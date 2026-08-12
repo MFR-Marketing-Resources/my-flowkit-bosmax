@@ -176,10 +176,10 @@ function CloneCopySetModal({
 				data-testid="clone-copy-set-modal"
 			>
 				<h3 className="text-sm font-bold text-slate-100">
-					Clone skrip ke produk serupa
+					Clone the script to similar products
 				</h3>
 				<p className="mt-1 text-xs text-slate-400">
-					Hook: “{set.hook || set.angle}”. Clone masuk semula sebagai{" "}
+					Hook: “{set.hook || set.angle}”. The clone re-enters as{" "}
 					<span className="font-semibold text-amber-200">Review required</span>{" "}
 					dengan claim-safety scan terhadap produk sasaran — tidak pernah
 					auto-approve. Usage bermula 0 (bajet reuse baharu).
@@ -207,7 +207,7 @@ function CloneCopySetModal({
 						onClick={() => target && onClone(target)}
 						className="rounded-lg border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"
 					>
-						{busy ? "Cloning…" : "Clone ke produk ini"}
+						{busy ? "Cloning…" : "Clone to this product"}
 					</button>
 				</div>
 			</div>
@@ -246,7 +246,7 @@ export default function CopySetRegistryPage() {
 	useEffect(() => {
 		void fetchProductCatalog(500)
 			.then((r) => setProducts(r.items ?? []))
-			.catch((e: Error) => setError(e.message || "Gagal muat katalog produk."));
+			.catch((e: Error) => setError(e.message || "Failed to load the product catalog."));
 	}, []);
 
 	useEffect(() => {
@@ -268,7 +268,7 @@ export default function CopySetRegistryPage() {
 			setGrounding(g);
 		} catch (e) {
 			setSets([]);
-			setError(e instanceof Error ? e.message : "Gagal muat copywriting set.");
+			setError(e instanceof Error ? e.message : "Failed to load copywriting sets.");
 		} finally {
 			setLoading(false);
 		}
@@ -301,16 +301,16 @@ export default function CopySetRegistryPage() {
 				formula_family: formulaId || undefined,
 			});
 			setSuccess(
-				`${res.created_count} set baru dijana${res.deduped_count ? ` · ${res.deduped_count} duplikat ditapis` : ""}. Semak & approve sebelum guna.`,
+				`${res.created_count} new sets generated${res.deduped_count ? ` · ${res.deduped_count} duplicates filtered` : ""}. Review & approve before use.`,
 			);
 			await loadSets(selectedProduct.id);
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : "Gagal jana copywriting set.";
+			const msg = e instanceof Error ? e.message : "Failed to generate copywriting sets.";
 			setError(
 				/409|NOT_CONFIGURED/i.test(msg)
-					? "Lane AI (DeepSeek text_assist) belum dikonfigur. Sila set di Cockpit Settings / AI Providers dahulu."
+					? "The AI lane (DeepSeek text_assist) is not configured. Set it in Cockpit Settings / AI Providers first."
 					: /COPY_GROUNDING_INSUFFICIENT/i.test(msg)
-						? "Produk ini belum ada Product Knowledge + Customer Avatar diluluskan. Tekan 'Prepare Product for Copywriting' dahulu, atau approve snapshot di Products > Intelligence."
+						? "This product has no approved Product Knowledge + Customer Avatar yet. Press 'Prepare Product for Copywriting' first, or approve a snapshot in Products > Intelligence."
 						: msg,
 			);
 		} finally {
@@ -328,7 +328,7 @@ export default function CopySetRegistryPage() {
 			setSuccess("1 set deterministik (tanpa AI) ditambah.");
 			await loadSets(selectedProduct.id);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Gagal tambah set.");
+			setError(e instanceof Error ? e.message : "Failed to add the set.");
 		} finally {
 			setGenerating(false);
 		}
@@ -342,14 +342,14 @@ export default function CopySetRegistryPage() {
 		try {
 			const r = await prepareProductForCopywriting(selectedProduct.id);
 			setSuccess(
-				`AI sedia draf Product Knowledge + Customer Avatar (formula: ${r.recommended_formula}). Semak & approve di Products > Intelligence sebelum jana copy grounded.`,
+				`AI drafts Product Knowledge + Customer Avatar (formula: ${r.recommended_formula}). Review & approve in Products > Intelligence before generating grounded copy.`,
 			);
 			void loadSets(selectedProduct.id);
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : "Gagal sediakan produk.";
+			const msg = e instanceof Error ? e.message : "Failed to prepare the product.";
 			setError(
 				/503|NOT_CONFIGURED/i.test(msg)
-					? "Lane AI (DeepSeek text_assist) belum dikonfigur."
+					? "The AI lane (DeepSeek text_assist) is not configured."
 					: msg,
 			);
 		} finally {
@@ -364,7 +364,7 @@ export default function CopySetRegistryPage() {
 			await fn();
 			if (selectedProduct) await loadSets(selectedProduct.id);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Tindakan gagal.");
+			setError(e instanceof Error ? e.message : "Action failed.");
 		} finally {
 			setBusyId(null);
 		}
@@ -373,7 +373,7 @@ export default function CopySetRegistryPage() {
 	const handleApprove = (s: CopySet) =>
 		void withBusy(s.copy_set_id, async () => {
 			await approveCopySet(s.copy_set_id, { approved_by: "operator" });
-			setSuccess("Set diluluskan (APPROVED).");
+			setSuccess("Set approved (APPROVED).");
 		});
 
 	const handleReject = (s: CopySet) => {
@@ -396,7 +396,7 @@ export default function CopySetRegistryPage() {
 		const target = editTarget;
 		void withBusy(target.copy_set_id, async () => {
 			await patchCopySet(target.copy_set_id, patch);
-			setSuccess("Set dikemas kini.");
+			setSuccess("Set updated.");
 			setEditTarget(null);
 		});
 	};
@@ -406,7 +406,7 @@ export default function CopySetRegistryPage() {
 		const target = deleteTarget;
 		void withBusy(target.copy_set_id, async () => {
 			await deleteCopySet(target.copy_set_id);
-			setSuccess("Set dipadam.");
+			setSuccess("Set deleted.");
 			setDeleteTarget(null);
 		});
 	};
@@ -418,8 +418,8 @@ export default function CopySetRegistryPage() {
 			const res = await cloneCopySetToProduct(source.copy_set_id, targetProduct.id);
 			setSuccess(
 				res.created
-					? `Skrip di-clone ke "${targetProduct.product_display_name ?? targetProduct.id}" — masuk semula review di produk itu.`
-					: "Skrip serupa sudah wujud di produk sasaran (dedupe match) — tiada clone baharu.",
+					? `Script cloned to "${targetProduct.product_display_name ?? targetProduct.id}" — re-enters review on that product.`
+					: "A similar script already exists on the target product (dedupe match) — no new clone.",
 			);
 			setCloneTarget(null);
 		});
@@ -434,15 +434,15 @@ export default function CopySetRegistryPage() {
 		try {
 			const dry = await runSimilarityBackfill({ product_id: selectedProduct.id });
 			if (dry.scanned === 0) {
-				setSuccess("Tiada skrip untuk discan.");
+				setSuccess("No scripts to scan.");
 				return;
 			}
 			const wantApply = window.confirm(
-				`Scan (dry-run): ${dry.scanned} skrip, ${dry.flagged} near-dup dikesan, ${dry.items.filter((i) => i.changed).length} baris akan dikemas kini.\n\nTulis metadata similarity/uniqueness ke library? (Status TIDAK disentuh — anda tetap yang approve/reject.)`,
+				`Scan (dry-run): ${dry.scanned} scripts, ${dry.flagged} near-dups detected, ${dry.items.filter((i) => i.changed).length} rows will be updated.\n\nWrite similarity/uniqueness metadata to the library? (Status is NOT touched — you still approve/reject.)`,
 			);
 			if (!wantApply) {
 				setSuccess(
-					`Dry-run sahaja: ${dry.scanned} skrip discan, ${dry.flagged} near-dup dikesan. Tiada apa-apa ditulis.`,
+					`Dry-run only: ${dry.scanned} scripts scanned, ${dry.flagged} near-dups detected. Nothing was written.`,
 				);
 				return;
 			}
@@ -451,11 +451,11 @@ export default function CopySetRegistryPage() {
 				apply: true,
 			});
 			setSuccess(
-				`Scan siap: ${applied.scanned} skrip, ${applied.flagged} near-dup, ${applied.updated} baris dikemas kini.`,
+				`Scan complete: ${applied.scanned} scripts, ${applied.flagged} near-dups, ${applied.updated} rows updated.`,
 			);
 			await loadSets(selectedProduct.id);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Scan gagal.");
+			setError(e instanceof Error ? e.message : "Scan failed.");
 		} finally {
 			setScanning(false);
 		}
@@ -491,7 +491,7 @@ export default function CopySetRegistryPage() {
 				`${failures.length} set gagal approve (gate menolak): ${failures.slice(0, 3).join(" · ")}${failures.length > 3 ? " · …" : ""}`,
 			);
 		}
-		if (ok) setSuccess(`${ok} set diluluskan (bulk).`);
+		if (ok) setSuccess(`${ok} sets approved (bulk).`);
 		if (selectedProduct) await loadSets(selectedProduct.id);
 	};
 
@@ -556,11 +556,11 @@ export default function CopySetRegistryPage() {
 								className={capped ? "font-bold text-rose-300" : "text-slate-300"}
 								title={
 									r.last_used_at
-										? `Kali terakhir dipakai: ${r.last_used_at}${r.used_in_modes.length ? ` · mod: ${r.used_in_modes.join(", ")}` : ""}`
-										: "Belum pernah dipakai"
+										? `Last used: ${r.last_used_at}${r.used_in_modes.length ? ` · modes: ${r.used_in_modes.join(", ")}` : ""}`
+										: "Never used"
 								}
 							>
-								Guna {usage}/{REUSE_CAP}
+								Use {usage}/{REUSE_CAP}
 								{capped ? " · RETIRED" : ""}
 							</div>
 							{r.similar_to_copy_set_id ? (
@@ -686,7 +686,7 @@ export default function CopySetRegistryPage() {
 						data-testid={`clone-${r.copy_set_id}`}
 						disabled={busy}
 						onClick={() => setCloneTarget(r)}
-						title="Kongsi skrip dengan produk serupa (masuk semula review di sana)"
+						title="Share the script with similar products (re-enters review there)"
 						className="rounded border border-blue-500/40 px-2 py-1 text-[10px] font-bold uppercase text-blue-200 disabled:opacity-40"
 					>
 						Clone
@@ -733,7 +733,7 @@ export default function CopySetRegistryPage() {
 				</h1>
 				<p className="mt-2 max-w-3xl text-sm text-slate-400">
 					Satu database copywriting set per produk (angle → hook → subhook → USP →
-					CTA). Tekan Generate, AI (DeepSeek) isi set. Approved set dipakai oleh
+					CTA). Press Generate, AI (DeepSeek) fills the set. Approved sets are used by
 					Poster Builder dan video generation (T2V/F2V/Hybrid/I2V). Setiap baris =
 					satu set MAPPING lengkap.
 				</p>
@@ -756,7 +756,7 @@ export default function CopySetRegistryPage() {
 				</p>
 			) : null}
 
-			<Section title="Product" helper="Pilih produk untuk urus copywriting set-nya.">
+			<Section title="Product" helper="Select a product to manage its copywriting sets.">
 				<div className="max-w-xl">
 					<SearchableProductSelect
 						products={products}
@@ -771,7 +771,7 @@ export default function CopySetRegistryPage() {
 					{grounding ? (
 						<Section
 							title="Copy grounding"
-							helper="Adakah copy dijana berdasarkan product knowledge + customer avatar sebenar?"
+							helper="Is the copy generated from real product knowledge + customer avatar?"
 							action={
 								<Badge
 									tone={
@@ -847,7 +847,7 @@ export default function CopySetRegistryPage() {
 
 					<Section
 						title="Generate copywriting sets"
-						helper={`AI menjana ${GENERATE_COUNT} set setiap tekan (max ${GENERATE_COUNT} demi kualiti). Tekan lagi untuk tambah. Set baru bertaraf "Review required" — approve sebelum guna.`}
+						helper={`AI generates ${GENERATE_COUNT} sets per press (max ${GENERATE_COUNT} for quality). Press again to add more. New sets are "Review required" — approve before use.`}
 						action={
 							<div className="flex flex-wrap items-center gap-2">
 								<select
@@ -897,14 +897,14 @@ export default function CopySetRegistryPage() {
 						}
 					>
 						<HelperText tone="warn">
-							Generate menggunakan token DeepSeek — hanya berjalan bila anda tekan
-							butang, tidak automatik. {approvedCount} set diluluskan setakat ini.
+							Generate uses DeepSeek tokens — only runs when you press the
+							button, not automatic. {approvedCount} sets approved so far.
 						</HelperText>
 					</Section>
 
 					<Section
 						title="Copywriting sets"
-						helper="Edit / Approve / Reject / Delete. Approved set auto dipakai builder & video. Kolum Library: guna x/15 (rotation cap) + flag NEAR-DUP."
+						helper="Edit / Approve / Reject / Delete. Approved sets are auto-used by the builder & video. Library column: usage x/15 (rotation cap) + NEAR-DUP flag."
 						action={
 							<div className="flex flex-wrap items-center gap-2">
 								<button
@@ -912,7 +912,7 @@ export default function CopySetRegistryPage() {
 									data-testid="scan-near-dup"
 									disabled={scanning || loading || sets.length === 0}
 									onClick={() => void handleScan()}
-									title="Kira semula metadata near-dup + uniqueness untuk semua skrip produk ini (dry-run dulu, confirm sebelum tulis). Status tidak disentuh."
+									title="Recompute near-dup + uniqueness metadata for all this product's scripts (dry-run first, confirm before writing). Status is untouched."
 									className="rounded-xl border border-amber-500/40 px-4 py-2 text-xs font-bold uppercase text-amber-200 disabled:opacity-40"
 								>
 									{scanning ? "Scanning…" : "Scan Near-Dup"}
@@ -926,7 +926,7 @@ export default function CopySetRegistryPage() {
 								>
 									{bulkApproving
 										? "Approving…"
-										: `Approve semua review (${reviewRequired.length})`}
+										: `Approve all in review (${reviewRequired.length})`}
 								</button>
 							</div>
 						}
@@ -946,7 +946,7 @@ export default function CopySetRegistryPage() {
 								filters={filters}
 								initialSort={{ key: "status", dir: "asc" }}
 								rowActions={rowActions}
-								emptyLabel="Belum ada copywriting set. Tekan Generate untuk mula."
+								emptyLabel="No copywriting sets yet. Press Generate to start."
 								minWidthClassName="min-w-[900px]"
 							/>
 						)}
@@ -955,7 +955,7 @@ export default function CopySetRegistryPage() {
 			) : (
 				<Section title="Copywriting sets">
 					<p className="text-sm text-slate-500">
-						Pilih produk dahulu untuk lihat & jana copywriting set.
+						Select a product first to view & generate copywriting sets.
 					</p>
 				</Section>
 			)}
@@ -981,8 +981,8 @@ export default function CopySetRegistryPage() {
 
 			<ConfirmActionModal
 				open={bulkApproveOpen}
-				title={`Approve ${reviewRequired.length} set sekali gus?`}
-				body="Setiap set melalui endpoint approval yang SAMA (gate formula/claim kekal berkuat kuasa — set yang ditolak gate akan dilaporkan gagal). Approved set terus masuk rotation Script Library."
+				title={`Approve ${reviewRequired.length} sets at once?`}
+				body="Every set goes through the SAME approval endpoint (the formula/claim gate stays in force — sets rejected by the gate are reported as failed). Approved sets enter the Script Library rotation directly."
 				confirmLabel={`Approve ${reviewRequired.length} sets`}
 				busy={bulkApproving}
 				onConfirm={() => void confirmBulkApprove()}
@@ -992,10 +992,10 @@ export default function CopySetRegistryPage() {
 			<ConfirmActionModal
 				open={!!deleteTarget}
 				tone="danger"
-				title="Padam copywriting set?"
+				title="Delete copywriting set?"
 				body={
 					deleteTarget
-						? `Set "${deleteTarget.angle || deleteTarget.hook || deleteTarget.copy_set_id}" akan dipadam kekal. Guna Reject jika hanya mahu tandakan tidak sesuai.`
+						? `Set "${deleteTarget.angle || deleteTarget.hook || deleteTarget.copy_set_id}" will be permanently deleted. Use Reject if you only want to mark it as unsuitable.`
 						: ""
 				}
 				requiredPhrase={DELETE_PHRASE}

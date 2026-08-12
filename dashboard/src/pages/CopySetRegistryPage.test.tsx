@@ -339,7 +339,7 @@ describe("CopySetRegistryPage", () => {
 		});
 		renderPage();
 		const cell = await screen.findByTestId("library-cell-cs1");
-		expect(cell).toHaveTextContent("Guna 3/15");
+		expect(cell).toHaveTextContent("Use 3/15");
 		expect(cell).toHaveTextContent("NEAR-DUP 87%");
 		expect(cell).toHaveTextContent("uniq 35%");
 	});
@@ -363,7 +363,7 @@ describe("CopySetRegistryPage", () => {
 		);
 		// Only the dry-run fired — apply run never sent.
 		expect(mockedBackfill).toHaveBeenCalledTimes(1);
-		expect(await screen.findByText(/Dry-run sahaja/)).toBeInTheDocument();
+		expect(await screen.findByText(/Dry-run only/)).toBeInTheDocument();
 	});
 
 	it("[Script Library] Clone appears only for APPROVED sets and calls the API", async () => {
@@ -397,7 +397,7 @@ describe("CopySetRegistryPage", () => {
 		renderPage();
 		const btn = await screen.findByTestId("bulk-approve");
 		await waitFor(() =>
-			expect(btn).toHaveTextContent("Approve semua review (2)"),
+			expect(btn).toHaveTextContent("Approve all in review (2)"),
 		);
 		btn.click();
 		const confirm = await screen.findByRole("button", { name: /Approve 2 sets/i });
@@ -430,7 +430,7 @@ describe("CopySetRegistryPage", () => {
 		const btn = await screen.findByTestId("generate-copy-sets");
 		btn.click();
 		expect(await screen.findByTestId("copy-registry-error")).toHaveTextContent(
-			/belum dikonfigur/i,
+			/is not configured/i,
 		);
 		expect(screen.getByText("Safe hook")).toBeInTheDocument();
 	});
