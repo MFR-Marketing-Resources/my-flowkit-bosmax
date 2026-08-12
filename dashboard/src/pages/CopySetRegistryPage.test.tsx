@@ -313,13 +313,12 @@ describe("CopySetRegistryPage", () => {
 		expect(screen.queryByTestId("approve-cs1")).not.toBeInTheDocument();
 	});
 
-	it("Reject prompts for a note and calls rejectCopySet", async () => {
-		vi.spyOn(window, "prompt").mockReturnValue("not suitable");
+	it("Reject opens a modal for a note and calls rejectCopySet", async () => {
 		mockedReject.mockResolvedValue({ ...sampleSet, status: "COPY_REJECTED" });
 		renderPage();
-		const btn = await screen.findByTestId("reject-cs1");
-		btn.click();
-		await waitFor(() => expect(mockedReject).toHaveBeenCalledWith("cs1", "not suitable"));
+		fireEvent.click(await screen.findByTestId("reject-cs1"));
+		fireEvent.click(await screen.findByRole("button", { name: "Reject set" }));
+		await waitFor(() => expect(mockedReject).toHaveBeenCalledWith("cs1", "Not suitable"));
 	});
 
 	it("[Script Library] Library cell shows usage x/15 + NEAR-DUP flag", async () => {
@@ -363,6 +362,7 @@ describe("CopySetRegistryPage", () => {
 		);
 		// Only the dry-run fired — apply run never sent.
 		expect(mockedBackfill).toHaveBeenCalledTimes(1);
+		fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
 		expect(await screen.findByText(/Dry-run only/)).toBeInTheDocument();
 	});
 
