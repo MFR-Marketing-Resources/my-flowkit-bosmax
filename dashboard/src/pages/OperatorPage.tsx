@@ -708,6 +708,14 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// Explicit-Fallback-Confirmation V1: gate shown before Generate Final Prompt
 	// runs with no approved Copy Set selected.
 	const [showFallbackConfirm, setShowFallbackConfirm] = useState(false);
+	// HYBRID anchor is auto-locked from the product's official image, so the
+	// canonical reference picker is collapsed by default and only revealed when
+	// the operator explicitly chooses to override the anchor.
+	const [showHybridOverride, setShowHybridOverride] = useState(false);
+	// Avatar + scene are auto-picked from the product-type mapping (shown as
+	// locks). The override dropdowns stay hidden behind an "Advanced" disclosure
+	// so the presenter/scene read as mapped defaults, not free-form picks.
+	const [showPresenterOverride, setShowPresenterOverride] = useState(false);
 	const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 	const [isLoadingPackage, setIsLoadingPackage] = useState(false);
 	const [isLoadingReadiness, setIsLoadingReadiness] = useState(false);
@@ -2197,6 +2205,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			? `${requestedTotalDuration ?? "—"}s · Extended`
 			: `${videoDurationSeconds}s · Single`;
 		const copyBound = Boolean(selectedCopySetId);
+		// APPROVED_COPY_STALE: approved copy exists for this product but none is
+		// production-valid anymore (product truth moved on). Surface a direct
+		// "fix copy" path to the product's Copy Registry so the operator can
+		// revalidate before generating instead of silently shipping stale copy.
+		const copyApprovedButStale =
+			!!copyReadiness &&
+			copyReadiness.copy_applicable !== false &&
+			copyReadiness.approved_copy_set_count > 0 &&
+			(copyReadiness.valid_approved_copy_set_count ?? 0) === 0;
 		// SINGLE-clip generation: the compiled single-block prompt from the prepared
 		// execution package. Fired through the LIVE one-door lane (/api/flow/generate),
 		// the same proven lane IMG uses — NOT the retired DOM lane (ADR-007 compliant).
@@ -2447,6 +2464,22 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										)
 									}
 								/>
+								{copyApprovedButStale ? (
+									<button
+										type="button"
+										data-testid="copy-stale-fix-link"
+										onClick={() =>
+											window.location.assign(
+												selectedProduct
+													? `/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}`
+													: "/creative/copy-registry",
+											)
+										}
+										className="inline-flex items-center gap-1 self-start rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-amber-100 transition-colors hover:bg-amber-500/20"
+									>
+										Fix copy for this product →
+									</button>
+								) : null}
 								<CopySelectionPanel
 									productId={selectedProduct?.id ?? null}
 									productName={selectedProduct?.product_display_name ?? null}
@@ -2501,6 +2534,33 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										{registryPoolsLoading ? (
 											<p className="text-[11px] text-slate-400">Loading registries…</p>
 										) : null}
+										{/* FASA 2c: avatar + scene are auto-picked from the product-type
+										    mapping (the locks below). The override dropdowns are hidden
+										    behind this Advanced disclosure so they read as mapped
+										    defaults, not free-form picks. */}
+										{registryAvatarId ? (
+											<div className="text-[11px] text-cyan-100">
+												Avatar lock: {registryAvatarId}
+											</div>
+										) : null}
+										{registrySceneCode ? (
+											<div className="text-[11px] text-cyan-100">
+												Scene lock: {registrySceneCode}
+											</div>
+										) : null}
+										<button
+											type="button"
+											data-testid="presenter-advanced-override-toggle"
+											aria-expanded={showPresenterOverride}
+											onClick={() => setShowPresenterOverride((v) => !v)}
+											className="inline-flex items-center gap-1 self-start rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition-colors hover:bg-slate-800/60"
+										>
+											{showPresenterOverride
+												? "▾ Hide advanced"
+												: "▸ Advanced — override presenter/scene"}
+										</button>
+										{showPresenterOverride ? (
+											<>
 										<label className="block space-y-1 text-xs text-slate-200">
 											<span>Avatar registry</span>
 											<select
@@ -2595,15 +2655,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 												status: "APPROVED",
 											}))}
 										/>
-										{registryAvatarId ? (
-											<div className="text-[11px] text-cyan-100">
-												Avatar lock: {registryAvatarId}
-											</div>
-										) : null}
-										{registrySceneCode ? (
-											<div className="text-[11px] text-cyan-100">
-												Scene lock: {registrySceneCode}
-											</div>
+										</>
 										) : null}
 									</div>
 								) : v4RecipesLoading ? (
@@ -2866,12 +2918,41 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 											comes from the Avatar Registry.
 										</p>
 									) : null}
-									<CanonicalReferenceBindingControls
-										mode={mode}
-										productId={selectedProduct?.id ?? null}
-										binding={referenceBinding}
-										onChange={setReferenceBinding}
-									/>
+									{mode === "HYBRID" ? (
+										// FASA 2b: HYBRID's anchor is auto-locked from the product's
+										// official image (banner above). Collapse the canonical picker
+										// behind an explicit "Override anchor" disclosure so it no
+										// longer reads as a free/generic reference choice.
+										// F2V/I2V/T2V are unchanged.
+										<div className="space-y-2">
+											<button
+												type="button"
+												data-testid="hybrid-override-anchor-toggle"
+												aria-expanded={showHybridOverride}
+												onClick={() => setShowHybridOverride((v) => !v)}
+												className="inline-flex items-center gap-1 self-start rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition-colors hover:bg-slate-800/60"
+											>
+												{showHybridOverride
+													? "▾ Hide anchor override"
+													: "▸ Override anchor"}
+											</button>
+											{showHybridOverride ? (
+												<CanonicalReferenceBindingControls
+													mode={mode}
+													productId={selectedProduct?.id ?? null}
+													binding={referenceBinding}
+													onChange={setReferenceBinding}
+												/>
+											) : null}
+										</div>
+									) : (
+										<CanonicalReferenceBindingControls
+											mode={mode}
+											productId={selectedProduct?.id ?? null}
+											binding={referenceBinding}
+											onChange={setReferenceBinding}
+										/>
+									)}
 								</div>
 							</WorkflowStep>
 						) : null}
@@ -3040,6 +3121,35 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										Fires one video through Google Flow — spends credits. Needs an
 										open, warmed-up Flow editor tab. For a longer joined video,
 										switch Length to “Extended video”.
+									</p>
+								</div>
+							) : !referenceBlocker && previewPackage && !workspacePackage ? (
+								// FASA 1: the guided-shell dead-end. previewPackage is compiled but
+								// workspacePackage is still null, so the credit-bearing Generate
+								// button above cannot appear. Give the operator the REAL "Prepare
+								// final prompt" action — the SAME handler the classic view uses
+								// (handleGeneratePackage → fallback-confirm credit gate →
+								// runGeneratePackage). It builds workspacePackage; the Generate
+								// button then appears automatically. Mode-agnostic (T2V/F2V/HYBRID/I2V).
+								<div className="space-y-2">
+									<button
+										type="button"
+										data-testid="action-prepare-final-prompt"
+										onClick={() => void handleGeneratePackage()}
+										disabled={
+											isLoadingPackage ||
+											showFallbackConfirm ||
+											extendTotalRequired ||
+											backendRuntimeStale
+										}
+										className="w-full rounded-xl border border-blue-500/40 bg-blue-500/15 px-4 py-3 text-[13px] font-bold text-blue-100 transition-all hover:bg-blue-500/25 disabled:opacity-50 disabled:grayscale"
+									>
+										{isLoadingPackage ? "Preparing…" : "Prepare final prompt"}
+									</button>
+									<p className="text-[11px] text-slate-500">
+										{mode === "HYBRID" && !hybridOfficialImageReady
+											? "Locks this product's official image as the Hybrid anchor and compiles the final prompt — no credits spent yet. If Prepare reports it missing, set the official image in the Visual / Canva tab."
+											: "Compiles the final prompt and resolves references into the package — no credits spent yet. Generate appears next."}
 									</p>
 								</div>
 							) : (
