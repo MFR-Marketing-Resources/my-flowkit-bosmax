@@ -566,6 +566,7 @@ describe("P6.3-R2 production plan state isolation", () => {
 	it("uses the guided recipe shortcuts for the governed duration selector", async () => {
 		window.history.replaceState({}, "", "/production-studio?v4=1");
 		render(<CreativeProductionStudioPage />);
+		fireEvent.click(await screen.findByRole("button", { name: /Recipe & length/i }));
 		await screen.findByTestId("p6-recipe-single-8");
 		fireEvent.click(screen.getByTestId("p6-recipe-extend-24"));
 		expect(screen.getByLabelText("Governed video duration")).toHaveValue("24");
