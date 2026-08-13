@@ -131,8 +131,10 @@ export function PosterBuilderLegacyPanel() {
 	// changes after a check the signature diverges → the report is stale → the
 	// generate gate re-arms (mandatory recheck before generation).
 	const [posterQualityKey, setPosterQualityKey] = useState<string | null>(null);
-	// Poster image generation (gated, credit-spending — reuses the one-door IMG lane).
+	// Poster image generation is a live external action gate; IMG generation is
+	// credit-free and must never be described or gated as a credit spend.
 	const [posterGenConfirm, setPosterGenConfirm] = useState(false);
+	const [posterLiveActionConfirmed, setPosterLiveActionConfirmed] = useState(false);
 	const [posterGenLoading, setPosterGenLoading] = useState(false);
 	const [posterGenStage, setPosterGenStage] = useState<string>("");
 	const [exactPolicy, setExactPolicy] = useState<ExactProductPolicy | null>(null);
@@ -239,6 +241,7 @@ export function PosterBuilderLegacyPanel() {
 			setPosterGenResult(null);
 			setPosterGenError("");
 			setPosterGenConfirm(false);
+			setPosterLiveActionConfirmed(false);
 			setApprovedCopySet(null);
 			setObjectiveRecs([]);
 		}
@@ -714,10 +717,11 @@ export function PosterBuilderLegacyPanel() {
 		}
 	};
 
-	// GATED, credit-spending: only after explicit confirm.
+	// GATED live IMG submission: only after explicit action confirmation.
 	// Exact-policy products: scene-only Flow plate + deterministic cutout composite.
 	// Non-exact: reference-conditioned one-door IMG path (unchanged).
 	const handleConfirmedGeneratePoster = async () => {
+		if (!posterLiveActionConfirmed) return;
 		const pkg = promptPackage;
 		if (!pkg?.poster_prompt) return;
 		const subjectAsset = productSubjectAsset(selectedProduct);
@@ -1407,7 +1411,10 @@ export function PosterBuilderLegacyPanel() {
 										!readiness.generation_allowed ||
 										!productReferenceReady
 									}
-									onClick={() => setPosterGenConfirm(true)}
+									onClick={() => {
+										setPosterLiveActionConfirmed(false);
+										setPosterGenConfirm(true);
+									}}
 									className="mt-3 rounded-xl border border-rose-500/40 bg-rose-600/20 px-4 py-2 text-xs font-bold uppercase text-rose-100 disabled:opacity-40"
 								>
 									{posterGenLoading
@@ -1502,6 +1509,19 @@ export function PosterBuilderLegacyPanel() {
 							mode:IMG). Image generation is <strong>credit-free</strong> (only
 							video costs credits). It will not run without this confirmation.
 						</div>
+						<label className="flex items-start gap-2 text-[11px] text-slate-200">
+							<input
+								type="checkbox"
+								data-testid="poster-img-live-action-confirm-checkbox"
+								checked={posterLiveActionConfirmed}
+								onChange={(event) => setPosterLiveActionConfirmed(event.target.checked)}
+								className="mt-0.5"
+							/>
+							<span>
+								I understand this submits one live IMG job. Image generation is
+								credit-free; only video uses Google Flow credits.
+							</span>
+						</label>
 						<div className="flex justify-end gap-2">
 							<button
 								type="button"
@@ -1513,8 +1533,9 @@ export function PosterBuilderLegacyPanel() {
 							<button
 								type="button"
 								data-testid="poster-gen-confirm"
+								disabled={!posterLiveActionConfirmed}
 								onClick={() => void handleConfirmedGeneratePoster()}
-								className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-3 py-1.5 text-[11px] font-bold text-rose-100"
+								className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-3 py-1.5 text-[11px] font-bold text-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
 							>
 								Confirm &amp; Generate (live)
 							</button>
