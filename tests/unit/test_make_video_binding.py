@@ -260,7 +260,7 @@ def _setup_generate_mocks(nres):
         async def create_agent_session(self, *a):
             return {"data": {"sessionInfo": {"agentSessionId": "s1"}}}
 
-        async def reload_flow_tab(self):
+        async def reload_flow_tab(self, tab_id=None):
             return {"ok": True}
 
         async def harvest_video_urls(self, tab_id=None):
@@ -451,7 +451,7 @@ def test_retrieval_reloads_stale_tab_and_never_claims_preexisting_video():
         async def create_agent_session(self, *a):
             return {"data": {"sessionInfo": {"agentSessionId": "s1"}}}
 
-        async def reload_flow_tab(self):
+        async def reload_flow_tab(self, tab_id=None):
             state["reloads"] += 1
             return {"ok": True}
 
@@ -516,7 +516,7 @@ def test_retrieval_probe_fails_fast_on_reference_image_missing():
         async def create_agent_session(self, *a):
             return {"data": {"sessionInfo": {"agentSessionId": "s1"}}}
 
-        async def reload_flow_tab(self):
+        async def reload_flow_tab(self, tab_id=None):
             return {"ok": True}
 
         async def harvest_video_urls(self, tab_id=None):
@@ -579,7 +579,7 @@ def test_retrieval_collects_user_count_videos():
         async def create_agent_session(self, *a):
             return {"data": {"sessionInfo": {"agentSessionId": "s1"}}}
 
-        async def reload_flow_tab(self):
+        async def reload_flow_tab(self, tab_id=None):
             state["reloads"] += 1
             return {"ok": True}
 
@@ -697,7 +697,7 @@ def test_fastfail_waits_through_the_reload_blind_band():
         async def create_agent_session(self, *a):
             return {"data": {"sessionInfo": {"agentSessionId": "s1"}}}
 
-        async def reload_flow_tab(self):
+        async def reload_flow_tab(self, tab_id=None):
             state["reloads"] += 1
             return {"ok": True}
 

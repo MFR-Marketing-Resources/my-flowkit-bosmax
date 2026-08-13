@@ -11,6 +11,7 @@ import json
 import re
 import time
 from uuid import uuid4
+from urllib.parse import unquote
 
 from agent.config import OUTPUT_DIR
 from agent.services.flow_client import get_flow_client
@@ -23,17 +24,25 @@ _JOBS: dict = {}
 # job may be in flight at a time. IMG is exempt. (Locked patch H.)
 _VIDEO_LANE_JOB = None
 _JOB_TTL = 1800  # seconds — GC finished jobs after this.
+_GENERATION_TERMINAL_STATUSES = frozenset({
+    "DONE",
+    "FAILED",
+    "REJECTED",
+    "GENERATED_BUT_UNRETRIEVED",
+    "RENDER_NOT_MATERIALIZED",
+    "STALE_OR_FOREIGN_CANDIDATES_ONLY",
+})
 
 
 def _job_active(job_id) -> bool:
     j = _JOBS.get(job_id)
-    return bool(j) and j.get("status") not in ("DONE", "FAILED", "REJECTED")
+    return bool(j) and j.get("status") not in _GENERATION_TERMINAL_STATUSES
 
 
 def _gc_jobs():
     now = time.time()
     for jid in [k for k, v in _JOBS.items()
-                if v.get("status") in ("DONE", "FAILED", "REJECTED")
+                if v.get("status") in _GENERATION_TERMINAL_STATUSES
                 and (now - v.get("created", now)) > _JOB_TTL]:
         _JOBS.pop(jid, None)
 
@@ -259,6 +268,8 @@ async def _record_artifacts(job, mode, artifacts):
     """Persist every finished artifact into the system library (generated_artifact
     table) so completed videos/images survive restarts and are listable/downloadable
     from the dashboard. Best-effort: a DB hiccup must never fail a finished job."""
+    job["artifact_persist_attempted"] = True
+    job["artifact_persisted_count"] = 0
     try:
         from agent.db import crud
         for art in artifacts:
@@ -273,6 +284,7 @@ async def _record_artifacts(job, mode, artifacts):
                 model_used=job.get("model_used"),
                 duration_used=job.get("duration_used"),
             )
+            job["artifact_persisted_count"] += 1
     except Exception as e:  # noqa: BLE001
         job["artifact_record_error"] = str(e)
 
@@ -388,6 +400,34 @@ async def _durable_media_exclusion() -> set:
         return set()
 
 
+def _is_flow_media_redirect_url(url: str) -> bool:
+    """True for the authenticated Flow tRPC delivery URL, not a signed asset URL."""
+    value = str(url or "").strip()
+    return value.startswith("/fx/api/trpc/media.getMediaUrlRedirect") or value.startswith(
+        "https://labs.google/fx/api/trpc/media.getMediaUrlRedirect"
+    )
+
+
+async def _resolve_media_download_url(client, media_id: str, url: str) -> str:
+    """Resolve a Flow-relative image URL through the authenticated extension relay."""
+    if url and not _is_flow_media_redirect_url(url):
+        return str(url or "")
+    resolver = getattr(client, "get_media_download_url", None)
+    if not callable(resolver):
+        raise RuntimeError("MEDIA_REDIRECT_UNAVAILABLE: extension relay lacks MEDIA_URL_REDIRECT")
+    redirect_media_id = str(media_id or "")
+    match = re.search(r"[?&]name=([^&#]+)", str(url or ""))
+    if match:
+        redirect_media_id = unquote(match.group(1))
+    resolved = await resolver(redirect_media_id)
+    if not isinstance(resolved, dict) or not resolved.get("ok") or not resolved.get("url"):
+        status = resolved.get("status") if isinstance(resolved, dict) else None
+        raise RuntimeError(
+            f"MEDIA_REDIRECT_FAILED: media {media_id} status={status or 'unknown'}"
+        )
+    return str(resolved["url"])
+
+
 def _extract_provider_prompt(raw) -> tuple:
     """Normalize the provider-stored media prompt to its EFFECTIVE prompt text.
 
@@ -433,7 +473,7 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
 
     A candidate media id becomes this run's output ONLY when its OWN media
     resource structurally proves it belongs to THIS submission. Captured live
-    contract (zero-credit GET /v1/media/{id}, clips 12b526c5 + f0f865d6):
+    contract (zero-credit GET /v1/media/{generation-key}, clips 12b526c5 + f0f865d6):
     {name, video{prompt, model, seed, aspectRatio, encodedVideo}} — the resource
     carries the generation prompt (XML envelope, inner <prompt> == the exact
     input prompt, proven lossless), the model key and the seed.
@@ -461,14 +501,40 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
     anchors = [str(a).strip() for a in (correlation.get("sse_prompt"),
                                         correlation.get("submitted_prompt")) if a]
     gen_seed = _seed_value(correlation.get("seed"))
+    stats.setdefault("media_fetch_errors", 0)
+    stats.setdefault("media_fetch_error_ids", [])
+    stats.setdefault("media_fetch_error_statuses", {})
+    stats.setdefault("media_not_ready", 0)
+    stats.setdefault("media_not_ready_ids", [])
     stats["round_rejected_ids"] = []  # per-call: completed-but-identity-rejected
     for mid in dict.fromkeys(candidates):  # de-dupe, keep order
         if mid in exclude:
             continue
-        media = await client.get_media(mid)
+        try:
+            media = await client.get_media(mid)
+        except Exception:
+            # Preserve a compact retrieval trace without storing response bodies
+            # or signed URLs in job telemetry.
+            stats["media_fetch_errors"] += 1
+            if mid not in stats["media_fetch_error_ids"]:
+                stats["media_fetch_error_ids"].append(mid)
+            stats["media_fetch_error_statuses"][mid] = "exception"
+            continue
+        media_status = media.get("status") if isinstance(media, dict) else None
+        if ((isinstance(media, dict) and media.get("error"))
+                or (isinstance(media_status, int) and media_status >= 400)):
+            stats["media_fetch_errors"] += 1
+            if mid not in stats["media_fetch_error_ids"]:
+                stats["media_fetch_error_ids"].append(mid)
+            stats["media_fetch_error_statuses"][mid] = (
+                media_status if isinstance(media_status, int) else "error")
+            continue
         mdata = media.get("data", media) if isinstance(media, dict) else media
         enc = _deep(mdata, "encodedVideo")
         if not enc:
+            stats["media_not_ready"] += 1
+            if mid not in stats["media_not_ready_ids"]:
+                stats["media_not_ready_ids"].append(mid)
             continue  # not a finished video (or not a video resource at all)
         video_meta = mdata.get("video") if isinstance(mdata, dict) else None
         video_meta = video_meta if isinstance(video_meta, dict) else {}
@@ -787,13 +853,20 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                 if not res or res.get("error"):
                     job["provider_operation_ids"] = provider_operation_ids
                     raise RuntimeError("image gen failed: " + str((res or {}).get("error")))
-                if not imgs or not imgs[0].get("url"):
+                if not imgs:
+                    job["provider_operation_ids"] = provider_operation_ids
+                    raise RuntimeError("no image returned")
+                mid, url = imgs[0]["media_id"], imgs[0].get("url")
+                download_media_id = imgs[0].get("delivery_media_id") or mid
+                download_url = await _resolve_media_download_url(
+                    client, download_media_id, url
+                )
+                if not download_url:
                     job["provider_operation_ids"] = provider_operation_ids
                     raise RuntimeError("no image/url returned")
-                mid, url = imgs[0]["media_id"], imgs[0]["url"]
                 path = outdir / f"{mid}.jpg"
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as s:
-                    async with s.get(url) as r:
+                    async with s.get(download_url) as r:
                         if r.status != 200:
                             job["provider_operation_ids"] = provider_operation_ids
                             raise RuntimeError(f"image download HTTP {r.status}")
@@ -858,6 +931,27 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                     refs = [imgs[0]["media_id"]]
             if not refs:
                 raise RuntimeError(f"{mode} needs a reference image (image_media_ids or image_prompt)")
+
+        # False-DONE guard: take the project media snapshot after any required
+        # start-frame resolution but BEFORE agent negotiation can mint this run's
+        # output.  A snapshot taken after approval can classify a freshly created
+        # tile as pre-existing and exclude the only valid result.
+        preexisting = set()
+        try:
+            h0 = await client.harvest_video_urls(
+                tab_id=(job.get("binding") or {}).get("flow_tab_id"))
+            inner0 = h0.get("result", h0) if isinstance(h0, dict) else {}
+            diag0 = inner0.get("diag", inner0) if isinstance(inner0, dict) else {}
+            for k in ("videoIds", "imageIds", "mediaIds"):
+                preexisting |= set((diag0.get(k) or []) if isinstance(diag0, dict) else [])
+        except Exception:  # noqa: BLE001 — stale/ref excludes still apply
+            pass
+        job["preexisting_media_excluded"] = len(preexisting)
+        # SEV-0 durable exclusion: the DOM snapshot can under-report history-laden
+        # projects, while every DB-known id is guaranteed not to be freshly minted.
+        known = await _durable_media_exclusion()
+        job["db_known_media_excluded"] = len(known)
+        exclude = set(_STALE_VIDEO_IDS) | set(refs) | preexisting | known
 
         job["status"], job["stage"] = "NEGOTIATING", "agent session"
         sess = await client.create_agent_session(project_id)
@@ -967,36 +1061,15 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         corr_stats = {"unverifiable": 0, "prompt_mismatched": 0,
                       "model_mismatched": 0, "seed_mismatched": 0,
                       "unverifiable_ids": [], "normalization_failures": {},
-                      "round_rejected_ids": []}
+                      "round_rejected_ids": [], "media_fetch_errors": 0,
+                      "media_fetch_error_ids": [], "media_fetch_error_statuses": {},
+                      "media_not_ready": 0, "media_not_ready_ids": []}
         # Fast-failure trackers (Owner Phase-1): consecutive polls in which the
         # SAME completed candidates were rejected for deterministic identity reasons.
         identity_reject_sig, identity_reject_rounds = None, 0
         identity_reject_epoch = None
         reload_epoch = 0
         probe_turn = int(nres.get("turns_used") or 0) + 1  # next agent turn for status probes
-        # False-DONE fix (live: g_745e95ede679 claimed the PREVIOUS run's mp4 at try 1):
-        # snapshot every media id already visible in the project BEFORE polling, so
-        # retrieval can only ever accept media that appears AFTER this job's render.
-        preexisting = set()
-        try:
-            h0 = await client.harvest_video_urls(
-                tab_id=(job.get("binding") or {}).get("flow_tab_id"))
-            inner0 = h0.get("result", h0) if isinstance(h0, dict) else {}
-            diag0 = inner0.get("diag", inner0) if isinstance(inner0, dict) else {}
-            for k in ("videoIds", "imageIds", "mediaIds"):
-                preexisting |= set((diag0.get(k) or []) if isinstance(diag0, dict) else [])
-        except Exception:  # noqa: BLE001 — snapshot is best-effort; stale/ref excludes still apply
-            pass
-        job["preexisting_media_excluded"] = len(preexisting)
-        # SEV-0 durable exclusion (live incident g_09ced57d5d4b): the DOM snapshot
-        # above under-reports in a history-laden project — it saw only 2 ids, then
-        # the periodic tab reload surfaced OLD clip 0af072c9 (known to our own DB
-        # for hours) which was accepted and reported as this run's output. A fresh
-        # clip mints a brand-new Flow id, so it can NEVER be in our DB — every
-        # DB-known media id is excluded unconditionally, independent of DOM state.
-        known = await _durable_media_exclusion()
-        job["db_known_media_excluded"] = len(known)
-        exclude = set(_STALE_VIDEO_IDS) | set(refs) | preexisting | known
         collected = []  # user's count setting: retrieval collects num_videos artifacts
         await asyncio.sleep(120)
         for i in range(36):
@@ -1008,7 +1081,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             # tab every 6 polls so harvest can see newly finished media.
             if i and i % 6 == 0:
                 try:
-                    await client.reload_flow_tab()
+                    await client.reload_flow_tab(tab_id=bound_tab)
                     await asyncio.sleep(8)
                     reload_epoch += 1
                 except Exception:  # noqa: BLE001 — refresh is best-effort, harvest re-checks
@@ -1052,6 +1125,16 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                                 f" (try {i + 1})")
                 if len(collected) >= num_videos:
                     break
+            job["correlation_stats"] = dict(corr_stats)
+            job["retrieval_telemetry"] = {
+                "try": i + 1,
+                "candidate_count": len(cands),
+                "collected_count": len(collected),
+                "media_fetch_errors": corr_stats.get("media_fetch_errors", 0),
+                "media_not_ready": corr_stats.get("media_not_ready", 0),
+                "artifact_persist_attempted": bool(job.get("artifact_persist_attempted")),
+                "artifact_persisted_count": job.get("artifact_persisted_count", 0),
+            }
             if len(collected) >= num_videos:
                 first = collected[0]
                 job.update(status="DONE", stage="done", media_id=first["media_id"],
