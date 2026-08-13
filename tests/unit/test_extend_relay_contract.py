@@ -19,6 +19,34 @@ def _read(*parts):
         return f.read()
 
 
+def _solve_captcha_source():
+    background = _read("extension", "background.js")
+    start = background.index("async function solveCaptcha(")
+    end = background.index("async function handleSolveCaptcha(", start)
+    return background[start:end]
+
+
+def test_captcha_prefers_an_accessible_flow_tab_before_scripting():
+    solve_captcha = _solve_captcha_source()
+
+    active_choice = "tabs.find((t) => t.active && !t.discarded)"
+    accessible_choice = "tabs.find((t) => !t.discarded)"
+    fallback_choice = "tabs[0]"
+
+    assert active_choice in solve_captcha
+    assert accessible_choice in solve_captcha
+    assert solve_captcha.index(active_choice) < solve_captcha.index(accessible_choice)
+    assert solve_captcha.index(accessible_choice) < solve_captcha.rindex(fallback_choice)
+    assert "requestCaptchaFromTab(flowTab.id, requestId, captchaAction)" in solve_captcha
+
+
+def test_captcha_reloads_only_when_every_discovered_flow_tab_is_discarded():
+    solve_captcha = _solve_captcha_source()
+
+    assert "if (flowTab.discarded)" in solve_captcha
+    assert "await reloadTabAndWait(flowTab.id)" in solve_captcha
+
+
 def test_api_request_host_guard_is_path_agnostic():
     bg = _read("extension", "background.js")
     # host-only guard -> the batchAsyncGenerateVideoExtendVideo PATH is covered exactly
