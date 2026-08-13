@@ -6148,9 +6148,26 @@ async function solveCaptcha(requestId, captchaAction) {
 		}
 	}
 
+	// Do NOT blindly script tabs[0]: chrome.tabs.query order is not focus order, and a
+	// memory-discarded or stale background Flow tab throws the host-access error
+	// "Cannot access contents of the page. Extension manifest must request permission..."
+	// on executeScript (which surfaces to the operator as CAPTCHA_FAILED). Prefer the
+	// active, non-discarded Flow tab; if the chosen tab is discarded, reload it to
+	// un-discard before scripting. Any accessible labs.google/fx tab can mint the
+	// origin+action-scoped reCAPTCHA token, so this never changes which project renders.
+	let flowTab =
+		tabs.find((t) => t.active && !t.discarded) ||
+		tabs.find((t) => !t.discarded) ||
+		tabs[0];
+	if (flowTab.discarded) {
+		try {
+			await reloadTabAndWait(flowTab.id);
+		} catch (_) {}
+	}
+
 	try {
 		const resp = await Promise.race([
-			requestCaptchaFromTab(tabs[0].id, requestId, captchaAction),
+			requestCaptchaFromTab(flowTab.id, requestId, captchaAction),
 			new Promise((_, rej) =>
 				setTimeout(() => rej(new Error("CAPTCHA_TIMEOUT")), 60000),
 			),
