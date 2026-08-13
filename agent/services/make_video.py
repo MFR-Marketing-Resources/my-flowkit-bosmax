@@ -410,7 +410,7 @@ def _is_flow_media_redirect_url(url: str) -> bool:
 
 async def _resolve_media_download_url(client, media_id: str, url: str) -> str:
     """Resolve a Flow-relative image URL through the authenticated extension relay."""
-    if not _is_flow_media_redirect_url(url):
+    if url and not _is_flow_media_redirect_url(url):
         return str(url or "")
     resolver = getattr(client, "get_media_download_url", None)
     if not callable(resolver):
