@@ -117,7 +117,7 @@ _DESCRIPTORS = (
     ),
     CopyLaneDescriptor(
         "POSTER_BUILDER", "Poster Builder", "IMAGE", "REQUIRED",
-        "POST /api/poster/compose and /api/poster/prompt",
+        "POST /api/poster/compose and /api/poster/prompt-draft",
         "agent/services/poster_composition_service.py",
         "dashboard/src/pages/PosterBuilderPage.tsx",
         "ImageCopyProjection", "bind poster-aware V2 copy explicitly; never treat poster copy as video stages",
