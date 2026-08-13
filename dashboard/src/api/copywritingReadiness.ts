@@ -17,6 +17,8 @@ export interface CopywritingReadiness {
 	copy_classification?: string | null;
 	primary_blocker?: string | null;
 	recommended_copy_action?: string | null;
+	copy_blockers?: string[];
+	revalidation_copy_set_id?: string | null;
 	formula_validation_status: string;
 	sales_clarity_status: string;
 	copy_applicable: boolean;

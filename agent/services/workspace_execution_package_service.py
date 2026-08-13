@@ -13,7 +13,7 @@ from agent.services.approved_product_package_service import (
 from agent.services.copy_binding_service import (
     COPY_FALLBACK_CONFIRMATION_SOURCE,
     COPY_FALLBACK_POLICY,
-    ERR_FALLBACK_CONFIRMATION_REQUIRED,
+    ERR_PRODUCTION_VALID_COPY_REQUIRED,
     CopyBindingError,
     resolve_compiler_copy_intelligence,
 )
@@ -298,23 +298,21 @@ async def create_workspace_execution_package(
     scene_template: dict[str, Any] | None = None,
     camera_preset: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    # Explicit-Fallback-Confirmation V1 (FINAL generation only — preview stays
-    # warning-only): producing a saved execution package with NO approved Copy
-    # Set selected must be an intentional operator act. Fail closed BEFORE any
-    # work when neither a copy_set_id nor an explicit fallback confirmation is
-    # given. A provided copy_set_id (valid or not) never needs confirmation — it
-    # is validated fail-closed by the resolver instead.
-    if not copy_set_id and not copy_fallback_confirmed:
+    normalized_mode = normalize_mode(mode)
+    # Production-valid approved copy is mandatory for saved video execution
+    # packages. The legacy fallback-confirmation field remains accepted for
+    # compatibility with older callers, but it can never authorize a final
+    # video prompt. IMG remains the clean-frame copy-free lane.
+    if normalized_mode != "IMG" and not copy_set_id:
         raise CopyBindingError(
-            ERR_FALLBACK_CONFIRMATION_REQUIRED,
+            ERR_PRODUCTION_VALID_COPY_REQUIRED,
             status_code=409,
             detail=(
-                "Generate Final Prompt without an approved Copy Set requires "
-                "explicit fallback confirmation."
+                "Generate Final Prompt for video modes requires a currently "
+                "production-valid approved Copy Set."
             ),
         )
     package = await get_approved_product_package(product_id, mode)
-    normalized_mode = normalize_mode(mode)
     # Resolve the source lineage from the RAW mode BEFORE normalization, so a
     # caller-named canonical lineage (e.g. mode="FRAMES") is preserved into the
     # SAVED package instead of flipping to HYBRID. Without this, preview

@@ -885,6 +885,13 @@ export interface CopySet {
 			gaps: string[];
 			clear: boolean;
 		};
+		semantic_review?: {
+			reviewer?: string;
+			reviewed_at?: string;
+			decision?: "APPROVED" | "REJECTED";
+			rationale?: string;
+			pi_snapshot_id?: string | null;
+		};
 	};
 	reviewer_note: string | null;
 	approved_at: string | null;

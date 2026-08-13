@@ -5,6 +5,12 @@ const NEXT_ACTION_LABEL: Record<string, string> = {
 	GENERATE_AND_APPROVE_COPY_SET: "Generate & approve a Copy Set",
 	COMPLETE_PRODUCT_INTELLIGENCE: "Complete Product Knowledge + Avatar",
 	READY: "Copywriting ready",
+	REVALIDATE_COPY_SET: "Open Copy Registry to revalidate",
+	SEMANTIC_REVIEW_COPY_SET: "Open Copy Registry for semantic review",
+	REVIEW_COPY_SET: "Open Copy Registry to review copy",
+	REPAIR_OR_REPLACE_COPY_SET: "Open Copy Registry to repair or replace",
+	REPLACE_COPY_SET: "Open Copy Registry to replace copy",
+	BLOCKED: "Open Copy Registry to resolve blockers",
 };
 
 /**
@@ -104,6 +110,23 @@ export default function CopywritingReadinessCard({
 							className="rounded-xl border border-blue-500/40 bg-blue-600/20 px-3 py-1.5 text-[11px] font-bold uppercase text-blue-100"
 						>
 							Generate &amp; approve a Copy Set
+						</button>
+					) : null}
+					{[
+						"REVALIDATE_COPY_SET",
+						"SEMANTIC_REVIEW_COPY_SET",
+						"REVIEW_COPY_SET",
+						"REPAIR_OR_REPLACE_COPY_SET",
+						"REPLACE_COPY_SET",
+						"BLOCKED",
+					].includes(action) ? (
+						<button
+							type="button"
+							data-testid="readiness-copy-registry-remediation-cta"
+							onClick={onOpenCopyRegistry}
+							className="rounded-xl border border-blue-500/40 bg-blue-600/20 px-3 py-1.5 text-[11px] font-bold uppercase text-blue-100"
+						>
+							{NEXT_ACTION_LABEL[action] ?? "Open Copy Registry"}
 						</button>
 					) : null}
 				</div>

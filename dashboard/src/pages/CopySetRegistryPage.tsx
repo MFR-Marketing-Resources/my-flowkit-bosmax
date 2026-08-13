@@ -14,7 +14,9 @@ import {
 	listCopySetsForProduct,
 	patchCopySet,
 	rejectCopySet,
+	revalidateCopySet,
 	runSimilarityBackfill,
+	submitSemanticReview,
 } from "../api/copySets";
 import { fetchProductCatalog, prepareProductForCopywriting } from "../api/products";
 import {
@@ -234,6 +236,7 @@ export default function CopySetRegistryPage() {
 	const [bulkApproving, setBulkApproving] = useState(false);
 	const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
 	const [rejectTarget, setRejectTarget] = useState<CopySet | null>(null);
+	const [semanticReviewTarget, setSemanticReviewTarget] = useState<CopySet | null>(null);
 	const [scanConfirm, setScanConfirm] = useState<Awaited<
 		ReturnType<typeof runSimilarityBackfill>
 	> | null>(null);
@@ -381,6 +384,32 @@ export default function CopySetRegistryPage() {
 		});
 
 	const handleReject = (s: CopySet) => setRejectTarget(s);
+	const handleRevalidate = (s: CopySet) =>
+		void withBusy(s.copy_set_id, async () => {
+			const result = await revalidateCopySet(s.copy_set_id);
+			setSuccess(
+				result.revalidation.production_valid
+					? "Revalidation complete: set is production-valid."
+					: `Revalidation complete; still blocked — ${result.revalidation.validity_reasons.slice(0, 3).join(", ") || "review the validity details"}.`,
+			);
+		});
+	const confirmSemanticReview = (rationale: string) => {
+		const target = semanticReviewTarget;
+		if (!target) return;
+		setSemanticReviewTarget(null);
+		void withBusy(target.copy_set_id, async () => {
+			const result = await submitSemanticReview(target.copy_set_id, {
+				reviewer: "operator",
+				decision: "APPROVED",
+				rationale: rationale.trim(),
+			});
+			setSuccess(
+				result.semantic_review.production_valid
+					? "Semantic review recorded: set is production-valid."
+					: `Semantic review recorded; still blocked — ${result.semantic_review.validity_reasons.slice(0, 3).join(", ") || "review the validity details"}.`,
+			);
+		});
+	};
 	const confirmReject = (reason: string) => {
 		const s = rejectTarget;
 		if (!s) return;
@@ -525,6 +554,24 @@ export default function CopySetRegistryPage() {
 				sortValue: (r) => r.status,
 				render: (r) => (
 					<Badge tone={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>
+				),
+			},
+			{
+				key: "validity",
+				header: "Production validity",
+				sortValue: (r) => (r.production_valid ? "0" : "1") + (r.validity_class ?? ""),
+				render: (r) => (
+					<div
+						data-testid={`validity-cell-${r.copy_set_id}`}
+						className={r.status !== "COPY_APPROVED" ? "text-slate-500" : r.production_valid ? "text-emerald-300" : "text-amber-300"}
+						title={(r.validity_reasons || []).join(", ") || undefined}
+					>
+						{r.status !== "COPY_APPROVED"
+							? "—"
+							: r.production_valid
+								? "VALID"
+								: r.validity_class_label || r.validity_class || "BLOCKED"}
+					</div>
 				),
 			},
 			{
@@ -678,6 +725,9 @@ export default function CopySetRegistryPage() {
 
 	const rowActions = (r: CopySet) => {
 		const busy = busyId === r.copy_set_id;
+		const needsSemanticReview =
+			r.validity_class === "APPROVED_COPY_MISSING_REVIEW" ||
+			r.recommended_action === "SEMANTIC_REVIEW_REQUIRED";
 		return (
 			<div className="flex flex-wrap justify-end gap-1.5">
 				{r.status !== "COPY_APPROVED" && r.status !== "COPY_REJECTED" ? (
@@ -703,6 +753,29 @@ export default function CopySetRegistryPage() {
 					</button>
 				) : null}
 				{r.status === "COPY_APPROVED" ? (
+					<>
+						{r.production_valid !== true ? (
+							<button
+								type="button"
+								data-testid={`revalidate-${r.copy_set_id}`}
+								disabled={busy}
+								onClick={() => handleRevalidate(r)}
+								className="rounded border border-blue-500/40 px-2 py-1 text-[10px] font-bold uppercase text-blue-200 disabled:opacity-40"
+							>
+								{busy ? "Checking…" : "Revalidate"}
+							</button>
+						) : null}
+						{needsSemanticReview ? (
+							<button
+								type="button"
+								data-testid={`semantic-review-${r.copy_set_id}`}
+								disabled={busy}
+								onClick={() => setSemanticReviewTarget(r)}
+								className="rounded border border-violet-500/40 px-2 py-1 text-[10px] font-bold uppercase text-violet-200 disabled:opacity-40"
+							>
+								Semantic review
+							</button>
+						) : null}
 					<button
 						type="button"
 						data-testid={`clone-${r.copy_set_id}`}
@@ -713,6 +786,7 @@ export default function CopySetRegistryPage() {
 					>
 						Clone
 					</button>
+					</>
 				) : null}
 				<button
 					type="button"
@@ -1054,6 +1128,22 @@ export default function CopySetRegistryPage() {
 				confirmLabel="Write metadata"
 				onConfirm={confirmScanApply}
 				onCancel={cancelScan}
+			/>
+
+			<ConfirmActionModal
+				open={!!semanticReviewTarget}
+				title="Submit semantic review?"
+				body={
+					semanticReviewTarget
+						? `This records an explicit semantic decision for “${semanticReviewTarget.hook || semanticReviewTarget.angle || semanticReviewTarget.copy_set_id}”. It does not change the Copy Set text, workflow approval, or Product Truth lineage.`
+						: ""
+				}
+				reasonLabel="Reviewer rationale"
+				reasonDefault="Reviewed against the current approved Product Truth and confirmed as product-specific."
+				confirmLabel="Submit semantic review"
+				busy={!!semanticReviewTarget && busyId === semanticReviewTarget.copy_set_id}
+				onConfirm={confirmSemanticReview}
+				onCancel={() => setSemanticReviewTarget(null)}
 			/>
 		</div>
 	);

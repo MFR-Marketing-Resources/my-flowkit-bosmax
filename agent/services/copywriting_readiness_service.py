@@ -112,6 +112,9 @@ async def get_copywriting_readiness(product_id: str) -> dict[str, Any]:
         cls = classification.get("classification")
         if cls:
             blocking_reasons.append(str(cls))
+        for reason in classification.get("block_reasons") or []:
+            if str(reason) not in blocking_reasons:
+                blocking_reasons.append(str(reason))
 
     if not eligibility["eligible"]:
         blocking_reasons.extend(
@@ -176,6 +179,8 @@ async def get_copywriting_readiness(product_id: str) -> dict[str, Any]:
         "copy_classification": classification.get("classification"),
         "primary_blocker": classification.get("primary_blocker"),
         "recommended_copy_action": classification.get("recommended_next_action"),
+        "copy_blockers": list(classification.get("block_reasons") or []),
+        "revalidation_copy_set_id": classification.get("best_recoverable_copy_set_id"),
         "formula_validation_status": formula_validation_status,
         "sales_clarity_status": sales_clarity_status,
         "copy_applicable": True,

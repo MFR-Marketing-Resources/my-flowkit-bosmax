@@ -211,6 +211,45 @@ export async function rejectCopySet(
 	);
 }
 
+export interface CopySetRevalidationResponse {
+	copy_set: CopySet;
+	revalidation: {
+		recomputed: boolean;
+		production_valid: boolean;
+		validity_class: string | null;
+		validity_reasons: string[];
+		recommended_action: string | null;
+	};
+}
+
+export interface CopySetSemanticReviewResponse {
+	copy_set: CopySet;
+	semantic_review: {
+		decision: "APPROVED" | "REJECTED";
+		production_valid: boolean;
+		validity_reasons: string[];
+	};
+}
+
+export async function revalidateCopySet(
+	copySetId: string,
+): Promise<CopySetRevalidationResponse> {
+	return postAPI<CopySetRevalidationResponse>(
+		`/api/copy-sets/${encodeURIComponent(copySetId)}/revalidate`,
+		{},
+	);
+}
+
+export async function submitSemanticReview(
+	copySetId: string,
+	input: { reviewer: string; rationale: string; decision?: "APPROVED" | "REJECTED" },
+): Promise<CopySetSemanticReviewResponse> {
+	return postAPI<CopySetSemanticReviewResponse>(
+		`/api/copy-sets/${encodeURIComponent(copySetId)}/semantic-review`,
+		input,
+	);
+}
+
 // Script Library P3 — clone a script to a SIMILAR product (explicit only;
 // clone re-enters review against the target product, never auto-approved).
 export async function cloneCopySetToProduct(

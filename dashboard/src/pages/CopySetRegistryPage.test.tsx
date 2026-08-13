@@ -46,6 +46,8 @@ vi.mock("../api/copySets", () => ({
 	fetchCopyFormulas: vi.fn().mockResolvedValue({ formulas: [] }),
 	cloneCopySetToProduct: vi.fn(),
 	runSimilarityBackfill: vi.fn(),
+	revalidateCopySet: vi.fn(),
+	submitSemanticReview: vi.fn(),
 }));
 
 import {
@@ -57,6 +59,8 @@ import {
 	listCopySetsForProduct,
 	rejectCopySet,
 	runSimilarityBackfill,
+	revalidateCopySet,
+	submitSemanticReview,
 } from "../api/copySets";
 
 const mockedList = vi.mocked(listCopySetsForProduct);
@@ -67,6 +71,8 @@ const mockedDelete = vi.mocked(deleteCopySet);
 const mockedGrounding = vi.mocked(fetchCopyGrounding);
 const mockedClone = vi.mocked(cloneCopySetToProduct);
 const mockedBackfill = vi.mocked(runSimilarityBackfill);
+const mockedRevalidate = vi.mocked(revalidateCopySet);
+const mockedSemanticReview = vi.mocked(submitSemanticReview);
 
 const sampleGrounding = {
 	product_id: "p1",
@@ -156,6 +162,8 @@ describe("CopySetRegistryPage", () => {
 		mockedReject.mockReset();
 		mockedDelete.mockReset();
 		mockedGrounding.mockReset();
+		mockedRevalidate.mockReset();
+		mockedSemanticReview.mockReset();
 		mockedGrounding.mockResolvedValue(sampleGrounding);
 		mockedList.mockResolvedValue({ product_id: "p1", items: [sampleSet] });
 		mockedBatch.mockResolvedValue({
@@ -273,6 +281,68 @@ describe("CopySetRegistryPage", () => {
 		const btn = await screen.findByTestId("approve-cs1");
 		btn.click();
 		await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith("cs1", { approved_by: "operator" }));
+	});
+
+	it("revalidates an approved invalid set and refreshes the registry", async () => {
+		mockedList.mockResolvedValue({
+			product_id: "p1",
+			items: [
+				{
+					...sampleSet,
+					status: "COPY_APPROVED" as const,
+					production_valid: false,
+					validity_class: "APPROVED_COPY_STALE",
+					validity_class_label: "STALE PI",
+					validity_reasons: ["PI_SNAPSHOT_MISMATCH"],
+					recommended_action: "REVALIDATE_APPROVED",
+				},
+			],
+		});
+		mockedRevalidate.mockResolvedValue({
+			copy_set: { ...sampleSet, status: "COPY_APPROVED" as const },
+			revalidation: {
+				recomputed: true,
+				production_valid: false,
+				validity_class: "APPROVED_COPY_STALE",
+				validity_reasons: ["PI_SNAPSHOT_MISMATCH"],
+				recommended_action: "REVALIDATE_APPROVED",
+			},
+		});
+		renderPage();
+		fireEvent.click(await screen.findByTestId("revalidate-cs1"));
+		await waitFor(() => expect(mockedRevalidate).toHaveBeenCalledWith("cs1"));
+		await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(2));
+		expect(await screen.findByTestId("copy-registry-success")).toHaveTextContent(/still blocked/i);
+	});
+
+	it("submits semantic review explicitly for a missing-review set", async () => {
+		mockedList.mockResolvedValue({
+			product_id: "p1",
+			items: [
+				{
+					...sampleSet,
+					status: "COPY_APPROVED" as const,
+					production_valid: false,
+					validity_class: "APPROVED_COPY_MISSING_REVIEW",
+					validity_class_label: "MISSING REVIEW",
+					recommended_action: "SEMANTIC_REVIEW_REQUIRED",
+				},
+			],
+		});
+		mockedSemanticReview.mockResolvedValue({
+			copy_set: { ...sampleSet, status: "COPY_APPROVED" as const },
+			semantic_review: { decision: "APPROVED", production_valid: true, validity_reasons: [] },
+		});
+		renderPage();
+		fireEvent.click(await screen.findByTestId("semantic-review-cs1"));
+		fireEvent.click(await screen.findByRole("button", { name: "Submit semantic review" }));
+		await waitFor(() =>
+			expect(mockedSemanticReview).toHaveBeenCalledWith(
+				"cs1",
+				expect.objectContaining({ reviewer: "operator", decision: "APPROVED" }),
+			),
+		);
+		await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(2));
 	});
 
 	it("stays on the current page after Approve (no jump back to page 1)", async () => {

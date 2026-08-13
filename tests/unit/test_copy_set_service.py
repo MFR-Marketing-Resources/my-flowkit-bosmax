@@ -5,6 +5,7 @@ derivation, explicit approval gate, fail-closed claim/risk validation, edit/
 reject/regenerate transitions, and compiler compatibility of the Copy Set
 payload — WITHOUT touching the Google Flow execution lane or the prompt compiler.
 """
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -206,6 +207,44 @@ async def test_approve_success_sets_approved_metadata(monkeypatch):
     assert approved["status"] == models.STATUS_COPY_APPROVED
     assert approved["approved_at"]
     assert approved["approved_by"] == "faris"
+
+
+@pytest.mark.asyncio
+async def test_semantic_review_changes_only_review_receipt(monkeypatch):
+    pid = await _make_product()
+    _no_landbank(monkeypatch)
+    _fake_generator(monkeypatch, _fake_signal())
+    draft = (await svc.generate_copy_set({"product_id": pid}))["copy_set"]
+    approved = await svc.approve_copy_set(
+        draft["copy_set_id"],
+        {"approval_phrase": models.APPROVAL_PHRASE, "approved_by": "faris"},
+    )
+
+    stored_before = await crud.get_copy_set(draft["copy_set_id"])
+    claim = json.loads(stored_before["claim_review_json"])
+    claim.pop("semantic_review", None)
+    await crud.update_copy_set(
+        draft["copy_set_id"], claim_review_json=json.dumps(claim, ensure_ascii=False)
+    )
+    stored_before_review = await crud.get_copy_set(draft["copy_set_id"])
+
+    result = await svc.semantic_review_copy_set(
+        draft["copy_set_id"],
+        {
+            "reviewer": "operator",
+            "rationale": "Reviewed against the current approved Product Truth.",
+        },
+    )
+
+    assert result["semantic_review"]["production_valid"] is True
+    stored_after = await crud.get_copy_set(draft["copy_set_id"])
+    assert stored_after["status"] == stored_before_review["status"] == models.STATUS_COPY_APPROVED
+    assert stored_after["approved_at"] == stored_before_review["approved_at"]
+    assert stored_after["approved_by"] == stored_before_review["approved_by"]
+    assert stored_after["pi_snapshot_id"] == stored_before_review["pi_snapshot_id"]
+    assert stored_after["pi_grounding_digest"] == stored_before_review["pi_grounding_digest"]
+    assert stored_after["provenance_json"] == stored_before_review["provenance_json"]
+    assert json.loads(stored_after["claim_review_json"])["semantic_review"]["reviewer"] == "operator"
 
 
 @pytest.mark.asyncio

@@ -89,4 +89,25 @@ describe("CopywritingReadinessCard", () => {
 			"APPROVED_COPY_VALID",
 		);
 	});
+
+	it("surfaces a remediation CTA for active Copy Set blockers", () => {
+		const onOpenCopyRegistry = vi.fn();
+		render(
+			<CopywritingReadinessCard
+				readiness={{
+					...base,
+					has_approved_snapshot: true,
+					approved_copy_set_count: 1,
+					copy_classification: "APPROVED_COPY_MISSING_REVIEW",
+					blocking_reasons: ["SEMANTIC_REVIEW_MISSING"],
+					recommended_next_action: "SEMANTIC_REVIEW_COPY_SET",
+				}}
+				onOpenCopyRegistry={onOpenCopyRegistry}
+			/>,
+		);
+		const cta = screen.getByTestId("readiness-copy-registry-remediation-cta");
+		expect(cta).toHaveTextContent("semantic review");
+		cta.click();
+		expect(onOpenCopyRegistry).toHaveBeenCalled();
+	});
 });

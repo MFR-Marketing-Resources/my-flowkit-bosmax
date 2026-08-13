@@ -10,6 +10,25 @@ from agent.services.workspace_execution_package_service import (
     create_workspace_execution_package,
     list_workspace_execution_packages,
 )
+from agent.services.copy_binding_service import (
+    ERR_PRODUCTION_VALID_COPY_REQUIRED,
+    CopyBindingError,
+)
+
+
+@pytest.mark.asyncio
+async def test_saved_video_package_requires_selected_production_valid_copy_set():
+    with pytest.raises(CopyBindingError) as exc:
+        await create_workspace_execution_package(
+            "prod-001",
+            "T2V",
+            8,
+            "9:16",
+            "Veo 3.1 - Lite",
+            False,
+            copy_fallback_confirmed=True,
+        )
+    assert exc.value.code == ERR_PRODUCTION_VALID_COPY_REQUIRED
 
 
 def test_package_id_binds_reference_selection_identity():
@@ -372,9 +391,8 @@ async def test_workspace_execution_package_frames_binds_selected_start_frame(mon
     monkeypatch.setattr("agent.services.workspace_execution_package_service.crud.create_or_replace_workspace_execution_package", fake_store)
     monkeypatch.setattr("agent.services.workspace_execution_package_service.validate_selectable_asset", fake_validate)
 
-    # copy_fallback_confirmed=True: this test exercises package mechanics, not the
-    # copy gate; no Copy Set is selected so fallback must be intentionally confirmed
-    # (Explicit-Fallback-Confirmation V1).
+    # A selected Copy Set is required for a saved video package; the compiler is
+    # mocked here because this test exercises package mechanics.
     result = await create_workspace_execution_package(
         "prod-001",
         "F2V",
@@ -384,7 +402,7 @@ async def test_workspace_execution_package_frames_binds_selected_start_frame(mon
         False,
         source_mode="FRAMES",
         start_frame_asset_id="ca_start",
-        copy_fallback_confirmed=True,
+        copy_set_id="cs-approved",
     )
 
     assert result["readiness"] == "READY"
@@ -486,7 +504,7 @@ async def test_workspace_execution_package_hybrid_uses_automatic_product_anchor(
         "Veo 3.1 - Lite",
         False,
         source_mode="HYBRID",
-        copy_fallback_confirmed=True,
+        copy_set_id="cs-approved",
     )
 
     assert result["readiness"] == "READY"
@@ -638,7 +656,7 @@ async def test_workspace_execution_package_preserves_extend_lineage(monkeypatch)
             {"block_index": 1, "duration_seconds": 8},
             {"block_index": 2, "duration_seconds": 8},
         ],
-        copy_fallback_confirmed=True,  # no Copy Set selected — fallback confirmed
+        copy_set_id="cs-approved",
         creative_treatment=treatment,
     )
 

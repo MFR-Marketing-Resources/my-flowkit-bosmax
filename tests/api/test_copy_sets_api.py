@@ -129,6 +129,47 @@ def test_approve_success_returns_200(monkeypatch):
     assert response.json()["status"] == "COPY_APPROVED"
 
 
+def test_revalidate_is_exposed_as_read_only_route(monkeypatch):
+    async def fake_revalidate(copy_set_id):
+        return {
+            "copy_set": _sample_copy_set(status="COPY_APPROVED"),
+            "revalidation": {
+                "recomputed": True,
+                "production_valid": False,
+                "validity_class": "APPROVED_COPY_STALE",
+                "validity_reasons": ["PI_SNAPSHOT_MISMATCH"],
+                "recommended_action": "REVALIDATE_APPROVED",
+            },
+        }
+
+    monkeypatch.setattr(svc, "revalidate_copy_set", fake_revalidate)
+    response = _client().post("/api/copy-sets/cs-001/revalidate")
+    assert response.status_code == 200
+    assert response.json()["revalidation"]["production_valid"] is False
+
+
+def test_semantic_review_route_is_explicit(monkeypatch):
+    async def fake_review(copy_set_id, request):
+        assert request.reviewer == "operator"
+        assert request.decision == "APPROVED"
+        return {
+            "copy_set": _sample_copy_set(status="COPY_APPROVED"),
+            "semantic_review": {
+                "decision": "APPROVED",
+                "production_valid": True,
+                "validity_reasons": [],
+            },
+        }
+
+    monkeypatch.setattr(svc, "semantic_review_copy_set", fake_review)
+    response = _client().post(
+        "/api/copy-sets/cs-001/semantic-review",
+        json={"reviewer": "operator", "rationale": "Reviewed current Product Truth."},
+    )
+    assert response.status_code == 200
+    assert response.json()["semantic_review"]["production_valid"] is True
+
+
 def test_patch_and_reject_and_regenerate(monkeypatch):
     async def fake_patch(copy_set_id, request):
         return _sample_copy_set(hook="Hook baru", status="DRAFT_COPY")

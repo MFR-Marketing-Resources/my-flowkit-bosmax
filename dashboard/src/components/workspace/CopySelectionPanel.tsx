@@ -4,7 +4,10 @@ import {
 	generateAICopyCandidate,
 	generateCopySet,
 	listCopySetsForProduct,
+	revalidateCopySet,
+	submitSemanticReview,
 } from "../../api/copySets";
+import { ConfirmActionModal } from "../ui";
 import type { CopySet, CopySetStatus } from "../../types";
 
 // Copy Selection & Compiler Binding Foundation V1 — operator surface to review,
@@ -100,6 +103,8 @@ export default function CopySelectionPanel({
 	const [isAiAssisting, setIsAiAssisting] = useState(false);
 	const [aiNotes, setAiNotes] = useState("");
 	const [aiNotice, setAiNotice] = useState<string | null>(null);
+	const [actionNotice, setActionNotice] = useState<string | null>(null);
+	const [semanticReviewTarget, setSemanticReviewTarget] = useState<CopySet | null>(null);
 
 	// Angle filter & Pagination state
 	const [selectedAngle, setSelectedAngle] = useState<string>("ALL");
@@ -141,7 +146,12 @@ export default function CopySelectionPanel({
 		const current = copySets.find(
 			(cs) => cs.copy_set_id === selectedCopySetId,
 		);
-		if (!isLoading && (!current || current.status !== "COPY_APPROVED")) {
+		if (
+			!isLoading &&
+			(!current ||
+				current.status !== "COPY_APPROVED" ||
+				current.production_valid !== true)
+		) {
 			onSelect(null);
 		}
 	}, [copySets, selectedCopySetId, isLoading, onSelect]);
@@ -203,6 +213,51 @@ export default function CopySelectionPanel({
 		} finally {
 			setBusyId(null);
 		}
+	};
+
+	const handleRevalidate = async (copySetId: string) => {
+		setBusyId(copySetId);
+		setError(null);
+		setActionNotice(null);
+		try {
+			const result = await revalidateCopySet(copySetId);
+			await load();
+			setActionNotice(
+				result.revalidation.production_valid
+					? "Revalidation complete: this Copy Set is production-valid."
+					: `Revalidation complete: still blocked — ${result.revalidation.validity_reasons.slice(0, 3).join(", ") || "review the validity details"}.`,
+			);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : "Revalidation failed.");
+		} finally {
+			setBusyId(null);
+		}
+	};
+
+	const confirmSemanticReview = (rationale: string) => {
+		const target = semanticReviewTarget;
+		if (!target) return;
+		setSemanticReviewTarget(null);
+		setBusyId(target.copy_set_id);
+		setError(null);
+		setActionNotice(null);
+		void submitSemanticReview(target.copy_set_id, {
+			reviewer: "operator",
+			decision: "APPROVED",
+			rationale: rationale.trim(),
+		})
+			.then(async (result) => {
+				await load();
+				setActionNotice(
+					result.semantic_review.production_valid
+						? "Semantic review recorded: this Copy Set is production-valid."
+						: `Semantic review recorded; still blocked — ${result.semantic_review.validity_reasons.slice(0, 3).join(", ") || "review the validity details"}.`,
+				);
+			})
+			.catch((e: unknown) => {
+				setError(e instanceof Error ? e.message : "Semantic review failed.");
+			})
+			.finally(() => setBusyId(null));
 	};
 
 	const toggleExpand = (id: string) => {
@@ -310,6 +365,11 @@ export default function CopySelectionPanel({
 			{error ? (
 				<div className="mb-3 rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-[11px] text-rose-300">
 					{error}
+				</div>
+			) : null}
+			{actionNotice ? (
+				<div className="mb-3 rounded-lg border border-blue-500/30 bg-blue-500/5 px-3 py-2 text-[11px] text-blue-200">
+					{actionNotice}
 				</div>
 			) : null}
 
@@ -543,15 +603,38 @@ export default function CopySelectionPanel({
 												>
 													{isSelected ? "✓ Selected — Deselect" : "Select for Final Prompt"}
 												</button>
-											) : isApproved && !isProductionValid ? (
-												<span
-													data-testid="copy-select-blocked"
-													title={(cs.validity_reasons || []).join(", ")}
-													className="max-w-[220px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[10px] font-semibold leading-snug text-amber-100"
-												>
-													Cannot bind — {validityBlocker}
-													{cs.recommended_action ? ` · ${cs.recommended_action}` : ""}
-												</span>
+							) : isApproved && !isProductionValid ? (
+								<div className="flex flex-wrap items-center justify-end gap-1.5">
+									<span
+										data-testid="copy-select-blocked"
+										title={(cs.validity_reasons || []).join(", ")}
+										className="max-w-[220px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[10px] font-semibold leading-snug text-amber-100"
+									>
+										Cannot bind — {validityBlocker}
+										{cs.recommended_action ? ` · ${cs.recommended_action}` : ""}
+									</span>
+									<button
+										type="button"
+										data-testid={`copy-revalidate-${cs.copy_set_id}`}
+										onClick={() => void handleRevalidate(cs.copy_set_id)}
+										disabled={disabled || busyId === cs.copy_set_id}
+										className="rounded-lg border border-blue-500/40 bg-blue-500/15 px-2.5 py-1 text-[10px] font-semibold text-blue-100 disabled:opacity-50"
+									>
+										{busyId === cs.copy_set_id ? "Checking…" : "Revalidate"}
+									</button>
+									{cs.validity_class === "APPROVED_COPY_MISSING_REVIEW" ||
+									cs.recommended_action === "SEMANTIC_REVIEW_REQUIRED" ? (
+										<button
+											type="button"
+											data-testid={`copy-semantic-review-${cs.copy_set_id}`}
+											onClick={() => setSemanticReviewTarget(cs)}
+											disabled={disabled || busyId === cs.copy_set_id}
+											className="rounded-lg border border-violet-500/40 bg-violet-500/15 px-2.5 py-1 text-[10px] font-semibold text-violet-100 disabled:opacity-50"
+										>
+											Semantic review
+										</button>
+									) : null}
+								</div>
 											) : cs.status !== "COPY_REJECTED" ? (
 												<button
 													type="button"
@@ -653,6 +736,21 @@ export default function CopySelectionPanel({
 					</div>
 				</>
 			)}
+			<ConfirmActionModal
+				open={!!semanticReviewTarget}
+				title="Submit semantic review?"
+				body={
+					semanticReviewTarget
+						? `This records an explicit semantic decision for “${semanticReviewTarget.hook || semanticReviewTarget.angle || semanticReviewTarget.copy_set_id}”. It does not change the Copy Set text, workflow approval, or Product Truth lineage.`
+						: ""
+				}
+				reasonLabel="Reviewer rationale"
+				reasonDefault="Reviewed against the current approved Product Truth and confirmed as product-specific."
+				confirmLabel="Submit semantic review"
+				busy={!!semanticReviewTarget && busyId === semanticReviewTarget.copy_set_id}
+				onConfirm={confirmSemanticReview}
+				onCancel={() => setSemanticReviewTarget(null)}
+			/>
 		</div>
 	);
 }

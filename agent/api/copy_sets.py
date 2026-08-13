@@ -27,6 +27,7 @@ from agent.models.copy_set import (
     CopySetPatchRequest,
     CopySetRegenerateRequest,
     CopySetRejectRequest,
+    CopySetSemanticReviewRequest,
 )
 from agent.services import ai_copy_assist_service as ai_svc
 from agent.services import ai_copy_provider_adapter as ai_provider
@@ -162,6 +163,26 @@ async def regenerate_copy_set(copy_set_id: str, request: CopySetRegenerateReques
     overrides = request.model_dump(exclude_none=True) if request else None
     try:
         return await svc.regenerate_copy_set(copy_set_id, overrides or None)
+    except svc.CopySetError as error:
+        _raise(error)
+
+
+@router.post("/{copy_set_id}/revalidate")
+async def revalidate_copy_set(copy_set_id: str):
+    """Recompute current production validity without changing the Copy Set."""
+    try:
+        return await svc.revalidate_copy_set(copy_set_id)
+    except svc.CopySetError as error:
+        _raise(error)
+
+
+@router.post("/{copy_set_id}/semantic-review")
+async def submit_semantic_review(
+    copy_set_id: str, request: CopySetSemanticReviewRequest
+):
+    """Record an explicit semantic-review receipt for an approved Copy Set."""
+    try:
+        return await svc.semantic_review_copy_set(copy_set_id, request)
     except svc.CopySetError as error:
         _raise(error)
 

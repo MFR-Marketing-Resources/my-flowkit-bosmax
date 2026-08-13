@@ -705,9 +705,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	);
 	const { readiness: copyReadiness, loading: copyReadinessLoading } =
 		useCopywritingReadiness(selectedProduct?.id ?? null);
-	// Explicit-Fallback-Confirmation V1: gate shown before Generate Final Prompt
-	// runs with no approved Copy Set selected.
-	const [showFallbackConfirm, setShowFallbackConfirm] = useState(false);
 	// HYBRID anchor is auto-locked from the product's official image, so the
 	// canonical reference picker is collapsed by default and only revealed when
 	// the operator explicitly chooses to override the anchor.
@@ -1019,7 +1016,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset keyed on product id only
 	useEffect(() => {
 		setSelectedCopySetId(null);
-		setShowFallbackConfirm(false);
 		// Knowledge-driven pre-fill: seed the avatar picker from the product's creative
 		// setup (gender/cluster-correct saved selection, else the smart default) so the
 		// operator starts from the RIGHT avatar instead of free-picking a mismatched one.
@@ -1891,10 +1887,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	};
 
 	// Step 4 — Generate Final Prompt (compile + save to DB).
-	// runGeneratePackage does the actual save; fallbackConfirmed is forwarded to
-	// the backend which fails closed when no Copy Set is selected and fallback is
-	// not explicitly confirmed (Explicit-Fallback-Confirmation V1).
-	const runGeneratePackage = async (fallbackConfirmed: boolean) => {
+	// The backend rechecks the selected Copy Set's production validity.
+	const runGeneratePackage = async () => {
 		if (backendRuntimeStale) {
 			setNotice({
 				tone: "warning",
@@ -1929,7 +1923,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			});
 			return;
 		}
-		setShowFallbackConfirm(false);
 		setIsLoadingPackage(true);
 		try {
 			const pkg = await createWorkspaceExecutionPackage({
@@ -1937,7 +1930,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				mode: jobMode,
 				source_mode: resolveSourceMode(mode),
 				copy_set_id: selectedCopySetId,
-				copy_fallback_confirmed: fallbackConfirmed,
 				// Record the operator-selected video model on the package so the
 				// runtime + reload use the same tuple (was previously unset → "").
 				model: videoModel,
@@ -2000,8 +1992,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		}
 	};
 
-	// Click handler: an approved Copy Set generates immediately; NO selection
-	// opens the explicit fallback-confirmation gate first (backend also enforces).
+	// Click handler: final prompt generation requires a selected production-valid
+	// approved Copy Set. The backend repeats the same fail-closed check.
 	const handleGeneratePackage = () => {
 		if (extendTotalRequired) {
 			setNotice({
@@ -2014,10 +2006,16 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			return;
 		}
 		if (!selectedCopySetId) {
-			setShowFallbackConfirm(true);
+			setNotice({
+				tone: "warning",
+				title: "Production-valid Copy Set required",
+				detail:
+					"Select a currently production-valid approved Copy Set in Copy Selection. Revalidate or submit semantic review there when the set is blocked.",
+				requestId: null,
+			});
 			return;
 		}
-		void runGeneratePackage(false);
+		void runGeneratePackage();
 	};
 
 	const allowedDurations = promptConfig?.allowed_block_durations_seconds ?? [
@@ -2437,8 +2435,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							status={s2}
 							open={v4IsOpen(2, s2)}
 							onToggleOpen={() => v4Toggle(2, v4IsOpen(2, s2))}
-							summary={copyBound ? "Approved copy set bound" : "Fallback copy"}
-							helper="Bind an approved copy set, or continue on fallback."
+							summary={copyBound ? "Production-valid copy set bound" : "Copy Set required"}
+							helper="Bind a production-valid approved Copy Set before preparing the final video prompt."
 						>
 							<div className="space-y-3">
 								<SceneStrategySummary
@@ -3128,7 +3126,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								// workspacePackage is still null, so the credit-bearing Generate
 								// button above cannot appear. Give the operator the REAL "Prepare
 								// final prompt" action — the SAME handler the classic view uses
-								// (handleGeneratePackage → fallback-confirm credit gate →
+								// (handleGeneratePackage → production-valid Copy Set gate →
 								// runGeneratePackage). It builds workspacePackage; the Generate
 								// button then appears automatically. Mode-agnostic (T2V/F2V/HYBRID/I2V).
 								<div className="space-y-2">
@@ -3136,9 +3134,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										type="button"
 										data-testid="action-prepare-final-prompt"
 										onClick={() => void handleGeneratePackage()}
-										disabled={
+						disabled={
 											isLoadingPackage ||
-											showFallbackConfirm ||
+											!selectedCopySetId ||
+											copyReadinessLoading ||
+											copyReadiness?.ready_for_generation !== true ||
 											extendTotalRequired ||
 											backendRuntimeStale
 										}
@@ -3168,44 +3168,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						</WorkflowStep>
 							</>
 						)}
-
-						{/* Fallback-copy confirmation gate (backend also enforces) */}
-						{showFallbackConfirm ? (
-							<div
-								data-testid="workflow-fallback-confirm"
-								data-state="AWAITING_HUMAN_CONFIRMATION"
-								data-rpa-stop="true"
-								className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-[12px] text-amber-100"
-							>
-								<div className="mb-2 font-bold uppercase tracking-[0.15em] text-amber-300">
-									Confirm fallback copy
-								</div>
-								<p className="mb-3">
-									No approved copy set selected. Continue with fallback copy from
-									product landbank / claim-safe angles?
-								</p>
-								<div className="flex flex-wrap gap-2">
-									<button
-										type="button"
-										onClick={() => void runGeneratePackage(true)}
-										disabled={isLoadingPackage || backendRuntimeStale}
-										className="rounded-lg border border-amber-500/50 bg-amber-500/20 px-3 py-2 text-[11px] font-semibold text-amber-100 hover:bg-amber-500/30 disabled:opacity-50"
-									>
-										{isLoadingPackage
-											? "Preparing…"
-											: "Confirm fallback and continue"}
-									</button>
-									<button
-										type="button"
-										onClick={() => setShowFallbackConfirm(false)}
-										disabled={isLoadingPackage}
-										className="rounded-lg border border-slate-600/40 bg-slate-700/30 px-3 py-2 text-[11px] font-semibold text-slate-100 hover:bg-slate-700/50 disabled:opacity-50"
-									>
-										Cancel
-									</button>
-								</div>
-							</div>
-						) : null}
 
 						{/* Shared workflow notice */}
 						<div
@@ -4079,19 +4041,17 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				// RPA Round A (renumbered by Workflow Upgrade V1): the container keeps the
 				// generate-phase state machine that previously lived on workflow-step-4 —
 				// DERIVED from the existing gates that already drive the buttons' `disabled`
-				// expressions below; no new state. AWAITING_HUMAN_CONFIRMATION (G0
-				// amendment O1) marks the fallback gate: the RPA must STOP there, never
-				// click through it. The load phase reports as workflow-step-4-load.
+				// expressions below; no new state. Copy selection remains a hard
+				// prerequisite for saved video prompts. The load phase reports as
+				// workflow-step-4-load.
 				<div
 					data-testid="workflow-step-4"
 					data-state={
-						showFallbackConfirm
-							? "AWAITING_HUMAN_CONFIRMATION"
-							: isLoadingPackage
-								? "RUNNING"
-								: !previewPackage || extendTotalRequired
-									? "NOT_READY"
-									: "READY"
+						isLoadingPackage
+							? "RUNNING"
+							: !previewPackage || extendTotalRequired
+								? "NOT_READY"
+								: "READY"
 					}
 					className="mb-6 rounded-2xl border border-blue-500/20 bg-slate-900/40 p-4"
 				>
@@ -4346,15 +4306,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						After loading the package above, press this button to compile and
 						save the final execution prompt to the workspace.
 					</div>
-					{/* Copy binding state (Explicit-Fallback-Confirmation V1) */}
+					{/* Copy binding state: saved video prompts require production-valid copy. */}
 					{selectedCopySetId ? (
 						<div className="mb-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">
 							Approved Copy Set bound to final prompt generation.
 						</div>
 					) : (
 						<div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
-							No approved Copy Set selected. Generate Final Prompt requires
-							fallback confirmation.
+							No production-valid approved Copy Set selected. Revalidate or submit
+							semantic review in Copy Selection before generating the final prompt.
 						</div>
 					)}
 					<button
@@ -4364,7 +4324,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						disabled={
 							!previewPackage ||
 							isLoadingPackage ||
-							showFallbackConfirm ||
+							!selectedCopySetId ||
+							copyReadinessLoading ||
+							copyReadiness?.ready_for_generation !== true ||
 							extendTotalRequired ||
 							backendRuntimeStale
 						}
@@ -4372,53 +4334,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					>
 						{isLoadingPackage ? "Generating…" : generatePromptLabel}
 					</button>
-					{/* Explicit fallback confirmation gate — shown only when the operator
-					    presses Generate with NO approved Copy Set selected. Backend also
-					    enforces this (copy_fallback_confirmed); this UI is not the sole gate. */}
-					{showFallbackConfirm ? (
-						// RPA Round A: the fallback-confirmation gate is a Protected Area and a
-						// hard STOP for any UI-click operator. It is tagged so the RPA can DETECT
-						// it and halt — never to click through it (that would ship fallback copy).
-						<div
-							data-testid="workflow-fallback-confirm"
-							data-state="AWAITING_HUMAN_CONFIRMATION"
-							data-rpa-stop="true"
-							className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-[12px] text-amber-100"
-						>
-							<div className="mb-2 font-bold uppercase tracking-[0.15em] text-amber-300">
-								Confirm fallback copy
-							</div>
-							<p className="mb-1">No approved Copy Set selected.</p>
-							<p className="mb-1">
-								Generate Final Prompt will use fallback copy from product
-								landbank / claim-safe angles.
-							</p>
-							<p className="mb-3 font-semibold">
-								This fallback is not approved Copy Set copy. Continue with
-								fallback?
-							</p>
-							<div className="flex flex-wrap gap-2">
-								<button
-									type="button"
-									onClick={() => void runGeneratePackage(true)}
-									disabled={isLoadingPackage || backendRuntimeStale}
-									className="rounded-lg border border-amber-500/50 bg-amber-500/20 px-3 py-2 text-[11px] font-semibold text-amber-100 hover:bg-amber-500/30 disabled:opacity-50 transition-colors"
-								>
-									{isLoadingPackage
-										? "Generating…"
-										: "Confirm fallback and continue"}
-								</button>
-								<button
-									type="button"
-									onClick={() => setShowFallbackConfirm(false)}
-									disabled={isLoadingPackage}
-									className="rounded-lg border border-slate-600/40 bg-slate-700/30 px-3 py-2 text-[11px] font-semibold text-slate-100 hover:bg-slate-700/50 disabled:opacity-50 transition-colors"
-								>
-									Cancel and select / approve Copy Set
-								</button>
-							</div>
-						</div>
-					) : null}
 					{workspacePackage ? (
 						<div className="mt-4 space-y-3">
 							{workspacePackage.copy_binding ? (
