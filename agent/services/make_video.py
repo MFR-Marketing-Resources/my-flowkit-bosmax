@@ -377,7 +377,7 @@ def _is_flow_media_redirect_url(url: str) -> bool:
 
 async def _resolve_media_download_url(client, media_id: str, url: str) -> str:
     """Resolve a Flow-relative image URL through the authenticated extension relay."""
-    if not _is_flow_media_redirect_url(url):
+    if url and not _is_flow_media_redirect_url(url):
         return str(url or "")
     resolver = getattr(client, "get_media_download_url", None)
     if not callable(resolver):
@@ -760,11 +760,13 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             if not res or res.get("error"):
                 raise RuntimeError("image gen failed: " + str((res or {}).get("error")))
             imgs = _extract_images(res.get("data", res))
-            if not imgs or not imgs[0].get("url"):
-                raise RuntimeError("no image/url returned")
+            if not imgs:
+                raise RuntimeError("no image returned")
             mid, url = imgs[0]["media_id"], imgs[0]["url"]
             download_media_id = imgs[0].get("delivery_media_id") or mid
             download_url = await _resolve_media_download_url(client, download_media_id, url)
+            if not download_url:
+                raise RuntimeError("no image/url returned")
             outdir = OUTPUT_DIR / "retrieved"
             outdir.mkdir(parents=True, exist_ok=True)
             path = outdir / f"{mid}.jpg"

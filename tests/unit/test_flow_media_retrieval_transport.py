@@ -106,6 +106,24 @@ async def test_correlated_output_records_media_fetch_failure_without_accepting_t
     assert stats["media_fetch_error_statuses"][DELIVERY_MEDIA_ID] == 400
 
 
+async def test_image_without_inline_url_uses_delivery_id_from_flow_redirect():
+    calls = []
+
+    class _Client:
+        async def get_media_download_url(self, media_id):
+            calls.append(media_id)
+            return {"ok": True, "url": "https://flow-content.google/image/signed-token"}
+
+    resolved = await mv._resolve_media_download_url(
+        _Client(),
+        "projects/p/media/generation-key",
+        "/fx/api/trpc/media.getMediaUrlRedirect?name=" + DELIVERY_MEDIA_ID,
+    )
+
+    assert resolved == "https://flow-content.google/image/signed-token"
+    assert calls == [DELIVERY_MEDIA_ID]
+
+
 async def test_terminal_bridge_closes_render_without_waiting_forever(monkeypatch):
     import agent.api.flow as flow
 
