@@ -75,7 +75,7 @@ intentionally complete before Phase 3 page wiring begins.
 | Image Gen | IMAGE | NOT_REQUIRED | `POST /api/flow/generate (mode=IMG)` | `image_prompt_compiler.py` | `workspace/IMGModule.tsx` | carry explicit copy-free policy and gate proof |
 | IMG Fastlane | IMAGE | NOT_REQUIRED | `POST /api/img-factory/*` | `img_asset_factory_service.py` | `ImgFastlanePage.tsx` | carry explicit copy-free policy and gate proof |
 | IMG Cockpit | IMAGE | NOT_REQUIRED | `POST /api/flow/generate (mode=IMG)` | `image_prompt_compiler.py` | `ImgCockpitPage.tsx` | carry explicit copy-free policy and gate proof |
-| Poster Builder | IMAGE | REQUIRED | `POST /api/poster/compose` / `POST /api/poster/prompt` | `poster_composition_service.py` | `PosterBuilderPage.tsx` | bind poster-aware copy explicitly; no video-stage assumption |
+| Poster Builder | IMAGE | REQUIRED | `POST /api/poster/compose` / `POST /api/poster/prompt-draft` | `poster_composition_service.py` | `PosterBuilderPage.tsx` | bind poster-aware copy explicitly; no video-stage assumption |
 
 `VideoCopyProjection` is the required-copy adapter for all seven video lanes.
 `ImageCopyProjection` handles all four image lanes.  Image Gen, IMG Fastlane,

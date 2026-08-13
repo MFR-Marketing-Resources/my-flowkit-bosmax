@@ -53,6 +53,8 @@ def test_matrix_covers_exactly_all_required_lanes_and_current_seams():
         assert row["current_page_entry_point"]
         assert row["copy_policy"] in {"REQUIRED", "NOT_REQUIRED"}
         assert row["adapter"] in {"VideoCopyProjection", "ImageCopyProjection"}
+    poster = LANE_MATRIX["POSTER_BUILDER"]
+    assert "/api/poster/prompt-draft" in poster.current_api_entry_point
 
 
 @pytest.mark.parametrize("lane", VIDEO_LANES)
