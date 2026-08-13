@@ -756,7 +756,7 @@ describe("PosterBuilderPage", () => {
 		expect(mockedStartGen).not.toHaveBeenCalled();
 		const confirmBtn = await screen.findByTestId("poster-gen-confirm");
 		expect(confirmBtn).toBeDisabled();
-		(await screen.findByTestId("poster-img-credit-confirm-checkbox")).click();
+		(await screen.findByTestId("poster-img-live-action-confirm-checkbox")).click();
 		expect(confirmBtn).not.toBeDisabled();
 		confirmBtn.click();
 		await waitFor(() =>
