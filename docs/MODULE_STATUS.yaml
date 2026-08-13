@@ -589,6 +589,7 @@ domains:
       - agent/services/make_video.py
       - tests/unit/test_agent_video.py
       - tests/unit/test_manual_lane_reroute.py
+      - tests/unit/test_flow_media_retrieval_transport.py
       - tests/unit/test_make_video_binding.py
       - tests/unit/test_retrieval_freshness_exclusion.py
       - agent/services/batch_planner.py
@@ -783,7 +784,9 @@ domains:
       - dashboard/src/components/workspace/WorkspaceImageAssetSlot.tsx
       - dashboard/src/components/copywriting/CopyBindingGate.tsx
       - extension/background.js
+      - extension/content.js
       - extension/f2v-flow-queue-runner.js
+      - extension/injected.js
       - extension/selector-registry.js
       - extension/content-flow-dom.js
       - extension/manifest.json
