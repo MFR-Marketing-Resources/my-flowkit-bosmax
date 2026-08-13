@@ -2915,6 +2915,7 @@ export default function CreativeProductionStudioPage() {
 							<ResultsSidebar
 								results={[]}
 								generating={Boolean(busy)}
+								mediaKind="video"
 								libraryHref="/library/videos"
 							/>
 						</div>

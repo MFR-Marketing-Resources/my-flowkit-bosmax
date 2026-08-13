@@ -568,6 +568,7 @@ domains:
       - dashboard/src/pages/OperatorPage.workflowHierarchy.component.test.tsx
       - dashboard/src/components/workspace/SceneStrategySummary.tsx
       - dashboard/src/components/workspace/SceneStrategySummary.test.tsx
+      - dashboard/src/components/workspace/ResultsSidebar.tsx
       - dashboard/src/components/workspace/rpaSelectors.component.test.tsx
       - dashboard/src/utils/promptRepresentationUi.test.ts
       - dashboard/src/utils/promptRepresentationUi.ts
