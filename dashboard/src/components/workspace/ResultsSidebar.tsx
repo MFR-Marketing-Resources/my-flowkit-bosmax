@@ -21,6 +21,8 @@ interface ResultsSidebarProps {
 	title?: string;
 	/** Library route to point at for historical results (image vs video lane). */
 	libraryHref?: string;
+	/** What this surface produces — drives the "Generating…" placeholder wording. Defaults to image. */
+	mediaKind?: "image" | "video";
 }
 
 /**
@@ -35,6 +37,7 @@ export default function ResultsSidebar({
 	onRemoved,
 	title = "This session's results",
 	libraryHref = "/library/images",
+	mediaKind = "image",
 }: ResultsSidebarProps) {
 	const [busyId, setBusyId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -86,7 +89,7 @@ export default function ResultsSidebar({
 				<div className="grid grid-cols-2 gap-2">
 					{generating ? (
 						<div className="col-span-2 flex items-center justify-center rounded-xl border border-dashed border-blue-500/30 bg-blue-500/5 px-3 py-4 text-[11px] text-blue-200">
-							Generating image… results will appear here.
+							Generating {mediaKind === "video" ? "video" : "image"}… results will appear here.
 						</div>
 					) : null}
 					{results.map((r) => (

@@ -1406,7 +1406,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 				setNotice({
 					tone: "info",
-					title: `${data.mode} running`,
+					title: `${mode} running`,
 					detail: `Stage: ${job.stage ?? status}`,
 					requestId,
 				});
@@ -1507,7 +1507,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 				setNotice({
 					tone: "info",
-					title: `${data.mode} running — video is generating (±3–8 min), keep this page open`,
+					title: `${mode} running — video is generating (±3–8 min), keep this page open`,
 					detail: `Stage: ${stageLabel}${stageMessage ? ` — ${stageMessage}` : ""} · Note: nothing moves in the Google Flow tab — generation runs via API and the video appears here when it's ready.`,
 					requestId: manualRequestId,
 				});
@@ -3285,6 +3285,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							<ResultsSidebar
 								results={sessionResults}
 								generating={isExecuting}
+								mediaKind={isImageMode ? "image" : "video"}
 								libraryHref={isImageMode ? "/library/images" : "/library/videos"}
 								onRemoved={(mediaId) =>
 									setSessionResults((prev) =>
