@@ -109,7 +109,7 @@ async def _quarantined_approved_set(pid: str) -> str:
 
 
 @pytest.mark.asyncio
-async def test_revalidate_makes_quarantined_approved_set_valid():
+async def test_revalidate_is_read_only_and_keeps_quarantined_set_blocked():
     pid = await _eligible_product()
     cid = await _quarantined_approved_set(pid)
 
@@ -117,18 +117,25 @@ async def test_revalidate_makes_quarantined_approved_set_valid():
     before = await evaluate_copy_set_id(cid)
     assert before["valid"] is False
     assert any("QUARANTINED" in r or "SEMANTIC_REVIEW" in r for r in before["reasons"])
+    stored_before = await crud.get_copy_set(cid)
 
-    await revalidate_copy_set(
+    result = await revalidate_copy_set(
         cid,
         reviewer="corrective-revalidation-engine",
         rationale="Deterministically grounded on current approved PI; non-generic; complete; safe.",
     )
 
+    assert result["revalidation"]["recomputed"] is True
+    assert result["revalidation"]["production_valid"] is False
     after = await evaluate_copy_set_id(cid)
-    assert after["valid"] is True, after["reasons"]
+    assert after["valid"] is False, after["reasons"]
+    assert after["reasons"] == before["reasons"]
     stored = await crud.get_copy_set(cid)
-    assert not (stored["pi_eligibility_status"] or "")  # quarantine cleared
-    assert stored["pi_snapshot_id"]  # lineage stamped
+    assert stored["pi_eligibility_status"] == "NEEDS_REVALIDATION"
+    assert stored["pi_snapshot_id"] is None
+    assert stored["pi_grounding_digest"] is None
+    assert stored["claim_review_json"] == stored_before["claim_review_json"]
+    assert stored["provenance_json"] == stored_before["provenance_json"]
 
 
 @pytest.mark.asyncio

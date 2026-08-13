@@ -168,6 +168,16 @@ class CopySetRejectRequest(BaseModel):
     reviewer_note: str
 
 
+class CopySetSemanticReviewRequest(BaseModel):
+    """Explicit human semantic-review receipt for an already-approved set."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reviewer: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    decision: str = Field(default="APPROVED", pattern="^(APPROVED|REJECTED)$")
+
+
 class CopySetResponse(BaseModel):
     copy_set_id: str
     product_id: str

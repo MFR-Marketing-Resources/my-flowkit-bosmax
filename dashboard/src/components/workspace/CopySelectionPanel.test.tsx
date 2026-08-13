@@ -5,12 +5,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CopySet } from "../../types";
 
 const listCopySetsForProduct = vi.fn();
+const revalidateCopySet = vi.fn();
+const submitSemanticReview = vi.fn();
 
 vi.mock("../../api/copySets", () => ({
 	approveCopySet: vi.fn(),
 	generateAICopyCandidate: vi.fn(),
 	generateCopySet: vi.fn(),
 	listCopySetsForProduct: (...args: unknown[]) => listCopySetsForProduct(...args),
+	revalidateCopySet: (...args: unknown[]) => revalidateCopySet(...args),
+	submitSemanticReview: (...args: unknown[]) => submitSemanticReview(...args),
 }));
 
 import CopySelectionPanel from "./CopySelectionPanel";
@@ -298,6 +302,22 @@ describe("CopySelectionPanel — production validity contract (#688)", () => {
 		expect(screen.getByTestId("copy-raw-approved-count")).toHaveTextContent("1");
 	});
 
+	it("clears a previously selected set if it becomes non-production-valid", async () => {
+		const stale = makeCopySet("selected-stale", "Empathy", "COPY_APPROVED", {
+			production_valid: false,
+		});
+		listCopySetsForProduct.mockResolvedValue({ items: [stale] });
+		const onSelect = vi.fn();
+		render(
+			<CopySelectionPanel
+				productId="p1"
+				selectedCopySetId="selected-stale"
+				onSelect={onSelect}
+			/>,
+		);
+		await waitFor(() => expect(onSelect).toHaveBeenCalledWith(null));
+	});
+
 	it("allows Select for Final Prompt only for production-valid approved sets", async () => {
 		const sets = [
 			makeCopySet("good-1", "Empathy", "COPY_APPROVED", { production_valid: true }),
@@ -318,5 +338,52 @@ describe("CopySelectionPanel — production validity contract (#688)", () => {
 		expect(screen.getAllByTestId("copy-select-blocked")).toHaveLength(1);
 		expect(screen.getByTestId("copy-production-valid-count")).toHaveTextContent("1");
 		expect(screen.getByTestId("copy-raw-approved-count")).toHaveTextContent("2");
+	});
+
+	it("offers read-only revalidation for a stale approved set and refreshes", async () => {
+		const stale = makeCopySet("stale-action", "Empathy", "COPY_APPROVED", {
+			production_valid: false,
+			validity_class: "APPROVED_COPY_STALE",
+			validity_reasons: ["PI_SNAPSHOT_MISMATCH"],
+		});
+		listCopySetsForProduct.mockResolvedValue({ items: [stale] });
+		revalidateCopySet.mockResolvedValue({
+			copy_set: stale,
+			revalidation: {
+				recomputed: true,
+				production_valid: false,
+				validity_class: "APPROVED_COPY_STALE",
+				validity_reasons: ["PI_SNAPSHOT_MISMATCH"],
+				recommended_action: "REVALIDATE_APPROVED",
+			},
+		});
+		render(<CopySelectionPanel productId="p1" selectedCopySetId={null} onSelect={vi.fn()} />);
+		await waitFor(() => expect(screen.getByTestId("copy-revalidate-stale-action")).toBeInTheDocument());
+		fireEvent.click(screen.getByTestId("copy-revalidate-stale-action"));
+		await waitFor(() => expect(revalidateCopySet).toHaveBeenCalledWith("stale-action"));
+		expect(listCopySetsForProduct).toHaveBeenCalledTimes(2);
+		expect(screen.getByText(/Revalidation complete: still blocked/)).toBeInTheDocument();
+		expect(screen.queryByTestId("select-copy-for-final-prompt")).not.toBeInTheDocument();
+	});
+
+	it("opens an explicit semantic-review action for missing review", async () => {
+		const missingReview = makeCopySet("missing-review", "Empathy", "COPY_APPROVED", {
+			production_valid: false,
+			validity_class: "APPROVED_COPY_MISSING_REVIEW",
+			validity_class_label: "MISSING REVIEW",
+			recommended_action: "SEMANTIC_REVIEW_REQUIRED",
+		});
+		listCopySetsForProduct.mockResolvedValue({ items: [missingReview] });
+		submitSemanticReview.mockResolvedValue({
+			copy_set: { ...missingReview, production_valid: true },
+			semantic_review: { decision: "APPROVED", production_valid: true, validity_reasons: [] },
+		});
+		render(<CopySelectionPanel productId="p1" selectedCopySetId={null} onSelect={vi.fn()} />);
+		await waitFor(() => expect(screen.getByTestId("copy-semantic-review-missing-review")).toBeInTheDocument());
+		fireEvent.click(screen.getByTestId("copy-semantic-review-missing-review"));
+		expect(screen.getByText("Submit semantic review?")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Submit semantic review" }));
+		await waitFor(() => expect(submitSemanticReview).toHaveBeenCalledWith("missing-review", expect.objectContaining({ reviewer: "operator", decision: "APPROVED" })));
+		expect(listCopySetsForProduct).toHaveBeenCalledTimes(2);
 	});
 });

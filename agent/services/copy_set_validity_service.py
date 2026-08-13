@@ -831,18 +831,17 @@ def assess_semantic_grounding(
 async def revalidate_copy_set(
     copy_set_id: str,
     *,
-    reviewer: str,
-    rationale: str,
+    reviewer: str | None = None,
+    rationale: str | None = None,
     decision: str = "APPROVED",
 ) -> dict[str, Any]:
-    """Atomically RE-STAMP an ALREADY-approved set as strict-valid (no provider).
+    """Recompute current validity without changing the Copy Set.
 
-    Recomputes field-level PI grounding + genericness from the copy itself, writes a
-    receipt carrying that ACTUAL evidence (B1), ensures a formula/sales verdict
-    (preserve existing; a deterministic non-AI lane with none gets a DURABLE
-    NOT_APPLICABLE — route-gated, B2), stamps lineage, clears quarantine — one write.
-    Raises COPY_SET_UNGROUNDED / COPY_SET_GENERIC when the copy genuinely fails, so
-    the caller QUARANTINES instead of re-stamping.
+    ``reviewer``, ``rationale``, and ``decision`` remain accepted for compatibility
+    with old offline scripts, but are deliberately ignored. Revalidation is
+    diagnostic only: it never rewrites copy, evidence, approval metadata,
+    semantic-review receipts, Product Truth lineage, or quarantine fields.
+    Explicit semantic approval belongs to the separate semantic-review route.
     """
     db = await get_db()
     cur = await db.execute("SELECT * FROM copy_set WHERE copy_set_id = ?", (copy_set_id,))
@@ -853,103 +852,20 @@ async def revalidate_copy_set(
     cs = dict(row)
     if _clean(cs.get("status")).upper() != STATUS_COPY_APPROVED:
         raise ValueError("COPY_SET_NOT_APPROVED")
-    snap = await _latest_approved_snapshot(str(cs["product_id"]))
-    if not snap:
-        raise ValueError("NO_APPROVED_PI_SNAPSHOT")
-    title = await _product_name(str(cs["product_id"]))
-    usp = _usp_list(cs)
-    # B1: real grounding evidence, computed from the copy against current PI.
-    gen = detect_generic_copy(
-        angle=_clean(cs.get("angle")), hook=_clean(cs.get("hook")),
-        subhook=_clean(cs.get("subhook")), usp_list=usp, cta=_clean(cs.get("cta")),
-        product_name=title,
-    )
-    if gen["generic"]:
-        raise ValueError("COPY_SET_GENERIC:" + ";".join(gen["hits"])[:120])
-    grounding = assess_semantic_grounding(
-        hook=_clean(cs.get("hook")), subhook=_clean(cs.get("subhook")),
-        usp_list=usp, cta=_clean(cs.get("cta")), snapshot=snap, product_title=title,
-    )
-    if not grounding.get("grounded"):
-        raise ValueError("COPY_SET_UNGROUNDED:" + ",".join(grounding.get("reasons") or []))
-    digest = pi_authority_digest(snap)
-    now = _now()
-    claim = _parse_json(cs.get("claim_review_json")) or {}
-    if not isinstance(claim, dict):
-        claim = {}
-    # B2: ensure a formula/sales verdict — preserve any existing; a deterministic
-    # (non-AI) generation lane that carries none gets a DURABLE NOT_APPLICABLE.
-    source = _clean(cs.get("source"))
-    is_ai = "AI" in source.upper()
-    route = source or "UNSPECIFIED_DETERMINISTIC_LANE"
-    fv = claim.get("formula_validation")
-    sc = claim.get("sales_clarity")
-    if not (isinstance(fv, dict) and fv) and not is_ai:
-        claim["formula_validation"] = build_not_applicable_verdict(
-            reason="non-formula (deterministic) generation lane", route=route,
-            evaluator=reviewer, evaluated_at=now)
-    if not (isinstance(sc, dict) and sc) and not is_ai:
-        claim["sales_clarity"] = build_not_applicable_verdict(
-            reason="non-formula (deterministic) generation lane", route=route,
-            evaluator=reviewer, evaluated_at=now)
-    # B2: the set must actually PASS the formula / sales gate now — present + passing,
-    # a durable NOT_APPLICABLE, or the exact per-gate override. A legacy formula-lane
-    # set that carries no verdict (and no override) fails here so the caller
-    # QUARANTINES it rather than re-stamping a missing-QA set as valid.
-    _ov = claim.get("approval_override") if isinstance(claim.get("approval_override"), dict) else {}
-    if not _verdict_ok(claim.get("formula_validation"), "valid", _ov, "formula_review_overridden"):
-        raise ValueError("COPY_SET_FORMULA_OPEN")
-    if not _verdict_ok(claim.get("sales_clarity"), "clear", _ov, "sales_clarity_overridden"):
-        raise ValueError("COPY_SET_SALES_OPEN")
-    claim["semantic_review"] = build_semantic_review_receipt(
-        reviewer=reviewer, decision=decision, rationale=rationale,
-        pi_snapshot_id=str(snap["snapshot_id"]), pi_snapshot_version=int(snap["version"]),
-        authority_digest=digest, platform=_clean(cs.get("platform")),
-        language=_clean(cs.get("language")), route=_clean(cs.get("route_type")),
-        formula=_clean(cs.get("formula_family")), grounding=grounding, genericness=gen,
-        product_title=title, reviewed_at=now,
-    )
-    prov = _parse_json(cs.get("provenance_json")) or {}
-    if not isinstance(prov, dict):
-        prov = {}
-    prov["pi_lineage"] = {
-        "snapshot_id": snap["snapshot_id"],
-        "version": snap["version"],
-        "authority_digest": digest,
-        "grounded_at": now,
-        "grounding_source": "APPROVED_PRODUCT_INTELLIGENCE_SNAPSHOT",
-        "revalidated_at": now,
-        "revalidated_by": reviewer,
-        "decision": "REVALIDATED_GROUNDED",
-        "rationale": rationale,
-    }
-    await db.execute(
-        "UPDATE copy_set SET claim_review_json = ?, provenance_json = ?, "
-        "pi_snapshot_id = ?, pi_snapshot_version = ?, pi_grounding_digest = ?, "
-        "grounded_at = ?, revalidated_at = ?, revalidated_by = ?, "
-        "revalidation_decision = ?, pi_eligibility_status = NULL, "
-        "pi_ineligible_reasons = NULL, updated_at = ? WHERE copy_set_id = ?",
-        (
-            json.dumps(claim, ensure_ascii=False),
-            json.dumps(prov, ensure_ascii=False),
-            snap["snapshot_id"],
-            int(snap["version"]),
-            digest,
-            now,
-            now,
-            reviewer,
-            "REVALIDATED",
-            now,
-            copy_set_id,
-        ),
-    )
-    await db.commit()
+    from agent.models.copy_set import serialize_copy_set
+
+    before = serialize_copy_set(cs)
+    verdict = await evaluate_copy_set_id(copy_set_id)
+    enriched = merge_validity_contract(before, verdict)
     return {
-        "copy_set_id": copy_set_id,
-        "pi_snapshot_id": str(snap["snapshot_id"]),
-        "pi_snapshot_version": int(snap["version"]),
-        "grounded_at": now,
-        "grounding": grounding,
+        "copy_set": enriched,
+        "revalidation": {
+            "recomputed": True,
+            "production_valid": bool(enriched.get("production_valid")),
+            "validity_class": enriched.get("validity_class"),
+            "validity_reasons": list(enriched.get("validity_reasons") or []),
+            "recommended_action": enriched.get("recommended_action"),
+        },
     }
 
 

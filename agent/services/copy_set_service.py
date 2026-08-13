@@ -38,6 +38,7 @@ from agent.models.copy_set import (
     CopySetGenerateRequest,
     CopySetPatchRequest,
     CopySetRejectRequest,
+    CopySetSemanticReviewRequest,
     compute_dedupe_key,
     normalize_usp_set,
     serialize_copy_set,
@@ -366,6 +367,141 @@ async def list_copy_sets(product_id: str) -> list[dict[str, Any]]:
 
     # Shared validity contract (#688): list never implies COPY_APPROVED == production-valid.
     return await enrich_copy_sets_with_validity(product_id, serialized)
+
+
+async def revalidate_copy_set(copy_set_id: str) -> dict[str, Any]:
+    """Read-only validity recomputation exposed through the Copy Set API."""
+    from agent.services.copy_set_validity_service import (
+        revalidate_copy_set as recompute_copy_set_validity,
+    )
+
+    try:
+        return await recompute_copy_set_validity(copy_set_id)
+    except ValueError as exc:
+        code = str(exc).split(":", 1)[0]
+        status = 404 if code == "COPY_SET_NOT_FOUND" else 409
+        raise CopySetError(
+            code, status_code=status, detail={"copy_set_id": copy_set_id}
+        ) from exc
+
+
+async def semantic_review_copy_set(
+    copy_set_id: str, request: CopySetSemanticReviewRequest | dict
+) -> dict[str, Any]:
+    """Record an explicit semantic-review receipt without changing approval or lineage.
+
+    The only persisted field is ``claim_review_json`` with the prior review
+    object preserved and a new semantic-review receipt overlaid. Content,
+    formula/sales evidence, provenance, Product Truth lineage, quarantine state,
+    workflow status, and approval metadata are untouched.
+    """
+    req = (
+        request
+        if isinstance(request, CopySetSemanticReviewRequest)
+        else CopySetSemanticReviewRequest.model_validate(request)
+    )
+    reviewer = _clean(req.reviewer)
+    rationale = _clean(req.rationale)
+    decision = req.decision.upper()
+    if not reviewer:
+        raise CopySetError("SEMANTIC_REVIEWER_REQUIRED", status_code=422)
+    if not rationale:
+        raise CopySetError("SEMANTIC_REVIEW_RATIONALE_REQUIRED", status_code=422)
+
+    row = await crud.get_copy_set(copy_set_id)
+    if not row:
+        raise CopySetError("COPY_SET_NOT_FOUND", status_code=404)
+    if _clean(row.get("status")).upper() != STATUS_COPY_APPROVED:
+        raise CopySetError(
+            "COPY_SET_NOT_APPROVED",
+            status_code=409,
+            detail={"copy_set_id": copy_set_id, "status": row.get("status")},
+        )
+    if bool(row.get("archived")):
+        raise CopySetError(
+            "COPY_SET_ARCHIVED", status_code=409, detail={"copy_set_id": copy_set_id}
+        )
+
+    from agent.services.copy_set_validity_service import (
+        _latest_approved_snapshot,
+        _product_name,
+        assess_semantic_grounding,
+        build_semantic_review_receipt,
+        detect_generic_copy,
+        pi_authority_digest,
+    )
+
+    fields = serialize_copy_set(row)
+    snapshot = await _latest_approved_snapshot(str(row["product_id"]))
+    if not snapshot:
+        raise CopySetError(
+            "COPY_SET_NO_PI_SNAPSHOT",
+            status_code=409,
+            detail={"product_id": row["product_id"]},
+        )
+    product_name = await _product_name(str(row["product_id"]))
+    generic = detect_generic_copy(
+        angle=_clean(fields.get("angle")),
+        hook=_clean(fields.get("hook")),
+        subhook=_clean(fields.get("subhook")),
+        usp_list=[u for u in (fields.get("usp_set") or []) if _clean(u)],
+        cta=_clean(fields.get("cta")),
+        product_name=product_name,
+    )
+    grounding = assess_semantic_grounding(
+        hook=_clean(fields.get("hook")),
+        subhook=_clean(fields.get("subhook")),
+        usp_list=[u for u in (fields.get("usp_set") or []) if _clean(u)],
+        cta=_clean(fields.get("cta")),
+        snapshot=snapshot,
+        product_title=product_name,
+    )
+    if decision == "APPROVED" and generic.get("generic"):
+        raise CopySetError("COPY_SET_GENERIC", status_code=422, detail=generic)
+    if decision == "APPROVED" and not grounding.get("grounded"):
+        raise CopySetError(
+            "COPY_SET_UNGROUNDED",
+            status_code=422,
+            detail={
+                "reasons": grounding.get("reasons"),
+                "overlap_count": grounding.get("overlap_count"),
+            },
+        )
+
+    claim_review = fields.get("claim_review")
+    if not isinstance(claim_review, dict):
+        claim_review = {}
+    receipt = build_semantic_review_receipt(
+        reviewer=reviewer,
+        decision=decision,
+        rationale=rationale,
+        pi_snapshot_id=str(snapshot["snapshot_id"]),
+        pi_snapshot_version=int(snapshot["version"]),
+        authority_digest=pi_authority_digest(snapshot),
+        platform=_clean(fields.get("platform")),
+        language=_clean(fields.get("language")),
+        route=_clean(fields.get("route_type")),
+        formula=_clean(fields.get("formula_family")),
+        grounding=grounding,
+        genericness=generic,
+        product_title=product_name,
+    )
+    claim_review = {**claim_review, "semantic_review": receipt}
+    await crud.update_copy_set(
+        copy_set_id,
+        claim_review_json=json.dumps(claim_review, ensure_ascii=False),
+    )
+    refreshed = await get_copy_set(copy_set_id)
+    if refreshed is None:
+        raise CopySetError("COPY_SET_NOT_FOUND", status_code=404)
+    return {
+        "copy_set": refreshed,
+        "semantic_review": {
+            "decision": decision,
+            "production_valid": bool(refreshed.get("production_valid")),
+            "validity_reasons": list(refreshed.get("validity_reasons") or []),
+        },
+    }
 
 
 async def delete_copy_set(copy_set_id: str) -> dict[str, Any]:

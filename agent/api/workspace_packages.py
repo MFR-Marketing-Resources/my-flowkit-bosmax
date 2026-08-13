@@ -68,12 +68,11 @@ class WorkspaceExecutionPackageRequest(BaseModel):
     scene_context_reference_asset_id: str | None = None
     style_reference_asset_id: str | None = None
     blocks: list[WorkspacePromptBlockRequest] = Field(default_factory=list)
-    # Copy Selection & Compiler Binding V1: operator-selected approved Copy Set.
-    # Optional — when absent the compiler uses its existing fallback copy.
+    # Copy Selection & Compiler Binding V1: operator-selected production-valid
+    # approved Copy Set. Required for saved video packages; IMG is copy-free.
     copy_set_id: str | None = None
-    # Explicit-Fallback-Confirmation V1: final generation with NO approved Copy
-    # Set requires the operator to intentionally confirm fallback usage. Preview
-    # never needs this (see WorkspacePromptCompileRequest — deliberately absent).
+    # Retained as a compatibility field for older clients. It never authorizes
+    # fallback copy in a saved video package.
     copy_fallback_confirmed: bool = False
     # T2V/Hybrid registry authority: optional AvatarCode + scene Background override
     avatar_id: str | None = None
