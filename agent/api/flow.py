@@ -443,7 +443,11 @@ def _extract_images(data) -> list[dict]:
             mid = m.get("name")
             gi = (m.get("image") or {}).get("generatedImage") or {}
             if mid:
-                out.append({"media_id": mid, "url": gi.get("fifeUrl")})
+                out.append({
+                    "media_id": mid,
+                    "delivery_media_id": gi.get("mediaId") or mid,
+                    "url": gi.get("fifeUrl"),
+                })
     return out
 
 
@@ -1692,7 +1696,14 @@ _VIDEO_ASPECT_TO_RATIO = {
     "VIDEO_ASPECT_RATIO_LANDSCAPE": "16:9",
     "VIDEO_ASPECT_RATIO_SQUARE": "1:1",
 }
-_INITIAL_GEN_TERMINAL = {"DONE", "FAILED", "REJECTED", "GENERATED_BUT_UNRETRIEVED"}
+_INITIAL_GEN_TERMINAL = {
+    "DONE",
+    "FAILED",
+    "REJECTED",
+    "GENERATED_BUT_UNRETRIEVED",
+    "RENDER_NOT_MATERIALIZED",
+    "STALE_OR_FOREIGN_CANDIDATES_ONLY",
+}
 
 
 class InitialGenerationError(RuntimeError):
@@ -2464,7 +2475,7 @@ async def _bridge_generate_job_telemetry(request_id: str, job_id: str,
             await crud.update_request(request_id, status="COMPLETED", updated_at=crud._now())
             await _persist_generation_results(result_snapshot, job, all_ids)
             return
-        if status in ("FAILED", "GENERATED_BUT_UNRETRIEVED"):
+        if status in (_INITIAL_GEN_TERMINAL - {"DONE"}):
             code = str(job.get("error") or status)
             await crud.upsert_request_telemetry(
                 request_id, status="FAILED", failed_at=crud._now(),

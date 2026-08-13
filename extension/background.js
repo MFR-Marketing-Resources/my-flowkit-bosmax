@@ -81,6 +81,11 @@ const FLOW_PROJECT_URL_STORAGE_KEY = "flow_project_url";
 
 let ws = null;
 let flowKey = null;
+// Flow's current project payload distinguishes a delivery-tile mediaId from
+// the generation resource key accepted by /v1/media.  The MAIN-world fetch
+// monitor forwards the pair through content.js; retain it for the next exact-tab
+// harvest without persisting the raw project payload or signed URLs.
+const flowMediaGenerationIds = Object.create(null);
 let _callbackSecret = null; // Auth secret for HTTP callback, received from server on WS connect
 let state = "off"; // off | idle | running
 let manualDisconnect = false;
@@ -454,6 +459,16 @@ async function handleHarvestVideoUrls(targetTabId) {
 			},
 		});
 		const out = res?.[0]?.result || {};
+		const mediaGenerationIds = {};
+		for (const mediaId of new Set([
+			...(out.videoIds || []),
+			...(out.imageIds || []),
+			...(out.mediaIds || []),
+		])) {
+			const generationId = flowMediaGenerationIds[String(mediaId)];
+			if (generationId) mediaGenerationIds[String(mediaId)] = generationId;
+		}
+		out.mediaGenerationIds = mediaGenerationIds;
 		return { ok: true, urls: out.urls || [], diag: out };
 	} catch (e) {
 		return { ok: false, urls: [], error: String(e?.message || e) };
@@ -1527,6 +1542,7 @@ const WS_METHOD_TIMEOUT_MS = {
 	CHECK_FLOW_COMPOSER_READY: 12000,
 	FLOW_PAGE_STATE_DIAGNOSTIC: 12000,
 	RELOAD_FLOW_TAB: 12000,
+	MEDIA_URL_REDIRECT: 30000,
 	OPEN_TARGET_FLOW_PROJECT: 45000,
 	OPEN_FLOW_NEW_PROJECT: 75000,
 	EXECUTE_FLOW_JOB: 125000,
@@ -5382,12 +5398,78 @@ async function handleReloadExtension() {
 	return { ok: true, action: "RELOAD_EXTENSION" };
 }
 
-async function handleReloadFlowTab() {
-	const flowTab = await getFlowTab();
+async function handleMediaUrlRedirect(params = {}) {
+	const rawUrl = String(params.url || "").trim();
+	let redirectUrl;
+	try {
+		redirectUrl = new URL(rawUrl);
+	} catch (_) {
+		return { ok: false, error: "INVALID_MEDIA_REDIRECT_URL" };
+	}
+	if (
+		redirectUrl.origin !== "https://labs.google" ||
+		redirectUrl.pathname !== "/fx/api/trpc/media.getMediaUrlRedirect"
+	) {
+		return { ok: false, error: "MEDIA_REDIRECT_HOST_NOT_ALLOWED" };
+	}
+	const mediaId = String(params.media_id || redirectUrl.searchParams.get("name") || "").trim();
+	if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(mediaId)) {
+		return { ok: false, error: "INVALID_MEDIA_ID" };
+	}
+	try {
+		const response = await fetch(redirectUrl.toString(), {
+			method: "GET",
+			credentials: "include",
+			redirect: "follow",
+			cache: "no-store",
+		});
+		let finalUrl = null;
+		try {
+			const resolved = new URL(response.url || "");
+			const trusted =
+				resolved.hostname === "flow-content.google" ||
+				resolved.hostname.endsWith(".flow-content.google") ||
+				resolved.hostname === "storage.googleapis.com" ||
+				resolved.hostname === "lh3.googleusercontent.com";
+			if (trusted) finalUrl = resolved.toString();
+		} catch (_) {}
+		return {
+			ok: Boolean(response.ok && finalUrl),
+			status: response.status,
+			media_id: mediaId,
+			url: finalUrl,
+			content_type: response.headers.get("content-type") || null,
+			content_length: response.headers.get("content-length") || null,
+			error: response.ok && finalUrl ? null : "MEDIA_REDIRECT_FAILED",
+		};
+	} catch (error) {
+		return {
+			ok: false,
+			media_id: mediaId,
+			error: String(error?.message || error || "MEDIA_REDIRECT_FAILED"),
+		};
+	}
+}
+
+async function handleReloadFlowTab(targetTabId = null) {
+	const hasBoundTarget = targetTabId !== null && targetTabId !== undefined;
+	let flowTab = null;
+	if (hasBoundTarget) {
+		try {
+			flowTab = await chrome.tabs.get(Number(targetTabId));
+		} catch (_) {
+			flowTab = null;
+		}
+		if (!flowTab || !/labs\.google\/fx\/.*tools\/flow/.test(flowTab.url || "")) {
+			flowTab = null;
+		}
+	} else {
+		flowTab = await getFlowTab();
+	}
 	if (!flowTab) {
 		return {
 			ok: false,
-			error: "ERR_NO_FLOW_TAB",
+			error: hasBoundTarget ? "BOUND_TAB_GONE" : "ERR_NO_FLOW_TAB",
 			action_taken: "NONE",
 			flow_tab_id: null,
 			flow_url: null,
@@ -5726,7 +5808,12 @@ function connectToAgent() {
 				replyToAgent(msg, result);
 			} else if (msg.method === "RELOAD_FLOW_TAB") {
 				const result = await executeWsMethodAndReply(msg, () =>
-					handleReloadFlowTab(),
+					handleReloadFlowTab(msg.params?.tab_id),
+				);
+				replyToAgent(msg, result);
+			} else if (msg.method === "MEDIA_URL_REDIRECT") {
+				const result = await executeWsMethodAndReply(msg, () =>
+					handleMediaUrlRedirect(msg.params || {}),
 				);
 				replyToAgent(msg, result);
 			} else if (
@@ -6631,7 +6718,7 @@ async function handleMessage(msg, sender) {
 	}
 
 	if (msg.type === "RELOAD_FLOW_TAB") {
-		return await handleReloadFlowTab();
+		return await handleReloadFlowTab(msg.params?.tab_id ?? msg.tab_id);
 	}
 
 	if (msg.type === "EXECUTE_FLOW_JOB") {
@@ -6761,7 +6848,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 	if (message.type === "RELOAD_FLOW_TAB") {
 		return respondAsync(sendResponse, async () => {
-			const result = await handleReloadFlowTab();
+			const result = await handleReloadFlowTab(
+				message.params?.tab_id ?? message.tab_id,
+			);
 			return result && typeof result === "object" && "ok" in result
 				? result
 				: { ok: true, data: result };
@@ -8803,11 +8892,87 @@ async function handleRuntimeSelfTest(mode = "F2V", attemptOpenProject = false) {
 
 function handleTrpcMediaUrls(_trpcUrl, bodyText) {
 	try {
+		const mediaGenerationIds = {};
+		let payload = null;
+		try {
+			payload = JSON.parse(String(bodyText || ""));
+		} catch (_) {
+			payload = null;
+		}
+
+		const uuidRe = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+		const addUuid = (value, set) => {
+			const match = String(value || "").match(uuidRe);
+			if (match) set.add(match[0]);
+		};
+		const collectMediaIds = (node, set, depth = 0) => {
+			if (node == null || depth > 8) return;
+			if (Array.isArray(node)) {
+				for (const value of node) collectMediaIds(value, set, depth + 1);
+				return;
+			}
+			if (typeof node !== "object") return;
+			for (const [key, value] of Object.entries(node)) {
+				if (key === "mediaId" || key === "media_id") addUuid(value, set);
+				if ((key === "fifeUri" || key === "fifeUrl" || key === "servingBaseUri" || key === "url")
+					&& /storage\.googleapis\.com\/ai-sandbox-videofx\/(?:image|video)\//.test(String(value || ""))) {
+					addUuid(value, set);
+				}
+				collectMediaIds(value, set, depth + 1);
+			}
+		};
+		const collectGenerationIds = (node, set, depth = 0) => {
+			if (node == null || depth > 8) return;
+			if (Array.isArray(node)) {
+				for (const value of node) collectGenerationIds(value, set, depth + 1);
+				return;
+			}
+			if (typeof node !== "object") return;
+			const hasMediaContext = Object.keys(node).some((key) =>
+				["mediaId", "media_id", "generatedVideo", "videoData", "mediaData", "fifeUri", "fifeUrl", "servingBaseUri"]
+					.includes(key),
+			);
+			for (const [key, value] of Object.entries(node)) {
+				if (key === "mediaGenerationId"
+					|| (key === "clipId" && (hasMediaContext || String(value || "").includes("flowMedia/")))) {
+					const generationId = String(value || "").trim();
+					if (generationId) set.add(generationId);
+				}
+				collectGenerationIds(value, set, depth + 1);
+			}
+		};
+		const collectPairs = (node, depth = 0) => {
+			if (node == null || depth > 8) return;
+			if (Array.isArray(node)) {
+				for (const value of node) collectPairs(value, depth + 1);
+				return;
+			}
+			if (typeof node !== "object") return;
+			const mediaIds = new Set();
+			const generationIds = new Set();
+			collectMediaIds(node, mediaIds);
+			collectGenerationIds(node, generationIds);
+			// Only create a pair when this response subtree contains exactly one
+			// delivery id and one generation key.  A project response can contain
+			// many clips; a broad root-level pairing would make one clip's key look
+			// valid for another tile and defeat the backend correlation guard.
+			if (mediaIds.size === 1 && generationIds.size === 1) {
+				const media = Array.from(mediaIds);
+				const generations = Array.from(generationIds);
+				mediaGenerationIds[media[0]] = generations[0];
+			}
+			for (const value of Object.values(node)) collectPairs(value, depth + 1);
+		};
+		collectPairs(payload);
+		for (const [mediaId, generationId] of Object.entries(mediaGenerationIds)) {
+			flowMediaGenerationIds[mediaId] = generationId;
+		}
+
 		// Extract all fresh GCS signed URLs
 		const urlRegex =
 			/https:\/\/storage\.googleapis\.com\/ai-sandbox-videofx\/(?:image|video)\/[0-9a-f-]{36}\?[^"'\s]+/g;
-		const matches = bodyText.match(urlRegex) || [];
-		if (!matches.length) return;
+		const matches = String(bodyText || "").match(urlRegex) || [];
+		if (!matches.length && !Object.keys(mediaGenerationIds).length) return;
 
 		// Deduplicate and parse
 		const urlMap = {};
@@ -8818,15 +8983,20 @@ function handleTrpcMediaUrls(_trpcUrl, bodyText) {
 			if (mediaMatch) {
 				const [, mediaType, mediaId] = mediaMatch;
 				// Keep last occurrence (freshest)
-				urlMap[mediaId] = { mediaType, url, mediaId };
+				urlMap[mediaId] = {
+					mediaType,
+					url,
+					mediaId,
+					mediaGenerationId: flowMediaGenerationIds[mediaId] || null,
+				};
 			}
 		}
 
 		const entries = Object.values(urlMap);
-		if (!entries.length) return;
+		if (!entries.length && !Object.keys(mediaGenerationIds).length) return;
 
 		console.log(
-			`[FlowAgent] Captured ${entries.length} fresh media URLs from TRPC`,
+			`[FlowAgent] Captured ${entries.length} fresh media URLs and ${Object.keys(mediaGenerationIds).length} media generation mappings from TRPC`,
 		);
 		// URL refresh is silent — don't show in request log
 
@@ -8836,6 +9006,7 @@ function handleTrpcMediaUrls(_trpcUrl, bodyText) {
 				JSON.stringify({
 					type: "media_urls_refresh",
 					urls: entries,
+					mediaGenerationIds,
 				}),
 			);
 		}

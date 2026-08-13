@@ -10,6 +10,7 @@ import logging
 import time
 import uuid
 from typing import Optional
+from urllib.parse import quote
 
 from agent.config import (
     GOOGLE_FLOW_API, GOOGLE_API_KEY, ENDPOINTS,
@@ -59,6 +60,11 @@ class FlowClient:
         self._extension_ws = None  # Set by WS server when extension connects
         self._pending: dict[str, asyncio.Future] = {}
         self._flow_key: Optional[str] = None
+        # Flow's current project payload exposes both the DOM media UUID and a
+        # separate mediaGenerationId/clipId.  Keep the mapping learned by the
+        # authenticated extension harvest so /v1/media receives the generation
+        # key, not the delivery-tile UUID.
+        self._media_generation_ids: dict[str, str] = {}
         # WS stats
         self._ws_connect_count = 0
         self._ws_disconnect_count = 0
@@ -120,6 +126,18 @@ class FlowClient:
             return
 
         if data.get("type") == "media_urls_refresh":
+            self._remember_media_generation_ids({
+                "result": {"diag": {
+                    "mediaGenerationIds": data.get("mediaGenerationIds", {})
+                }}
+            })
+            for entry in data.get("urls", []) or []:
+                if isinstance(entry, dict) and entry.get("mediaGenerationId"):
+                    entry_media_id = str(entry.get("mediaId") or "").strip()
+                    if entry_media_id:
+                        self._media_generation_ids[entry_media_id] = str(
+                            entry["mediaGenerationId"]
+                        ).strip()
             asyncio.create_task(self._refresh_media_urls(data.get("urls", [])))
             return
 
@@ -398,9 +416,10 @@ class FlowClient:
 
         return {"ok": False, "error": "invalid flow page state diagnostic payload"}
 
-    async def reload_flow_tab(self) -> dict:
+    async def reload_flow_tab(self, tab_id: int | None = None) -> dict:
         """Reload the detected Flow tab and re-inject the DOM helper without executing generation."""
-        result = await self._send("RELOAD_FLOW_TAB", {}, timeout=15)
+        params = {} if tab_id is None else {"tab_id": tab_id}
+        result = await self._send("RELOAD_FLOW_TAB", params, timeout=15)
         if result.get("error"):
             return {"ok": False, "error": result["error"]}
 
@@ -478,7 +497,31 @@ class FlowClient:
         params: dict = {}
         if tab_id is not None:
             params["tab_id"] = tab_id
-        return await self._send("HARVEST_VIDEO_URLS", params, timeout=30)
+        result = await self._send("HARVEST_VIDEO_URLS", params, timeout=30)
+        self._remember_media_generation_ids(result)
+        return result
+
+    def _remember_media_generation_ids(self, result: dict) -> None:
+        """Cache the current Flow UUID -> generation-resource mapping.
+
+        The extension returns this alongside the DOM harvest.  It is deliberately
+        best-effort: older extension builds omit it and the caller still gets the
+        original response for diagnostics.
+        """
+        if not isinstance(result, dict):
+            return
+        payload = result.get("result", result)
+        if not isinstance(payload, dict):
+            return
+        diag = payload.get("diag", payload)
+        mapping = diag.get("mediaGenerationIds") if isinstance(diag, dict) else None
+        if not isinstance(mapping, dict):
+            return
+        for media_id, generation_id in mapping.items():
+            media_id = str(media_id or "").strip()
+            generation_id = str(generation_id or "").strip()
+            if media_id and generation_id:
+                self._media_generation_ids[media_id] = generation_id
 
     async def open_target_flow_project(self, flow_project_url: str) -> dict:
         """Open or focus an exact Google Flow project editor URL before readiness checks."""
@@ -935,18 +978,47 @@ class FlowClient:
         status = result.get("status", 500)
         return isinstance(status, int) and status == 200
 
-    async def get_media(self, media_id: str) -> dict:
+    async def get_media(self, media_id: str, media_generation_id: str | None = None) -> dict:
         """Fetch media metadata from Google Flow.
 
-        Returns the raw API response which contains a fresh signed URL
-        in data.fifeUrl or data.servingUri.
+        Current Flow project payloads distinguish the delivery tile's ``mediaId``
+        (the UUID found in ``media.getMediaUrlRedirect``) from the generation
+        resource key used by ``/v1/media``.  Prefer the authenticated mapping
+        captured by ``harvest_video_urls``; fall back to the supplied id for
+        legacy payloads and test clients.
         """
-        url = f"{GOOGLE_FLOW_API}/v1/media/{media_id}?key={GOOGLE_API_KEY}&clientContext.tool=PINHOLE"
+        generation_key = str(
+            media_generation_id
+            or self._media_generation_ids.get(str(media_id))
+            or media_id
+        ).strip()
+        # The web client accepts Flow's resource-name form but strips this
+        # namespace before constructing the /v1/media path.
+        if "flowMedia/" in generation_key:
+            generation_key = generation_key.split("flowMedia/", 1)[1]
+        encoded_key = quote(generation_key, safe="/")
+        url = (f"{GOOGLE_FLOW_API}/v1/media/{encoded_key}"
+               f"?key={GOOGLE_API_KEY}&clientContext.tool=PINHOLE")
         return await self._send("api_request", {
             "url": url,
             "method": "GET",
             "headers": random_headers(),
         }, timeout=15)
+
+    async def get_media_download_url(self, media_id: str) -> dict:
+        """Resolve a Flow tile UUID through the authenticated browser redirect.
+
+        This is the delivery fallback for current image/video tiles whose
+        metadata endpoint is not addressable from the UUID alone.  The extension
+        follows the authenticated labs.google redirect and returns only the final
+        signed URL; bytes are downloaded by the agent, never buffered in the
+        extension WebSocket.
+        """
+        url = ("https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name="
+               + quote(str(media_id), safe=""))
+        result = await self._send("MEDIA_URL_REDIRECT", {"url": url}, timeout=30)
+        payload = result.get("result", result) if isinstance(result, dict) else result
+        return payload if isinstance(payload, dict) else {"ok": False, "error": "invalid media redirect payload"}
 
     async def create_scene(self, project_id: str, workflow_ids: list[str]) -> dict:
         """Create a Flow SCENE (the timeline container) from workflow ids.
