@@ -22,7 +22,14 @@ window.fetch = async function (...args) {
     if (url.includes('/fx/api/trpc/') && response.ok) {
       const clone = response.clone();
       clone.text().then(text => {
-        if (text.includes('storage.googleapis.com/ai-sandbox-videofx/')) {
+        // Current Flow project responses may expose the generation-resource key
+        // without an inline GCS URL.  Forward either shape so the background
+        // worker can correlate mediaId (delivery tile) to mediaGenerationId.
+        const hasSignedMediaUrl = text.includes('storage.googleapis.com/ai-sandbox-videofx/');
+        const hasGenerationMapping =
+          (text.includes('mediaGenerationId') || text.includes('clipId')) &&
+          text.includes('mediaId');
+        if (hasSignedMediaUrl || hasGenerationMapping) {
           window.dispatchEvent(new CustomEvent('TRPC_MEDIA_URLS', {
             detail: { url, body: text },
           }));

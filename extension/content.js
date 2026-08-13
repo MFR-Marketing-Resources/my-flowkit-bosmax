@@ -10,6 +10,23 @@ if (!window._flowKitInjected) {
   console.log('[FlowAgent] Content script injected');
   const CAPTCHA_PROTOCOL_VERSION = 'FLOWKIT_CAPTCHA_V1';
 
+  // injected.js runs in the page's MAIN world so it can observe Flow's fetch
+  // responses.  Bridge its media payloads back to the background worker; without
+  // this listener the event never crosses the isolated-world boundary and the
+  // worker cannot learn Flow's mediaGenerationId/clipId mapping.
+  window.addEventListener('TRPC_MEDIA_URLS', (event) => {
+    const detail = event?.detail || {};
+    if (!detail.url || !detail.body) return;
+    try {
+      const pending = chrome.runtime.sendMessage({
+        type: 'TRPC_MEDIA_URLS',
+        trpcUrl: detail.url,
+        body: detail.body,
+      });
+      pending?.catch?.(() => {});
+    } catch (_) {}
+  });
+
   // Default timeout for async listener handlers in content.js (captcha path).
   // reCAPTCHA Enterprise can normally resolve well under 5s; if grecaptcha
   // hangs we surface a structured timeout instead of leaking the port.
