@@ -1022,6 +1022,23 @@ def compile_ugc_video_prompt(
         sentences = [x.strip() for x in _re.split(r"(?<=[.!?])\s+", resolved_claim_safe_rewrite) if x.strip()]
         resolved_copy["usps"] = sentences[:3]
     resolved_scene_strategy = _scene_strategies.resolve_scene_strategy(product)
+    if (
+        resolved_scene_strategy["fallback_used"]
+        or resolved_scene_strategy["strategy_id"] == "GENERIC_FALLBACK"
+    ):
+        raise ValueError("GENERIC_FALLBACK_BLOCKED")
+    if treatment:
+        from agent.models.scene_choreography_v2 import PLACEHOLDER_STATE_MARKERS
+
+        action_sequence = treatment.get("action_sequence") or []
+        blob = " ".join(
+            str(step.get(key) or "")
+            for step in action_sequence
+            if isinstance(step, dict)
+            for key in ("action_text", "initial_state", "resulting_state")
+        ).casefold()
+        if any(marker in blob for marker in PLACEHOLDER_STATE_MARKERS):
+            raise ValueError("PLACEHOLDER_STATE_FORBIDDEN")
     if resolved_source_mode != "IMAGES" and not treatment:
         direct_slots = resolved_scene_strategy["direct_script_slots"]
         if not resolved_copy.get("hook"):

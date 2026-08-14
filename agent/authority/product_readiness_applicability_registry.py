@@ -11,7 +11,7 @@ from agent.services.creative_treatment_service import canonical_sha256
 from agent.services.scene_strategy_library import SCENE_STRATEGIES, SceneStrategyEntry
 
 
-PROFILE_VERSION: Final = "product-readiness-applicability-v1"
+PROFILE_VERSION: Final = "product-readiness-applicability-v2"
 
 _COMPOSITION_TOKENS: Final = frozenset(
     {
@@ -306,18 +306,24 @@ def _profile_payload(
         and scene_strategy_id != "GENERIC_FALLBACK"
         and entry["product_family"] != "GENERIC_UNCLASSIFIED"
     )
-    indexed_actions = (
-        [
-            {
-                "allowed_action_index": index,
-                "action_text": action,
-                "action_classes": classify_indexed_action(action),
-            }
-            for index, action in enumerate(entry["allowed_actions"])
-        ]
-        if entry is not None
-        else []
-    )
+    indexed_actions: list[dict[str, object]] = []
+    if entry is not None and scene_strategy_id != "GENERIC_FALLBACK":
+        from agent.services.scene_choreography_catalog import (
+            all_choreography_variants,
+            choreography_sha256,
+        )
+
+        variants = all_choreography_variants().get(scene_strategy_id, ())
+        for index, variant in enumerate(variants):
+            indexed_actions.append(
+                {
+                    "allowed_action_index": index,
+                    "action_text": variant.intent_label,
+                    "action_classes": classify_indexed_action(variant.intent_label),
+                    "choreography_id": variant.choreography_id,
+                    "choreography_sha256": choreography_sha256(variant),
+                }
+            )
     return {
         "profile_version": PROFILE_VERSION,
         "scene_strategy_id": scene_strategy_id,

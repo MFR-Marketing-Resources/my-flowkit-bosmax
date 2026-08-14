@@ -312,6 +312,13 @@ domains:
       - agent/services/scene_strategy_library.py
       - agent/services/variation_matrix.py
       - tests/unit/test_scene_strategy_library.py
+      # Scene Choreography V2 — cohesive production cutover
+      - agent/models/scene_choreography_v2.py
+      - agent/services/scene_choreography_validator.py
+      - agent/services/scene_choreography_catalog.py
+      - agent/services/scene_choreography_lineage.py
+      - scripts/validate_scene_choreography_library.py
+      - tests/unit/test_scene_choreography_v2.py
       # Scene Strategy Cluster Scouting P2 — read-only cluster/type coverage queue
       - agent/services/product_strategy_scouting_service.py
       - tests/unit/test_product_strategy_scouting_service.py

@@ -51,6 +51,14 @@ class TreatmentActionStep(BaseModel):
     initial_state: str = Field(min_length=1)
     resulting_state: str = Field(min_length=1)
     continuity_requirements: list[str] = Field(default_factory=list)
+    start_time_seconds: float | None = Field(default=None, ge=0)
+    end_time_seconds: float | None = Field(default=None, gt=0)
+    support_hand: str | None = None
+    active_hand: str | None = None
+    visibility: str | None = None
+    camera_cut_boundary: str | None = None
+    product_location: str | None = None
+    component_custody: str | None = None
 
 
 class TreatmentShot(BaseModel):

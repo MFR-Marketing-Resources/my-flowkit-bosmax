@@ -1892,11 +1892,32 @@ def render_block(
     if s3_lock_lines:
         s3 = "\n".join([s3, *s3_lock_lines])
     if treatment:
+        from agent.models.scene_choreography_v2 import PLACEHOLDER_STATE_MARKERS
+
+        raw_steps = [
+            step
+            for step in treatment.get("action_sequence") or []
+            if isinstance(step, Mapping)
+        ]
+        blob = " ".join(
+            str(step.get(key) or "")
+            for step in raw_steps
+            for key in ("action_text", "initial_state", "resulting_state")
+        ).casefold()
+        if any(marker in blob for marker in PLACEHOLDER_STATE_MARKERS):
+            raise ValueError("PLACEHOLDER_STATE_FORBIDDEN")
         action_lines = [
             (
-                f"Action {step.get('sequence')}: "
-                f"{_clean(step.get('action_text'))}; "
+                f"Action {step.get('sequence')}"
+                + (
+                    f" {step.get('start_time_seconds')}-{step.get('end_time_seconds')}s"
+                    if step.get("start_time_seconds") is not None
+                    and step.get("end_time_seconds") is not None
+                    else ""
+                )
+                + f": {_clean(step.get('action_text'))}; "
                 f"actor={_clean(step.get('actor_role'))}; "
+                f"hands={_clean(step.get('support_hand'))}/{_clean(step.get('active_hand'))}; "
                 f"state={_clean(step.get('initial_state'))} -> "
                 f"{_clean(step.get('resulting_state'))}; "
                 "continuity="
@@ -1905,8 +1926,7 @@ def render_block(
                     for value in step.get("continuity_requirements") or []
                 )
             )
-            for step in treatment.get("action_sequence") or []
-            if isinstance(step, Mapping)
+            for step in raw_steps
         ]
         if not action_lines:
             raise ValueError("TREATMENT_ACTION_SEQUENCE_REQUIRED")

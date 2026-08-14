@@ -74,6 +74,9 @@ class SelectedSceneStrategyVariant(TypedDict):
     direct_hook: str
     direct_benefit: str
     direct_cta: str
+    choreography_id: str
+    choreography_schema_version: str
+    choreography_sha256: str
 
 
 _COMMON_PHYSICS_FORBIDDEN = (
@@ -3168,24 +3171,22 @@ def select_scene_strategy_variant(
     strategy: ResolvedSceneStrategy,
     variation_index: int,
 ) -> SelectedSceneStrategyVariant:
-    """Select aligned scene/action/camera/copy slots deterministically."""
+    """Select one cohesive choreography variant as a single production unit."""
+
+    from agent.services.scene_choreography_catalog import (
+        choreography_sha256,
+        select_variant_for_strategy,
+    )
 
     offset = max(int(variation_index), 0)
     scripts = strategy["direct_script_slots"]
+    variant = select_variant_for_strategy(strategy["strategy_id"], offset)
     return {
         "scene_strategy_id": strategy["strategy_id"],
-        "allowed_scene_strategy": strategy["allowed_scene_strategy"][
-            offset % len(strategy["allowed_scene_strategy"])
-        ],
-        "allowed_action": strategy["allowed_actions"][
-            offset % len(strategy["allowed_actions"])
-        ],
-        "scene_context": strategy["scene_contexts"][
-            offset % len(strategy["scene_contexts"])
-        ],
-        "camera_route": strategy["camera_routes"][
-            offset % len(strategy["camera_routes"])
-        ],
+        "allowed_scene_strategy": variant.scene_strategy_label,
+        "allowed_action": variant.intent_label,
+        "scene_context": variant.scene_context,
+        "camera_route": variant.camera_route,
         "avatar_hint": strategy["avatar_hints"][
             offset % len(strategy["avatar_hints"])
         ],
@@ -3195,6 +3196,9 @@ def select_scene_strategy_variant(
         "direct_hook": scripts["hook"][offset % len(scripts["hook"])],
         "direct_benefit": scripts["benefit"][offset % len(scripts["benefit"])],
         "direct_cta": scripts["cta"][offset % len(scripts["cta"])],
+        "choreography_id": variant.choreography_id,
+        "choreography_schema_version": variant.schema_version,
+        "choreography_sha256": choreography_sha256(variant),
     }
 
 
@@ -3204,13 +3208,37 @@ def build_scene_strategy_context(
     variation_index: int = 0,
     base_scene_context: str | None = None,
 ) -> str:
-    """Render visual-only strategy instructions for the canonical compiler."""
+    """Render the ordered v2 choreography for the canonical compiler."""
+
+    from agent.services.scene_choreography_catalog import select_variant_for_strategy
 
     selected = select_scene_strategy_variant(strategy, variation_index)
+    variant = select_variant_for_strategy(strategy["strategy_id"], variation_index)
+    step_lines = []
+    for step in variant.steps:
+        initial = "; ".join(
+            f"{state.entity_id} at {state.location} ({state.custody}, {state.physical_state})"
+            for state in step.initial_states
+        )
+        resulting = "; ".join(
+            f"{state.entity_id} at {state.location} ({state.custody}, {state.physical_state})"
+            for state in step.resulting_states
+        )
+        step_lines.append(
+            f"Step {step.step_number} {step.start_s:.1f}-{step.end_s:.1f}s: "
+            f"{step.action_instruction} "
+            f"support_hand={step.support_hand}; active_hand={step.active_hand}; "
+            f"initial=[{initial}] -> resulting=[{resulting}]; "
+            f"visibility={step.visibility}; cut={step.camera_cut_boundary}; "
+            f"continuity={'; '.join(step.continuity_rules)}."
+        )
     parts = [
         str(base_scene_context or "").strip() or selected["scene_context"],
+        f"Choreography {variant.choreography_id} ({variant.schema_version}).",
         f"Allowed scene strategy: {selected['allowed_scene_strategy']}.",
-        f"Allowed product action: {selected['allowed_action']}.",
+        "Execute this ordered scene choreography exactly:",
+        *step_lines,
+        f"Final-state lock: {variant.final_state_lock}",
         f"Camera route: {selected['camera_route']}.",
         f"Avatar hint: {selected['avatar_hint']}.",
         f"Wardrobe hint: {selected['wardrobe_hint']}.",

@@ -296,23 +296,62 @@ def _validate_sequence(body: CreateTreatmentRequest, strategy: dict[str, Any]) -
             "ACTION_SEQUENCE_NOT_CONTIGUOUS",
             status_code=422,
         )
-    allowed_actions = list(strategy.get("allowed_actions") or ())
-    for step in body.action_sequence:
-        if step.allowed_action_index >= len(allowed_actions):
+    from agent.models.scene_choreography_v2 import PLACEHOLDER_STATE_MARKERS
+    from agent.services.scene_choreography_catalog import list_production_variants
+
+    try:
+        variants = list_production_variants(str(strategy.get("strategy_id") or body.scene_strategy_id))
+    except Exception as exc:
+        raise CreativeTreatmentError(
+            "CHOREOGRAPHY_NOT_PRODUCTION_ELIGIBLE",
+            status_code=422,
+            details={"reason": str(exc)},
+        ) from exc
+    if not variants:
+        raise CreativeTreatmentError(
+            "CHOREOGRAPHY_NOT_PRODUCTION_ELIGIBLE",
+            status_code=422,
+        )
+    variant_index = body.action_sequence[0].allowed_action_index
+    if variant_index >= len(variants):
+        raise CreativeTreatmentError(
+            "ACTION_INDEX_NOT_ALLOWED",
+            status_code=422,
+            details={"sequence": 1, "variant_index": variant_index},
+        )
+    variant = variants[variant_index]
+    if len(body.action_sequence) != len(variant.steps):
+        raise CreativeTreatmentError(
+            "CHOREOGRAPHY_STEP_COUNT_MISMATCH",
+            status_code=422,
+            details={
+                "expected": len(variant.steps),
+                "actual": len(body.action_sequence),
+                "choreography_id": variant.choreography_id,
+            },
+        )
+    for step, expected in zip(body.action_sequence, variant.steps, strict=True):
+        if step.allowed_action_index != variant_index:
             raise CreativeTreatmentError(
                 "ACTION_INDEX_NOT_ALLOWED",
                 status_code=422,
                 details={"sequence": step.sequence},
             )
-        canonical_action = str(allowed_actions[step.allowed_action_index])
-        if step.action_text != canonical_action:
+        if step.action_text != expected.action_instruction:
             raise CreativeTreatmentError(
                 "ACTION_TEXT_NOT_CANONICAL",
                 status_code=422,
                 details={
                     "sequence": step.sequence,
-                    "expected_action_text": canonical_action,
+                    "expected_action_text": expected.action_instruction,
                 },
+            )
+        blob = f"{step.initial_state} {step.resulting_state}".casefold()
+        if any(marker in blob for marker in PLACEHOLDER_STATE_MARKERS):
+            raise CreativeTreatmentError(
+                "PLACEHOLDER_STATE_FORBIDDEN",
+                status_code=422,
+                details={"sequence": step.sequence},
             )
         lowered = step.action_text.casefold()
         for forbidden in strategy.get("forbidden_actions") or ():

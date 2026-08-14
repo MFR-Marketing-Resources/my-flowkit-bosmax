@@ -190,6 +190,8 @@ class IndexedActionApplicability(BaseModel):
     allowed_action_index: int
     action_text: str
     action_classes: list[str]
+    choreography_id: str | None = None
+    choreography_sha256: str | None = None
 
 
 class ApplicabilityProfileProjection(BaseModel):

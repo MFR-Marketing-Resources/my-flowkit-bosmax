@@ -703,6 +703,20 @@ async def resolve_treatment_authority(
             "TREATMENT_GENERIC_FALLBACK_FORBIDDEN",
             "Generic fallback scene authority is forbidden for P6 video.",
         )
+    from agent.services.scene_choreography_lineage import (
+        assert_production_treatment_payload,
+    )
+
+    try:
+        assert_production_treatment_payload(
+            strategy_id=str(row.get("scene_strategy_id") or ""),
+            decoded=decoded,
+        )
+    except Exception as exc:
+        raise _treatment_error(
+            str(getattr(exc, "code", None) or "LEGACY_ATOMIC_TREATMENT_REJECTED"),
+            str(exc),
+        ) from exc
     expected_source_mode = {
         "T2V": "T2V",
         "HYBRID": "HYBRID",
@@ -2167,11 +2181,10 @@ def _scene_variants(
     strategy = approved["scene_strategies"].get(product_id)
     if strategy is None:
         return []
+    from agent.services.scene_choreography_catalog import all_choreography_variants
+
     count = max(
-        len(strategy["allowed_scene_strategy"]),
-        len(strategy["allowed_actions"]),
-        len(strategy["scene_contexts"]),
-        len(strategy["camera_routes"]),
+        len(all_choreography_variants().get(strategy["strategy_id"], ())),
         1,
     )
     variants: list[dict[str, str]] = []

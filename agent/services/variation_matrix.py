@@ -42,6 +42,13 @@ async def generate_variation_plan(product_id: str, quantity: int = 3) -> list:
         or strategy["camera_routes"]
     )
 
+    if strategy["fallback_used"] or strategy["strategy_id"] == "GENERIC_FALLBACK":
+        logger.warning(
+            "GENERIC_FALLBACK blocked from production variation planning for %s",
+            product_id,
+        )
+        return []
+
     for i in range(quantity):
         selected = select_scene_strategy_variant(strategy, i)
         scene_context = (
