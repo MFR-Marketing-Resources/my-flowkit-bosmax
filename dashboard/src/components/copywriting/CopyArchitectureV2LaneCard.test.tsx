@@ -125,4 +125,47 @@ describe("CopyArchitectureV2LaneCard", () => {
 		expect(screen.getByTestId("copy-v2-readiness")).toHaveTextContent("READY");
 		expect(screen.getByTestId("copy-v2-blueprint")).toHaveTextContent("N/A — copy-free lane");
 	});
+
+	it("renders the numeric revision from a real V2 binding receipt", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn((url: string) =>
+				url.endsWith("consumer-status")
+					? response({
+							version: "2",
+							feature_flags: {
+								flag_name: "COPY_BLUEPRINT_V2_ENABLED",
+								enabled: true,
+								shadow_mode: false,
+								scope: "synthetic",
+								pilot_scope: [],
+								state: "ON",
+							},
+							legacy_path_unchanged: false,
+							binding_required_when_enabled: true,
+							provider_calls: 0,
+							credit_spend: false,
+						})
+					: response({ version: "2", items: [lane] }),
+			),
+		);
+		render(
+			<CopyArchitectureV2LaneCard
+				lane="T2V"
+				productId="synthetic-product"
+				execution={{
+					status: "READY",
+					blueprint_id: "bp-synthetic",
+					revision: 7,
+					formula_id: "PAS",
+					formula_version: "pas.v1",
+				}}
+			/>,
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId("copy-v2-blueprint")).toHaveTextContent(
+				"bp-synthetic · r7",
+			),
+		);
+	});
 });
