@@ -1508,6 +1508,35 @@ async def generate_job(job_id: str):
     return j
 
 
+@router.post("/direct-capture/recover")
+async def recover_direct_capture(body: dict):
+    """Recover an already-submitted direct media target without resubmitting it."""
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    if body.get("confirm_recovery") is not True:
+        raise HTTPException(409, "DIRECT_RECOVERY_CONFIRMATION_REQUIRED")
+    media_id = str(body.get("media_id") or "").strip()
+    project_id = str(body.get("project_id") or "").strip()
+    if not media_id or not project_id:
+        raise HTTPException(422, "DIRECT_RECOVERY_TARGET_REQUIRED")
+    from agent.services import make_video as _mv
+    result = await _mv.start_direct_media_recovery(
+        media_id=media_id,
+        project_id=project_id,
+        mode=body.get("mode") or "F2V",
+        source_mode=body.get("source_mode") or "HYBRID",
+        model_key=body.get("model_key"),
+        duration_s=body.get("duration_s", 8),
+        seed=body.get("seed"),
+        recovery_of=body.get("recovery_of") or body.get("request_id"),
+        confirm_recovery=True,
+    )
+    if not result.get("ok"):
+        raise HTTPException(409, result.get("error") or "DIRECT_RECOVERY_REJECTED")
+    return {"lane": "DIRECT_CAPTURE_RECOVERY", **result}
+
+
 @router.get("/product/{product_id}/visual-grounding")
 async def get_product_visual_grounding_endpoint(product_id: str):
     from agent.services.product_visual_grounding_resolver import (
