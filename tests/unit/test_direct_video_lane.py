@@ -528,6 +528,15 @@ def test_capture_current_media_submit_contract_polls_without_second_submit(
     _reset_lane()
 
 
+def test_current_media_parser_handles_nested_relay_envelope():
+    response = {"id": "relay-1", "status": 200, "data": {"status": 200,
+        "data": {"workflows": [{"metadata": {
+            "primaryMediaId": _MID}}], "media": [{"name": _MID}]}}}
+    assert mv._extract_direct_media_targets(response, "pid-1") == [
+        {"name": _MID, "projectId": "pid-1"}
+    ]
+
+
 def test_direct_media_recovery_never_calls_provider_submit(monkeypatch, tmp_path):
     _reset_lane()
     client = _FakeCurrentMediaDirectClient()
