@@ -5,6 +5,7 @@ export const DEACTIVATED_SURFACE_REDIRECTS = {
 	"/operator/img": "/creative/poster-builder",
 	"/assets/img-cockpit": "/creative/poster-builder",
 	"/assets/img-fastlane": "/creative/poster-builder",
+	"/assets/scene-context-registry": "/assets/creative-library",
 } as const;
 
 export type DeactivatedSurfacePath = keyof typeof DEACTIVATED_SURFACE_REDIRECTS;

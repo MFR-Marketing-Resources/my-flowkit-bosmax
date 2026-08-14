@@ -6,7 +6,7 @@ import {
 } from "./deactivatedSurfaces";
 
 describe("deactivated dashboard surfaces", () => {
-	it("keeps the six owner-deactivated pages behind active surface redirects", () => {
+	it("keeps the seven owner-deactivated pages behind active surface redirects", () => {
 		expect(DEACTIVATED_SURFACE_REDIRECTS).toEqual({
 			"/operator/t2v": "/operator/hybrid",
 			"/operator/f2v": "/operator/hybrid",
@@ -14,6 +14,7 @@ describe("deactivated dashboard surfaces", () => {
 			"/operator/img": "/creative/poster-builder",
 			"/assets/img-cockpit": "/creative/poster-builder",
 			"/assets/img-fastlane": "/creative/poster-builder",
+			"/assets/scene-context-registry": "/assets/creative-library",
 		});
 	});
 
@@ -23,6 +24,9 @@ describe("deactivated dashboard surfaces", () => {
 		expect(resolveActiveSurfacePath("/operator/t2v")).toBe("/operator/hybrid");
 		expect(resolveActiveSurfacePath("/operator/img")).toBe(
 			"/creative/poster-builder",
+		);
+		expect(resolveActiveSurfacePath("/assets/scene-context-registry")).toBe(
+			"/assets/creative-library",
 		);
 	});
 });
