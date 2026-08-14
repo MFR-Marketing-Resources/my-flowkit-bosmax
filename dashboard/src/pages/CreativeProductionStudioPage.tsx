@@ -96,7 +96,7 @@ const blockerMessage = (code: string) => {
 		return "An approved product-linked creator is required. Open Avatar Registry to review the linkage.";
 	}
 	if (/SCENE/.test(code)) {
-		return "An approved scene strategy or scene asset is required. Open Scene Registry to resolve it.";
+		return "An approved scene strategy or scene asset is required for this product before production can proceed.";
 	}
 	if (/CAPACITY/.test(code)) {
 		return "This product does not have enough unique approved material for the requested quantity. Reduce quantity or add approved supply.";
@@ -1318,10 +1318,10 @@ export default function CreativeProductionStudioPage() {
 							Hybrid workspace ↗
 						</a>
 						<a
-							href="/assets/scene-context-registry"
+							href="/assets/creative-library"
 							className="rounded-lg border border-slate-700 px-3 py-1.5 text-slate-300"
 						>
-							Scene Registry ↗
+							Creative Library ↗
 						</a>
 						<a
 							href="/production-studio?classic=1"

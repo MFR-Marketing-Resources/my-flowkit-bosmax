@@ -43,7 +43,6 @@ import {
 import ApprovedPackagesPage from "./pages/ApprovedPackagesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
 import AvatarRegistryPage from "./pages/AvatarRegistryPage";
-import SceneContextRegistryPage from "./pages/SceneContextRegistryPage";
 import CreativeLibraryPage from "./pages/CreativeLibraryPage";
 import CreativeProductionStudioPage from "./pages/CreativeProductionStudioPage";
 import CreativeLibraryWorkspacePage from "./pages/CreativeLibraryWorkspacePage";
@@ -628,10 +627,6 @@ function Layout() {
 						<Route
 							path="/assets/avatar-registry"
 							element={<AvatarRegistryPage />}
-						/>
-						<Route
-							path="/assets/scene-context-registry"
-							element={<SceneContextRegistryPage />}
 						/>
 						<Route
 							path="/assets/product-type-registry"
