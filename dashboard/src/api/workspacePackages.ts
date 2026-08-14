@@ -72,6 +72,7 @@ export async function createWorkspaceExecutionPackage(input: {
 	}>;
 	// Copy Selection & Compiler Binding V1: operator-selected approved Copy Set.
 	copy_set_id?: string | null;
+	copy_v2_context?: Record<string, unknown> | null;
 	// Explicit-Fallback-Confirmation V1: required-true for FINAL generation when
 	// no approved Copy Set is selected (backend fails closed otherwise).
 	copy_fallback_confirmed?: boolean;
@@ -424,6 +425,7 @@ export async function compileWorkspacePromptPreview(input: {
 	}>;
 	// Copy Selection & Compiler Binding V1: operator-selected approved Copy Set.
 	copy_set_id?: string | null;
+	copy_v2_context?: Record<string, unknown> | null;
 	avatar_id?: string | null;
 	scene_context_override?: string | null;
 }): Promise<WorkspacePromptPreviewResult> {

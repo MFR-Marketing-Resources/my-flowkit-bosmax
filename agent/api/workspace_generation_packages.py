@@ -26,6 +26,14 @@ _ERROR_404 = frozenset({
 
 def _http_exc_for(exc: Exception) -> HTTPException:
     """Convert a ValueError blocker into a structured 409/404 or fall back to 500."""
+    if getattr(exc, "code", None):
+        return HTTPException(
+            status_code=int(getattr(exc, "status_code", 409) or 409),
+            detail={
+                "error": str(exc.code),
+                "detail": getattr(exc, "detail", None) or getattr(exc, "details", None) or str(exc),
+            },
+        )
     message = str(exc)
     if isinstance(exc, ValueError):
         if message in _BLOCKER_409:
@@ -81,6 +89,7 @@ class T2VGenerationPackageRequest(_BaseModel):
     engine_duration_target: str | None = None  # GOOGLE_FLOW | GROK
     requested_total_duration_seconds: int | None = None  # workbook derives N blocks
     operator_notes: str | None = None
+    copy_v2_context: dict | None = None
 
 
 class IMGGenerationPackageRequest(_BaseModel):
@@ -103,6 +112,8 @@ class IMGGenerationPackageRequest(_BaseModel):
     style_preview_url: str | None = None
     style_download_url: str | None = None
     operator_notes: str | None = None
+    copy_v2_context: dict | None = None
+    copy_v2_lane: str | None = None
 
 
 class BatchGenerationRequest(_BaseModel):
@@ -164,6 +175,7 @@ async def create_f2v_package(request: F2VGenerationPackageRequest):
             end_frame_preview_url=request.end_frame_preview_url,
             end_frame_download_url=request.end_frame_download_url,
             operator_notes=request.operator_notes,
+            copy_v2_context=request.copy_v2_context,
         )
         return package
     except Exception as exc:
@@ -192,6 +204,7 @@ async def create_i2v_package(request: I2VGenerationPackageRequest):
             scene_context_reference_asset_id=request.scene_context_reference_asset_id,
             style_reference_asset_id=request.style_reference_asset_id,
             operator_notes=request.operator_notes,
+            copy_v2_context=request.copy_v2_context,
         )
         return package
     except Exception as exc:
@@ -332,12 +345,22 @@ async def create_from_execution_package(
                 product_id=product_id,
                 workspace_execution_package_id=workspace_execution_package_id,
                 copy_set_id=_bound_copy_set_id,
+                copy_v2_context=(
+                    (lineage.get("copy_architecture_v2") or {}).get("consumer_context")
+                    if isinstance(lineage.get("copy_architecture_v2"), dict)
+                    else None
+                ),
                 **_seed_plan_kwargs,
             )
         elif wep_mode == "IMG":
             package = await create_img_generation_package(
                 product_id=product_id,
                 workspace_execution_package_id=workspace_execution_package_id,
+                copy_v2_context=(
+                    (lineage.get("copy_architecture_v2") or {}).get("consumer_context")
+                    if isinstance(lineage.get("copy_architecture_v2"), dict)
+                    else None
+                ),
             )
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported mode {wep_mode!r} for from-execution-package")
@@ -368,6 +391,7 @@ async def create_t2v_package(request: T2VGenerationPackageRequest):
             engine_duration_target=request.engine_duration_target,
             requested_total_duration_seconds=request.requested_total_duration_seconds,
             operator_notes=request.operator_notes,
+            copy_v2_context=request.copy_v2_context,
         )
         return package
     except Exception as exc:
@@ -398,6 +422,8 @@ async def create_img_package(request: IMGGenerationPackageRequest):
             style_preview_url=request.style_preview_url,
             style_download_url=request.style_download_url,
             operator_notes=request.operator_notes,
+            copy_v2_context=request.copy_v2_context,
+            copy_v2_lane=request.copy_v2_lane,
         )
         return package
     except Exception as exc:

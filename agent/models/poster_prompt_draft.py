@@ -48,6 +48,7 @@ class PosterPromptDraftRequest(BaseModel):
     # poster domain). When set, its fields project into the zone copy fields and
     # the package is production-eligible without copy_fallback confirmation.
     poster_copy_set_id: str = ""
+    copy_v2_context: dict[str, Any] | None = None
 
 
 class PosterCopyLayout(BaseModel):
@@ -83,3 +84,4 @@ class PosterPromptDraftResponse(BaseModel):
     poster_spec: PosterSpec | None = None
     overlay_spec: OverlaySpec | None = None
     composition_plan: dict[str, Any] = Field(default_factory=dict)
+    copy_architecture_v2: dict[str, Any] | None = None

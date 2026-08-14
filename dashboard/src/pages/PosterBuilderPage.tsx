@@ -64,6 +64,7 @@ import {
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import ResultsSidebar, { type SessionResult } from "../components/workspace/ResultsSidebar";
 import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
+import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import {
 	isGenerateButtonDisabled,
@@ -1617,6 +1618,8 @@ export default function PosterBuilderPage() {
 					</nav>
 				</header>
 
+				<CopyArchitectureV2LaneCard lane="POSTER_BUILDER" />
+
 				<div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_20rem]">
 					<main className="min-w-0 space-y-4">
 						<WorkflowStep
@@ -1656,6 +1659,7 @@ export default function PosterBuilderPage() {
 
 	return (
 		<div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6" data-testid="poster-builder-page">
+			<CopyArchitectureV2LaneCard lane="POSTER_BUILDER" />
 			<PosterGuidedShell />
 			{advancedDiagnostics}
 		</div>

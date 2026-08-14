@@ -42,6 +42,10 @@ from agent.services.montage_scene_reference_policy import (
 from agent.services.workspace_execution_package_service import (
     create_workspace_execution_package,
 )
+from agent.services.copy_execution_resolver import (
+    CopyExecutionResolutionError,
+    resolve_copy_execution_binding,
+)
 
 router = APIRouter(prefix="/montage", tags=["montage"])
 
@@ -63,6 +67,7 @@ class MontagePlanRequest(BaseModel):
     background_id: str = "AUTO"
     model: str = Field(..., min_length=1)
     duration_seconds: int = Field(..., gt=0)
+    copy_v2_context: dict[str, Any] | None = None
 
 
 class MontageExecuteRequest(MontagePlanRequest):
@@ -171,6 +176,19 @@ async def montage_plan(body: MontagePlanRequest) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     beats = body.beats or _default_beats()
+    copy_resolution = None
+    if body.copy_v2_context is not None:
+        try:
+            copy_resolution = resolve_copy_execution_binding(
+                body.product_id,
+                "MONTAGE",
+                body.copy_v2_context,
+            )
+        except CopyExecutionResolutionError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"error": exc.code, "detail": exc.details or str(exc)},
+            ) from exc
     plans = plan_scenes_from_story(
         story_beats=beats,
         default_policy=default_policy,
@@ -188,6 +206,12 @@ async def montage_plan(body: MontagePlanRequest) -> dict[str, Any]:
         "execution_supported": True,
         "model": model,
         "duration_seconds": duration_seconds,
+        "copy_policy": "REQUIRED",
+        "copy_architecture_v2": (
+            copy_resolution.to_metadata(consumer_context=body.copy_v2_context)
+            if copy_resolution and copy_resolution.v2_enabled
+            else None
+        ),
     }
 
 
@@ -235,11 +259,13 @@ async def montage_execute_scenes(body: MontageExecuteRequest) -> dict[str, Any]:
         copy_fallback_confirmed=body.copy_fallback_confirmed,
         model=model,
         duration_seconds=duration_seconds,
+        copy_v2_context=body.copy_v2_context,
     )
     payload = report.to_dict()
     payload["hook_id"] = body.hook_id
     payload["background_id"] = body.background_id
     payload["execution_supported"] = True
+    payload["copy_policy"] = "REQUIRED"
     return payload
 
 
@@ -355,6 +381,7 @@ async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
             background_id=body.background_id,
             model=body.model,
             duration_seconds=body.duration_seconds,
+            copy_v2_context=body.copy_v2_context,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

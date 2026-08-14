@@ -34,6 +34,7 @@ import {
 	fetchWorkspacePackageReadiness,
 } from "../api/workspacePackages";
 import BackendVersionBanner from "../components/BackendVersionBanner";
+import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
 import NativeExtendPanel from "../components/NativeExtendPanel";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
@@ -2374,6 +2375,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				<div className="mb-4">
 					<BackendVersionBanner onRuntimeStaleChange={setBackendRuntimeStale} />
 				</div>
+				{!isImageMode ? (
+					<CopyArchitectureV2LaneCard
+						lane={mode === "HYBRID" ? "HYBRID" : mode}
+						productId={selectedProduct?.id}
+						execution={workspacePackage?.copy_architecture_v2}
+					/>
+				) : null}
 
 				<div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row">
 					<main className="min-w-0 space-y-3 pb-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">

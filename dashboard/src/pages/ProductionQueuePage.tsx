@@ -23,6 +23,7 @@ import {
 	retryProductionRun,
 	startProductionRun,
 } from "../api/productionQueue";
+import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 
 // PRODUCTION QUEUE — the ONLY place where approved prompt packages are
 // executed against Google Flow. Fail-closed: every run starts as a
@@ -320,6 +321,16 @@ export default function ProductionQueuePage() {
 					</div>
 				)}
 			</section>
+
+			<CopyArchitectureV2LaneCard
+				lane="PRODUCTION_STUDIO_P6"
+				productId={detail?.items?.[0]?.product_id ?? null}
+				execution={
+					detail?.items?.[0] &&
+						((detail.items[0] as unknown as { copy_architecture_v2?: Record<string, unknown> })
+							.copy_architecture_v2 ?? null)
+				}
+			/>
 
 			{/* Runs table */}
 			<section className="rounded-2xl border border-slate-800 bg-slate-950/80 overflow-hidden">

@@ -24,6 +24,7 @@ import {
 } from "../components/workflow";
 import ResultsSidebar, { type SessionResult } from "../components/workspace/ResultsSidebar";
 import NativeExtendPanel from "../components/NativeExtendPanel";
+import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import CanonicalReferenceBindingControls, {
 	EMPTY_BINDING,
 	type CanonicalReferenceBinding,
@@ -524,10 +525,16 @@ export default function FacelessVideoPage() {
 						clip automatically. Credits spent only when you press Generate.
 					</p>
 				</div>
-				{settingsLoading ? (
+			{settingsLoading ? (
 					<span className="text-[11px] text-slate-500">Loading settings…</span>
 				) : null}
 			</header>
+
+			<CopyArchitectureV2LaneCard
+				lane="FACELESS"
+				productId={selectedProduct?.id}
+				execution={workspacePackage?.copy_architecture_v2}
+			/>
 
 			<div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
 				<div className="min-h-0 space-y-3 overflow-y-auto pr-1">

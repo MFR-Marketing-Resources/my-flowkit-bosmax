@@ -612,7 +612,10 @@ async def require_complete_plan_snapshot(plan_id: str) -> dict[str, Any]:
 
 
 def _request_snapshot(body: ProductionPlanCreateRequest) -> dict[str, Any]:
-    return body.model_dump(mode="json", exclude_none=False)
+    snapshot = body.model_dump(mode="json", exclude_none=False)
+    if snapshot.get("copy_v2_context") is None:
+        snapshot.pop("copy_v2_context", None)
+    return snapshot
 
 
 def _video_allocations(plan: dict[str, Any]) -> dict[str, int]:
@@ -1214,6 +1217,8 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
         "controlled_reuse_max_per_dna": body.controlled_reuse_max_per_dna,
         "product_video_allocations": allocation_snapshot,
     }
+    if body.copy_v2_context is not None:
+        pool_snapshot["copy_v2_context"] = body.copy_v2_context
     if availability is not None:
         pool_snapshot["treatment_ids"] = availability[
             "selected_treatment_ids"

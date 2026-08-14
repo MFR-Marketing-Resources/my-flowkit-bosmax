@@ -17,6 +17,10 @@ from agent.services.poster_prompt_draft_service import (
     PosterPromptDraftValidationError,
 )
 from agent.services.creative_direction_service import CreativeDirectionError
+from agent.services.copy_execution_resolver import (
+    CopyExecutionResolutionError,
+    resolve_copy_execution_binding,
+)
 from agent.models.poster_campaign_design_brief import (
     CampaignCopyRoutesRequest,
     CampaignDesignBriefRequest,
@@ -87,7 +91,33 @@ async def get_poster_builder_settings() -> PosterBuilderSettingsResponse:
 async def create_poster_prompt_draft(body: PosterPromptDraftRequest):
     """Assemble a poster prompt package from product readiness + operator copy fields."""
     try:
-        result = await PosterPromptDraftService.build_draft(body)
+        resolution = resolve_copy_execution_binding(
+            body.product_id,
+            "POSTER_BUILDER",
+            body.copy_v2_context,
+        )
+        request = body
+        if resolution.v2_enabled and resolution.projection is not None:
+            derived = resolution.projection.derived_copy
+            request = body.model_copy(
+                update={
+                    "hook": derived.hook if derived else "",
+                    "subhook": "",
+                    "usp_1": derived.body if derived else "",
+                    "usp_2": "",
+                    "usp_3": "",
+                    "cta": derived.cta if derived else "",
+                    "copy_source": "APPROVED_COPY_SET",
+                    "copy_fallback_confirmed": False,
+                    "poster_copy_set_id": "",
+                }
+            )
+        result = await PosterPromptDraftService.build_draft(request)
+    except CopyExecutionResolutionError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "detail": exc.details or str(exc)},
+        ) from exc
     except CreativeDirectionError as exc:
         raise HTTPException(
             status_code=422,
@@ -104,7 +134,19 @@ async def create_poster_prompt_draft(body: PosterPromptDraftRequest):
                 "field_errors": exc.field_errors,
             },
         ) from exc
-    return result.model_dump(mode="json")
+    payload = result.model_dump(mode="json")
+    if resolution.v2_enabled:
+        payload["copy_architecture_v2"] = resolution.to_metadata(
+            consumer_context=body.copy_v2_context
+        )
+        if resolution.binding is not None:
+            payload["copy_execution_binding"] = resolution.binding.model_dump(mode="json")
+    else:
+        # The V2 response fields are additive. Keep the flag-off legacy payload
+        # byte-shape unchanged while still exposing the fields for V2 callers.
+        payload.pop("copy_architecture_v2", None)
+        payload.pop("copy_execution_binding", None)
+    return payload
 
 
 @router.post("/copy-recommendations")

@@ -48,6 +48,16 @@ def test_lane_matrix_endpoint_returns_all_eleven_lanes():
     assert {row["copy_policy"] for row in body["items"]} == {"REQUIRED", "NOT_REQUIRED"}
 
 
+def test_consumer_status_is_read_only_and_provider_free():
+    response = _client().get("/api/copy-architecture/v2/consumer-status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["feature_flags"]["state"] == "OFF"
+    assert body["legacy_path_unchanged"] is True
+    assert body["provider_calls"] == 0
+    assert body["credit_spend"] is False
+
+
 def test_validate_endpoint_is_read_only_and_exposes_production_gate():
     response = _client().post("/api/copy-architecture/v2/validate", json=_payload(_blueprint()))
     assert response.status_code == 200

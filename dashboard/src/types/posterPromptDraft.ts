@@ -35,6 +35,7 @@ export interface PosterPromptDraftRequest {
 	copy_fallback_confirmed?: boolean;
 	poster_recipe_id?: string;
 	poster_copy_set_id?: string;
+	copy_v2_context?: Record<string, unknown> | null;
 }
 
 export interface PosterPromptDraftResponse {
@@ -60,4 +61,6 @@ export interface PosterPromptDraftResponse {
 	poster_spec?: PosterSpec | null;
 	overlay_spec?: OverlaySpec | null;
 	composition_plan?: Record<string, unknown>;
+	copy_architecture_v2?: Record<string, unknown> | null;
+	copy_execution_binding?: Record<string, unknown> | null;
 }

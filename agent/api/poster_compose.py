@@ -26,6 +26,10 @@ from agent.services.poster_deliverable_service import (
     PosterDeliverableService,
 )
 from agent.services.creative_direction_service import CreativeDirectionError
+from agent.services.copy_execution_resolver import (
+    CopyExecutionResolutionError,
+    resolve_copy_execution_binding,
+)
 
 router = APIRouter(prefix="/poster", tags=["poster-compose"])
 
@@ -36,13 +40,17 @@ def _http(exc: Exception, code: str, status_code: int) -> HTTPException:
 
 class ComposeRequest(BaseModel):
     product_id: str
-    poster_copy_set_id: str
+    # Legacy callers may still provide an approved poster Copy Set.  V2
+    # callers bind from the explicit blueprint context and do not need a
+    # legacy identifier.
+    poster_copy_set_id: str = ""
     recipe_id: str
     background_media_id: str = ""
     background_local_path: str = ""
     image_model: str = ""
     creative_mode: str | None = None
     settings: dict[str, Any] = Field(default_factory=dict)
+    copy_v2_context: dict[str, Any] | None = None
 
 
 class CompositionPlanPreviewRequest(BaseModel):
@@ -87,7 +95,12 @@ async def composition_plan_preview(req: CompositionPlanPreviewRequest):
 @router.post("/compose")
 async def compose_poster(req: ComposeRequest):
     try:
-        return await PosterDeliverableService.compose_poster(
+        resolution = resolve_copy_execution_binding(
+            req.product_id,
+            "POSTER_BUILDER",
+            req.copy_v2_context,
+        )
+        result = await PosterDeliverableService.compose_poster(
             product_id=req.product_id,
             poster_copy_set_id=req.poster_copy_set_id,
             recipe_id=req.recipe_id,
@@ -96,7 +109,29 @@ async def compose_poster(req: ComposeRequest):
             image_model=req.image_model,
             creative_mode=req.creative_mode,
             settings=req.settings,
+            copy_v2_projection=(
+                {
+                    **resolution.projection.model_dump(mode="json"),
+                    "metadata": resolution.to_metadata(
+                        consumer_context=req.copy_v2_context
+                    ),
+                }
+                if resolution.v2_enabled and resolution.projection is not None
+                else None
+            ),
         )
+        if resolution.v2_enabled:
+            result["copy_architecture_v2"] = resolution.to_metadata(
+                consumer_context=req.copy_v2_context
+            )
+            if resolution.binding is not None:
+                result["copy_execution_binding"] = resolution.binding.model_dump(mode="json")
+        return result
+    except CopyExecutionResolutionError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "detail": exc.details or str(exc)},
+        ) from exc
     except PosterDeliverableError as exc:
         raise _http(exc, exc.code, exc.status_code)
     except CreativeDirectionError as exc:

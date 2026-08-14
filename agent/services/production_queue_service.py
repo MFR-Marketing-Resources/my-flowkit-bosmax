@@ -434,6 +434,14 @@ async def build_execution_payload(pkg: dict, run_config: dict | None = None) -> 
     """
     cfg = run_config or {}
     blockers: list[str] = []
+    v2_handoff = _loads(pkg.get("resolver_output_json"), {})
+    if not isinstance(v2_handoff, dict):
+        v2_handoff = {}
+    if v2_handoff.get("v2_enabled"):
+        if v2_handoff.get("status") != "READY":
+            blockers.append(
+                "COPY_V2_BINDING_NOT_READY:" + str(v2_handoff.get("status") or "UNKNOWN")
+            )
     logical_mode = (pkg.get("logical_mode") or "").strip().upper()
     if not logical_mode:
         # Legacy packages: derive from stored mode/source_lane without relabelling.
@@ -547,6 +555,10 @@ async def build_execution_payload(pkg: dict, run_config: dict | None = None) -> 
         "logical_mode": logical_mode,
         "execution_lane": planner.EXECUTION_LANES.get(logical_mode, engine_mode),
     }
+    if v2_handoff.get("v2_enabled"):
+        payload["copy_architecture_v2"] = v2_handoff
+        if v2_handoff.get("binding"):
+            payload["copy_execution_binding"] = v2_handoff["binding"]
     return payload, blockers
 
 

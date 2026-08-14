@@ -10,6 +10,7 @@ import type {
 	WorkspacePromptPreviewResult,
 } from "../../types";
 import { productSubjectAsset } from "../../utils/productSubjectAsset";
+import CopyArchitectureV2LaneCard from "../copywriting/CopyArchitectureV2LaneCard";
 import WorkspaceImageAssetSlot from "./WorkspaceImageAssetSlot";
 
 interface IMGModuleProps {
@@ -330,6 +331,11 @@ export default function IMGModule({
 			className={`space-y-6 ${compact ? "" : "xl:grid xl:grid-cols-[minmax(0,1fr)_18rem] xl:items-start xl:gap-6 xl:space-y-0"}`}
 		>
 			<div className="space-y-6 pb-12">
+				<CopyArchitectureV2LaneCard
+					lane="IMAGE_GEN"
+					productId={selectedProduct?.id ?? workspacePackage?.product_id}
+					execution={workspacePackage?.copy_architecture_v2}
+				/>
 				<section className="space-y-4">
 					<h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest">
 						1. Visual Assets (Subject / Scene / Style)

@@ -93,6 +93,7 @@ export interface CreateProductionPlanRequest {
 	controlled_reuse_reason: string | null;
 	controlled_reuse_max_per_dna: number;
 	execution_policy: Record<string, unknown>;
+	copy_v2_context?: Record<string, unknown> | null;
 }
 
 export interface ProductVideoAllocation {
