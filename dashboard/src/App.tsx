@@ -36,14 +36,16 @@ import {
 	useWebSocketContext,
 	WebSocketProvider,
 } from "./contexts/WebSocketContext";
+import {
+	DEACTIVATED_SURFACE_REDIRECTS,
+	isDeactivatedSurfacePath,
+} from "./deactivatedSurfaces";
 import ApprovedPackagesPage from "./pages/ApprovedPackagesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
 import AvatarRegistryPage from "./pages/AvatarRegistryPage";
 import SceneContextRegistryPage from "./pages/SceneContextRegistryPage";
 import CreativeLibraryPage from "./pages/CreativeLibraryPage";
 import CreativeProductionStudioPage from "./pages/CreativeProductionStudioPage";
-import ImgCockpitPage from "./pages/ImgCockpitPage";
-import ImgFastlanePage from "./pages/ImgFastlanePage";
 import CreativeLibraryWorkspacePage from "./pages/CreativeLibraryWorkspacePage";
 import CockpitSettingsPage from "./pages/CockpitSettingsPage";
 import CopyIntelligencePage from "./pages/CopyIntelligencePage";
@@ -71,7 +73,7 @@ import WorkspaceJobsPage from "./pages/WorkspaceJobsPage";
 import LibraryPage from "./pages/LibraryPage";
 import type { TelemetrySummary } from "./types";
 
-const NAV_GROUPS = [
+const ALL_NAV_GROUPS = [
 	{
 		label: "VIDEO PRODUCTION",
 		items: [
@@ -195,6 +197,11 @@ const NAV_GROUPS = [
 		],
 	},
 ];
+
+const NAV_GROUPS = ALL_NAV_GROUPS.map((group) => ({
+	...group,
+	items: group.items.filter((item) => !isDeactivatedSurfacePath(item.to)),
+}));
 
 function PageTitle() {
 	const loc = useLocation();
@@ -380,7 +387,7 @@ function Layout() {
 		{ to: "/workspace/generation-packages", label: "Bank" },
 		{ to: "/workspace/jobs", label: "Jobs" },
 		{ to: "/troubleshoot", label: "Issues" },
-	];
+	].filter((link) => !isDeactivatedSurfacePath(link.to));
 
 	const portalLiveLabel = portalSummary
 		? `${portalSummary.processing + portalSummary.flow_running} live • ${portalSummary.queued + portalSummary.waiting_flow} waiting • ${portalSummary.failed} failed`
@@ -553,10 +560,20 @@ function Layout() {
 						<Route
 							path="/operator"
 							element={
-								<Navigate to={withPortalQuery("/operator/f2v")} replace />
+								<Navigate to={withPortalQuery("/operator/hybrid")} replace />
 							}
 						/>
-						<Route path="/operator/t2v" element={<OperatorPage mode="T2V" />} />
+						{Object.entries(DEACTIVATED_SURFACE_REDIRECTS).map(
+							([path, redirectTo]) => (
+								<Route
+									key={path}
+									path={path}
+									element={
+										<Navigate to={withPortalQuery(redirectTo)} replace />
+									}
+								/>
+							),
+						)}
 						<Route
 							path="/operator/hybrid"
 							element={<OperatorPage mode="HYBRID" />}
@@ -578,9 +595,6 @@ function Layout() {
 							path="/reporting/operations"
 							element={<ReportingOperationsPage />}
 						/>
-						<Route path="/operator/f2v" element={<OperatorPage mode="F2V" />} />
-						<Route path="/operator/i2v" element={<OperatorPage mode="I2V" />} />
-						<Route path="/operator/img" element={<OperatorPage mode="IMG" />} />
 						<Route path="/operator/faceless" element={<FacelessVideoPage />} />
 						<Route path="/operator/montage" element={<MontagePage />} />
 						<Route path="/workspace/jobs" element={<WorkspaceJobsPage />} />
@@ -622,14 +636,6 @@ function Layout() {
 						<Route
 							path="/assets/product-type-registry"
 							element={<ProductTypeRegistryPage />}
-						/>
-						<Route
-							path="/assets/img-cockpit"
-							element={<ImgCockpitPage />}
-						/>
-						<Route
-							path="/assets/img-fastlane"
-							element={<ImgFastlanePage />}
 						/>
 						<Route
 							path="/assets/creative-library"

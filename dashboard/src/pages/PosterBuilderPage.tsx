@@ -1598,10 +1598,10 @@ export default function PosterBuilderPage() {
 					</div>
 					<nav className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
 						<a
-							href="/assets/img-cockpit"
+							href="/library/images"
 							className="rounded-lg border border-v4-accent/30 bg-v4-accent/10 px-3 py-1.5 text-v4-accent-ink"
 						>
-							IMG Cockpit ↗
+							Image Library ↗
 						</a>
 						<a
 							href="/creative/copy-registry"

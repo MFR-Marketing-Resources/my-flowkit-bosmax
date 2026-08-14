@@ -593,6 +593,8 @@ domains:
       - agent/api/flow.py
       - dashboard/src/pages/LibraryPage.tsx
       - dashboard/src/App.tsx
+      - dashboard/src/deactivatedSurfaces.ts
+      - dashboard/src/deactivatedSurfaces.test.ts
       - dashboard/src/pages/OperatorPage.tsx
       - dashboard/src/pages/OperatorPage.promptRepresentation.component.test.tsx
       - dashboard/src/pages/OperatorPage.rpaSelectors.component.test.tsx

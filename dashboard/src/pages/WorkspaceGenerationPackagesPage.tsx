@@ -94,10 +94,6 @@ const SURFACE_FILTERS = [
 
 const MODE_OPERATOR_ROUTE: Record<string, string> = {
 	HYBRID: "/operator/hybrid",
-	T2V: "/operator/t2v",
-	F2V: "/operator/f2v",
-	I2V: "/operator/i2v",
-	IMG: "/operator/img",
 };
 
 function getOperatorSurfaceMode(pkg: WorkspaceGenerationPackage): string {
@@ -1124,7 +1120,7 @@ export default function WorkspaceGenerationPackagesPage() {
 					{detailPkg && getOperatorSurfaceRoute(detailPkg) && (
 						<button
 							type="button"
-							onClick={() => navigate(getOperatorSurfaceRoute(detailPkg) ?? "/operator/f2v")}
+							onClick={() => navigate(getOperatorSurfaceRoute(detailPkg) ?? "/operator/hybrid")}
 							className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2.5 text-sm font-semibold text-blue-100 hover:bg-blue-500/20"
 						>
 							→ Open {getOperatorSurfaceLabel(detailPkg)} Workspace
