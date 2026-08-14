@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+	avatarRegistryLabel,
+	avatarRegistryPreviewUrl,
 	buildAvatarRegistryReferenceAssets,
 	filterRecipesToAvatarRegistry,
 	resolveAvatarRegistryCode,
@@ -81,5 +83,37 @@ describe("Avatar Registry authority", () => {
 				display_name: "Farah — BOS_F_FARAH_01",
 			},
 		]);
+	});
+
+	it("renders canonical names and lower-case variants without code duplication", () => {
+		expect(
+			avatarRegistryLabel({
+				avatar_code: "BOS_F_ALYA_01",
+				character_name: "Alya",
+				variant: "Modest creator",
+			}),
+		).toBe("Alya · Modest creator");
+		expect(
+			avatarRegistryLabel({
+				avatar_code: "BOS_F_ALYA_01",
+				character_name: "BOS_F_ALYA_01",
+			}),
+		).toBe("BOS_F_ALYA_01");
+	});
+
+	it("falls back to the generated registry asset preview endpoint", () => {
+		const row = {
+			avatar_code: "BOS_F_ALYA_01",
+			generated_asset_id: "ca alya/01",
+		};
+		expect(avatarRegistryPreviewUrl(row, {})).toBe(
+			"/api/creative-assets/ca%20alya%2F01/preview",
+		);
+		expect(
+			avatarRegistryPreviewUrl(row, {
+				"ca alya/01": "/approved-preview.jpg",
+			}),
+		).toBe("/approved-preview.jpg");
+		expect(avatarRegistryPreviewUrl({}, {})).toBeNull();
 	});
 });

@@ -59,12 +59,31 @@ import {
 } from "../components/workflow";
 import ResultsSidebar from "../components/workspace/ResultsSidebar";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
+import { collectProductionSessionResults } from "../utils/videoSessionResults";
 
 const splitValues = (value: string) =>
 	value
 		.split(/[\n,]/)
 		.map((item) => item.trim())
 		.filter(Boolean);
+
+function assertPlanDetailBound(planId: string, detail: PlanDetail): void {
+	const itemIds = new Set(detail.items.map((item) => item.item_id));
+	const planIdMismatch =
+		detail.plan.plan_id !== planId ||
+		detail.snapshot.plan_id !== planId ||
+		detail.waves.some((row) => row.plan_id !== planId) ||
+		detail.batches.some((row) => row.plan_id !== planId) ||
+		detail.items.some((item) => item.plan_id !== planId) ||
+		detail.audit_events.some((row) => row.plan_id !== planId) ||
+		detail.attempts.some((attempt) => !itemIds.has(attempt.item_id)) ||
+		detail.qa.some((row) => !itemIds.has(String(row.item_id ?? "")));
+	if (planIdMismatch) {
+		throw new Error(
+			"Selected plan response is internally inconsistent. No plan data was rendered.",
+		);
+	}
+}
 
 const blockerMessage = (code: string) => {
 	if (/PRODUCT_REFERENCE|PRODUCT_ASSET|PRODUCT_IMAGE/.test(code)) {
@@ -238,6 +257,19 @@ export default function CreativeProductionStudioPage() {
 		controlledReuseReason: "",
 		controlledReuseMaxPerDna: 1,
 	});
+	const approvedAvatarOptions = useMemo(() => {
+		const seen = new Set<string>();
+		return (poolAuthority?.avatar_profiles ?? []).filter((profile) => {
+			const code = String(profile.avatar_code || "").trim();
+			if (!code || seen.has(code)) return false;
+			seen.add(code);
+			return true;
+		});
+	}, [poolAuthority]);
+	const sessionResults = useMemo(
+		() => collectProductionSessionResults(detail),
+		[detail],
+	);
 
 	const loadPlan = useCallback(async (planId: string) => {
 		const requestSequence = ++planRequestSequence.current;
@@ -252,23 +284,7 @@ export default function CreativeProductionStudioPage() {
 		try {
 			const fetchedDetail = await fetchProductionPlan(planId);
 			if (requestSequence !== planRequestSequence.current) return null;
-			const itemIds = new Set(fetchedDetail.items.map((item) => item.item_id));
-			const planIdMismatch =
-				fetchedDetail.plan.plan_id !== planId ||
-				fetchedDetail.snapshot.plan_id !== planId ||
-				fetchedDetail.waves.some((row) => row.plan_id !== planId) ||
-				fetchedDetail.batches.some((row) => row.plan_id !== planId) ||
-				fetchedDetail.items.some((item) => item.plan_id !== planId) ||
-				fetchedDetail.audit_events.some((row) => row.plan_id !== planId) ||
-				fetchedDetail.attempts.some(
-					(attempt) => !itemIds.has(attempt.item_id),
-				) ||
-				fetchedDetail.qa.some((row) => !itemIds.has(String(row.item_id ?? "")));
-			if (planIdMismatch) {
-				throw new Error(
-					"Selected plan response is internally inconsistent. No plan data was rendered.",
-				);
-			}
+			assertPlanDetailBound(planId, fetchedDetail);
 			setDetail(fetchedDetail);
 			setStudioMode(
 				fetchedDetail.snapshot.completeness === "COMPLETE"
@@ -307,6 +323,49 @@ export default function CreativeProductionStudioPage() {
 	useEffect(() => {
 		void refresh().catch((reason) => setError(String(reason)));
 	}, [refresh]);
+
+	useEffect(() => {
+		if (!selectedPlanId || detail?.plan.status !== "RUNNING") return;
+		let active = true;
+		let inFlight = false;
+		const requestSequence = planRequestSequence.current;
+		const poll = async () => {
+			if (inFlight) return;
+			inFlight = true;
+			try {
+				const fetchedDetail = await fetchProductionPlan(selectedPlanId);
+				if (
+					!active ||
+					requestSequence !== planRequestSequence.current
+				)
+					return;
+				assertPlanDetailBound(selectedPlanId, fetchedDetail);
+				setDetail(fetchedDetail);
+				setPlans((current) =>
+					current.map((plan) =>
+						plan.plan_id === selectedPlanId ? fetchedDetail.plan : plan,
+					),
+				);
+			} catch (reason) {
+				if (
+					active &&
+					requestSequence === planRequestSequence.current
+				) {
+					setError(
+						reason instanceof Error ? reason.message : String(reason),
+					);
+				}
+			} finally {
+				inFlight = false;
+			}
+		};
+		void poll();
+		const timer = window.setInterval(() => void poll(), 5000);
+		return () => {
+			active = false;
+			window.clearInterval(timer);
+		};
+	}, [detail?.plan.status, selectedPlanId]);
 
 	useEffect(() => {
 		void fetchVideoModels()
@@ -376,6 +435,23 @@ export default function CreativeProductionStudioPage() {
 			active = false;
 		};
 	}, [poolAuthorityProductKey, form.logicalMode]);
+
+	useEffect(() => {
+		if (!poolAuthority) return;
+		const availableCodes = approvedAvatarOptions.map((profile) =>
+			String(profile.avatar_code || "").trim(),
+		);
+		const allowed = new Set(availableCodes);
+		setForm((current) => {
+			const retained = splitValues(current.avatarCodes).filter((code) =>
+				allowed.has(code),
+			);
+			const nextCodes = retained.length ? retained : availableCodes;
+			const nextValue = nextCodes.join(",");
+			if (nextValue === current.avatarCodes) return current;
+			return { ...current, avatarCodes: nextValue };
+		});
+	}, [approvedAvatarOptions, poolAuthority]);
 
 	useEffect(() => {
 		const requestSequence = ++treatmentAvailabilitySequence.current;
@@ -1845,7 +1921,7 @@ export default function CreativeProductionStudioPage() {
 											{
 												key: "avatarCodes",
 												label: "Product-first approved avatars",
-												options: poolAuthority?.avatar_profiles ?? [],
+												options: approvedAvatarOptions,
 												valueKey: "avatar_code",
 												labelKeys: ["character_name", "variant"],
 											},
@@ -1884,7 +1960,71 @@ export default function CreativeProductionStudioPage() {
 												valueKey: "recipe_id",
 												labelKeys: ["name", "layout_family"],
 											},
-										].map(({ key, label, options, valueKey, labelKeys }) => (
+									].map(({ key, label, options, valueKey, labelKeys }) => {
+										if (key === "avatarCodes") {
+											const selectedCodes = new Set(
+												splitValues(form.avatarCodes),
+											);
+											return (
+												<fieldset
+													key={key}
+													className="rounded-lg border border-slate-700 bg-slate-900/60 p-3 text-xs text-slate-300"
+													data-testid="p6-avatar-pool"
+												>
+													<legend className="px-1 text-slate-400">{label}</legend>
+													<div className="mt-1 grid gap-2 sm:grid-cols-2">
+														{options.length ? (
+															options.map((option) => {
+																const value = String(option[valueKey] ?? "").trim();
+																const descriptor = labelKeys
+																	.map((labelKey) =>
+																		String(option[labelKey] ?? "").trim(),
+																	)
+																	.filter(Boolean)
+																	.join(" · ");
+																const optionLabel = `${descriptor || value} — ${value}`;
+																return (
+																	<label
+																		key={value}
+																		className="flex items-start gap-2 rounded border border-slate-700 bg-slate-950/70 px-2 py-2"
+																	>
+																		<input
+																			type="checkbox"
+																			aria-label={optionLabel}
+																			checked={selectedCodes.has(value)}
+																			onChange={(event) => {
+																				const checked = event.currentTarget.checked;
+																				setForm((current) => {
+																					const next = new Set(
+																						splitValues(current.avatarCodes),
+																					);
+																					if (checked) next.add(value);
+																					else next.delete(value);
+																					return {
+																						...current,
+																						avatarCodes: Array.from(next).join(","),
+																					};
+																				});
+																			}}
+																		/>
+																		<span>{optionLabel}</span>
+																	</label>
+																);
+															})
+														) : (
+															<span className="text-amber-300">
+																No product-approved avatar is available for this selection.
+															</span>
+														)}
+													</div>
+													<p className="mt-2 text-[10px] text-slate-500">
+														Product-approved avatars are included by default. Clear a checkbox
+														only when you intentionally want to remove that presenter.
+													</p>
+												</fieldset>
+											);
+										}
+										return (
 											<label key={key} className="text-xs text-slate-400">
 												{label}
 												<select
@@ -1918,7 +2058,8 @@ export default function CreativeProductionStudioPage() {
 													})}
 												</select>
 											</label>
-										))}
+										);
+									})}
 										<label className="text-xs text-slate-400">
 											Approved Creative Treatment IDs (optional override)
 											<textarea
@@ -2924,8 +3065,10 @@ export default function CreativeProductionStudioPage() {
 					<aside className="w-full 2xl:w-80 2xl:flex-none">
 						<div className="2xl:sticky 2xl:top-4">
 							<ResultsSidebar
-								results={[]}
-								generating={Boolean(busy)}
+								results={sessionResults}
+								generating={
+									Boolean(busy) || detail?.plan.status === "RUNNING"
+								}
 								mediaKind="video"
 								libraryHref="/library/videos"
 							/>

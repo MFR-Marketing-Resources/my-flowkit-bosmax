@@ -70,6 +70,7 @@ vi.mock(
 	}),
 );
 
+import { collectProductionSessionResults } from "../utils/videoSessionResults";
 import CreativeProductionStudioPage from "./CreativeProductionStudioPage";
 
 const COHORT_SHA =
@@ -527,6 +528,13 @@ function prime() {
 
 async function selectPlan(planId: string) {
 	const select = await screen.findByLabelText("Select production plan");
+	await waitFor(() =>
+		expect(
+			Array.from((select as HTMLSelectElement).options).some(
+				(option) => option.value === planId,
+			),
+		).toBe(true),
+	);
 	fireEvent.change(select, { target: { value: planId } });
 	await screen.findByTestId("p6-plan-status", undefined, { timeout: 5000 });
 }
@@ -608,6 +616,119 @@ describe("P6.3-R2 production plan state isolation", () => {
 		expect(screen.getByTestId("p6-content-matrix")).toHaveTextContent(
 			"plan-b-item-4",
 		);
+	});
+
+	it("collects unique video outputs from item and attempt ledgers", () => {
+		const videoItem = {
+			...DETAILS["plan-b"].items[0],
+			media_type: "VIDEO" as const,
+			status: "PLANNED" as const,
+			output_media_id: "p6-video-1",
+		};
+		const imageItem = {
+			...DETAILS["plan-b"].items[1],
+			media_type: "IMAGE" as const,
+			status: "PLANNED" as const,
+			output_media_id: "p6-image-ignored",
+		};
+		const attempt = {
+			...DETAILS["plan-b"].attempts[0],
+			item_id: videoItem.item_id,
+			artifact_media_id: "p6-video-1",
+		};
+
+		const detail = {
+			...DETAILS["plan-b"],
+			items: [videoItem, imageItem],
+			attempts: [
+				attempt,
+				{ ...attempt, artifact_media_id: "p6-video-2" },
+			],
+		} as unknown as NonNullable<
+			Parameters<typeof collectProductionSessionResults>[0]
+		>;
+
+		expect(collectProductionSessionResults(detail)).toEqual([
+			{ media_id: "p6-video-1", kind: "video" },
+			{ media_id: "p6-video-2", kind: "video" },
+		]);
+	});
+
+	it("auto-selects product-approved avatars and allows independent checkbox changes", async () => {
+		fetchGovernedPoolAuthority.mockResolvedValue({
+			product_ids: ["product-a"],
+			logical_mode: "T2V",
+			products: [],
+			copy_sets: [],
+			poster_copy_sets: [],
+			avatar_profiles: [
+				{
+					avatar_code: "BOS_F_ALYA_01",
+					character_name: "Alya",
+					variant: "Product demo",
+				},
+			],
+			product_reference_assets: [],
+			finished_frame_assets: [],
+			character_assets: [],
+			scene_assets: [],
+			style_assets: [],
+			poster_recipes: [],
+			blockers: [],
+			copy_reuse_cap: 15,
+			near_duplicate_threshold: 0.8,
+			credit_spend: 0,
+		});
+		render(<CreativeProductionStudioPage />);
+		fireEvent.click(await screen.findByRole("button", { name: /Choose products/i }));
+		fireEvent.click(
+			await screen.findByRole("option", { name: /P6 Product A/i }),
+		);
+		fireEvent.click(
+			screen.getByText("Advanced approved pools and reuse controls"),
+		);
+		const avatar = await screen.findByRole("checkbox", {
+			name: "Alya · Product demo — BOS_F_ALYA_01",
+		});
+		await waitFor(() => expect(avatar).toBeChecked());
+		fireEvent.click(avatar);
+		expect(avatar).not.toBeChecked();
+	});
+
+	it("silently refreshes a running plan until its video reaches the results rail", async () => {
+		const running = {
+			...DETAILS["plan-b"],
+			plan: { ...DETAILS["plan-b"].plan, status: "RUNNING" as const },
+			snapshot: {
+				...DETAILS["plan-b"].snapshot,
+				status: "RUNNING" as const,
+			},
+		};
+		const completed = {
+			...running,
+			plan: { ...running.plan, status: "COMPLETED" as const },
+			snapshot: { ...running.snapshot, status: "COMPLETED" as const },
+			items: running.items.map((row, index) =>
+				index === 0
+					? { ...row, output_media_id: "p6-polled-video" }
+					: row,
+			),
+		};
+		fetchProductionPlan
+			.mockReset()
+			.mockResolvedValueOnce(running)
+			.mockResolvedValue(completed);
+
+		render(<CreativeProductionStudioPage />);
+		await selectPlan("plan-b");
+		await waitFor(() =>
+			expect(
+				document.querySelector(
+					'video[src="/api/flow/retrieved/p6-polled-video"]',
+				),
+			).not.toBeNull(),
+		);
+		expect(fetchProductionPlan).toHaveBeenCalledTimes(2);
 	});
 
 	it("ignores a late Plan A response after Plan B has been selected", async () => {

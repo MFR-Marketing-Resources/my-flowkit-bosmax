@@ -18,6 +18,8 @@ import { fetchProductCatalog } from "../api/products";
 import { fetchProductVisualReadiness } from "../api/productVisualOnboarding";
 import {
 	avatarRegistryCode,
+	avatarRegistryLabel,
+	avatarRegistryPreviewUrl,
 	fetchAvatarRegistryPool,
 	filterRecipesToAvatarRegistry,
 	resolveAvatarRegistryCode,
@@ -2613,8 +2615,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 														row.avatar_code || row.AvatarCode || "",
 													).trim();
 													if (!code) return null;
-													const label =
-														row.display_name || row.Name || row.name || row.Variant || code;
+													const label = avatarRegistryLabel(row);
 													return (
 														<option key={code} value={code}>
 															{label} — {code}
@@ -2634,17 +2635,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 											items={avatarRegistryPool
 												.map((row) => ({
 													value: String(row.avatar_code || row.AvatarCode || ""),
-													title: String(
-														row.character_name ||
-															row.display_name ||
-															row.Name ||
-															row.name ||
-															row.avatar_code ||
-															"Avatar",
-														),
+													title: avatarRegistryLabel(row),
 													subtitle: String(row.avatar_code || row.AvatarCode || ""),
-													previewUrl:
-														registryPreviewUrls[String(row.generated_asset_id || "")] || null,
+													previewUrl: avatarRegistryPreviewUrl(
+														row,
+														registryPreviewUrls,
+													),
 													status: "APPROVED",
 												}))
 												.filter((row) => Boolean(row.value))}
@@ -3866,12 +3862,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										{avatarRegistryPool.map((row) => {
 											const code = String(row.avatar_code || row.AvatarCode || "").trim();
 											if (!code) return null;
-											const label =
-												row.display_name ||
-												row.Name ||
-												row.name ||
-												row.Variant ||
-												code;
+											const label = avatarRegistryLabel(row);
 											return (
 												<option key={code} value={code}>
 													{label} — {code}
@@ -3880,7 +3871,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										})}
 									</select>
 								</label>
-								<VisualAssetPicker label="Avatar registry visual picker" value={registryAvatarId} onChange={(value) => setRegistryAvatarId(resolveAvatarRegistryCode(value, avatarRegistryPool))} items={avatarRegistryPool.map((row) => ({ value: String(row.avatar_code || row.AvatarCode || ""), title: String(row.character_name || row.display_name || row.Name || row.name || row.avatar_code || "Avatar"), subtitle: String(row.avatar_code || row.AvatarCode || ""), previewUrl: registryPreviewUrls[String(row.generated_asset_id || "")] || null, status: "APPROVED" })).filter((row) => Boolean(row.value))} />
+								<VisualAssetPicker label="Avatar registry visual picker" value={registryAvatarId} onChange={(value) => setRegistryAvatarId(resolveAvatarRegistryCode(value, avatarRegistryPool))} items={avatarRegistryPool.map((row) => ({ value: String(row.avatar_code || row.AvatarCode || ""), title: avatarRegistryLabel(row), subtitle: String(row.avatar_code || row.AvatarCode || ""), previewUrl: avatarRegistryPreviewUrl(row, registryPreviewUrls), status: "APPROVED" })).filter((row) => Boolean(row.value))} />
 								<label className="space-y-1 text-xs text-slate-200">
 									<span>Scene registry</span>
 									<select
