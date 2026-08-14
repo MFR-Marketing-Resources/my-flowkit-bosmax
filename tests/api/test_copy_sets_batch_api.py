@@ -63,49 +63,32 @@ def test_router_dry_run_default_false():
     assert req.dry_run is False
 
 
-def test_router_fails_when_provider_not_configured(monkeypatch):
-    async def fake_batch(request):
-        raise ai_provider.AICopyProviderNotConfigured(ai_provider.ERR_NOT_CONFIGURED)
-    monkeypatch.setattr(ai_svc, "generate_ai_copy_candidates_batch", fake_batch)
+def test_router_fails_closed_before_provider_for_legacy_batch():
     resp = _client().post("/api/copy-sets/generate-batch",
         json={"product_id": "test-id", "requested_count": 5})
-    assert resp.status_code == 409
+    assert resp.status_code == 410
+    assert resp.json()["detail"]["error"] == "LEGACY_COPY_GENERATION_DISABLED"
 
 
-def test_router_provider_error_returns_502(monkeypatch):
-    async def fake_batch(request):
-        raise ai_provider.AICopyProviderError(ai_provider.ERR_CALL_FAILED, detail="timeout")
-    monkeypatch.setattr(ai_svc, "generate_ai_copy_candidates_batch", fake_batch)
+def test_router_legacy_batch_never_returns_provider_error():
     resp = _client().post("/api/copy-sets/generate-batch",
         json={"product_id": "test-id", "requested_count": 5})
-    assert resp.status_code == 502
+    assert resp.status_code == 410
+    assert resp.json()["detail"]["error"] == "LEGACY_COPY_GENERATION_DISABLED"
 
 
-def test_router_product_not_found(monkeypatch):
-    async def fake_batch(request):
-        raise svc.CopySetError("PRODUCT_NOT_FOUND", status_code=404)
-    monkeypatch.setattr(ai_svc, "generate_ai_copy_candidates_batch", fake_batch)
+def test_router_legacy_batch_does_not_query_product():
     resp = _client().post("/api/copy-sets/generate-batch",
         json={"product_id": "test-id", "requested_count": 5})
-    assert resp.status_code == 404
+    assert resp.status_code == 410
+    assert resp.json()["detail"]["error"] == "LEGACY_COPY_GENERATION_DISABLED"
 
 
-def test_router_success_response_shape(monkeypatch):
-    """Router passes through service response correctly."""
-    async def fake_batch(request):
-        return {
-            "batch_id": "batch-abc", "product_id": "p1",
-            "requested_count": 5, "created_count": 2, "deduped_count": 1, "rejected_count": 0,
-            "provider": {}, "candidates": [], "ledger": {"batch_id": "batch-abc"},
-            "warnings": [], "dry_run": False,
-        }
-    monkeypatch.setattr(ai_svc, "generate_ai_copy_candidates_batch", fake_batch)
+def test_router_legacy_batch_never_returns_success():
     resp = _client().post("/api/copy-sets/generate-batch",
         json={"product_id": "p1", "requested_count": 5})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["batch_id"] == "batch-abc"
-    assert "ledger" in body
+    assert resp.status_code == 410
+    assert resp.json()["detail"]["error"] == "LEGACY_COPY_GENERATION_DISABLED"
 
 
 # ═══════════════════════════════════════════════════════════

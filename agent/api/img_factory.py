@@ -58,7 +58,7 @@ from agent.services.product_reference_pack_service import (
 from agent.db import crud
 from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
-    resolve_copy_execution_binding,
+    resolve_persisted_copy_execution_binding,
 )
 
 
@@ -236,7 +236,7 @@ async def post_img_fastlane_preview(
     request: ImgFastlanePromptPreviewRequest,
 ) -> ImgFastlanePromptPreviewResponse:
     try:
-        resolution = resolve_copy_execution_binding(
+        resolution = await resolve_persisted_copy_execution_binding(
             request.product_id or "request-product",
             "IMG_FASTLANE",
             request.copy_v2_context,

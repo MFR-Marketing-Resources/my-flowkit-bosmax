@@ -134,6 +134,14 @@ domains:
       - dashboard/src/components/copywriting/CopyArchitectureV2LaneCard.test.tsx
       - tests/unit/test_copy_execution_resolver.py
       - docs/copywriting/COPY_ARCHITECTURE_V2_PHASE3_CUTOVER.md
+      # Formula-native Copy Register V2 clean cutover: isolated persistence,
+      # explicit approval, persisted consumer bindings, and zero-credit proof.
+      - agent/api/copy_register_v2.py
+      - agent/services/copy_register_v2_service.py
+      - dashboard/src/api/copyRegisterV2.ts
+      - tests/api/test_copy_register_v2_api.py
+      - tests/unit/test_copy_register_v2_cutover.py
+      - tests/unit/test_copy_architecture_v2_phase4_activation.py
       - docs/COPY_SELECTION_AND_COMPILER_BINDING_FOUNDATION_V1.md
       - docs/COPY_FALLBACK_EXPLICIT_CONFIRMATION_V1.md
       - agent/services/ai_copy_assist_service.py

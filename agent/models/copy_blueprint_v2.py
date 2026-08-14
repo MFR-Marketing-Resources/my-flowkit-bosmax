@@ -226,6 +226,29 @@ class ApprovedExecutionText(BaseModel):
     text: str = Field(min_length=1)
 
 
+class SemanticReviewProof(BaseModel):
+    """Immutable semantic review receipt required before V2 production use."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    decision: Literal["APPROVED", "REJECTED"]
+    reviewer: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    reviewed_at: str = Field(min_length=1)
+
+
+class ProductionReadinessProof(BaseModel):
+    """Explicit non-provider readiness gates for a production blueprint."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    readiness_validated: bool = False
+    provenance_validated: bool = False
+    safety_validated: bool = False
+    bridge_validated: bool = False
+    duration_validated: bool = False
+
+
 class StageTextDigest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -250,6 +273,8 @@ class ApprovalSnapshot(BaseModel):
     evidence_digest: str = Field(pattern=_SHA256_RE.pattern)
     approved_by: str = Field(min_length=1)
     approved_at: str = Field(min_length=1)
+    semantic_review: SemanticReviewProof | None = None
+    readiness_proof: ProductionReadinessProof | None = None
 
     @model_validator(mode="after")
     def _unique_stage_receipts(self) -> "ApprovalSnapshot":
@@ -300,7 +325,6 @@ class CopyBlueprintV2(BaseModel):
     version: Literal["2"] = V2_SCHEMA_VERSION
     blueprint_id: str = Field(min_length=1)
     product_id: str = Field(min_length=1)
-    copy_set_id: str = Field(min_length=1)
     revision: int = Field(ge=1)
     status: BlueprintStatus = "DRAFT"
     formula_id: str = ""
@@ -315,6 +339,8 @@ class CopyBlueprintV2(BaseModel):
     estimated_word_count: int = Field(default=0, ge=0)
     approval_snapshot: ApprovalSnapshot | None = None
     approved_execution_text: tuple[ApprovedExecutionText, ...] = Field(default_factory=tuple)
+    semantic_review: SemanticReviewProof | None = None
+    readiness_proof: ProductionReadinessProof | None = None
     provenance: tuple[ProvenanceEntry, ...] = Field(default_factory=tuple)
     product_truth_lineage: ProductTruthLineage
     supersedes: SupersessionRef | None = None

@@ -4620,6 +4620,135 @@ CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_event_plan ON product_t
             await db.execute("ALTER TABLE product_cutout_preparation ADD COLUMN product_isolation_status TEXT")
         await db.commit()
 
+        # Formula-native Copy Register V2 cutover.  These tables are additive
+        # and intentionally have no legacy copy_set/copy_component foreign key
+        # or column.  The ordered stage/evidence/approval JSON is the persisted
+        # V2 artifact; hook/body/CTA remain derived projections only.
+        copy_v2_cols_cursor = await db.execute("PRAGMA table_info(copy_blueprint_v2)")
+        copy_v2_existing_cols = {row[1] for row in await copy_v2_cols_cursor.fetchall()}
+        if copy_v2_existing_cols and "readiness_proof_json" not in copy_v2_existing_cols:
+            await db.execute(
+                "ALTER TABLE copy_blueprint_v2 ADD COLUMN readiness_proof_json TEXT"
+            )
+            await db.commit()
+        await db.executescript("""
+CREATE TABLE IF NOT EXISTS copy_blueprint_v2 (
+    blueprint_id                    TEXT NOT NULL,
+    product_id                      TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    revision                        INTEGER NOT NULL CHECK(revision >= 1),
+    status                          TEXT NOT NULL DEFAULT 'DRAFT'
+                                    CHECK(status IN ('DRAFT','REVIEW_REQUIRED','APPROVED','PRODUCTION_VALID','SUPERSEDED','BLOCKED')),
+    formula_id                      TEXT NOT NULL,
+    formula_version                 TEXT NOT NULL,
+    objective_json                  TEXT NOT NULL DEFAULT '{}',
+    angle_json                      TEXT NOT NULL DEFAULT '{}',
+    stages_json                     TEXT NOT NULL DEFAULT '[]',
+    component_refs_json             TEXT NOT NULL DEFAULT '[]',
+    evidence_refs_json              TEXT NOT NULL DEFAULT '[]',
+    product_truth_lineage_json      TEXT NOT NULL DEFAULT '{}',
+    product_truth_snapshot_id       TEXT NOT NULL
+                                    REFERENCES product_intelligence_snapshot(snapshot_id) ON DELETE RESTRICT,
+    product_truth_snapshot_version  INTEGER NOT NULL CHECK(product_truth_snapshot_version >= 1),
+    product_truth_snapshot_digest   TEXT NOT NULL CHECK(length(product_truth_snapshot_digest) = 64),
+    approved_execution_text_json     TEXT NOT NULL DEFAULT '[]',
+    approval_snapshot_json           TEXT,
+    semantic_review_json             TEXT,
+    readiness_proof_json             TEXT,
+    supersedes_json                  TEXT,
+    provenance_json                  TEXT NOT NULL DEFAULT '{}',
+    target_duration_seconds          REAL,
+    wps_profile                      TEXT,
+    estimated_word_count             INTEGER NOT NULL DEFAULT 0 CHECK(estimated_word_count >= 0),
+    blueprint_digest                 TEXT NOT NULL CHECK(length(blueprint_digest) = 64),
+    created_at                      TEXT NOT NULL,
+    approved_at                     TEXT,
+    approved_by                     TEXT,
+    PRIMARY KEY (blueprint_id, revision)
+);
+CREATE INDEX IF NOT EXISTS idx_copy_blueprint_v2_product
+    ON copy_blueprint_v2(product_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_copy_blueprint_v2_truth
+    ON copy_blueprint_v2(product_id, product_truth_snapshot_id, product_truth_snapshot_version);
+
+CREATE TABLE IF NOT EXISTS copy_evidence_fact_v2 (
+    product_id          TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    snapshot_id         TEXT NOT NULL
+                        REFERENCES product_intelligence_snapshot(snapshot_id) ON DELETE RESTRICT,
+    fact_id             TEXT NOT NULL,
+    fact_kind           TEXT NOT NULL,
+    canonical_text      TEXT NOT NULL,
+    text_digest         TEXT NOT NULL CHECK(length(text_digest) = 64),
+    snapshot_version    INTEGER NOT NULL CHECK(snapshot_version >= 1),
+    snapshot_status     TEXT NOT NULL,
+    approved            INTEGER NOT NULL DEFAULT 0 CHECK(approved IN (0,1)),
+    source_ref          TEXT,
+    created_at          TEXT NOT NULL,
+    PRIMARY KEY (snapshot_id, fact_id)
+);
+CREATE INDEX IF NOT EXISTS idx_copy_evidence_fact_v2_product
+    ON copy_evidence_fact_v2(product_id, snapshot_id, fact_kind);
+
+CREATE TABLE IF NOT EXISTS copy_execution_binding_v2 (
+    binding_id                  TEXT PRIMARY KEY,
+    blueprint_id                TEXT NOT NULL,
+    revision                    INTEGER NOT NULL CHECK(revision >= 1),
+    product_id                  TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    lane                        TEXT NOT NULL,
+    media_kind                  TEXT NOT NULL CHECK(media_kind IN ('VIDEO','IMAGE')),
+    copy_policy                 TEXT NOT NULL CHECK(copy_policy IN ('REQUIRED','NOT_REQUIRED')),
+    formula_id                  TEXT NOT NULL,
+    formula_version             TEXT NOT NULL,
+    approval_snapshot_id        TEXT NOT NULL,
+    product_truth_lineage_json  TEXT NOT NULL DEFAULT '{}',
+    evidence_lineage_json       TEXT NOT NULL DEFAULT '{}',
+    evidence_digest             TEXT NOT NULL CHECK(length(evidence_digest) = 64),
+    compiler_binding_version     TEXT NOT NULL,
+    feature_flag_state_json      TEXT NOT NULL DEFAULT '{}',
+    binding_status               TEXT NOT NULL DEFAULT 'BOUND'
+                                CHECK(binding_status IN ('BOUND','REVOKED')),
+    bound_at                    TEXT NOT NULL,
+    UNIQUE(blueprint_id, revision, lane),
+    FOREIGN KEY (blueprint_id, revision)
+        REFERENCES copy_blueprint_v2(blueprint_id, revision) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_copy_execution_binding_v2_product
+    ON copy_execution_binding_v2(product_id, lane, binding_status, bound_at);
+
+CREATE TRIGGER IF NOT EXISTS trg_copy_blueprint_v2_approved_immutable_update
+BEFORE UPDATE ON copy_blueprint_v2
+WHEN OLD.status IN ('APPROVED','PRODUCTION_VALID','SUPERSEDED')
+BEGIN
+    SELECT RAISE(ABORT, 'COPY_V2_APPROVED_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_copy_blueprint_v2_approved_immutable_delete
+BEFORE DELETE ON copy_blueprint_v2
+WHEN OLD.status IN ('APPROVED','PRODUCTION_VALID','SUPERSEDED')
+BEGIN
+    SELECT RAISE(ABORT, 'COPY_V2_APPROVED_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_copy_evidence_fact_v2_immutable_update
+BEFORE UPDATE ON copy_evidence_fact_v2
+BEGIN
+    SELECT RAISE(ABORT, 'COPY_V2_EVIDENCE_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_copy_evidence_fact_v2_immutable_delete
+BEFORE DELETE ON copy_evidence_fact_v2
+BEGIN
+    SELECT RAISE(ABORT, 'COPY_V2_EVIDENCE_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_copy_execution_binding_v2_immutable_update
+BEFORE UPDATE ON copy_execution_binding_v2
+BEGIN
+    SELECT RAISE(ABORT, 'COPY_V2_BINDING_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_copy_execution_binding_v2_immutable_delete
+BEFORE DELETE ON copy_execution_binding_v2
+BEGIN
+    SELECT RAISE(ABORT, 'COPY_V2_BINDING_IMMUTABLE');
+END;
+""")
+        await db.commit()
+
     logger.info("Database initialized at %s", DB_PATH)
 
 

@@ -28,7 +28,7 @@ from agent.services.poster_deliverable_service import (
 from agent.services.creative_direction_service import CreativeDirectionError
 from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
-    resolve_copy_execution_binding,
+    resolve_persisted_copy_execution_binding,
 )
 
 router = APIRouter(prefix="/poster", tags=["poster-compose"])
@@ -95,7 +95,7 @@ async def composition_plan_preview(req: CompositionPlanPreviewRequest):
 @router.post("/compose")
 async def compose_poster(req: ComposeRequest):
     try:
-        resolution = resolve_copy_execution_binding(
+        resolution = await resolve_persisted_copy_execution_binding(
             req.product_id,
             "POSTER_BUILDER",
             req.copy_v2_context,

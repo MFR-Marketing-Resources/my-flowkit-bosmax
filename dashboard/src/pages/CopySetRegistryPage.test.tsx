@@ -1,12 +1,6 @@
 import "@testing-library/jest-dom/vitest";
-import {
-	cleanup,
-	fireEvent,
-	render,
-	screen,
-	waitFor,
-} from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import CopySetRegistryPage from "./CopySetRegistryPage";
 
@@ -14,137 +8,117 @@ vi.mock("../components/workspace/SearchableProductSelect", () => ({
 	default: () => <div data-testid="product-picker">Product picker</div>,
 }));
 
-// The Copy Components panel is exercised by its own test; stub it here so the
-// page test does not fire its capacity/component API calls.
-vi.mock("../components/CopyComponentsPanel", () => ({
-	default: () => <div data-testid="copy-components-panel-mock" />,
+vi.mock("../api/products", () => ({ fetchProductCatalog: vi.fn() }));
+vi.mock("../api/copyRegisterV2", () => ({
+	fetchCopyRegisterFormulas: vi.fn(),
+	fetchCopyRegisterTruth: vi.fn(),
+	generateCopyRegisterAngles: vi.fn(),
+	generateFormulaCopyBlueprint: vi.fn(),
+	listCopyRegisterBlueprints: vi.fn(),
+	regenerateFormulaStage: vi.fn(),
+	approveFormulaBlueprint: vi.fn(),
 }));
 
-vi.mock("../api/products", () => ({
-	fetchProductCatalog: vi.fn().mockResolvedValue({
-		items: [
-			{
-				id: "p1",
-				raw_product_title: "Test Product",
-				product_display_name: "Test Product",
-				source: "MANUAL",
-				category: "Oil",
-			},
-		],
-	}),
-}));
-
-vi.mock("../api/copySets", () => ({
-	listCopySetsForProduct: vi.fn(),
-	generateCopySetBatch: vi.fn(),
-	generateCopySet: vi.fn(),
-	approveCopySet: vi.fn(),
-	rejectCopySet: vi.fn(),
-	patchCopySet: vi.fn(),
-	deleteCopySet: vi.fn(),
-	fetchCopyGrounding: vi.fn(),
-	fetchCopyFormulas: vi.fn().mockResolvedValue({ formulas: [] }),
-	cloneCopySetToProduct: vi.fn(),
-	runSimilarityBackfill: vi.fn(),
-	revalidateCopySet: vi.fn(),
-	submitSemanticReview: vi.fn(),
-}));
-
+import { fetchProductCatalog } from "../api/products";
 import {
-	approveCopySet,
-	cloneCopySetToProduct,
-	deleteCopySet,
-	fetchCopyGrounding,
-	generateCopySetBatch,
-	listCopySetsForProduct,
-	rejectCopySet,
-	runSimilarityBackfill,
-	revalidateCopySet,
-	submitSemanticReview,
-} from "../api/copySets";
+	approveFormulaBlueprint,
+	fetchCopyRegisterFormulas,
+	fetchCopyRegisterTruth,
+	generateCopyRegisterAngles,
+	generateFormulaCopyBlueprint,
+	listCopyRegisterBlueprints,
+} from "../api/copyRegisterV2";
 
-const mockedList = vi.mocked(listCopySetsForProduct);
-const mockedBatch = vi.mocked(generateCopySetBatch);
-const mockedApprove = vi.mocked(approveCopySet);
-const mockedReject = vi.mocked(rejectCopySet);
-const mockedDelete = vi.mocked(deleteCopySet);
-const mockedGrounding = vi.mocked(fetchCopyGrounding);
-const mockedClone = vi.mocked(cloneCopySetToProduct);
-const mockedBackfill = vi.mocked(runSimilarityBackfill);
-const mockedRevalidate = vi.mocked(revalidateCopySet);
-const mockedSemanticReview = vi.mocked(submitSemanticReview);
+const mockedCatalog = vi.mocked(fetchProductCatalog);
+const mockedFormulas = vi.mocked(fetchCopyRegisterFormulas);
+const mockedTruth = vi.mocked(fetchCopyRegisterTruth);
+const mockedAngles = vi.mocked(generateCopyRegisterAngles);
+const mockedGenerate = vi.mocked(generateFormulaCopyBlueprint);
+const mockedList = vi.mocked(listCopyRegisterBlueprints);
+const mockedApprove = vi.mocked(approveFormulaBlueprint);
 
-const sampleGrounding = {
+const product = {
+	id: "p1",
+	raw_product_title: "Synthetic Product",
+	product_display_name: "Synthetic Product",
+	source: "MANUAL",
+	category: "Skincare",
+};
+
+const fact = {
+	snapshot_id: "snapshot-p1-v1",
+	fact_id: "fact:p1:usp_json:0",
 	product_id: "p1",
-	grounded: true,
-	source: "FRAMEWORK_FAMILY",
-	family: "MALE_HEALTH_SENSITIVE",
-	is_stealth: true,
-	effective_route: "STEALTH",
-	copy_formula: "PAS / PESTA",
-	angle_strategies: ["stealth_masculinity", "wrapped_readiness", "maruah_and_ego"],
-	buyer_persona: {
-		audience: "Lelaki dewasa yang jaga maruah",
-		desires: ["yakin semula"],
-		fears: ["malu"],
-		pains: ["keyakinan menurun"],
-		objections: ["selamat ke?"],
-		triggers: ["ego", "maruah"],
-		tone: "wrapped, ego-aware",
-		pronoun: "aku / kau",
+	fact_kind: "USP",
+	text: "formula ringan",
+	text_digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	snapshot_version: 1,
+	snapshot_status: "APPROVED",
+	approved: true,
+};
+
+const truth = {
+	product_id: "p1",
+	product: {
+		display_name: "Synthetic Product",
+		category: "Skincare",
+		subcategory: "Serum",
+		product_type: "Topical",
+		product_family: "",
+		cluster: "",
 	},
-	product_knowledge: {
-		description: "",
-		benefits: [],
-		usps: [],
-		ingredients: "",
-		target_customer: "Lelaki dewasa yang jaga maruah",
-	},
-	claim_guardrails: {
-		claim_gate: "CLAIM_REVIEW_REQUIRED",
-		claim_risk_level: "HIGH",
-		allowed_claims: [],
+	product_truth: {
+		approved: true,
+		snapshot: {
+			snapshot_id: "snapshot-p1-v1",
+			version: 1,
+			status: "APPROVED",
+			digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			approved_by: "truth-reviewer",
+			approved_at: "2026-08-14T00:00:00Z",
+		},
+		lineage: {},
+		persona: { audience: "qualified buyers" },
+		allowed_claims: ["formula ringan"],
 		blocked_claims: [],
-		banned_terms: ["zakar", "cure"],
+		warnings: [],
 	},
-	missing: ["approved product-intelligence snapshot"],
+	facts: [fact],
+	blockers: [],
+	ready_for_copy: true,
 };
 
-const sampleSet = {
-	copy_set_id: "cs1",
-	product_id: "p1",
-	angle: "Trust",
-	hook: "Safe hook",
-	subhook: "Sub",
-	usp_set: ["a", "b", "c"],
-	cta: "Shop",
-	platform: "TIKTOK",
-	language: "BM_MS",
-	route_type: "DIRECT",
-	formula_family: "HSO",
-	status: "COPY_REVIEW_REQUIRED" as const,
-	dedupe_key: "k",
-	source: "AI_COPY_ASSIST",
-	provenance: {},
-	claim_review: {},
-	reviewer_note: null,
-	approved_at: null,
-	approved_by: null,
-	created_at: "2026-07-07T00:00:00Z",
-	updated_at: "2026-07-07T00:00:00Z",
-	// Script Library (Phase-1) fields
-	usage_count: 0,
-	last_used_at: null,
-	used_in_modes: [] as string[],
-	uniqueness_score: null,
-	similar_to_copy_set_id: null,
-	similarity_score: null,
-	archived: 0,
-};
+function blueprint(status: string = "DRAFT") {
+	return {
+		version: "2" as const,
+		blueprint_id: "bpv2_test",
+		product_id: "p1",
+		revision: 1,
+		status,
+		formula_id: "PAS",
+		formula_version: "pas.v1",
+		objective: { objective_id: "conversion", definition: "A grounded objective" },
+		angle: { angle_id: "angle:test:0", definition: "formula ringan" },
+		stages: [
+			{ stage_key: "stage-0-problem", order: 0, authored_text: "Problem", semantic_role: "problem", formula_stage_key: "problem", bridge: { entry: "OPEN", exit: "ONE", continuity_requirements: [] }, claim_bearing: true, fact_refs: [fact], validation: { valid: true, error_codes: [] } },
+			{ stage_key: "stage-1-agitate", order: 1, authored_text: "Agitate", semantic_role: "agitate", formula_stage_key: "agitate", bridge: { entry: "ONE", exit: "TWO", continuity_requirements: [] }, claim_bearing: true, fact_refs: [fact], validation: { valid: true, error_codes: [] } },
+			{ stage_key: "stage-2-solution", order: 2, authored_text: "Solution", semantic_role: "solution", formula_stage_key: "solution", bridge: { entry: "TWO", exit: "THREE", continuity_requirements: [] }, claim_bearing: true, fact_refs: [fact], validation: { valid: true, error_codes: [] } },
+			{ stage_key: "stage-3-cta", order: 3, authored_text: "CTA", semantic_role: "cta", formula_stage_key: "cta", bridge: { entry: "THREE", exit: "DONE", continuity_requirements: [] }, claim_bearing: false, fact_refs: [], validation: { valid: true, error_codes: [] } },
+		],
+		evidence_refs: [fact],
+		product_truth_lineage: {},
+		approval_snapshot: status === "PRODUCTION_VALID" ? {} : null,
+		semantic_review: status === "PRODUCTION_VALID" ? {} : null,
+		readiness_proof: status === "PRODUCTION_VALID" ? {} : null,
+		approved_execution_text: status === "PRODUCTION_VALID" ? [{ stage_key: "stage-0-problem", text: "Problem" }] : [],
+		estimated_word_count: 4,
+		v2_badge: status === "PRODUCTION_VALID" ? "V2 PRODUCTION_VALID" : null,
+	};
+}
 
-function renderPage(query = "?product_id=p1") {
+function renderPage() {
 	return render(
-		<MemoryRouter initialEntries={[`/creative/copy-registry${query}`]}>
+		<MemoryRouter initialEntries={["/creative/copy-registry?product_id=p1"]}>
 			<Routes>
 				<Route path="/creative/copy-registry" element={<CopySetRegistryPage />} />
 			</Routes>
@@ -152,356 +126,58 @@ function renderPage(query = "?product_id=p1") {
 	);
 }
 
-describe("CopySetRegistryPage", () => {
-	afterEach(() => cleanup());
-
+describe("CopySetRegistryPage V2 cutover", () => {
 	beforeEach(() => {
-		mockedList.mockReset();
-		mockedBatch.mockReset();
-		mockedApprove.mockReset();
-		mockedReject.mockReset();
-		mockedDelete.mockReset();
-		mockedGrounding.mockReset();
-		mockedRevalidate.mockReset();
-		mockedSemanticReview.mockReset();
-		mockedGrounding.mockResolvedValue(sampleGrounding);
-		mockedList.mockResolvedValue({ product_id: "p1", items: [sampleSet] });
-		mockedBatch.mockResolvedValue({
-			batch_id: "b1",
-			product_id: "p1",
-			requested_count: 5,
-			created_count: 5,
-			deduped_count: 0,
-			rejected_count: 0,
-			provider: { lane: "text_assist", configured: true, provider_id: "deepseek" },
-			candidates: [],
-			warnings: [],
-			dry_run: false,
+		mockedCatalog.mockResolvedValue({ items: [product] } as never);
+		mockedFormulas.mockResolvedValue({
+			formulas: [{
+				formula_id: "PAS",
+				formula_version: "pas.v1",
+				display_name: "Problem Agitate Solution",
+				definition_status: "CANONICAL",
+				compiler_family: "PAS",
+				slots: [],
+				best_for: [],
+				unsuitable_for: [],
+			}],
 		});
+		mockedTruth.mockResolvedValue(truth);
+		mockedList.mockResolvedValue({ product_id: "p1", items: [] });
+		mockedAngles.mockResolvedValue({
+			angles: [{ angle_id: "angle:test:0", definition: "formula ringan", evidence_fact_ids: [fact.fact_id], source: "APPROVED_PRODUCT_TRUTH" }],
+			facts: [fact],
+			formula_id: "PAS",
+			formula_version: "pas.v1",
+		});
+		mockedGenerate.mockResolvedValue({ blueprint: blueprint(), production_valid: false });
+		mockedApprove.mockResolvedValue({ blueprint: blueprint("PRODUCTION_VALID"), production_valid: true, badge: "V2 PRODUCTION_VALID" });
 	});
 
-	it("renders the registry and loads sets for the product", async () => {
+	it("walks product → truth → formula → angle/evidence → new V2 blueprint → approval", async () => {
 		renderPage();
 		expect(await screen.findByTestId("copy-set-registry-page")).toBeInTheDocument();
-		await waitFor(() => expect(mockedList).toHaveBeenCalledWith("p1"));
-		expect(await screen.findByTestId("generate-copy-sets")).toBeInTheDocument();
-		expect(await screen.findByText("Safe hook")).toBeInTheDocument();
-	});
+		expect(await screen.findByTestId("product-truth-proof")).toBeInTheDocument();
 
-	it("[UI smoke] renders the Formula picker and Prepare Product button", async () => {
-		renderPage();
-		expect(await screen.findByTestId("formula-picker")).toBeInTheDocument();
-		expect(
-			await screen.findByTestId("prepare-product-copywriting"),
-		).toBeInTheDocument();
-	});
+		fireEvent.change(await screen.findByTestId("v2-formula-picker"), { target: { value: "PAS" } });
+		fireEvent.click(await screen.findByTestId("generate-angle-options"));
+		await waitFor(() => expect(mockedAngles).toHaveBeenCalledWith({ product_id: "p1", formula_id: "PAS", objective: "conversion" }));
+		fireEvent.click(screen.getByRole("radio", { name: /formula ringan/ }));
+		fireEvent.click(screen.getByRole("checkbox"));
+		fireEvent.click(screen.getByTestId("generate-new-formula-copy"));
+		await waitFor(() => expect(mockedGenerate).toHaveBeenCalled());
+		expect(await screen.findByTestId("v2-blueprint-card")).toHaveTextContent("bpv2_test");
+		expect(screen.getByTestId("v2-approval-panel")).toBeInTheDocument();
 
-	it("[UI smoke] shows the TRUE formula_id + compiler family in the Formula/QA column", async () => {
-		mockedList.mockResolvedValue({
-			product_id: "p1",
-			items: [
-				{
-					...sampleSet,
-					formula_family: "PAS",
-					claim_review: {
-						formula_id: "SavagePAS",
-						formula_definition_status: "OPERATOR_REVIEW_DRAFT",
-						formula_breakdown: { problem: "x", solution: "y" },
-						formula_validation: {
-							formula_id: "SavagePAS",
-							definition_status: "OPERATOR_REVIEW_DRAFT",
-							valid: true,
-							review_required: false,
-							slot_coverage: { problem: true, solution: true },
-							violations: [],
-						},
-						sales_clarity: { clarity_score: 0.88, answers: {}, gaps: [], clear: true },
-					},
-				},
-			],
-		});
-		renderPage();
-		const cell = await screen.findByTestId("formula-cell-cs1");
-		expect(cell).toHaveTextContent("SavagePAS"); // true formula_id (not just PAS)
-		expect(cell).toHaveTextContent("→ PAS"); // compiler-safe family
-		expect(cell).toHaveTextContent(/draft/i); // definition_status
-		expect(cell).toHaveTextContent(/clarity/i);
-	});
-
-	it("[UI smoke] ungrounded Generate is blocked and points to Prepare", async () => {
-		mockedBatch.mockRejectedValue(
-			new Error('API 422: {"error":"COPY_GROUNDING_INSUFFICIENT"}'),
-		);
-		renderPage();
-		(await screen.findByTestId("generate-copy-sets")).click();
-		expect(
-			await screen.findByText(/Prepare Product for Copywriting/i),
-		).toBeInTheDocument();
-	});
-
-	it("[UI smoke] AI copy sets are Review required, never auto-approved", async () => {
-		renderPage();
-		// sampleSet status is COPY_REVIEW_REQUIRED
-		expect(await screen.findByText("Review required")).toBeInTheDocument();
-	});
-
-	it("shows the copy grounding banner with avatar + angle strategies", async () => {
-		renderPage();
-		await waitFor(() => expect(mockedGrounding).toHaveBeenCalledWith("p1"));
-		const banner = await screen.findByTestId("copy-grounding-banner");
-		expect(banner).toBeInTheDocument();
-		expect(banner).toHaveTextContent("MALE_HEALTH_SENSITIVE");
-		expect(banner).toHaveTextContent("stealth_masculinity");
-		expect(banner).toHaveTextContent(/Lelaki dewasa/);
-		// framework tier → prompts the operator to author a snapshot
-		expect(banner).toHaveTextContent(/Product Knowledge snapshot/i);
-	});
-
-	it("does NOT auto-generate on product select (AI is click-only)", async () => {
-		renderPage();
-		await waitFor(() => expect(mockedList).toHaveBeenCalled());
-		await new Promise((r) => setTimeout(r, 30));
-		expect(mockedBatch).not.toHaveBeenCalled();
-	});
-
-	it("Generate calls generateCopySetBatch with requested_count 5", async () => {
-		renderPage();
-		const btn = await screen.findByTestId("generate-copy-sets");
-		btn.click();
-		await waitFor(() =>
-			expect(mockedBatch).toHaveBeenCalledWith(
-				expect.objectContaining({ product_id: "p1", requested_count: 5 }),
-			),
-		);
-	});
-
-	it("Approve calls approveCopySet", async () => {
-		mockedApprove.mockResolvedValue({ ...sampleSet, status: "COPY_APPROVED" });
-		renderPage();
-		const btn = await screen.findByTestId("approve-cs1");
-		btn.click();
-		await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith("cs1", { approved_by: "operator" }));
-	});
-
-	it("revalidates an approved invalid set and refreshes the registry", async () => {
-		mockedList.mockResolvedValue({
-			product_id: "p1",
-			items: [
-				{
-					...sampleSet,
-					status: "COPY_APPROVED" as const,
-					production_valid: false,
-					validity_class: "APPROVED_COPY_STALE",
-					validity_class_label: "STALE PI",
-					validity_reasons: ["PI_SNAPSHOT_MISMATCH"],
-					recommended_action: "REVALIDATE_APPROVED",
-				},
-			],
-		});
-		mockedRevalidate.mockResolvedValue({
-			copy_set: { ...sampleSet, status: "COPY_APPROVED" as const },
-			revalidation: {
-				recomputed: true,
-				production_valid: false,
-				validity_class: "APPROVED_COPY_STALE",
-				validity_reasons: ["PI_SNAPSHOT_MISMATCH"],
-				recommended_action: "REVALIDATE_APPROVED",
-			},
-		});
-		renderPage();
-		fireEvent.click(await screen.findByTestId("revalidate-cs1"));
-		await waitFor(() => expect(mockedRevalidate).toHaveBeenCalledWith("cs1"));
-		await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(2));
-		expect(await screen.findByTestId("copy-registry-success")).toHaveTextContent(/still blocked/i);
-	});
-
-	it("submits semantic review explicitly for a missing-review set", async () => {
-		mockedList.mockResolvedValue({
-			product_id: "p1",
-			items: [
-				{
-					...sampleSet,
-					status: "COPY_APPROVED" as const,
-					production_valid: false,
-					validity_class: "APPROVED_COPY_MISSING_REVIEW",
-					validity_class_label: "MISSING REVIEW",
-					recommended_action: "SEMANTIC_REVIEW_REQUIRED",
-				},
-			],
-		});
-		mockedSemanticReview.mockResolvedValue({
-			copy_set: { ...sampleSet, status: "COPY_APPROVED" as const },
-			semantic_review: { decision: "APPROVED", production_valid: true, validity_reasons: [] },
-		});
-		renderPage();
-		fireEvent.click(await screen.findByTestId("semantic-review-cs1"));
-		fireEvent.click(await screen.findByRole("button", { name: "Submit semantic review" }));
-		await waitFor(() =>
-			expect(mockedSemanticReview).toHaveBeenCalledWith(
-				"cs1",
-				expect.objectContaining({ reviewer: "operator", decision: "APPROVED" }),
-			),
-		);
-		await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(2));
-	});
-
-	it("stays on the current page after Approve (no jump back to page 1)", async () => {
-		// 30 review sets → 2 pages at pageSize 25; page 2 holds cs26…cs30.
-		const many = Array.from({ length: 30 }, (_, i) => ({
-			...sampleSet,
-			copy_set_id: `cs${i + 1}`,
-			hook: `Hook ${i + 1}`,
-		}));
-		// A REAL async gap is required: the defect is that `loading` unmounts the
-		// table mid-refetch, and that intermediate state only commits when the
-		// fetch actually suspends. An instantly-resolved mock hides the bug.
-		mockedList.mockImplementation(
-			() =>
-				new Promise((resolve) =>
-					setTimeout(() => resolve({ product_id: "p1", items: many }), 25),
-				),
-		);
-		mockedApprove.mockResolvedValue({ ...sampleSet, status: "COPY_APPROVED" });
-		renderPage();
-
-		await screen.findByTestId("approve-cs1");
-		fireEvent.click(screen.getByRole("button", { name: "Next" }));
-		expect(await screen.findByTestId("approve-cs26")).toBeInTheDocument();
-
-		fireEvent.click(screen.getByTestId("approve-cs26"));
-		await waitFor(() =>
-			expect(mockedApprove).toHaveBeenCalledWith("cs26", {
-				approved_by: "operator",
-			}),
-		);
-		// The post-action refetch must NOT unmount DataTable — doing so resets its
-		// internal page (and search/filter/sort) back to the first page.
-		await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(2));
-		// Let the refetch fully resolve and commit before judging the page.
-		await new Promise((r) => setTimeout(r, 60));
-		expect(screen.getByTestId("approve-cs26")).toBeInTheDocument();
-		expect(screen.queryByTestId("approve-cs1")).not.toBeInTheDocument();
-	});
-
-	it("Reject opens a modal for a note and calls rejectCopySet", async () => {
-		mockedReject.mockResolvedValue({ ...sampleSet, status: "COPY_REJECTED" });
-		renderPage();
-		fireEvent.click(await screen.findByTestId("reject-cs1"));
-		fireEvent.click(await screen.findByRole("button", { name: "Reject set" }));
-		await waitFor(() => expect(mockedReject).toHaveBeenCalledWith("cs1", "Not suitable"));
-	});
-
-	it("[Script Library] Library cell shows usage x/15 + NEAR-DUP flag", async () => {
-		mockedList.mockResolvedValue({
-			product_id: "p1",
-			items: [
-				{
-					...sampleSet,
-					usage_count: 3,
-					last_used_at: "2026-07-18T00:00:00Z",
-					used_in_modes: ["T2V"],
-					similar_to_copy_set_id: "cs9",
-					similarity_score: 0.87,
-					uniqueness_score: 0.35,
-				},
-			],
-		});
-		renderPage();
-		const cell = await screen.findByTestId("library-cell-cs1");
-		expect(cell).toHaveTextContent("Use 3/15");
-		expect(cell).toHaveTextContent("NEAR-DUP 87%");
-		expect(cell).toHaveTextContent("uniq 35%");
-	});
-
-	it("[Script Library] Scan Near-Dup dry-runs first; cancel writes nothing", async () => {
-		vi.spyOn(window, "confirm").mockReturnValue(false);
-		mockedBackfill.mockResolvedValue({
-			product_id: "p1",
-			scanned: 4,
-			flagged: 1,
-			updated: 0,
-			apply: false,
-			threshold: 0.8,
-			items: [],
-		});
-		renderPage();
-		await screen.findByText("Safe hook"); // sets loaded → button enabled
-		(await screen.findByTestId("scan-near-dup")).click();
-		await waitFor(() =>
-			expect(mockedBackfill).toHaveBeenCalledWith({ product_id: "p1" }),
-		);
-		// Only the dry-run fired — apply run never sent.
-		expect(mockedBackfill).toHaveBeenCalledTimes(1);
-		fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
-		expect(await screen.findByText(/Dry-run only/)).toBeInTheDocument();
-	});
-
-	it("[Script Library] Clone appears only for APPROVED sets and calls the API", async () => {
-		mockedList.mockResolvedValue({
-			product_id: "p1",
-			items: [{ ...sampleSet, status: "COPY_APPROVED" as const }],
-		});
-		mockedClone.mockResolvedValue({
-			copy_set: { ...sampleSet, copy_set_id: "cs_clone", product_id: "p2" },
-			created: true,
-			dedupe_match: false,
-			warnings: [],
-		});
-		renderPage();
-		(await screen.findByTestId("clone-cs1")).click();
-		expect(await screen.findByTestId("clone-copy-set-modal")).toBeInTheDocument();
-		// Target picker is mocked; confirm stays disabled until a product is
-		// chosen — the modal itself rendering is the UI contract here.
-	});
-
-	it("[Script Library] bulk approve confirms then approves every review set", async () => {
-		mockedList.mockResolvedValue({
-			product_id: "p1",
-			items: [
-				sampleSet,
-				{ ...sampleSet, copy_set_id: "cs2" },
-				{ ...sampleSet, copy_set_id: "cs3", status: "COPY_APPROVED" as const },
-			],
-		});
-		mockedApprove.mockResolvedValue({ ...sampleSet, status: "COPY_APPROVED" });
-		renderPage();
-		const btn = await screen.findByTestId("bulk-approve");
-		await waitFor(() =>
-			expect(btn).toHaveTextContent("Approve all in review (2)"),
-		);
-		btn.click();
-		const confirm = await screen.findByRole("button", { name: /Approve 2 sets/i });
-		fireEvent.click(confirm);
-		await waitFor(() => expect(mockedApprove).toHaveBeenCalledTimes(2));
-		expect(mockedApprove).toHaveBeenCalledWith("cs1", { approved_by: "operator" });
-		expect(mockedApprove).toHaveBeenCalledWith("cs2", { approved_by: "operator" });
-	});
-
-	it("Delete requires the confirm phrase before deleteCopySet fires", async () => {
-		mockedDelete.mockResolvedValue({ deleted: true, copy_set_id: "cs1" });
-		renderPage();
-		const del = await screen.findByTestId("delete-cs1");
-		del.click();
-		// Modal open; deletion must not fire until the phrase is typed.
-		const confirmBtn = await screen.findByText("Delete permanently");
-		confirmBtn.click();
-		expect(mockedDelete).not.toHaveBeenCalled();
-		const input = screen.getByPlaceholderText("DELETE");
-		fireEvent.change(input, { target: { value: "DELETE" } });
-		screen.getByText("Delete permanently").click();
-		await waitFor(() => expect(mockedDelete).toHaveBeenCalledWith("cs1"));
-	});
-
-	it("surfaces a friendly error when the AI lane is not configured; rows stay", async () => {
-		mockedBatch.mockRejectedValue(
-			new Error("API 409: AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED"),
-		);
-		renderPage();
-		const btn = await screen.findByTestId("generate-copy-sets");
-		btn.click();
-		expect(await screen.findByTestId("copy-registry-error")).toHaveTextContent(
-			/is not configured/i,
-		);
-		expect(screen.getByText("Safe hook")).toBeInTheDocument();
+		for (const key of ["semantic", "provenance", "safety", "bridge", "duration"]) {
+			fireEvent.click(screen.getByTestId(`approval-check-${key}`));
+		}
+		fireEvent.click(screen.getByTestId("approve-v2-blueprint"));
+		await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith(expect.objectContaining({
+			blueprint_id: "bpv2_test",
+			approved_by: "operator",
+			semantic_review: expect.objectContaining({ decision: "APPROVED" }),
+			readiness_proof: expect.objectContaining({ safety_validated: true }),
+		})));
+		expect(await screen.findByText("V2 PRODUCTION_VALID")).toBeInTheDocument();
 	});
 });

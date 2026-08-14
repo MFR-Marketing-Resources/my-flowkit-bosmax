@@ -33,7 +33,7 @@ from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
     copy_v2_handoff_context,
     lane_for_request,
-    resolve_copy_execution_binding,
+    resolve_persisted_copy_execution_binding,
 )
 from agent.services import creative_recipe_service as _recipe
 from agent.services.i2v_semantic_slot_resolver_service import resolve_i2v_semantic_slots
@@ -108,7 +108,7 @@ def _compiler_product_context(
     }
 
 
-def _resolve_v2_package_context(
+async def _resolve_v2_package_context(
     product_id: str,
     *,
     mode: str,
@@ -119,7 +119,7 @@ def _resolve_v2_package_context(
     """Resolve V2 once at each durable generation-package boundary."""
 
     try:
-        return resolve_copy_execution_binding(
+        return await resolve_persisted_copy_execution_binding(
             product_id,
             lane or str((context or {}).get("lane") or lane_for_request(mode, source_mode=source_mode)),
             context,
@@ -321,7 +321,7 @@ async def create_f2v_generation_package(
     """Create a durable F2V workspace generation package."""
     mode = "F2V"
     resolved_source_lane = _normalize_f2v_source_lane(source_mode)
-    v2_resolution = _resolve_v2_package_context(
+    v2_resolution = await _resolve_v2_package_context(
         product_id,
         mode=mode,
         source_mode=resolved_source_lane,
@@ -576,7 +576,7 @@ async def create_i2v_generation_package(
 ) -> dict:
     """Create a durable I2V workspace generation package."""
     mode = "I2V"
-    v2_resolution = _resolve_v2_package_context(
+    v2_resolution = await _resolve_v2_package_context(
         product_id,
         mode=mode,
         context=copy_v2_context,
@@ -934,7 +934,7 @@ async def create_t2v_generation_package(
 ) -> dict:
     """Create a durable T2V workspace generation package (text-only, no frame uploads)."""
     mode = "T2V"
-    v2_resolution = _resolve_v2_package_context(
+    v2_resolution = await _resolve_v2_package_context(
         product_id,
         mode=mode,
         context=copy_v2_context,
@@ -1112,7 +1112,7 @@ async def create_img_generation_package(
     requested_lane = str(
         (copy_v2_context or {}).get("lane") or copy_v2_lane or "IMAGE_GEN"
     )
-    v2_resolution = _resolve_v2_package_context(
+    v2_resolution = await _resolve_v2_package_context(
         product_id,
         mode=mode,
         lane=requested_lane,
