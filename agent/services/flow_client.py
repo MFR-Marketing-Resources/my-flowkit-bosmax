@@ -53,6 +53,19 @@ _CANONICAL_DOM_FORBIDDEN_MODES = frozenset(
 )
 
 
+def resolve_video_model_key(user_paygate_tier: str, gen_type: str, aspect_ratio: str,
+                            override: str | None = None) -> str | None:
+    """SSOT videoModelKey resolution for the direct batchAsync video RPCs.
+
+    An explicitly captured key (``override``) wins; otherwise the captured
+    models.json slot for (tier, gen_type, aspect) applies. Returns None when no
+    captured key exists — callers FAIL CLOSED on None and never guess a key.
+    """
+    if override and str(override).strip():
+        return str(override).strip()
+    return VIDEO_MODELS.get(user_paygate_tier, {}).get(gen_type, {}).get(aspect_ratio)
+
+
 class FlowClient:
     """Sends commands to Chrome extension via WebSocket."""
 
@@ -712,22 +725,29 @@ class FlowClient:
                               project_id: str, scene_id: str,
                               aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
                               end_image_media_id: str = None,
-                              user_paygate_tier: str = "PAYGATE_TIER_TWO") -> dict:
+                              user_paygate_tier: str = "PAYGATE_TIER_TWO",
+                              video_model_key: str = None,
+                              seed: int = None) -> dict:
         """Generate video from start image (i2v).
 
         Two sub-types:
         - frame_2_video (i2v): startImage only
         - start_end_frame_2_video (i2v_fl): startImage + endImage (for scene chaining)
+
+        ``video_model_key`` (USER SETTINGS ARE LAW): an explicitly captured key
+        overrides the models.json default; with neither the call FAILS CLOSED.
+        ``seed`` lets the caller record the exact fired seed for output binding.
         """
         gen_type = "start_end_frame_2_video" if end_image_media_id else "frame_2_video"
-        model_key = VIDEO_MODELS.get(user_paygate_tier, {}).get(gen_type, {}).get(aspect_ratio)
+        model_key = resolve_video_model_key(user_paygate_tier, gen_type, aspect_ratio,
+                                            override=video_model_key)
 
         if not model_key:
             return {"error": f"No model for tier={user_paygate_tier} type={gen_type} ratio={aspect_ratio}"}
 
         request = {
             "aspectRatio": aspect_ratio,
-            "seed": int(time.time()) % 10000,
+            "seed": int(seed) if seed is not None else int(time.time()) % 10000,
             "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
             "videoModelKey": model_key,
             "startImage": {"mediaId": start_image_media_id},
@@ -757,24 +777,31 @@ class FlowClient:
     async def generate_video_from_references(self, reference_media_ids: list[str],
                                               prompt: str, project_id: str, scene_id: str,
                                               aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
-                                              user_paygate_tier: str = "PAYGATE_TIER_TWO") -> dict:
+                                              user_paygate_tier: str = "PAYGATE_TIER_TWO",
+                                              video_model_key: str = None,
+                                              seed: int = None) -> dict:
         """Generate video from multiple reference images (r2v).
 
         Uses referenceImages instead of startImage — the model composes
         a video from all provided reference character images.
 
+        ``video_model_key`` (USER SETTINGS ARE LAW): an explicitly captured key
+        overrides the models.json default; with neither the call FAILS CLOSED.
+        ``seed`` lets the caller record the exact fired seed for output binding.
+
         Args:
             reference_media_ids: List of character media_ids (from uploadImage)
         """
         gen_type = "reference_frame_2_video"
-        model_key = VIDEO_MODELS.get(user_paygate_tier, {}).get(gen_type, {}).get(aspect_ratio)
+        model_key = resolve_video_model_key(user_paygate_tier, gen_type, aspect_ratio,
+                                            override=video_model_key)
 
         if not model_key:
             return {"error": f"No model for tier={user_paygate_tier} type={gen_type} ratio={aspect_ratio}"}
 
         request = {
             "aspectRatio": aspect_ratio,
-            "seed": int(time.time()) % 10000,
+            "seed": int(seed) if seed is not None else int(time.time()) % 10000,
             "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
             "videoModelKey": model_key,
             "referenceImages": [
