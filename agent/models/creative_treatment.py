@@ -90,6 +90,9 @@ class TreatmentCompatibilityProfile(BaseModel):
             "COMPOSITE_FRAME_REFERENCE",
         ]
     ] = Field(default_factory=list)
+    choreography_schema_version: str | None = None
+    choreography_id: str | None = None
+    choreography_sha256: str | None = None
 
 
 class CreateTreatmentRequest(BaseModel):
@@ -115,6 +118,9 @@ class CreateTreatmentRequest(BaseModel):
     variation_group_id: str | None = None
     variation_ordinal: int | None = Field(default=None, ge=1, le=5)
     supersedes_treatment_id: str | None = None
+    choreography_schema_version: str | None = None
+    choreography_id: str | None = None
+    choreography_sha256: str | None = None
     created_by: str = Field(min_length=1)
 
     @model_validator(mode="after")

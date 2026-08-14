@@ -16,6 +16,7 @@ from agent.services import product_treatment_template_service as template_servic
 from agent.services.canonical_prompt_compiler import compile_prompt_set
 from agent.services.scene_choreography_catalog import (
     SPECS,
+    action_coverage_receipt,
     all_choreography_variants,
     coverage_map,
     select_variant_for_strategy,
@@ -65,6 +66,28 @@ def test_inventory_reconciles_with_live_library_and_workbook() -> None:
         assert row["migration_status"] == "MIGRATED"
         assert row["choreography_variant_count"] >= 1
         assert row["validation_status"] == "VALID"
+
+
+def test_all_242_actions_have_explicit_or_blocked_receipt() -> None:
+    rows = action_coverage_receipt()
+    assert len(rows) == 242
+    blocked = [row for row in rows if row["coverage"] == "BLOCKED"]
+    explicit = [row for row in rows if row["coverage"] == "EXPLICIT"]
+    assert len(blocked) == 3
+    assert len(explicit) == 239
+    assert all(row["strategy_id"] == "GENERIC_FALLBACK" for row in blocked)
+    assert all(row["choreography_id"] and row["step_numbers"] for row in explicit)
+
+
+def test_entity_locations_are_not_branching_or_paths() -> None:
+    for strategy_id, variants in all_choreography_variants().items():
+        for variant in variants:
+            for step in variant.steps:
+                for state in [*step.initial_states, *step.resulting_states]:
+                    assert " or " not in state.location, (
+                        f"{strategy_id} {variant.choreography_id} step {step.step_number} "
+                        f"{state.entity_id} location={state.location}"
+                    )
 
 
 def test_every_production_variant_validates() -> None:

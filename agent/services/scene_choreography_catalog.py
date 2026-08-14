@@ -152,7 +152,7 @@ def _apply_contact(spec: StrategySpec, *, scene: str, intent: str) -> list[Chore
     ]
     s3i = s2r
     s3r = [
-        _st("product", "support hand or visible nearby", "SUPPORT_HAND", True, f"{product} identity unchanged"),
+        _st("product", "support hand, still in frame", "SUPPORT_HAND", True, f"{product} identity unchanged"),
         _st("component", "active hand", "ACTIVE_HAND", True, f"{cap} still in the same active hand"),
         _st("target", target, "FRAME_STATIC", True, f"one controlled pass completed on {target}"),
     ]
@@ -164,17 +164,17 @@ def _apply_contact(spec: StrategySpec, *, scene: str, intent: str) -> list[Chore
     ]
     s5i = s4r
     s5r = [
-        _st("product", "table or support hand, label-forward", "TABLE", True, f"{product} closed or placed label-forward"),
+        _st("product", "table, label-forward", "TABLE", True, f"{product} closed and placed label-forward on the table"),
         _st("component", "reseated on product", "TABLE", True, f"{cap} returned to the same {product}"),
         _st("target", target, "FRAME_STATIC", True, f"{target} unchanged after application"),
     ]
     s6i = s5r
     return [
         _step(1, 0.0, 1.0, f"The {product}, {cap}, and {target} are already present in the first frame. No object materializes after the scene begins.", initial=s1, resulting=list(s1), visibility="all required props and target visible", rules=["first-frame presence", "no thin-air entry"]),
-        _step(2, 1.0, 2.3, f"The same two hands open or expose the {cap}. Keep the removed component visible. The {product} stays in the support hand.", initial=s2i, resulting=s2r, visibility=f"{product} and {cap} remain visible", rules=["component custody retained", "no hand swap"]),
+        _step(2, 1.0, 2.3, f"The same two hands open the {cap}. Keep the removed component visible. The {product} stays in the support hand.", initial=s2i, resulting=s2r, visibility=f"{product} and {cap} remain visible", rules=["component custody retained", "no hand swap"]),
         _step(3, 2.3, 4.5, f"Perform one controlled application pass only onto the same {target}. Do not invent extra applicators or a second product.", initial=s3i, resulting=s3r, visibility=f"{product}, {cap}, and {target} stay in frame", rules=["one pass only", "preserve product identity"]),
         _step(4, 4.5, 5.5, f"Stop contact with the {target} and return the {product} to a safe visible position.", initial=s4i, resulting=s4r, visibility="product and component remain visible after contact stops", rules=["explicit withdrawal"]),
-        _step(5, 5.5, 7.0, f"Close or place the {product} label-forward. The same {cap} is reseated or left in its declared visible location.", initial=s5i, resulting=s5r, visibility="closed/placed product label-forward", rules=["explicit close/place"]),
+        _step(5, 5.5, 7.0, f"Close the {product} label-forward. The same {cap} is reseated on the same product.", initial=s5i, resulting=s5r, visibility="closed product label-forward on the table", rules=["explicit close/place"]),
         _step(6, 7.0, 8.0, "Hold the approved result context with no before/after transformation, no new prop, and no duplicate hand.", initial=s6i, resulting=list(s5r), visibility="final approved result held", rules=["final-state lock", "no new prop"], final=True),
     ]
 
@@ -182,36 +182,36 @@ def _apply_contact(spec: StrategySpec, *, scene: str, intent: str) -> list[Chore
 def _material_transfer(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyStep]:
     product, cap, receiver = spec.product, spec.component, spec.receiver
     s1 = [
-        _st("product", "upright in support hand or on table", "SUPPORT_HAND", True, f"closed/upright {product} already present"),
+        _st("product", "upright in support hand", "SUPPORT_HAND", True, f"closed/upright {product} already present"),
         _st("component", f"seated on {product}", "SUPPORT_HAND", True, f"{cap} closed and visible"),
         _st("receiver", receiver, "FRAME_STATIC", True, f"{receiver} already in frame"),
     ]
     s2r = [
         _st("product", "support hand, ready to dispense", "SUPPORT_HAND", True, f"{product} opened/readied"),
-        _st("component", "active hand or visible table spot", "ACTIVE_HAND", True, f"{cap} custody retained"),
+        _st("component", "active hand", "ACTIVE_HAND", True, f"{cap} custody retained"),
         _st("receiver", receiver, "FRAME_STATIC", True, f"{receiver} fixed"),
     ]
     s3r = [
         _st("product", "support hand over receiver", "SUPPORT_HAND", True, f"{product} after one controlled transfer"),
-        _st("component", "active hand or visible table spot", "ACTIVE_HAND", True, f"{cap} still in declared custody"),
+        _st("component", "active hand", "ACTIVE_HAND", True, f"{cap} still in declared custody"),
         _st("receiver", receiver, "FRAME_STATIC", True, f"exactly one controlled amount now on {receiver}"),
     ]
     s4r = [
         _st("product", "upright in support hand", "SUPPORT_HAND", True, f"{product} flow stopped and upright"),
-        _st("component", "active hand or visible table spot", "ACTIVE_HAND", True, f"{cap} unchanged"),
+        _st("component", "active hand", "ACTIVE_HAND", True, f"{cap} unchanged"),
         _st("receiver", receiver, "FRAME_STATIC", True, f"measured material remains only on {receiver}"),
     ]
     s5r = [
-        _st("product", "table, label-forward", "TABLE", True, f"{product} closed or placed label-forward"),
-        _st("component", "reseated or visibly placed", "TABLE", True, f"{cap} resolved"),
+        _st("product", "table, label-forward", "TABLE", True, f"{product} closed and placed label-forward on the table"),
+        _st("component", "reseated on the product", "TABLE", True, f"{cap} resolved"),
         _st("receiver", receiver, "FRAME_STATIC", True, f"{receiver} still holds the same amount"),
     ]
     return [
         _step(1, 0.0, 1.0, f"Establish the source {product} and the same {receiver}. Both are already present; nothing appears after the first frame.", initial=s1, resulting=list(s1), visibility="source and receiver visible", rules=["first-frame presence"]),
-        _step(2, 1.0, 2.2, f"Open or ready the dispenser while retaining {cap} custody in the active hand or a declared visible place.", initial=s1, resulting=s2r, visibility=f"{cap} never leaves frame", rules=["component custody retained"]),
+        _step(2, 1.0, 2.2, f"Open the dispenser while retaining {cap} custody in the active hand.", initial=s1, resulting=s2r, visibility=f"{cap} never leaves frame", rules=["component custody retained"]),
         _step(3, 2.2, 4.2, f"Transfer exactly one controlled amount to the same {receiver}. No airborne spray, extra stream, or second container.", initial=s2r, resulting=s3r, visibility="continuous coverage through the transfer", rules=["one controlled transfer", "no cut while material moves"]),
         _step(4, 4.2, 5.2, f"Stop the flow and return the {product} upright. The {receiver} stays fixed.", initial=s3r, resulting=s4r, visibility="source upright, receiver fixed", rules=["explicit stop-flow"]),
-        _step(5, 5.2, 6.8, f"Close the {product} or place it label-forward. Resolve the same {cap}.", initial=s4r, resulting=s5r, visibility="closed/placed source still visible", rules=["explicit close/place"]),
+        _step(5, 5.2, 6.8, f"Close the {product} and place it label-forward on the table. Reseat the same {cap} on the product.", initial=s4r, resulting=s5r, visibility="closed source still visible on the table", rules=["explicit close/place"]),
         _step(6, 6.8, 8.0, f"Hold the source {product} and the {receiver} together in frame. No new prop or extra amount.", initial=s5r, resulting=list(s5r), visibility="source and result together", rules=["final-state lock"], final=True),
     ]
 
@@ -239,16 +239,16 @@ def _spray(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyS
         _st("target", target, "FRAME_STATIC", True, f"{target} unchanged after spray"),
     ]
     s5r = [
-        _st("product", "same hand or table, label-forward", "SUPPORT_HAND", True, f"{product} recapped/nozzle-safe"),
+        _st("product", "same hand, label-forward", "SUPPORT_HAND", True, f"{product} recapped/nozzle-safe"),
         _st("component", "reseated on product", "SUPPORT_HAND", True, f"same {cap} replaced"),
         _st("target", target, "FRAME_STATIC", True, f"{target} still in frame"),
     ]
     return [
         _step(1, 0.0, 1.0, f"Establish the closed {product} and the approved {target} at a safe distance. Both already exist in frame one.", initial=s1, resulting=list(s1), visibility="product and target visible", rules=["first-frame presence"]),
-        _step(2, 1.0, 2.0, f"Remove or expose the nozzle while retaining {cap} custody in the other hand.", initial=s1, resulting=s2r, visibility=f"{cap} remains visible", rules=["component custody retained"]),
+        _step(2, 1.0, 2.0, f"Remove the cap and expose the nozzle while retaining {cap} custody in the other hand.", initial=s1, resulting=s2r, visibility=f"{cap} remains visible", rules=["component custody retained"]),
         _step(3, 2.0, 4.0, f"Aim once and perform one controlled spray toward the same {target}. No fake particles, extra bursts, or second bottle.", initial=s2r, resulting=s3r, visibility="continuous shot through the spray", rules=["one spray only"]),
         _step(4, 4.0, 5.5, f"Lower the {product} and stop spraying. The same hand still owns the bottle.", initial=s3r, resulting=s4r, visibility="product still in the same hand", rules=["no hand swap"]),
-        _step(5, 5.5, 7.0, f"Replace the same {cap} or lock the nozzle. Do not duplicate or lose the cap.", initial=s4r, resulting=s5r, visibility="recapped product visible", rules=["explicit recap"]),
+        _step(5, 5.5, 7.0, f"Replace the same {cap} on the nozzle. Do not duplicate or lose the cap.", initial=s4r, resulting=s5r, visibility="recapped product visible", rules=["explicit recap"]),
         _step(6, 7.0, 8.0, f"Hold the {product} label-forward in the final state. No new prop.", initial=s5r, resulting=list(s5r), visibility="final label-forward hold", rules=["final-state lock"], final=True),
     ]
 
@@ -263,34 +263,34 @@ def _food_cook(spec: StrategySpec, *, scene: str, intent: str) -> list[Choreogra
     ]
     s2r = [
         _st("product", "support hand", "SUPPORT_HAND", True, f"{product} opened"),
-        _st("component", "active hand or table", "ACTIVE_HAND", True, f"{cap} custody retained"),
+        _st("component", "active hand", "ACTIVE_HAND", True, f"{cap} custody retained"),
         _st("receiver", receiver, "FRAME_STATIC", True, f"{receiver} fixed"),
-        _st("utensil", "active or support hand", "ACTIVE_HAND", True, "same utensil"),
+        _st("utensil", "active hand", "ACTIVE_HAND", True, "same utensil"),
     ]
     s3r = [
-        _st("product", "support hand or counter", "SUPPORT_HAND", True, f"{product} after one portion"),
-        _st("component", "active hand or table", "ACTIVE_HAND", True, f"{cap} still declared"),
+        _st("product", "support hand", "SUPPORT_HAND", True, f"{product} after one portion"),
+        _st("component", "active hand", "ACTIVE_HAND", True, f"{cap} still declared"),
         _st("receiver", receiver, "FRAME_STATIC", True, f"one normal portion now in {receiver}"),
-        _st("utensil", "in or beside receiver", "ACTIVE_HAND", True, "same utensil after transfer"),
+        _st("utensil", "in receiver", "ACTIVE_HAND", True, "same utensil after transfer"),
     ]
     s4r = [
         _st("product", "counter, label-forward", "TABLE", True, f"{product} placed label-forward"),
-        _st("component", "reseated or visibly placed", "TABLE", True, f"{cap} resolved"),
+        _st("component", "reseated on the product", "TABLE", True, f"{cap} resolved"),
         _st("receiver", receiver, "FRAME_STATIC", True, f"{receiver} still holds the portion"),
-        _st("utensil", "in receiver or on rest", "TABLE", True, "utensil visible"),
+        _st("utensil", "in receiver", "TABLE", True, "utensil visible"),
     ]
     s5r = [
         _st("product", "counter, label-forward", "TABLE", True, f"{product} stationary beside the dish"),
-        _st("component", "reseated or visibly placed", "TABLE", True, f"{cap} unchanged"),
+        _st("component", "reseated on the product", "TABLE", True, f"{cap} unchanged"),
         _st("receiver", receiver, "FRAME_STATIC", True, f"only the declared food action completed in {receiver}"),
-        _st("utensil", "in receiver or on rest", "TABLE", True, "same utensil"),
+        _st("utensil", "in receiver", "TABLE", True, "same utensil"),
     ]
     return [
         _step(1, 0.0, 1.0, f"Establish the {product}, utensil, and {receiver}. All three are already present.", initial=s1, resulting=list(s1), visibility="pack, utensil, and receiver visible", rules=["first-frame presence"]),
         _step(2, 1.0, 2.2, f"Open the {product} while retaining {cap} custody.", initial=s1, resulting=s2r, visibility=f"{cap} stays visible", rules=["component custody retained"]),
         _step(3, 2.2, 4.0, f"Measure and transfer one normal portion into the same {receiver}.", initial=s2r, resulting=s3r, visibility="continuous transfer coverage", rules=["one portion only"]),
         _step(4, 4.0, 5.0, f"Set the {product} label-forward in a visible location. Do not hide the pack.", initial=s3r, resulting=s4r, visibility="pack remains visible", rules=["explicit placement"]),
-        _step(5, 5.0, 7.2, f"Stir or complete only the declared food action. The original {product} stays visible.", initial=s4r, resulting=s5r, visibility="product remains in frame during the food action", rules=["no off-camera pack move"]),
+        _step(5, 5.0, 7.2, f"Stir only the declared food action. The original {product} stays visible.", initial=s4r, resulting=s5r, visibility="product remains in frame during the food action", rules=["no off-camera pack move"]),
         _step(6, 7.2, 8.0, f"Hold the finished context with the original {product} still visible.", initial=s5r, resulting=list(s5r), visibility="finished context plus original product", rules=["final-state lock"], final=True),
     ]
 
@@ -298,7 +298,7 @@ def _food_cook(spec: StrategySpec, *, scene: str, intent: str) -> list[Choreogra
 def _open_close(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyStep]:
     product, cap = spec.product, spec.component
     s1 = [
-        _st("product", "support hand or table", "SUPPORT_HAND", True, f"closed {product} already visible"),
+        _st("product", "support hand", "SUPPORT_HAND", True, f"closed {product} already visible"),
         _st("component", f"seated on {product}", "SUPPORT_HAND", True, f"{cap} closed"),
     ]
     s2r = [
@@ -307,22 +307,22 @@ def _open_close(spec: StrategySpec, *, scene: str, intent: str) -> list[Choreogr
     ]
     s3r = [
         _st("product", "support hand", "SUPPORT_HAND", True, f"{product} still in support hand"),
-        _st("component", "active hand or table", "ACTIVE_HAND", True, f"{cap} kept in the same hand or placed visibly"),
+        _st("component", "active hand", "ACTIVE_HAND", True, f"{cap} kept in the same active hand"),
     ]
     s4r = [
         _st("product", "support hand", "SUPPORT_HAND", True, f"only the declared reveal shown on {product}"),
-        _st("component", "active hand or table", "ACTIVE_HAND", True, f"{cap} still declared"),
+        _st("component", "active hand", "ACTIVE_HAND", True, f"{cap} still declared"),
     ]
     s5r = [
-        _st("product", "support hand or table", "SUPPORT_HAND", True, f"{product} reclosed/resealed"),
+        _st("product", "support hand", "SUPPORT_HAND", True, f"{product} reclosed/resealed"),
         _st("component", "reseated", "SUPPORT_HAND", True, f"same {cap} returned"),
     ]
     return [
         _step(1, 0.0, 1.2, f"Establish the closed {product}. Opening mechanism and both hands are already in frame.", initial=s1, resulting=list(s1), visibility="closed product visible", rules=["first-frame presence"]),
         _step(2, 1.2, 3.0, f"The active hand opens once while the support hand stabilizes the {product}.", initial=s1, resulting=s2r, visibility="both hands and product visible", rules=["support hand never releases mid-opening"]),
-        _step(3, 3.0, 4.5, f"Keep the {cap} in the same hand or place it visibly. Do not lose or duplicate it.", initial=s2r, resulting=s3r, visibility=f"{cap} remains visible", rules=["component custody retained"]),
+        _step(3, 3.0, 4.5, f"Keep the {cap} in the same active hand. Do not lose or duplicate it.", initial=s2r, resulting=s3r, visibility=f"{cap} remains visible", rules=["component custody retained"]),
         _step(4, 4.5, 6.2, f"Perform only the declared reveal. No invented parts or extra openings.", initial=s3r, resulting=s4r, visibility="product and component visible during reveal", rules=["declared reveal only"]),
-        _step(5, 6.2, 7.3, f"Reclose or reseal if required using the same {cap}.", initial=s4r, resulting=s5r, visibility="final package state resolving the component", rules=["explicit reclose"]),
+        _step(5, 6.2, 7.3, f"Reclose using the same {cap}.", initial=s4r, resulting=s5r, visibility="final package state resolving the component", rules=["explicit reclose"]),
         _step(6, 7.3, 8.0, "Hold the final package state. No missing or duplicate cap/lid/wrapper.", initial=s5r, resulting=list(s5r), visibility="final package state held", rules=["final-state lock"], final=True),
     ]
 
@@ -362,21 +362,21 @@ def _prop_transfer(spec: StrategySpec, *, scene: str, intent: str) -> list[Chore
 def _static_lock(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyStep]:
     product = spec.product
     s1 = [
-        _st("product", "support hand or stable surface, label/feature visible", "SUPPORT_HAND", True, f"complete static {product} already present"),
-        _st("support", "declared support or surface", "FRAME_STATIC", True, "original support already in frame"),
+        _st("product", "support hand, label/feature visible", "SUPPORT_HAND", True, f"complete static {product} already present"),
+        _st("support", "declared table surface", "FRAME_STATIC", True, "original support already in frame"),
     ]
     s2r = [
         _st("product", "same support/hand after one show/point/rotate", "SUPPORT_HAND", True, f"{product} shown once without opening or inventing parts"),
-        _st("support", "declared support or surface", "FRAME_STATIC", True, "support unchanged"),
+        _st("support", "declared table surface", "FRAME_STATIC", True, "support unchanged"),
     ]
     s3r = [
-        _st("product", "returned to original support or surface", "TABLE", True, f"{product} back on the original support"),
-        _st("support", "declared support or surface", "FRAME_STATIC", True, "same support"),
+        _st("product", "returned to original table surface", "TABLE", True, f"{product} back on the original support"),
+        _st("support", "declared table surface", "FRAME_STATIC", True, "same support"),
     ]
     return [
         _step(1, 0.0, 1.5, f"Establish the complete static setup. The {product} and support are already present, label/feature visible.", initial=s1, resulting=list(s1), visibility="complete static setup visible", rules=["first-frame presence", "global continuity lock"]),
-        _step(2, 1.5, 4.5, f"Show, point, or rotate once without opening, transferring, or inventing parts. One controlled hand path only.", initial=s1, resulting=s2r, visibility="one hand path, no extra fingers or duplicate parts", rules=["static or one slow motivated move"]),
-        _step(3, 4.5, 6.5, "Return the product to the original support or surface. No off-camera hand swap.", initial=s2r, resulting=s3r, visibility="product returns to the same support", rules=["explicit return"]),
+        _step(2, 1.5, 4.5, f"Rotate the product once without opening, transferring, or inventing parts. One controlled hand path only.", initial=s1, resulting=s2r, visibility="one hand path, no extra fingers or duplicate parts", rules=["static or one slow motivated move"]),
+        _step(3, 4.5, 6.5, "Return the product to the original table surface. No off-camera hand swap.", initial=s2r, resulting=s3r, visibility="product returns to the same support", rules=["explicit return"]),
         _step(4, 6.5, 8.0, "Hold the final label/feature view. Match-cut lock: pose, grip, and component state stay identical.", initial=s3r, resulting=list(s3r), visibility="final label/feature view held", rules=["final-state lock", "match-cut lock"], final=True),
     ]
 
@@ -576,22 +576,22 @@ SPECS: dict[str, StrategySpec] = {
     "LIP_COLOR": StrategySpec(P0, "APPLY_CONTACT", "lip colour product", "applicator cap", "lips", "lips"),
     "BEAUTY_PERSONAL_CARE": StrategySpec(P0, "MATERIAL_TRANSFER", "beauty product", "cap/lid", "clean fingertip", "clean fingertip"),
     "CLEANSER": StrategySpec(P0, "MATERIAL_TRANSFER", "cleanser", "dispenser cap", "demonstration palette", "demonstration palette"),
-    "SERUM": StrategySpec(P0, "MATERIAL_TRANSFER", "serum", "dropper or pump cap", "demonstration palette", "demonstration palette"),
-    "FRAGRANCE": StrategySpec(P0, "SPRAY", "fragrance bottle", "cap", "wrist or approved clothing", "wrist"),
-    "SPICE_SEASONING": StrategySpec(P0, "FOOD_COOK", "seasoning pack", "lid", "pan or dish", "pan or dish"),
-    "PACKAGED_SAUCE_SAMBAL": StrategySpec(P0, "FOOD_COOK", "sauce pack", "lid", "pan or dish", "pan or dish"),
+    "SERUM": StrategySpec(P0, "MATERIAL_TRANSFER", "serum", "dropper cap", "demonstration palette", "demonstration palette"),
+    "FRAGRANCE": StrategySpec(P0, "SPRAY", "fragrance bottle", "cap", "wrist", "wrist"),
+    "SPICE_SEASONING": StrategySpec(P0, "FOOD_COOK", "seasoning pack", "lid", "pan", "pan"),
+    "PACKAGED_SAUCE_SAMBAL": StrategySpec(P0, "FOOD_COOK", "sauce pack", "lid", "dish", "dish"),
     "PACKAGED_FOOD": StrategySpec(P0, "FOOD_COOK", "packaged food", "seal/lid", "serving dish", "serving dish"),
-    "LAUNDRY_DETERGENT": StrategySpec(P0, "MATERIAL_TRANSFER", "detergent pack", "cap", "washer drawer or bottle", "washer drawer or bottle"),
+    "LAUNDRY_DETERGENT": StrategySpec(P0, "MATERIAL_TRANSFER", "detergent pack", "cap", "washer drawer", "washer drawer"),
     "FABRIC_SOFTENER": StrategySpec(P0, "MATERIAL_TRANSFER", "softener bottle", "cap", "washer compartment", "washer compartment"),
     "BABY_WIPES": StrategySpec(P0, "MATERIAL_TRANSFER", "wipes pack", "resealable lid", "clean table", "clean table"),
     "BABY_DIAPER": StrategySpec(P1, "OPEN_CLOSE", "diaper pack", "pack opening", "clean table", "clean table"),
-    "APPAREL": StrategySpec(P0, "PROP_TRANSFER", "garment", "hanger", "body/hanger", "hanger or body"),
-    "MODESTWEAR": StrategySpec(P0, "PROP_TRANSFER", "modest garment", "hanger", "body/hanger", "body or hanger"),
+    "APPAREL": StrategySpec(P0, "PROP_TRANSFER", "garment", "hanger", "body/hanger", "hanger"),
+    "MODESTWEAR": StrategySpec(P0, "PROP_TRANSFER", "modest garment", "hanger", "body/hanger", "body"),
     "SPORTSWEAR": StrategySpec(P1, "PROP_TRANSFER", "sportswear garment", "hanger", "body", "body"),
     "HOUSEHOLD_CLEANER": StrategySpec(P0, "APPLY_CONTACT", "household cleaner", "nozzle/cap", "suitable household surface", "suitable surface"),
-    "HOUSEHOLD_STORAGE": StrategySpec(P1, "OPEN_CLOSE", "storage organizer", "lid/door", "shelf or counter", "shelf or counter"),
+    "HOUSEHOLD_STORAGE": StrategySpec(P1, "OPEN_CLOSE", "storage organizer", "lid/door", "shelf", "shelf"),
     "ELECTRONICS_ACCESSORY": StrategySpec(P1, "PROP_TRANSFER", "electronics accessory", "connector", "compatible device", "compatible device"),
-    "ELECTRONICS_SMALL_DEVICE": StrategySpec(P0, "DEVICE_CONTROL", "small device", "power or control button", "stable desk", "stable desk"),
+    "ELECTRONICS_SMALL_DEVICE": StrategySpec(P0, "DEVICE_CONTROL", "small device", "power button", "stable desk", "stable desk"),
     "TRADITIONAL_HERBAL_OIL": StrategySpec(P0, "HERBAL_OIL", "heritage oil bottle", "cap", "adult wrist/forearm", "table"),
     "HERBAL_ROLL_ON_OIL": StrategySpec(P0, "ROLL_ON", "herbal roll-on", "cap", "adult wrist/forearm", "table"),
     "SENSITIVE_WELLNESS": StrategySpec(P1, "STATIC_LOCK", "sealed sensitive product", "outer pack", "private tabletop", "private tabletop"),
@@ -609,8 +609,8 @@ SPECS: dict[str, StrategySpec] = {
     "PACKAGED_BEVERAGE": StrategySpec(P0, "MATERIAL_TRANSFER", "beverage pack", "seal/cap", "clean glass", "clean glass"),
     "PANTRY_INGREDIENT": StrategySpec(P0, "FOOD_COOK", "pantry ingredient", "pack seal", "prepared dish", "prepared dish"),
     "BEDDING": StrategySpec(P1, "PROP_TRANSFER", "bedding", "fold", "clean bed", "clean bed"),
-    "RUG_MAT": StrategySpec(P1, "PROP_TRANSFER", "rug or mat", "roll", "clean dry floor", "clean dry floor"),
-    "BOOK": StrategySpec(P2, "STATIC_LOCK", "book", "cover", "reading position", "hands or table"),
+    "RUG_MAT": StrategySpec(P1, "PROP_TRANSFER", "rug", "roll", "clean dry floor", "clean dry floor"),
+    "BOOK": StrategySpec(P2, "STATIC_LOCK", "book", "cover", "reading position", "table"),
     "HOME_FAN": StrategySpec(P0, "DEVICE_CONTROL", "home fan", "control", "stable surface", "stable surface"),
     "VACUUM_CLEANER": StrategySpec(P0, "DEVICE_CONTROL", "vacuum cleaner", "control", "dry compatible floor", "dry compatible floor"),
     "VACUUM_SEALER": StrategySpec(P0, "DEVICE_CONTROL", "vacuum sealer", "lid/control", "kitchen counter", "kitchen counter"),
@@ -638,18 +638,18 @@ SPECS: dict[str, StrategySpec] = {
     "FEMININE_HYGIENE": StrategySpec(P1, "STATIC_LOCK", "sealed feminine-hygiene pack", "wrapper", "clean table", "clean table"),
     "TOP_APPAREL": StrategySpec(P2, "STATIC_LOCK", "top garment", "hanger", "hanger display", "hanger"),
     "UNDERGARMENT": StrategySpec(P2, "STATIC_LOCK", "undergarment", "size label", "flat lay", "flat lay"),
-    "SLEEPWEAR": StrategySpec(P2, "STATIC_LOCK", "sleepwear", "hanger", "hanger or flat lay", "hanger or flat lay"),
+    "SLEEPWEAR": StrategySpec(P2, "STATIC_LOCK", "sleepwear", "hanger", "hanger", "hanger"),
     "DRESS": StrategySpec(P2, "STATIC_LOCK", "dress", "hanger", "hanger display", "hanger"),
     "FOOTWEAR": StrategySpec(P2, "STATIC_LOCK", "footwear pair", "size label", "table display", "table"),
     "FROZEN_FOOD": StrategySpec(P0, "STATIC_LOCK", "sealed frozen-food pack", "seal", "label-directed cooking setup", "counter"),
     "CURTAIN": StrategySpec(P1, "PROP_TRANSFER", "curtain panel", "heading", "compatible rod", "compatible rod"),
     "WALL_COVERING": StrategySpec(P0, "PROP_TRANSFER", "wall-covering sample", "backing", "clean dry compatible surface", "compatible surface"),
-    "KNITTING_CROCHET": StrategySpec(P1, "MANIPULATION", "yarn and hook or needle", "label", "small sample", "small sample"),
+    "KNITTING_CROCHET": StrategySpec(P1, "MANIPULATION", "yarn and hook", "label", "small sample", "small sample"),
     "CAR_CARE": StrategySpec(P0, "MATERIAL_TRANSFER", "car-care product", "cap", "clean detached sample panel", "sample panel"),
     "BABY_FEEDING": StrategySpec(P1, "STATIC_LOCK", "baby-feeding item", "sealed parts", "clean table", "clean table"),
     "BABY_SKINCARE": StrategySpec(P0, "MATERIAL_TRANSFER", "baby skincare pack", "cap", "adult hand only", "adult hand"),
     "BATH_LINEN": StrategySpec(P0, "PROP_TRANSFER", "bath linen", "care label", "folded display", "table"),
-    "STATIONERY": StrategySpec(P1, "MANIPULATION", "stationery item", "pack", "clean document or desk", "desk"),
+    "STATIONERY": StrategySpec(P1, "MANIPULATION", "stationery item", "pack", "clean desk", "desk"),
     "FASHION_ACCESSORY": StrategySpec(P0, "PROP_TRANSFER", "fashion accessory", "fastening", "detached compatible fabric swatch", "fabric swatch"),
     "HEALTH_TEST_DEVICE": StrategySpec(P2, "STATIC_LOCK", "sealed health-test pack", "unopened components", "clean table", "clean table"),
     "OUTDOOR_LIGHTING": StrategySpec(P0, "DEVICE_CONTROL", "outdoor light", "control", "controlled low-light area", "safe surface"),
@@ -663,7 +663,7 @@ SPECS: dict[str, StrategySpec] = {
     "SMALL_LIGHT": StrategySpec(P0, "DEVICE_CONTROL", "small USB light", "control", "compatible test power source", "desk"),
     "BLUSH": StrategySpec(P0, "APPLY_CONTACT", "blush", "applicator", "clean adult forearm", "adult forearm"),
     "FISHING_GEAR": StrategySpec(P0, "DEVICE_CONTROL", "fishing reel", "handle/drag", "safe dry bench", "bench"),
-    "FITNESS_EQUIPMENT": StrategySpec(P1, "STATIC_LOCK", "fitness equipment", "adjustment", "off the doorway", "floor or bench"),
+    "FITNESS_EQUIPMENT": StrategySpec(P1, "STATIC_LOCK", "fitness equipment", "adjustment", "off the doorway", "floor"),
     "AUTOMOTIVE_ACCESSORY": StrategySpec(P0, "PROP_TRANSFER", "automotive accessory", "mount", "detached sample surface", "sample surface"),
     "AUDIO_DEVICE": StrategySpec(P0, "DEVICE_CONTROL", "audio device", "power control", "table, not worn", "table"),
     "SEWING_TOOL": StrategySpec(P1, "STATIC_LOCK", "sewing tool pack", "case", "magnetic-safe work mat", "work mat"),
@@ -695,8 +695,8 @@ def _build_strategy_variants(strategy_id: str) -> list[ChoreographyVariant]:
     actions = list(entry["allowed_actions"])
     builder = _BUILDERS[spec.family]
     variants: list[ChoreographyVariant] = []
-    for index, scene in enumerate(scenes):
-        intent = actions[index % len(actions)]
+    for index, intent in enumerate(actions):
+        scene = scenes[index % len(scenes)]
         context = contexts[index % len(contexts)]
         camera = cameras[index % len(cameras)]
         steps = builder(spec, scene=scene, intent=intent)
@@ -780,6 +780,63 @@ def library_choreography_sha256() -> str:
         for strategy_id, variants in all_choreography_variants().items()
     }
     return canonical_sha256(payload)
+
+
+def action_coverage_receipt() -> list[dict[str, object]]:
+    """Machine-checkable map of every atomic action to a choreography variant."""
+
+    catalog = all_choreography_variants()
+    rows: list[dict[str, object]] = []
+    for strategy_id, entry in SCENE_STRATEGIES.items():
+        actions = list(entry["allowed_actions"])
+        variants = catalog[strategy_id]
+        action_variants = [
+            variant for variant in variants if variant.family != "BROLL_MATCH_CUT"
+        ]
+        if strategy_id == "GENERIC_FALLBACK":
+            for index, action in enumerate(actions):
+                rows.append(
+                    {
+                        "action_id": f"{strategy_id}:{index}",
+                        "strategy_id": strategy_id,
+                        "action_index": index,
+                        "action_text": action,
+                        "choreography_id": None,
+                        "step_numbers": [],
+                        "coverage": "BLOCKED",
+                    }
+                )
+            continue
+        if len(action_variants) != len(actions):
+            raise ChoreographyValidationError(
+                "ATOMIC_ACTION_COVERAGE_GAP",
+                strategy_id=strategy_id,
+                details={
+                    "actions": len(actions),
+                    "variants": len(action_variants),
+                },
+            )
+        for index, action in enumerate(actions):
+            variant = action_variants[index]
+            if variant.intent_label != action:
+                raise ChoreographyValidationError(
+                    "ATOMIC_ACTION_INTENT_MISMATCH",
+                    strategy_id=strategy_id,
+                    choreography_id=variant.choreography_id,
+                    details={"expected": action, "actual": variant.intent_label},
+                )
+            rows.append(
+                {
+                    "action_id": f"{strategy_id}:{index}",
+                    "strategy_id": strategy_id,
+                    "action_index": index,
+                    "action_text": action,
+                    "choreography_id": variant.choreography_id,
+                    "step_numbers": [step.step_number for step in variant.steps],
+                    "coverage": "EXPLICIT",
+                }
+            )
+    return rows
 
 
 def coverage_map() -> list[dict[str, object]]:

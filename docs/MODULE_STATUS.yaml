@@ -319,6 +319,8 @@ domains:
       - agent/services/scene_choreography_lineage.py
       - scripts/validate_scene_choreography_library.py
       - tests/unit/test_scene_choreography_v2.py
+      - tests/unit/test_creative_treatment_service.py
+      - scripts/verify-gate.ps1
       # Scene Strategy Cluster Scouting P2 — read-only cluster/type coverage queue
       - agent/services/product_strategy_scouting_service.py
       - tests/unit/test_product_strategy_scouting_service.py

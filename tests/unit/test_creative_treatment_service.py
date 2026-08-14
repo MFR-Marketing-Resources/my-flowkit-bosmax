@@ -690,3 +690,36 @@ async def test_variation_group_enforces_same_dialogue_distinct_visuals_and_revie
     )
     assert approved["status"] == "APPROVED"
     assert approved["member_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_created_treatment_lineage_survives_db_and_p6_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent.db import creative_treatment_crud as treatment_crud
+    from agent.services import creative_production_plan_service as p6
+    from agent.services.canonical_prompt_compiler import compile_prompt_set
+
+    await _seed_authority(monkeypatch)
+    created = await service.create_treatment(_request())
+    assert created["choreography_id"]
+    assert created["choreography_sha256"]
+    assert created["choreography_schema_version"]
+    stored = await treatment_crud.get_treatment(created["treatment_id"])
+    assert stored is not None
+    decoded = service._decode_treatment(stored)
+    assert decoded["choreography_id"] == created["choreography_id"]
+    assert decoded["choreography_sha256"] == created["choreography_sha256"]
+    approved = await _approve(created)
+    authority = await p6.resolve_treatment_authority(approved["treatment_id"])
+    assert authority["treatment_id"] == approved["treatment_id"]
+    prompt = compile_prompt_set(
+        source_mode="FRAMES",
+        duration_seconds=8,
+        product={"id": PRODUCT_ID, "name": "Rempah", "category": "Food & Beverage"},
+        copy={"hook": "Harum rempah terus naik.", "usps": ["Mudah digunakan"], "cta": "Cuba hari ini."},
+        creative_treatment=authority,
+    )
+    text = " ".join(block["engine_prompt_text"] for block in prompt["blocks"])
+    assert "Establish the seasoning pack" in text or "0.0" in text
+    assert "final-state lock" in text.casefold() or "Hold the finished context" in text

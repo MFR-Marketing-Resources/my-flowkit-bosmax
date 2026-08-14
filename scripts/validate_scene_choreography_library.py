@@ -13,6 +13,7 @@ def main() -> int:
     sys.path.insert(0, str(repo))
     from agent.services.scene_choreography_catalog import (
         SPECS,
+        action_coverage_receipt,
         all_choreography_variants,
         coverage_map,
         library_choreography_sha256,
@@ -22,9 +23,18 @@ def main() -> int:
     failures: list[str] = []
     try:
         catalog = all_choreography_variants()
+        receipt = action_coverage_receipt()
     except Exception as exc:
         print(f"FAIL catalog_build: {exc}")
         return 2
+    if len(receipt) != 242:
+        failures.append(f"action receipt count {len(receipt)} != 242")
+    explicit = [row for row in receipt if row["coverage"] == "EXPLICIT"]
+    blocked = [row for row in receipt if row["coverage"] == "BLOCKED"]
+    if len(blocked) != 3 or len(explicit) != 239:
+        failures.append(f"action coverage split explicit={len(explicit)} blocked={len(blocked)}")
+    if any(not row["choreography_id"] or not row["step_numbers"] for row in explicit):
+        failures.append("explicit action missing choreography mapping")
     rows = coverage_map()
     live_ids = set(SCENE_STRATEGIES)
     spec_ids = set(SPECS)
@@ -48,6 +58,9 @@ def main() -> int:
             "live_strategy_count": len(SCENE_STRATEGIES),
             "classification_counts": counts,
             "variant_count": sum(int(row["choreography_variant_count"]) for row in rows),
+            "action_receipt_count": len(receipt),
+            "explicit_actions": len(explicit),
+            "blocked_actions": len(blocked),
             "library_choreography_sha256": library_choreography_sha256(),
             "failures": failures,
             "coverage": rows,

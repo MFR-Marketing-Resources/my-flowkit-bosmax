@@ -1028,6 +1028,9 @@ def _treatment_request_from_snapshot(
             else None
         ),
         scene_template_id=(recipe.scene_template_id if recipe is not None else None),
+        choreography_schema_version=str(template.get("choreography_schema_version") or "") or None,
+        choreography_id=str(template.get("choreography_id") or "") or None,
+        choreography_sha256=str(template.get("choreography_sha256") or "") or None,
         created_by=created_by,
     )
 

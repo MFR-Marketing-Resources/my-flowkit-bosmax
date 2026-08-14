@@ -912,6 +912,33 @@ def _build_treatment_snapshot(
     ]
     shot_grammar = [item.model_dump(mode="json") for item in body.shot_grammar]
     compatibility = body.compatibility_profile.model_dump(mode="json")
+    from agent.services.scene_choreography_catalog import (
+        choreography_sha256,
+        select_variant_for_strategy,
+    )
+
+    variant = select_variant_for_strategy(
+        body.scene_strategy_id,
+        body.action_sequence[0].allowed_action_index,
+    )
+    derived_id = variant.choreography_id
+    derived_version = variant.schema_version
+    derived_hash = choreography_sha256(variant)
+    if body.choreography_id and body.choreography_id != derived_id:
+        raise CreativeTreatmentError(
+            "CHOREOGRAPHY_LINEAGE_MISMATCH",
+            status_code=422,
+            details={"expected": derived_id, "provided": body.choreography_id},
+        )
+    if body.choreography_sha256 and body.choreography_sha256 != derived_hash:
+        raise CreativeTreatmentError(
+            "CHOREOGRAPHY_LINEAGE_MISMATCH",
+            status_code=422,
+            details={"expected": derived_hash, "provided": body.choreography_sha256},
+        )
+    compatibility["choreography_schema_version"] = derived_version
+    compatibility["choreography_id"] = derived_id
+    compatibility["choreography_sha256"] = derived_hash
     asset_bindings = [
         {
             "role": item["role"],
@@ -1008,6 +1035,9 @@ def _build_treatment_snapshot(
         "variation_ordinal": body.variation_ordinal,
         "supersedes_treatment_id": body.supersedes_treatment_id,
         "visual_fingerprint_sha256": visual_fingerprint,
+        "choreography_schema_version": derived_version,
+        "choreography_id": derived_id,
+        "choreography_sha256": derived_hash,
         **hashes,
     }
     if segment_plan:
@@ -1030,10 +1060,7 @@ def _stored_request(row: dict[str, Any]) -> CreateTreatmentRequest:
         duration_seconds=row["duration_seconds"],
         action_sequence=_parse_json(row["action_sequence_json"], []),
         shot_grammar=_parse_json(row["shot_grammar_json"], []),
-        compatibility_profile=_parse_json(
-            row["compatibility_profile_json"],
-            {},
-        ),
+        compatibility_profile=(compat := _parse_json(row["compatibility_profile_json"], {})),
         asset_bindings=[
             {"role": item["role"], "asset_id": item["asset_id"]}
             for item in _parse_json(row["asset_bindings_json"], [])
@@ -1043,6 +1070,14 @@ def _stored_request(row: dict[str, Any]) -> CreateTreatmentRequest:
         variation_group_id=row.get("variation_group_id"),
         variation_ordinal=row.get("variation_ordinal"),
         supersedes_treatment_id=row.get("supersedes_treatment_id"),
+        choreography_schema_version=(
+            row.get("choreography_schema_version")
+            or compat.get("choreography_schema_version")
+        ),
+        choreography_id=row.get("choreography_id") or compat.get("choreography_id"),
+        choreography_sha256=(
+            row.get("choreography_sha256") or compat.get("choreography_sha256")
+        ),
         created_by=row["created_by"],
     )
 
@@ -1115,6 +1150,19 @@ def _decode_treatment(row: dict[str, Any]) -> dict[str, Any]:
         result[key.removesuffix("_json")] = _parse_json(
             result.pop(key),
             default,
+        )
+    compatibility = result.get("compatibility_profile") or {}
+    if isinstance(compatibility, dict):
+        result["choreography_schema_version"] = (
+            result.get("choreography_schema_version")
+            or compatibility.get("choreography_schema_version")
+        )
+        result["choreography_id"] = (
+            result.get("choreography_id") or compatibility.get("choreography_id")
+        )
+        result["choreography_sha256"] = (
+            result.get("choreography_sha256")
+            or compatibility.get("choreography_sha256")
         )
     return result
 
