@@ -921,9 +921,17 @@ async def _direct_submit(client, plan, refs, prompt, project_id, tier, seed,
 
 
 def _direct_response_data(response: dict) -> dict:
-    """Unwrap a Flow RPC response without assuming the legacy operation shape."""
-    data = response.get("data", response) if isinstance(response, dict) else {}
-    return data if isinstance(data, dict) else {}
+    """Unwrap relay/provider data envelopes without assuming one fixed depth."""
+    data = response if isinstance(response, dict) else {}
+    # The extension relay may return ``{id,status,data:<provider>}``, while
+    # provider responses can themselves carry ``data:{media/workflows}``.
+    # Unwrap only bounded dictionaries; never walk arbitrary response values.
+    for _ in range(3):
+        nested = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(nested, dict):
+            break
+        data = nested
+    return data
 
 
 def _direct_media_status(media: dict) -> str:
