@@ -77,6 +77,11 @@ class ChoreographyStep(BaseModel):
     camera_cut_boundary: CutBoundary = "NONE"
     continuity_rules: list[str] = Field(default_factory=list)
     is_final_lock: bool = False
+    # Atomic library action indexes this step physically implements.
+    # Continuity-only / final-lock steps may leave this empty.
+    source_action_indexes: list[int] = Field(default_factory=list)
+    # Stable machine signature of the positive physical transition.
+    transition_signature: str = Field(default="", min_length=0)
 
 
 class ChoreographyVariant(BaseModel):

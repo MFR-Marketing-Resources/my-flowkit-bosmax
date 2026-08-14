@@ -9,6 +9,7 @@ from agent.models.scene_choreography_v2 import (
     ChoreographyVariant,
     EntityState,
 )
+from agent.services.scene_choreography_scenarios import has_positive_physical_branch
 
 
 _HAND_CUSTODY = {"SUPPORT_HAND", "ACTIVE_HAND", "BOTH_HANDS"}
@@ -110,6 +111,32 @@ def validate_choreography_variant(variant: ChoreographyVariant) -> None:
                     variant,
                     step=step.step_number,
                     marker=marker,
+                )
+        if has_positive_physical_branch(step.action_instruction):
+            raise _err(
+                "POSITIVE_PHYSICAL_BRANCH_FORBIDDEN",
+                variant,
+                step=step.step_number,
+                instruction=step.action_instruction,
+            )
+        for loc in (
+            *(state.location for state in step.initial_states),
+            *(state.location for state in step.resulting_states),
+        ):
+            if " or " in loc.casefold():
+                raise _err(
+                    "BRANCHING_LOCATION_FORBIDDEN",
+                    variant,
+                    step=step.step_number,
+                    location=loc,
+                )
+        for idx in step.source_action_indexes:
+            if int(idx) < 0:
+                raise _err(
+                    "SOURCE_ACTION_INDEX_INVALID",
+                    variant,
+                    step=step.step_number,
+                    index=idx,
                 )
 
         try:

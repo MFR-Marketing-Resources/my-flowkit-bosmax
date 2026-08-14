@@ -35,6 +35,37 @@ def main() -> int:
         failures.append(f"action coverage split explicit={len(explicit)} blocked={len(blocked)}")
     if any(not row["choreography_id"] or not row["step_numbers"] for row in explicit):
         failures.append("explicit action missing choreography mapping")
+    if any(not row.get("exact_step_numbers") for row in explicit):
+        failures.append("explicit action missing exact_step_numbers")
+    if any(row.get("coverage_status") != "COVERED" for row in explicit):
+        failures.append("explicit action missing COVERED status")
+    if any(
+        row.get("coverage_kind") not in {"COMPOSED_SEQUENCE", "ALTERNATIVE_VARIANT", "STATIC_LOCK"}
+        for row in explicit
+    ):
+        failures.append("explicit action missing semantic coverage_kind")
+    # Semantic: every covered action must bind via source_action_indexes on steps
+    for row in explicit:
+        if not row.get("structured_transition_signature"):
+            failures.append(f"{row['action_id']} missing transition signature")
+            break
+    kind_counts: dict[str, int] = {}
+    for row in receipt:
+        kind = str(row.get("coverage_kind") or "?")
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+    # Lip color semantic guard (use full catalog step signatures, not only receipt primary)
+    lip_variants = catalog.get("LIP_COLOR", ())
+    if len(lip_variants) != 4:
+        failures.append(f"LIP_COLOR variant count {len(lip_variants)}")
+    else:
+        targets = " ".join(
+            step.transition_signature
+            for variant in lip_variants
+            for step in variant.steps
+        )
+        for needle in ("lip:apply", "swatch:", "mirror:", "bag:"):
+            if needle not in targets:
+                failures.append(f"LIP_COLOR missing scenario {needle}")
     rows = coverage_map()
     live_ids = set(SCENE_STRATEGIES)
     spec_ids = set(SPECS)
@@ -61,6 +92,7 @@ def main() -> int:
             "action_receipt_count": len(receipt),
             "explicit_actions": len(explicit),
             "blocked_actions": len(blocked),
+            "coverage_kind_counts": kind_counts,
             "library_choreography_sha256": library_choreography_sha256(),
             "failures": failures,
             "coverage": rows,

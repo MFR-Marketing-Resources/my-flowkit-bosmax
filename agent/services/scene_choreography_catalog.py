@@ -18,6 +18,14 @@ from agent.models.scene_choreography_v2 import (
     EntityState,
 )
 from agent.services.creative_treatment_service import canonical_sha256
+from agent.services.scene_choreography_scenarios import (
+    COMPOSED_FAMILIES,
+    SPECIAL_STRATEGY_BUILDERS,
+    has_positive_physical_branch,
+    herbal_oil_steps_composed,
+    resolve_intent_scenario,
+    roll_on_steps_composed,
+)
 from agent.services.scene_choreography_validator import (
     validate_choreography_variant,
     validate_production_strategy_id,
@@ -81,7 +89,14 @@ def _step(
     cut: str = "NONE",
     final: bool = False,
     actor: str = "PRESENTER",
+    sources: list[int] | None = None,
+    transition: str = "",
 ) -> ChoreographyStep:
+    if has_positive_physical_branch(instruction):
+        raise ChoreographyValidationError(
+            "POSITIVE_PHYSICAL_BRANCH_FORBIDDEN",
+            details={"instruction": instruction},
+        )
     return ChoreographyStep(
         step_number=number,
         start_s=start,
@@ -96,6 +111,8 @@ def _step(
         camera_cut_boundary=cut,  # type: ignore[arg-type]
         continuity_rules=rules,
         is_final_lock=final,
+        source_action_indexes=list(sources or []),
+        transition_signature=transition,
     )
 
 
@@ -137,8 +154,17 @@ def _variant(
     )
 
 
-def _apply_contact(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyStep]:
-    product, cap, target = spec.product, spec.component, spec.target
+def _apply_contact(spec: StrategySpec, *, scene: str, intent: str, action_index: int = 0) -> list[ChoreographyStep]:
+    scenario = resolve_intent_scenario(
+        strategy_id="",
+        family="APPLY_CONTACT",
+        intent=intent,
+        default_target=spec.target,
+        default_receiver=spec.receiver,
+        action_index=action_index,
+    )
+    product, cap, target = spec.product, spec.component, scenario.physical_target
+    src, tr = [action_index], scenario.transition_key
     s1 = [
         _st("product", f"support hand, label-forward", "SUPPORT_HAND", True, f"closed {product} already present"),
         _st("component", f"attached to {product}", "SUPPORT_HAND", True, f"{cap} seated/closed"),
@@ -170,17 +196,26 @@ def _apply_contact(spec: StrategySpec, *, scene: str, intent: str) -> list[Chore
     ]
     s6i = s5r
     return [
-        _step(1, 0.0, 1.0, f"The {product}, {cap}, and {target} are already present in the first frame. No object materializes after the scene begins.", initial=s1, resulting=list(s1), visibility="all required props and target visible", rules=["first-frame presence", "no thin-air entry"]),
-        _step(2, 1.0, 2.3, f"The same two hands open the {cap}. Keep the removed component visible. The {product} stays in the support hand.", initial=s2i, resulting=s2r, visibility=f"{product} and {cap} remain visible", rules=["component custody retained", "no hand swap"]),
-        _step(3, 2.3, 4.5, f"Perform one controlled application pass only onto the same {target}. Do not invent extra applicators or a second product.", initial=s3i, resulting=s3r, visibility=f"{product}, {cap}, and {target} stay in frame", rules=["one pass only", "preserve product identity"]),
-        _step(4, 4.5, 5.5, f"Stop contact with the {target} and return the {product} to a safe visible position.", initial=s4i, resulting=s4r, visibility="product and component remain visible after contact stops", rules=["explicit withdrawal"]),
-        _step(5, 5.5, 7.0, f"Close the {product} label-forward. The same {cap} is reseated on the same product.", initial=s5i, resulting=s5r, visibility="closed product label-forward on the table", rules=["explicit close/place"]),
-        _step(6, 7.0, 8.0, "Hold the approved result context with no before/after transformation, no new prop, and no duplicate hand.", initial=s6i, resulting=list(s5r), visibility="final approved result held", rules=["final-state lock", "no new prop"], final=True),
+        _step(1, 0.0, 1.0, f"The {product}, {cap}, and {target} are already present in the first frame. No object materializes after the scene begins.", initial=s1, resulting=list(s1), visibility="all required props and target visible", rules=["first-frame presence", "no thin-air entry"], sources=src, transition=f"{tr}:s",),
+        _step(2, 1.0, 2.3, f"The same two hands open the {cap}. Keep the removed component visible. The {product} stays in the support hand.", initial=s2i, resulting=s2r, visibility=f"{product} and {cap} remain visible", rules=["component custody retained", "no hand swap"], sources=src, transition=f"{tr}:s",),
+        _step(3, 2.3, 4.5, f"Perform one controlled application pass only onto the same {target}. Intent: {intent}. Do not invent extra applicators or a second product.", initial=s3i, resulting=s3r, visibility=f"{product}, {cap}, and {target} stay in frame", rules=["one pass only", "preserve product identity"], sources=src, transition=f"{tr}:s",),
+        _step(4, 4.5, 5.5, f"Stop contact with the {target} and return the {product} to a safe visible position.", initial=s4i, resulting=s4r, visibility="product and component remain visible after contact stops", rules=["explicit withdrawal"], sources=src, transition=f"{tr}:s",),
+        _step(5, 5.5, 7.0, f"Close the {product} label-forward. The same {cap} is reseated on the same product.", initial=s5i, resulting=s5r, visibility="closed product label-forward on the table", rules=["explicit close/place"], sources=src, transition=f"{tr}:s",),
+        _step(6, 7.0, 8.0, "Hold the approved result context with no before/after transformation, no new prop, and no duplicate hand.", initial=s6i, resulting=list(s5r), visibility="final approved result held", rules=["final-state lock", "no new prop"], final=True, sources=src, transition=f"{tr}:s",),
     ]
 
 
-def _material_transfer(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyStep]:
-    product, cap, receiver = spec.product, spec.component, spec.receiver
+def _material_transfer(spec: StrategySpec, *, scene: str, intent: str, action_index: int = 0) -> list[ChoreographyStep]:
+    scenario = resolve_intent_scenario(
+        strategy_id="",
+        family="MATERIAL_TRANSFER",
+        intent=intent,
+        default_target=spec.target,
+        default_receiver=spec.receiver,
+        action_index=action_index,
+    )
+    product, cap, receiver = spec.product, spec.component, scenario.physical_target
+    src, tr = [action_index], scenario.transition_key
     s1 = [
         _st("product", "upright in support hand", "SUPPORT_HAND", True, f"closed/upright {product} already present"),
         _st("component", f"seated on {product}", "SUPPORT_HAND", True, f"{cap} closed and visible"),
@@ -207,17 +242,26 @@ def _material_transfer(spec: StrategySpec, *, scene: str, intent: str) -> list[C
         _st("receiver", receiver, "FRAME_STATIC", True, f"{receiver} still holds the same amount"),
     ]
     return [
-        _step(1, 0.0, 1.0, f"Establish the source {product} and the same {receiver}. Both are already present; nothing appears after the first frame.", initial=s1, resulting=list(s1), visibility="source and receiver visible", rules=["first-frame presence"]),
-        _step(2, 1.0, 2.2, f"Open the dispenser while retaining {cap} custody in the active hand.", initial=s1, resulting=s2r, visibility=f"{cap} never leaves frame", rules=["component custody retained"]),
-        _step(3, 2.2, 4.2, f"Transfer exactly one controlled amount to the same {receiver}. No airborne spray, extra stream, or second container.", initial=s2r, resulting=s3r, visibility="continuous coverage through the transfer", rules=["one controlled transfer", "no cut while material moves"]),
-        _step(4, 4.2, 5.2, f"Stop the flow and return the {product} upright. The {receiver} stays fixed.", initial=s3r, resulting=s4r, visibility="source upright, receiver fixed", rules=["explicit stop-flow"]),
-        _step(5, 5.2, 6.8, f"Close the {product} and place it label-forward on the table. Reseat the same {cap} on the product.", initial=s4r, resulting=s5r, visibility="closed source still visible on the table", rules=["explicit close/place"]),
-        _step(6, 6.8, 8.0, f"Hold the source {product} and the {receiver} together in frame. No new prop or extra amount.", initial=s5r, resulting=list(s5r), visibility="source and result together", rules=["final-state lock"], final=True),
+        _step(1, 0.0, 1.0, f"Establish the source {product} and the same {receiver}. Both are already present; nothing appears after the first frame.", initial=s1, resulting=list(s1), visibility="source and receiver visible", rules=["first-frame presence"], sources=src, transition=f"{tr}:s",),
+        _step(2, 1.0, 2.2, f"Open the dispenser while retaining {cap} custody in the active hand.", initial=s1, resulting=s2r, visibility=f"{cap} never leaves frame", rules=["component custody retained"], sources=src, transition=f"{tr}:s",),
+        _step(3, 2.2, 4.2, f"Transfer exactly one controlled amount to the same {receiver}. Intent: {intent}. No airborne spray, extra stream, or second container.", initial=s2r, resulting=s3r, visibility="continuous coverage through the transfer", rules=["one controlled transfer", "no cut while material moves"], sources=src, transition=f"{tr}:s",),
+        _step(4, 4.2, 5.2, f"Stop the flow and return the {product} upright. The {receiver} stays fixed.", initial=s3r, resulting=s4r, visibility="source upright, receiver fixed", rules=["explicit stop-flow"], sources=src, transition=f"{tr}:s",),
+        _step(5, 5.2, 6.8, f"Close the {product} and place it label-forward on the table. Reseat the same {cap} on the product.", initial=s4r, resulting=s5r, visibility="closed source still visible on the table", rules=["explicit close/place"], sources=src, transition=f"{tr}:s",),
+        _step(6, 6.8, 8.0, f"Hold the source {product} and the {receiver} together in frame. No new prop or extra amount.", initial=s5r, resulting=list(s5r), visibility="source and result together", rules=["final-state lock"], final=True, sources=src, transition=f"{tr}:s",),
     ]
 
 
-def _spray(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyStep]:
-    product, cap, target = spec.product, spec.component, spec.target
+def _spray(spec: StrategySpec, *, scene: str, intent: str, action_index: int = 0) -> list[ChoreographyStep]:
+    scenario = resolve_intent_scenario(
+        strategy_id="",
+        family="SPRAY",
+        intent=intent,
+        default_target=spec.target,
+        default_receiver=spec.receiver,
+        action_index=action_index,
+    )
+    product, cap, target = spec.product, spec.component, scenario.physical_target
+    src, tr = [action_index], scenario.transition_key
     s1 = [
         _st("product", "one hand, label-forward", "SUPPORT_HAND", True, f"closed {product} already in hand"),
         _st("component", f"on {product}", "SUPPORT_HAND", True, f"{cap} seated"),
@@ -244,17 +288,26 @@ def _spray(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyS
         _st("target", target, "FRAME_STATIC", True, f"{target} still in frame"),
     ]
     return [
-        _step(1, 0.0, 1.0, f"Establish the closed {product} and the approved {target} at a safe distance. Both already exist in frame one.", initial=s1, resulting=list(s1), visibility="product and target visible", rules=["first-frame presence"]),
-        _step(2, 1.0, 2.0, f"Remove the cap and expose the nozzle while retaining {cap} custody in the other hand.", initial=s1, resulting=s2r, visibility=f"{cap} remains visible", rules=["component custody retained"]),
-        _step(3, 2.0, 4.0, f"Aim once and perform one controlled spray toward the same {target}. No fake particles, extra bursts, or second bottle.", initial=s2r, resulting=s3r, visibility="continuous shot through the spray", rules=["one spray only"]),
-        _step(4, 4.0, 5.5, f"Lower the {product} and stop spraying. The same hand still owns the bottle.", initial=s3r, resulting=s4r, visibility="product still in the same hand", rules=["no hand swap"]),
-        _step(5, 5.5, 7.0, f"Replace the same {cap} on the nozzle. Do not duplicate or lose the cap.", initial=s4r, resulting=s5r, visibility="recapped product visible", rules=["explicit recap"]),
-        _step(6, 7.0, 8.0, f"Hold the {product} label-forward in the final state. No new prop.", initial=s5r, resulting=list(s5r), visibility="final label-forward hold", rules=["final-state lock"], final=True),
+        _step(1, 0.0, 1.0, f"Establish the closed {product} and the approved {target} at a safe distance. Both already exist in frame one.", initial=s1, resulting=list(s1), visibility="product and target visible", rules=["first-frame presence"], sources=src, transition=f"{tr}:s",),
+        _step(2, 1.0, 2.0, f"Remove the cap and expose the nozzle while retaining {cap} custody in the other hand.", initial=s1, resulting=s2r, visibility=f"{cap} remains visible", rules=["component custody retained"], sources=src, transition=f"{tr}:s",),
+        _step(3, 2.0, 4.0, f"Aim once and perform one controlled spray toward the same {target}. Intent: {intent}. No fake particles, extra bursts, or second bottle.", initial=s2r, resulting=s3r, visibility="continuous shot through the spray", rules=["one spray only"], sources=src, transition=f"{tr}:s",),
+        _step(4, 4.0, 5.5, f"Lower the {product} and stop spraying. The same hand still owns the bottle.", initial=s3r, resulting=s4r, visibility="product still in the same hand", rules=["no hand swap"], sources=src, transition=f"{tr}:s",),
+        _step(5, 5.5, 7.0, f"Replace the same {cap} on the nozzle. Do not duplicate or lose the cap.", initial=s4r, resulting=s5r, visibility="recapped product visible", rules=["explicit recap"], sources=src, transition=f"{tr}:s",),
+        _step(6, 7.0, 8.0, f"Hold the {product} label-forward in the final state. No new prop.", initial=s5r, resulting=list(s5r), visibility="final label-forward hold", rules=["final-state lock"], final=True, sources=src, transition=f"{tr}:s",),
     ]
 
 
-def _food_cook(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyStep]:
-    product, cap, receiver = spec.product, spec.component, spec.receiver
+def _food_cook(spec: StrategySpec, *, scene: str, intent: str, action_index: int = 0) -> list[ChoreographyStep]:
+    scenario = resolve_intent_scenario(
+        strategy_id="",
+        family="FOOD_COOK",
+        intent=intent,
+        default_target=spec.target,
+        default_receiver=spec.receiver,
+        action_index=action_index,
+    )
+    product, cap, receiver = spec.product, spec.component, scenario.physical_target
+    src, tr = [action_index], scenario.transition_key
     s1 = [
         _st("product", "counter, label-forward", "TABLE", True, f"closed {product} already present"),
         _st("component", f"on {product}", "TABLE", True, f"{cap} seated"),
@@ -286,17 +339,26 @@ def _food_cook(spec: StrategySpec, *, scene: str, intent: str) -> list[Choreogra
         _st("utensil", "in receiver", "TABLE", True, "same utensil"),
     ]
     return [
-        _step(1, 0.0, 1.0, f"Establish the {product}, utensil, and {receiver}. All three are already present.", initial=s1, resulting=list(s1), visibility="pack, utensil, and receiver visible", rules=["first-frame presence"]),
-        _step(2, 1.0, 2.2, f"Open the {product} while retaining {cap} custody.", initial=s1, resulting=s2r, visibility=f"{cap} stays visible", rules=["component custody retained"]),
-        _step(3, 2.2, 4.0, f"Measure and transfer one normal portion into the same {receiver}.", initial=s2r, resulting=s3r, visibility="continuous transfer coverage", rules=["one portion only"]),
-        _step(4, 4.0, 5.0, f"Set the {product} label-forward in a visible location. Do not hide the pack.", initial=s3r, resulting=s4r, visibility="pack remains visible", rules=["explicit placement"]),
-        _step(5, 5.0, 7.2, f"Stir only the declared food action. The original {product} stays visible.", initial=s4r, resulting=s5r, visibility="product remains in frame during the food action", rules=["no off-camera pack move"]),
-        _step(6, 7.2, 8.0, f"Hold the finished context with the original {product} still visible.", initial=s5r, resulting=list(s5r), visibility="finished context plus original product", rules=["final-state lock"], final=True),
+        _step(1, 0.0, 1.0, f"Establish the {product}, utensil, and {receiver}. All three are already present.", initial=s1, resulting=list(s1), visibility="pack, utensil, and receiver visible", rules=["first-frame presence"], sources=src, transition=f"{tr}:s",),
+        _step(2, 1.0, 2.2, f"Open the {product} while retaining {cap} custody.", initial=s1, resulting=s2r, visibility=f"{cap} stays visible", rules=["component custody retained"], sources=src, transition=f"{tr}:s",),
+        _step(3, 2.2, 4.0, f"Transfer one normal portion into the same {receiver}. Intent: {intent}.", initial=s2r, resulting=s3r, visibility="continuous transfer coverage", rules=["one portion only"], sources=src, transition=f"{tr}:s",),
+        _step(4, 4.0, 5.0, f"Set the {product} label-forward in a visible location. Do not hide the pack.", initial=s3r, resulting=s4r, visibility="pack remains visible", rules=["explicit placement"], sources=src, transition=f"{tr}:s",),
+        _step(5, 5.0, 7.2, f"Stir only the declared food action. The original {product} stays visible.", initial=s4r, resulting=s5r, visibility="product remains in frame during the food action", rules=["no off-camera pack move"], sources=src, transition=f"{tr}:s",),
+        _step(6, 7.2, 8.0, f"Hold the finished context with the original {product} still visible.", initial=s5r, resulting=list(s5r), visibility="finished context plus original product", rules=["final-state lock"], final=True, sources=src, transition=f"{tr}:s",),
     ]
 
 
-def _open_close(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyStep]:
+def _open_close(spec: StrategySpec, *, scene: str, intent: str, action_index: int = 0) -> list[ChoreographyStep]:
+    scenario = resolve_intent_scenario(
+        strategy_id="",
+        family="OPEN_CLOSE",
+        intent=intent,
+        default_target=spec.target,
+        default_receiver=spec.receiver,
+        action_index=action_index,
+    )
     product, cap = spec.product, spec.component
+    src, tr = [action_index], scenario.transition_key
     s1 = [
         _st("product", "support hand", "SUPPORT_HAND", True, f"closed {product} already visible"),
         _st("component", f"seated on {product}", "SUPPORT_HAND", True, f"{cap} closed"),
@@ -318,17 +380,26 @@ def _open_close(spec: StrategySpec, *, scene: str, intent: str) -> list[Choreogr
         _st("component", "reseated", "SUPPORT_HAND", True, f"same {cap} returned"),
     ]
     return [
-        _step(1, 0.0, 1.2, f"Establish the closed {product}. Opening mechanism and both hands are already in frame.", initial=s1, resulting=list(s1), visibility="closed product visible", rules=["first-frame presence"]),
-        _step(2, 1.2, 3.0, f"The active hand opens once while the support hand stabilizes the {product}.", initial=s1, resulting=s2r, visibility="both hands and product visible", rules=["support hand never releases mid-opening"]),
-        _step(3, 3.0, 4.5, f"Keep the {cap} in the same active hand. Do not lose or duplicate it.", initial=s2r, resulting=s3r, visibility=f"{cap} remains visible", rules=["component custody retained"]),
-        _step(4, 4.5, 6.2, f"Perform only the declared reveal. No invented parts or extra openings.", initial=s3r, resulting=s4r, visibility="product and component visible during reveal", rules=["declared reveal only"]),
-        _step(5, 6.2, 7.3, f"Reclose using the same {cap}.", initial=s4r, resulting=s5r, visibility="final package state resolving the component", rules=["explicit reclose"]),
-        _step(6, 7.3, 8.0, "Hold the final package state. No missing or duplicate cap/lid/wrapper.", initial=s5r, resulting=list(s5r), visibility="final package state held", rules=["final-state lock"], final=True),
+        _step(1, 0.0, 1.2, f"Establish the closed {product}. Opening mechanism and both hands are already in frame.", initial=s1, resulting=list(s1), visibility="closed product visible", rules=["first-frame presence"], sources=src, transition=f"{tr}:s",),
+        _step(2, 1.2, 3.0, f"The active hand opens once while the support hand stabilizes the {product}. Intent: {intent}.", initial=s1, resulting=s2r, visibility="both hands and product visible", rules=["support hand never releases mid-opening"], sources=src, transition=f"{tr}:s",),
+        _step(3, 3.0, 4.5, f"Keep the {cap} in the same active hand. Do not lose or duplicate it.", initial=s2r, resulting=s3r, visibility=f"{cap} remains visible", rules=["component custody retained"], sources=src, transition=f"{tr}:s",),
+        _step(4, 4.5, 6.2, f"Perform only the declared reveal. No invented parts or extra openings.", initial=s3r, resulting=s4r, visibility="product and component visible during reveal", rules=["declared reveal only"], sources=src, transition=f"{tr}:s",),
+        _step(5, 6.2, 7.3, f"Reclose using the same {cap}.", initial=s4r, resulting=s5r, visibility="final package state resolving the component", rules=["explicit reclose"], sources=src, transition=f"{tr}:s",),
+        _step(6, 7.3, 8.0, "Hold the final package state. No missing or duplicate cap/lid/wrapper.", initial=s5r, resulting=list(s5r), visibility="final package state held", rules=["final-state lock"], final=True, sources=src, transition=f"{tr}:s",),
     ]
 
 
-def _prop_transfer(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyStep]:
-    product, dest = spec.product, spec.receiver
+def _prop_transfer(spec: StrategySpec, *, scene: str, intent: str, action_index: int = 0) -> list[ChoreographyStep]:
+    scenario = resolve_intent_scenario(
+        strategy_id="",
+        family="PROP_TRANSFER",
+        intent=intent,
+        default_target=spec.target,
+        default_receiver=spec.receiver,
+        action_index=action_index,
+    )
+    product, dest = spec.product, scenario.physical_target
+    src, tr = [action_index], scenario.transition_key
     s1 = [
         _st("product", "source location", "TABLE", True, f"{product} already at its source"),
         _st("destination", dest, "FRAME_STATIC", True, f"{dest} already visible"),
@@ -350,17 +421,26 @@ def _prop_transfer(spec: StrategySpec, *, scene: str, intent: str) -> list[Chore
         _st("destination", dest, "FRAME_STATIC", True, f"{dest} unchanged"),
     ]
     return [
-        _step(1, 0.0, 1.2, f"Establish the {product} and the {dest}. Source and destination are both already visible.", initial=s1, resulting=list(s1), visibility="source and destination in frame", rules=["first-frame presence"]),
-        _step(2, 1.2, 2.5, f"Grasp and orient the same {product}. No second copy appears.", initial=s1, resulting=s2r, visibility="same product in hand", rules=["no product duplication"]),
-        _step(3, 2.5, 5.0, f"Move, align, connect, or place the same {product} onto the {dest} in one continuous motion.", initial=s2r, resulting=s3r, visibility="continuous transfer", rules=["explicit placement", "no cut during transfer"]),
-        _step(4, 5.0, 6.2, "Release hands only after physical support is clear.", initial=s3r, resulting=s4r, visibility="product supported at destination", rules=["explicit release"]),
-        _step(5, 6.2, 7.2, "Make one small adjustment without changing identity.", initial=s4r, resulting=s5r, visibility="same product at destination", rules=["identity preserved"]),
-        _step(6, 7.2, 8.0, f"Hold the completed arrangement. The same {product} remains at the {dest}.", initial=s5r, resulting=list(s5r), visibility="completed arrangement held", rules=["final-state lock"], final=True),
+        _step(1, 0.0, 1.2, f"Establish the {product} and the {dest}. Source and destination are both already visible.", initial=s1, resulting=list(s1), visibility="source and destination in frame", rules=["first-frame presence"], sources=src, transition=f"{tr}:s",),
+        _step(2, 1.2, 2.5, f"Grasp and orient the same {product}. No second copy appears.", initial=s1, resulting=s2r, visibility="same product in hand", rules=["no product duplication"], sources=src, transition=f"{tr}:s",),
+        _step(3, 2.5, 5.0, f"Place the same {product} onto the {dest} in one continuous motion. Intent: {intent}.", initial=s2r, resulting=s3r, visibility="continuous transfer", rules=["explicit placement", "no cut during transfer"], sources=src, transition=f"{tr}:s",),
+        _step(4, 5.0, 6.2, "Release hands only after physical support is clear.", initial=s3r, resulting=s4r, visibility="product supported at destination", rules=["explicit release"], sources=src, transition=f"{tr}:s",),
+        _step(5, 6.2, 7.2, "Make one small adjustment without changing identity.", initial=s4r, resulting=s5r, visibility="same product at destination", rules=["identity preserved"], sources=src, transition=f"{tr}:s",),
+        _step(6, 7.2, 8.0, f"Hold the completed arrangement. The same {product} remains at the {dest}.", initial=s5r, resulting=list(s5r), visibility="completed arrangement held", rules=["final-state lock"], final=True, sources=src, transition=f"{tr}:s",),
     ]
 
 
-def _static_lock(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyStep]:
+def _static_lock(spec: StrategySpec, *, scene: str, intent: str, action_index: int = 0) -> list[ChoreographyStep]:
+    scenario = resolve_intent_scenario(
+        strategy_id="",
+        family="STATIC_LOCK",
+        intent=intent,
+        default_target=spec.target,
+        default_receiver=spec.receiver,
+        action_index=action_index,
+    )
     product = spec.product
+    src, tr = [action_index], scenario.transition_key
     s1 = [
         _st("product", "support hand, label/feature visible", "SUPPORT_HAND", True, f"complete static {product} already present"),
         _st("support", "declared table surface", "FRAME_STATIC", True, "original support already in frame"),
@@ -374,15 +454,24 @@ def _static_lock(spec: StrategySpec, *, scene: str, intent: str) -> list[Choreog
         _st("support", "declared table surface", "FRAME_STATIC", True, "same support"),
     ]
     return [
-        _step(1, 0.0, 1.5, f"Establish the complete static setup. The {product} and support are already present, label/feature visible.", initial=s1, resulting=list(s1), visibility="complete static setup visible", rules=["first-frame presence", "global continuity lock"]),
-        _step(2, 1.5, 4.5, f"Rotate the product once without opening, transferring, or inventing parts. One controlled hand path only.", initial=s1, resulting=s2r, visibility="one hand path, no extra fingers or duplicate parts", rules=["static or one slow motivated move"]),
-        _step(3, 4.5, 6.5, "Return the product to the original table surface. No off-camera hand swap.", initial=s2r, resulting=s3r, visibility="product returns to the same support", rules=["explicit return"]),
-        _step(4, 6.5, 8.0, "Hold the final label/feature view. Match-cut lock: pose, grip, and component state stay identical.", initial=s3r, resulting=list(s3r), visibility="final label/feature view held", rules=["final-state lock", "match-cut lock"], final=True),
+        _step(1, 0.0, 1.5, f"Establish the complete static setup. The {product} and support are already present, label/feature visible.", initial=s1, resulting=list(s1), visibility="complete static setup visible", rules=["first-frame presence", "global continuity lock"], sources=src, transition=f"{tr}:s",),
+        _step(2, 1.5, 4.5, f"Rotate the product once without opening, transferring, or inventing parts. Intent: {intent}. One controlled hand path only.", initial=s1, resulting=s2r, visibility="one hand path, no extra fingers or duplicate parts", rules=["one slow motivated rotate"], sources=src, transition=f"{tr}:s",),
+        _step(3, 4.5, 6.5, "Return the product to the original table surface. No off-camera hand swap.", initial=s2r, resulting=s3r, visibility="product returns to the same support", rules=["explicit return"], sources=src, transition=f"{tr}:s",),
+        _step(4, 6.5, 8.0, "Hold the final label/feature view. Match-cut lock: pose, grip, and component state stay identical.", initial=s3r, resulting=list(s3r), visibility="final label/feature view held", rules=["final-state lock", "match-cut lock"], final=True, sources=src, transition=f"{tr}:s",),
     ]
 
 
-def _device_control(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyStep]:
+def _device_control(spec: StrategySpec, *, scene: str, intent: str, action_index: int = 0) -> list[ChoreographyStep]:
+    scenario = resolve_intent_scenario(
+        strategy_id="",
+        family="DEVICE_CONTROL",
+        intent=intent,
+        default_target=spec.target,
+        default_receiver=spec.receiver,
+        action_index=action_index,
+    )
     product, control = spec.product, spec.component
+    src, tr = [action_index], scenario.transition_key
     s1 = [
         _st("product", "stable compatible surface", "SURFACE", True, f"{product} already assembled and placed"),
         _st("control", f"on {product}", "ATTACHED", True, f"single verified {control} already visible"),
@@ -404,17 +493,26 @@ def _device_control(spec: StrategySpec, *, scene: str, intent: str) -> list[Chor
         _st("control", "at rest", "ATTACHED", True, f"{control} at rest"),
     ]
     return [
-        _step(1, 0.0, 1.2, f"Establish the {product} and safe environment. Cable/power state is explicit. Nothing is invented.", initial=s1, resulting=list(s1), visibility="device and control already visible", rules=["first-frame presence"]),
-        _step(2, 1.2, 2.5, f"The active hand approaches the single verified {control}. The support hand stays fixed.", initial=s1, resulting=s2r, visibility="one active hand only", rules=["no extra hands"]),
-        _step(3, 2.5, 4.5, f"Press or turn once and show only the expected indicator or mechanical response. No invented UI.", initial=s2r, resulting=s3r, visibility="lock framing across the control action", rules=["one actuation"]),
-        _step(4, 4.5, 6.2, "Release the control and keep the device fixed.", initial=s3r, resulting=s4r, visibility="device location unchanged", rules=["device stays put"]),
-        _step(5, 6.2, 7.2, "Return to the safe/off state when required. No hidden power or cable change.", initial=s4r, resulting=s5r, visibility="declared power state visible", rules=["explicit safe/off"]),
-        _step(6, 7.2, 8.0, "Hold the final device state. No new parts.", initial=s5r, resulting=list(s5r), visibility="final device state held", rules=["final-state lock"], final=True),
+        _step(1, 0.0, 1.2, f"Establish the {product} and safe environment. Cable/power state is explicit. Nothing is invented.", initial=s1, resulting=list(s1), visibility="device and control already visible", rules=["first-frame presence"], sources=src, transition=f"{tr}:s",),
+        _step(2, 1.2, 2.5, f"The active hand approaches the single verified {control}. The support hand stays fixed.", initial=s1, resulting=s2r, visibility="one active hand only", rules=["no extra hands"], sources=src, transition=f"{tr}:s",),
+        _step(3, 2.5, 4.5, f"Press the {control} once and show only the expected indicator response. Intent: {intent}. No invented UI.", initial=s2r, resulting=s3r, visibility="lock framing across the control action", rules=["one actuation"], sources=src, transition=f"{tr}:s",),
+        _step(4, 4.5, 6.2, "Release the control and keep the device fixed.", initial=s3r, resulting=s4r, visibility="device location unchanged", rules=["device stays put"], sources=src, transition=f"{tr}:s",),
+        _step(5, 6.2, 7.2, "Return to the safe/off state when required. No hidden power or cable change.", initial=s4r, resulting=s5r, visibility="declared power state visible", rules=["explicit safe/off"], sources=src, transition=f"{tr}:s",),
+        _step(6, 7.2, 8.0, "Hold the final device state. No new parts.", initial=s5r, resulting=list(s5r), visibility="final device state held", rules=["final-state lock"], final=True, sources=src, transition=f"{tr}:s",),
     ]
 
 
-def _manipulation(spec: StrategySpec, *, scene: str, intent: str) -> list[ChoreographyStep]:
-    product, target = spec.product, spec.target
+def _manipulation(spec: StrategySpec, *, scene: str, intent: str, action_index: int = 0) -> list[ChoreographyStep]:
+    scenario = resolve_intent_scenario(
+        strategy_id="",
+        family="MANIPULATION",
+        intent=intent,
+        default_target=spec.target,
+        default_receiver=spec.receiver,
+        action_index=action_index,
+    )
+    product, target = spec.product, scenario.physical_target
+    src, tr = [action_index], scenario.transition_key
     s1 = [
         _st("product", "stable orientation", "TABLE", True, f"{product} already visible, stable, correctly oriented"),
         _st("target", target, "FRAME_STATIC", True, f"{target} already visible"),
@@ -432,106 +530,26 @@ def _manipulation(spec: StrategySpec, *, scene: str, intent: str) -> list[Choreo
         _st("target", target, "FRAME_STATIC", True, f"{target} unchanged"),
     ]
     return [
-        _step(1, 0.0, 1.2, f"Establish the {product} and {target}. Both are already visible and correctly oriented.", initial=s1, resulting=list(s1), visibility="product and target visible", rules=["first-frame presence"]),
-        _step(2, 1.2, 2.5, "The active hand takes the declared grip. Any support hand stays fixed.", initial=s1, resulting=s2r, visibility="declared grip visible", rules=["one active hand"]),
-        _step(3, 2.5, 5.2, f"Perform one controlled manipulation only. Do not invent a second {product}.", initial=s2r, resulting=s3r, visibility="continuous action coverage", rules=["one manipulation"]),
-        _step(4, 5.2, 6.5, f"Stop and return the {product} to a stable position.", initial=s3r, resulting=s4r, visibility="product stable again", rules=["explicit return"]),
-        _step(5, 6.5, 8.0, "Hold the resulting state with all props visible.", initial=s4r, resulting=list(s4r), visibility="all props visible in the hold", rules=["final-state lock"], final=True),
+        _step(1, 0.0, 1.2, f"Establish the {product} and {target}. Both are already visible and correctly oriented.", initial=s1, resulting=list(s1), visibility="product and target visible", rules=["first-frame presence"], sources=src, transition=f"{tr}:s",),
+        _step(2, 1.2, 2.5, "The active hand takes the declared grip. Any support hand stays fixed.", initial=s1, resulting=s2r, visibility="declared grip visible", rules=["one active hand"], sources=src, transition=f"{tr}:s",),
+        _step(3, 2.5, 5.2, f"Perform one controlled manipulation only. Intent: {intent}. Do not invent a second {product}.", initial=s2r, resulting=s3r, visibility="continuous action coverage", rules=["one manipulation"], sources=src, transition=f"{tr}:s",),
+        _step(4, 5.2, 6.5, f"Stop and return the {product} to a stable position.", initial=s3r, resulting=s4r, visibility="product stable again", rules=["explicit return"], sources=src, transition=f"{tr}:s",),
+        _step(5, 6.5, 8.0, "Hold the resulting state with all props visible.", initial=s4r, resulting=list(s4r), visibility="all props visible in the hold", rules=["final-state lock"], final=True, sources=src, transition=f"{tr}:s",),
     ]
 
 
 def _herbal_oil_steps() -> list[ChoreographyStep]:
-    s1 = [
-        _st("product", "support hand, upright, label-forward", "SUPPORT_HAND", True, "heritage bottle already present, upright, label-forward, stable identity"),
-        _st("component", "seated on bottle", "SUPPORT_HAND", True, "cap fully seated, not yet rotated"),
-        _st("target", "same adult wrist/forearm", "FRAME_STATIC", True, "external wrist/forearm already in frame"),
-        _st("table", "in front of presenter", "FRAME_STATIC", True, "table already present as the later placement surface"),
-    ]
-    s2r = [
-        _st("product", "support hand, upright", "SUPPORT_HAND", True, "bottle remains in the same support hand"),
-        _st("component", "active hand on cap", "ACTIVE_HAND", True, "cap rotated exactly 90 degrees, still on the bottle, not removed"),
-        _st("target", "same adult wrist/forearm", "FRAME_STATIC", True, "same wrist/forearm"),
-        _st("table", "in front of presenter", "FRAME_STATIC", True, "table unchanged"),
-    ]
-    s3r = [
-        _st("product", "support hand, tilted toward same wrist/forearm", "SUPPORT_HAND", True, "same bottle tilted as if dispensing a small external amount; no uncontrolled stream"),
-        _st("component", "still on bottle at 90 degrees", "ACTIVE_HAND", True, "cap still attached at 90 degrees, not fully unscrewed"),
-        _st("target", "same adult wrist/forearm", "FRAME_STATIC", True, "same external wrist/forearm receiving the gesture"),
-        _st("table", "in front of presenter", "FRAME_STATIC", True, "table unchanged"),
-    ]
-    s4r = [
-        _st("product", "table, upright, label-forward", "TABLE", True, "same bottle returned upright and placed label-forward on the table"),
-        _st("component", "still on bottle at 90 degrees", "TABLE", True, "cap remains on the bottle at the same 90-degree state"),
-        _st("target", "same adult wrist/forearm", "FRAME_STATIC", True, "same wrist/forearm"),
-        _st("table", "in front of presenter", "FRAME_STATIC", True, "table now holds the bottle"),
-    ]
-    s5r = [
-        _st("product", "table, upright, label-forward, stationary", "TABLE", True, "bottle remains stationary and visible on the table; it does not return to the hand"),
-        _st("component", "still on bottle at 90 degrees", "TABLE", True, "cap state unchanged"),
-        _st("target", "same adult wrist/forearm", "FRAME_STATIC", True, "same external wrist/forearm being massaged"),
-        _st("table", "in front of presenter", "FRAME_STATIC", True, "table still holds the same bottle"),
-    ]
-    s6r = list(s5r)
-    return [
-        _step(1, 0.0, 1.0, "The bottle is already present in the avatar's support hand at the first frame, upright, label-forward, with stable product identity. It does not materialize after the scene begins.", initial=s1, resulting=list(s1), visibility="bottle, cap, support hand, and target limb already visible", rules=["first-frame presence", "no thin-air bottle"]),
-        _step(2, 1.0, 2.0, "The active hand grips the cap and rotates it exactly 90 degrees. Do not fully unscrew or remove the cap. The bottle remains in the support hand.", initial=s1, resulting=s2r, visibility="bottle stays in support hand; cap stays on the bottle", rules=["cap not removed", "support hand keeps the bottle"]),
-        _step(3, 2.0, 3.3, "The avatar tilts the same bottle toward the same wrist/forearm as if dispensing a small amount externally. Do not create an uncontrolled stream. Preserve bottle, cap, hand, and target-limb identity.", initial=s2r, resulting=s3r, visibility="same bottle, cap, hands, and limb", rules=["no uncontrolled liquid", "identity lock"]),
-        _step(4, 3.3, 4.2, "The avatar returns the bottle upright and places it label-forward on the table. The bottle's move from hand to table is explicit.", initial=s3r, resulting=s4r, visibility="explicit hand-to-table placement", rules=["explicit placement", "hand transfer to table"]),
-        _step(5, 4.2, 7.7, "The avatar massages the same external wrist/forearm. The same bottle remains stationary and visible on the table; it does not disappear or return to the hand.", initial=s4r, resulting=s5r, visibility="bottle stationary on the table during massage", rules=["bottle does not return to the hand", "same target limb"]),
-        _step(6, 7.7, 8.0, "Hold the final state. No new prop, duplicate hand, cap-state change, bottle teleportation, or unexplained object motion.", initial=s5r, resulting=s6r, visibility="final lock of bottle on table and massaged limb", rules=["final-state lock", "no new prop"], final=True),
-    ]
+    return herbal_oil_steps_composed()
 
 
 def _roll_on_steps() -> list[ChoreographyStep]:
-    s1 = [
-        _st("product", "support hand, capped, label-forward", "SUPPORT_HAND", True, "capped roll-on already in hand"),
-        _st("component", "seated on roll-on", "SUPPORT_HAND", True, "cap seated"),
-        _st("target", "same adult wrist/forearm", "FRAME_STATIC", True, "external wrist/forearm already in frame"),
-        _st("table", "in front of presenter", "FRAME_STATIC", True, "table already present"),
-    ]
-    s2r = [
-        _st("product", "support hand, uncapped", "SUPPORT_HAND", True, "same roll-on, cap removed"),
-        _st("component", "table, visible", "TABLE", True, "same cap placed visibly on the table"),
-        _st("target", "same adult wrist/forearm", "FRAME_STATIC", True, "same limb"),
-        _st("table", "in front of presenter", "FRAME_STATIC", True, "table now holds the cap"),
-    ]
-    s3r = [
-        _st("product", "support hand rolling on limb", "SUPPORT_HAND", True, "one controlled roll-on pass on the same external wrist/forearm"),
-        _st("component", "table, visible", "TABLE", True, "cap remains on the table"),
-        _st("target", "same adult wrist/forearm", "FRAME_STATIC", True, "same limb after one pass"),
-        _st("table", "in front of presenter", "FRAME_STATIC", True, "table unchanged"),
-    ]
-    s4r = [
-        _st("product", "table, upright, beside cap", "TABLE", True, "roll-on placed upright beside the same cap"),
-        _st("component", "table, visible, beside product", "TABLE", True, "same cap still on the table"),
-        _st("target", "same adult wrist/forearm", "FRAME_STATIC", True, "same limb"),
-        _st("table", "in front of presenter", "FRAME_STATIC", True, "table holds product and cap"),
-    ]
-    s5r = [
-        _st("product", "table, upright, beside cap, stationary", "TABLE", True, "product remains visible and stationary"),
-        _st("component", "table, visible, stationary", "TABLE", True, "cap remains visible and stationary"),
-        _st("target", "same adult wrist/forearm", "FRAME_STATIC", True, "same limb after authorized external massage only"),
-        _st("table", "in front of presenter", "FRAME_STATIC", True, "table unchanged"),
-    ]
-    s6r = [
-        _st("product", "support hand, recapped, upright", "SUPPORT_HAND", True, "same roll-on recapped with the same cap and returned upright"),
-        _st("component", "reseated on roll-on", "SUPPORT_HAND", True, "same cap replaced on the same roll-on"),
-        _st("target", "same adult wrist/forearm", "FRAME_STATIC", True, "same limb"),
-        _st("table", "in front of presenter", "FRAME_STATIC", True, "table now empty of product and cap"),
-    ]
-    return [
-        _step(1, 0.0, 1.0, "Establish the capped roll-on already in hand. Cap, label, and target limb are present in the first frame.", initial=s1, resulting=list(s1), visibility="capped roll-on and limb visible", rules=["first-frame presence"]),
-        _step(2, 1.0, 2.0, "The active hand removes the cap and places the same cap visibly on the table. Do not lose or duplicate the cap.", initial=s1, resulting=s2r, visibility="cap placed on the table", rules=["explicit cap placement", "component custody retained"]),
-        _step(3, 2.0, 3.6, "The support hand rolls one controlled pass on the same external wrist/forearm. No extra product appears.", initial=s2r, resulting=s3r, visibility="roll-on on the same limb; cap stays on the table", rules=["one pass", "cap stays put"]),
-        _step(4, 3.6, 4.4, "Place the roll-on upright beside the same cap. Placement is explicit.", initial=s3r, resulting=s4r, visibility="product and cap side by side on the table", rules=["explicit placement"]),
-        _step(5, 4.4, 6.7, "Massage only if the verified label authorizes it. Product and cap remain visible and stationary. No invented medical outcome.", initial=s4r, resulting=s5r, visibility="product and cap stationary and visible", rules=["no disappearance", "label-authorized massage only"]),
-        _step(6, 6.7, 7.6, "Pick up the roll-on, replace the same cap, and return it upright. This is an explicit pickup and recap.", initial=s5r, resulting=s6r, visibility="same cap returns to the same roll-on", rules=["explicit pickup", "explicit recap", "hand transfer"]),
-        _step(7, 7.6, 8.0, "Hold the final recapped upright state. No new prop or duplicate cap.", initial=s6r, resulting=list(s6r), visibility="final recapped hold", rules=["final-state lock"], final=True),
-    ]
+    return roll_on_steps_composed()
 
 
 def _broll_steps(spec: StrategySpec) -> list[ChoreographyStep]:
     product = spec.product
+    src: list[int] = []
+    tr = "broll"
     s1 = [
         _st("product", "table, label-forward", "TABLE", True, f"{product} already on the table"),
         _st("component", "seated", "TABLE", True, f"{spec.component} seated"),
@@ -545,11 +563,11 @@ def _broll_steps(spec: StrategySpec) -> list[ChoreographyStep]:
         _st("component", "seated", "TABLE", True, "re-established incoming state: same component seated"),
     ]
     return [
-        _step(1, 0.0, 1.5, f"Establish the {product} already on the table, label-forward. No object enters after frame one.", initial=s1, resulting=list(s1), visibility="product already present", rules=["first-frame presence"]),
-        _step(2, 1.5, 3.5, "Hold a continuous product-detail beat. No opening, transfer, or invented part.", initial=s1, resulting=list(s1), visibility="continuous product detail", rules=["no illegal state change"]),
-        _step(3, 3.5, 4.0, "Declare the outgoing state before the B-roll cut: same product, same location, same closed state.", initial=s1, resulting=outgoing, visibility="outgoing state fully declared", rules=["cut outgoing state declared"], cut="OUTGOING"),
-        _step(4, 4.0, 6.5, "After the cut, re-establish the compatible incoming state before any further interaction. Same product, table, and closed state.", initial=outgoing, resulting=incoming, visibility="incoming state re-established", rules=["cut re-establish required"], cut="REESTABLISH"),
-        _step(5, 6.5, 8.0, "Hold the re-established final state. The cut must not hide teleportation, duplication, or a hand swap.", initial=incoming, resulting=list(incoming), visibility="final re-established hold", rules=["final-state lock", "cut cannot hide illegal change"], final=True),
+        _step(1, 0.0, 1.5, f"Establish the {product} already on the table, label-forward. No object enters after frame one.", initial=s1, resulting=list(s1), visibility="product already present", rules=["first-frame presence"], sources=[], transition="broll:step",),
+        _step(2, 1.5, 3.5, "Hold a continuous product-detail beat. No opening, transfer, or invented part.", initial=s1, resulting=list(s1), visibility="continuous product detail", rules=["no illegal state change"], sources=[], transition="broll:step",),
+        _step(3, 3.5, 4.0, "Declare the outgoing state before the B-roll cut: same product, same location, same closed state.", initial=s1, resulting=outgoing, visibility="outgoing state fully declared", rules=["cut outgoing state declared"], cut="OUTGOING", sources=[], transition="broll:step",),
+        _step(4, 4.0, 6.5, "After the cut, re-establish the compatible incoming state before any further interaction. Same product, table, and closed state.", initial=outgoing, resulting=incoming, visibility="incoming state re-established", rules=["cut re-establish required"], cut="REESTABLISH", sources=[], transition="broll:step",),
+        _step(5, 6.5, 8.0, "Hold the re-established final state. The cut must not hide teleportation, duplication, or a hand swap.", initial=incoming, resulting=list(incoming), visibility="final re-established hold", rules=["final-state lock", "cut cannot hide illegal change"], final=True, sources=[], transition="broll:step",),
     ]
 
 
@@ -563,8 +581,8 @@ _BUILDERS = {
     "STATIC_LOCK": _static_lock,
     "DEVICE_CONTROL": _device_control,
     "MANIPULATION": _manipulation,
-    "HERBAL_OIL": lambda spec, **_: _herbal_oil_steps(),
-    "ROLL_ON": lambda spec, **_: _roll_on_steps(),
+    "HERBAL_OIL": lambda spec, scene="", intent="", action_index=0, **_: _herbal_oil_steps(),
+    "ROLL_ON": lambda spec, scene="", intent="", action_index=0, **_: _roll_on_steps(),
 }
 
 
@@ -693,13 +711,38 @@ def _build_strategy_variants(strategy_id: str) -> list[ChoreographyVariant]:
     contexts = list(entry["scene_contexts"])
     cameras = list(entry["camera_routes"])
     actions = list(entry["allowed_actions"])
-    builder = _BUILDERS[spec.family]
     variants: list[ChoreographyVariant] = []
+
+    if spec.family in COMPOSED_FAMILIES:
+        builder = _BUILDERS[spec.family]
+        steps = builder(spec, scene=scenes[0], intent="|".join(actions), action_index=0)
+        variants.append(
+            _variant(
+                strategy_id=strategy_id,
+                index=0,
+                spec=spec,
+                family=spec.family,
+                scene=scenes[0],
+                context=contexts[0],
+                camera=cameras[0],
+                intent="composed sequence: " + " -> ".join(actions),
+                steps=steps,
+                extra_contexts=contexts,
+                extra_cameras=cameras,
+            )
+        )
+        return variants
+
+    special = SPECIAL_STRATEGY_BUILDERS.get(strategy_id)
+    builder = _BUILDERS[spec.family]
     for index, intent in enumerate(actions):
         scene = scenes[index % len(scenes)]
         context = contexts[index % len(contexts)]
         camera = cameras[index % len(cameras)]
-        steps = builder(spec, scene=scene, intent=intent)
+        if special is not None:
+            steps = special(index, intent)
+        else:
+            steps = builder(spec, scene=scene, intent=intent, action_index=index)
         variants.append(
             _variant(
                 strategy_id=strategy_id,
@@ -782,17 +825,36 @@ def library_choreography_sha256() -> str:
     return canonical_sha256(payload)
 
 
+def _step_graph_fingerprint(variant: ChoreographyVariant) -> str:
+    payload = []
+    for step in variant.steps:
+        payload.append(
+            {
+                "n": step.step_number,
+                "sig": step.transition_signature,
+                "src": list(step.source_action_indexes),
+                "instruction": step.action_instruction,
+                "initial": [
+                    (s.entity_id, s.location, s.custody, s.visible, s.physical_state)
+                    for s in step.initial_states
+                ],
+                "resulting": [
+                    (s.entity_id, s.location, s.custody, s.visible, s.physical_state)
+                    for s in step.resulting_states
+                ],
+            }
+        )
+    return canonical_sha256(payload)
+
+
 def action_coverage_receipt() -> list[dict[str, object]]:
-    """Machine-checkable map of every atomic action to a choreography variant."""
+    """Semantic map of every atomic action to exact source-tagged steps."""
 
     catalog = all_choreography_variants()
     rows: list[dict[str, object]] = []
     for strategy_id, entry in SCENE_STRATEGIES.items():
         actions = list(entry["allowed_actions"])
-        variants = catalog[strategy_id]
-        action_variants = [
-            variant for variant in variants if variant.family != "BROLL_MATCH_CUT"
-        ]
+        variants = [v for v in catalog[strategy_id] if v.family != "BROLL_MATCH_CUT"]
         if strategy_id == "GENERIC_FALLBACK":
             for index, action in enumerate(actions):
                 rows.append(
@@ -801,29 +863,98 @@ def action_coverage_receipt() -> list[dict[str, object]]:
                         "strategy_id": strategy_id,
                         "action_index": index,
                         "action_text": action,
-                        "choreography_id": None,
-                        "step_numbers": [],
+                        "coverage_status": "BLOCKED",
+                        "coverage_kind": "BLOCKED",
                         "coverage": "BLOCKED",
+                        "choreography_ids": [],
+                        "choreography_id": None,
+                        "exact_step_numbers": [],
+                        "step_numbers": [],
+                        "structured_physical_target": None,
+                        "structured_transition_signature": None,
+                        "actor_hand_ownership": None,
+                        "initial_location": None,
+                        "resulting_location": None,
+                        "component_custody": None,
+                        "block_reason": "GENERIC_FALLBACK_BLOCKED",
                     }
                 )
             continue
-        if len(action_variants) != len(actions):
-            raise ChoreographyValidationError(
-                "ATOMIC_ACTION_COVERAGE_GAP",
-                strategy_id=strategy_id,
-                details={
-                    "actions": len(actions),
-                    "variants": len(action_variants),
-                },
+
+        spec = SPECS[strategy_id]
+        composed = spec.family in COMPOSED_FAMILIES
+        by_action: dict[int, list[tuple[ChoreographyVariant, ChoreographyStep]]] = {
+            i: [] for i in range(len(actions))
+        }
+        for variant in variants:
+            for step in variant.steps:
+                for idx in step.source_action_indexes:
+                    if idx in by_action:
+                        by_action[idx].append((variant, step))
+
+        fingerprints: dict[str, tuple[str, tuple[int, ...]]] = {}
+        for variant in variants:
+            fp = _step_graph_fingerprint(variant)
+            covered = tuple(
+                sorted({i for step in variant.steps for i in step.source_action_indexes})
             )
-        for index, action in enumerate(actions):
-            variant = action_variants[index]
-            if variant.intent_label != action:
+            prior = fingerprints.get(fp)
+            if prior is not None and prior[1] != covered:
                 raise ChoreographyValidationError(
-                    "ATOMIC_ACTION_INTENT_MISMATCH",
+                    "SEMANTIC_FINGERPRINT_COLLISION",
                     strategy_id=strategy_id,
-                    choreography_id=variant.choreography_id,
-                    details={"expected": action, "actual": variant.intent_label},
+                    details={
+                        "a": prior[0],
+                        "b": variant.choreography_id,
+                        "covered_a": list(prior[1]),
+                        "covered_b": list(covered),
+                    },
+                )
+            fingerprints[fp] = (variant.choreography_id, covered)
+
+        for index, action in enumerate(actions):
+            hits = by_action[index]
+            if not hits:
+                raise ChoreographyValidationError(
+                    "ATOMIC_ACTION_SEMANTIC_GAP",
+                    strategy_id=strategy_id,
+                    details={"action_index": index, "action": action},
+                )
+            choreography_ids = sorted({v.choreography_id for v, _ in hits})
+            step_numbers = sorted({s.step_number for _, s in hits})
+            primary = hits[0][1]
+            product_states_i = [st for st in primary.initial_states if st.entity_id == "product"]
+            product_states_r = [st for st in primary.resulting_states if st.entity_id == "product"]
+            comp_states = [
+                st for st in primary.resulting_states if st.entity_id in {"component", "control"}
+            ]
+            kind = (
+                "COMPOSED_SEQUENCE"
+                if composed
+                else ("STATIC_LOCK" if spec.family == "STATIC_LOCK" else "ALTERNATIVE_VARIANT")
+            )
+            action_l = action.casefold()
+            phys = " ".join(
+                f"{st.entity_id}:{st.location}:{st.physical_state}"
+                for st in primary.resulting_states
+            ).casefold()
+            if "back of the hand" in action_l and "back of the hand" not in phys:
+                raise ChoreographyValidationError(
+                    "ACTION_TARGET_INCOMPATIBLE",
+                    strategy_id=strategy_id,
+                    details={"action": action, "physics": phys},
+                )
+            if "handbag" in action_l and "handbag" not in phys and "bag" not in phys:
+                raise ChoreographyValidationError(
+                    "ACTION_TARGET_INCOMPATIBLE",
+                    strategy_id=strategy_id,
+                    details={"action": action, "physics": phys},
+                )
+            if "mirror" in action_l and "mirror" not in phys:
+                raise ChoreographyValidationError(
+                    "ACTION_TARGET_INCOMPATIBLE",
+                    strategy_id=strategy_id,
+                    details={"action": action, "physics": phys},
                 )
             rows.append(
                 {
@@ -831,9 +962,26 @@ def action_coverage_receipt() -> list[dict[str, object]]:
                     "strategy_id": strategy_id,
                     "action_index": index,
                     "action_text": action,
-                    "choreography_id": variant.choreography_id,
-                    "step_numbers": [step.step_number for step in variant.steps],
+                    "coverage_status": "COVERED",
+                    "coverage_kind": kind,
                     "coverage": "EXPLICIT",
+                    "choreography_ids": choreography_ids,
+                    "choreography_id": choreography_ids[0],
+                    "exact_step_numbers": step_numbers,
+                    "step_numbers": step_numbers,
+                    "structured_physical_target": (
+                        product_states_r[0].location if product_states_r else None
+                    ),
+                    "structured_transition_signature": primary.transition_signature,
+                    "actor_hand_ownership": f"{primary.support_hand}/{primary.active_hand}",
+                    "initial_location": (
+                        product_states_i[0].location if product_states_i else None
+                    ),
+                    "resulting_location": (
+                        product_states_r[0].location if product_states_r else None
+                    ),
+                    "component_custody": (comp_states[0].custody if comp_states else None),
+                    "block_reason": None,
                 }
             )
     return rows

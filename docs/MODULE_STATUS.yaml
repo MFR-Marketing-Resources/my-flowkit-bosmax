@@ -316,6 +316,7 @@ domains:
       - agent/models/scene_choreography_v2.py
       - agent/services/scene_choreography_validator.py
       - agent/services/scene_choreography_catalog.py
+      - agent/services/scene_choreography_scenarios.py
       - agent/services/scene_choreography_lineage.py
       - scripts/validate_scene_choreography_library.py
       - tests/unit/test_scene_choreography_v2.py

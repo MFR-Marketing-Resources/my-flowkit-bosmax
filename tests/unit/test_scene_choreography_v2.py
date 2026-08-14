@@ -77,6 +77,111 @@ def test_all_242_actions_have_explicit_or_blocked_receipt() -> None:
     assert len(explicit) == 239
     assert all(row["strategy_id"] == "GENERIC_FALLBACK" for row in blocked)
     assert all(row["choreography_id"] and row["step_numbers"] for row in explicit)
+    assert all(row.get("coverage_status") == "COVERED" for row in explicit)
+    assert all(row.get("exact_step_numbers") for row in explicit)
+    assert all(row.get("structured_transition_signature") for row in explicit)
+    assert all(
+        row.get("coverage_kind")
+        in {"COMPOSED_SEQUENCE", "ALTERNATIVE_VARIANT", "STATIC_LOCK"}
+        for row in explicit
+    )
+    # No action may claim coverage only via intent_label — require source-tagged steps.
+    catalog = all_choreography_variants()
+    for row in explicit:
+        found = False
+        for cid in row["choreography_ids"]:
+            for variant in catalog[str(row["strategy_id"])]:
+                if variant.choreography_id != cid:
+                    continue
+                for step in variant.steps:
+                    if int(row["action_index"]) in step.source_action_indexes:
+                        found = True
+                        break
+        assert found, row["action_id"]
+
+
+def test_semantic_source_mapping_not_fake_all_steps() -> None:
+    oil = select_variant_for_strategy("TRADITIONAL_HERBAL_OIL", 0)
+    # Continuity/final steps may be untagged; action steps must be sparse, not every step for every action.
+    by_src: dict[int, list[int]] = {}
+    for step in oil.steps:
+        for idx in step.source_action_indexes:
+            by_src.setdefault(idx, []).append(step.step_number)
+    assert set(by_src) == {0, 1, 2, 3, 4}
+    for idx, nums in by_src.items():
+        assert nums != [s.step_number for s in oil.steps], f"action {idx} mapped to all steps"
+
+
+def test_lip_color_four_physical_scenarios() -> None:
+    variants = all_choreography_variants()["LIP_COLOR"]
+    assert len(variants) == 4
+    blobs = []
+    for variant in variants:
+        phys = " ".join(
+            f"{st.entity_id}:{st.location}:{st.physical_state}"
+            for step in variant.steps
+            for st in step.resulting_states
+        ).casefold()
+        blobs.append((variant.intent_label.casefold(), phys, variant.steps))
+    apply_b, swatch_b, mirror_b, bag_b = blobs
+    assert "lips" in apply_b[0] and "lips" in apply_b[1]
+    assert "swatch" in swatch_b[0] and "back of the hand" in swatch_b[1]
+    assert "lips" not in swatch_b[1].split("back of the hand")[0] or "back of the hand" in swatch_b[1]
+    # hand swatch must not claim lip application as resulting target product path exclusively lips without hand
+    assert "back of the hand" in swatch_b[1]
+    assert "mirror" in mirror_b[0] and "mirror" in mirror_b[1]
+    assert "handbag" in bag_b[0] and ("handbag" in bag_b[1] or "bag" in bag_b[1])
+    # Source indexes unique per scenario
+    for i, variant in enumerate(variants):
+        tagged = {idx for step in variant.steps for idx in step.source_action_indexes}
+        assert tagged == {i}
+
+
+def test_baby_wipes_three_scenarios() -> None:
+    variants = all_choreography_variants()["BABY_WIPES"]
+    assert len(variants) == 3
+    seals = " ".join(s.transition_signature for s in variants[0].steps)
+    pull = " ".join(s.transition_signature for s in variants[1].steps)
+    bag = " ".join(s.transition_signature for s in variants[2].steps)
+    assert "reseal" in seals
+    assert "pull_one" in pull
+    assert "into_bag" in bag or "bag" in bag
+
+
+def test_apparel_four_scenarios() -> None:
+    variants = all_choreography_variants()["APPAREL"]
+    assert len(variants) == 4
+    modes = [" ".join(s.transition_signature for s in v.steps) for v in variants]
+    assert any("hanger" in m for m in modes)
+    assert any("fit" in m or "wear" in m for m in modes)
+    assert any("pinch" in m for m in modes)
+    assert any("seam" in m for m in modes)
+
+
+def test_electronics_small_device_four_scenarios() -> None:
+    variants = all_choreography_variants()["ELECTRONICS_SMALL_DEVICE"]
+    assert len(variants) == 4
+    modes = [" ".join(s.transition_signature for s in v.steps) for v in variants]
+    assert any("unbox" in m for m in modes)
+    assert any("press" in m for m in modes)
+    assert any("show" in m for m in modes)
+    assert any("place" in m for m in modes)
+    # Fail-closed: place path must not wear
+    place = variants[3]
+    blob = " ".join(s.action_instruction for s in place.steps).casefold()
+    assert "do not wear" in blob or "wear path is not used" in blob
+
+
+def test_no_positive_physical_branch_in_library() -> None:
+    from agent.services.scene_choreography_scenarios import has_positive_physical_branch
+
+    for strategy_id, variants in all_choreography_variants().items():
+        for variant in variants:
+            for step in variant.steps:
+                assert not has_positive_physical_branch(step.action_instruction), (
+                    f"{strategy_id} {variant.choreography_id} step {step.step_number}: "
+                    f"{step.action_instruction}"
+                )
 
 
 def test_entity_locations_are_not_branching_or_paths() -> None:
