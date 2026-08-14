@@ -57,7 +57,16 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 	}, [kind, modeFilter]);
 
 	useEffect(() => {
-		void refresh();
+		const loadWhenVisible = () => {
+			if (!document.hidden) void refresh();
+		};
+		loadWhenVisible();
+		document.addEventListener("visibilitychange", loadWhenVisible);
+		const timer = window.setInterval(loadWhenVisible, 5000);
+		return () => {
+			document.removeEventListener("visibilitychange", loadWhenVisible);
+			window.clearInterval(timer);
+		};
 	}, [refresh]);
 
 	const handleDeleteImage = useCallback(
@@ -139,18 +148,21 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 
 			<div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
 				{artifacts.map((item) => (
+					(() => {
+						const retrievedUrl = `/api/flow/retrieved/${encodeURIComponent(item.media_id)}`;
+						return (
 					<div
 						key={item.media_id}
 						className="group rounded-xl border border-slate-800 bg-slate-950/60 p-2 hover:border-slate-600"
 					>
 						<a
-							href={`/api/flow/retrieved/${item.media_id}`}
+							href={retrievedUrl}
 							target="_blank"
 							rel="noopener noreferrer"
 						>
 							{item.artifact_kind === "video" ? (
 								<video
-									src={`/api/flow/retrieved/${item.media_id}`}
+									src={retrievedUrl}
 									muted
 									playsInline
 									controls
@@ -159,7 +171,7 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 								/>
 							) : (
 								<img
-									src={`/api/flow/retrieved/${item.media_id}`}
+									src={retrievedUrl}
 									alt={item.mode ?? "artifact"}
 									loading="lazy"
 									className="aspect-[9/16] w-full rounded-lg bg-black object-contain"
@@ -189,7 +201,7 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 							)}
 							<div className="flex items-center gap-1">
 							<a
-								href={`/api/flow/retrieved/${item.media_id}`}
+								href={retrievedUrl}
 								download={`${item.media_id}.${item.artifact_kind === "video" ? "mp4" : "jpg"}`}
 								className="flex items-center gap-1 rounded border border-slate-700 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-slate-800"
 							>
@@ -214,6 +226,8 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 							{item.created_at?.replace("T", " ").replace("Z", "")}
 						</div>
 					</div>
+						);
+					})()
 				))}
 			</div>
 		</div>
