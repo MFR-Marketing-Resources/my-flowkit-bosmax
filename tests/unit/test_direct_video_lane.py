@@ -89,6 +89,41 @@ class _FakeDirectClient:
             "encodedVideo": base64.b64encode(_VBYTES).decode()}}}
 
 
+class _FakeCurrentMediaDirectClient(_FakeDirectClient):
+    """Current Flow response: submit exposes media/workflows, then media polling."""
+
+    def __init__(self):
+        super().__init__()
+        self.media_poll_count = 0
+
+    async def generate_video_from_references(self, reference_media_ids, prompt,
+                                             project_id, scene_id, **kw):
+        self.calls.append(("r2v", reference_media_ids, kw))
+        return {"status": 200, "data": {
+            "workflows": [{"name": "workflow-1", "metadata": {
+                "primaryMediaId": _MID, "batchId": "batch-1"}}],
+            "media": [{"name": _MID, "projectId": project_id,
+                        "workflowId": "workflow-1",
+                        "mediaMetadata": {"mediaStatus": {
+                            "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_SCHEDULED"}},
+                        "video": {"generatedVideo": {
+                            "model": "veo_3_1_r2v_fast_portrait"}}}],
+            "remainingCredits": 1767,
+        }}
+
+    async def check_video_status_by_media(self, targets):
+        self.media_poll_count += 1
+        self.calls.append(("media_poll", [t["name"] for t in targets]))
+        status = ("MEDIA_GENERATION_STATUS_SCHEDULED"
+                  if self.media_poll_count == 1
+                  else "MEDIA_GENERATION_STATUS_SUCCESSFUL")
+        return {"data": {"media": [{"name": _MID,
+            "mediaMetadata": {"mediaStatus": {
+                "mediaGenerationStatus": status}},
+            "video": {"generatedVideo": {
+                "fifeUrl": "https://example.invalid/v/" + _MID}}}]}}
+
+
 def _patch_direct_runtime(monkeypatch, tmp_path, client):
     """Common patches: fake client, tmp output dir, instant polling, recorded
     artifact persistence. Returns the list of insert_generated_artifact kwargs."""
@@ -456,6 +491,64 @@ def test_capture_returns_raw_submit_and_retrieves_in_background(monkeypatch, tmp
     assert job["lane"] == "DIRECT_CAPTURE"
     assert len(recorded) == 1 and recorded[0]["media_id"] == _MID
     assert mv._VIDEO_LANE_JOB is None
+    _reset_lane()
+
+
+def test_capture_current_media_submit_contract_polls_without_second_submit(
+        monkeypatch, tmp_path):
+    """The current media/workflow response is accepted and retrieved once."""
+    _reset_lane()
+    monkeypatch.setenv("DIRECT_VIDEO_CAPTURE_ENABLED", "1")
+    client = _FakeCurrentMediaDirectClient()
+    recorded = _patch_direct_runtime(monkeypatch, tmp_path, client)
+
+    async def go():
+        res = await mv.start_direct_capture(
+            "F2V", "p", "pid-1", ["ref-1"], aspect="9:16",
+            tier="PAYGATE_TIER_TWO", source_mode="HYBRID",
+            confirm_live_credit_burn=True)
+        assert res["ok"] is True
+        assert res["operations"] == [_MID]
+        assert res["submit_response"]["data"]["media"]
+        await mv._JOBS[res["job_id"]]["_task"]
+        return mv.get_job(res["job_id"])
+
+    job = _run(go())
+    assert job["status"] == "DONE"
+    assert job["approved"] is True
+    assert job["credit_state"] == "MAY_HAVE_SPENT"
+    assert job["provider_operation_ids"] == [_MID]
+    assert job["output_correlation"]["matched_on"] == "media_status"
+    assert client.media_poll_count == 2
+    assert [c[0] for c in client.calls].count("r2v") == 1
+    assert [c[0] for c in client.calls].count("media_poll") == 2
+    assert not any(c[0] == "poll" for c in client.calls)
+    assert (tmp_path / "retrieved" / f"{_MID}.mp4").read_bytes() == _VBYTES
+    assert len(recorded) == 1 and recorded[0]["media_id"] == _MID
+    _reset_lane()
+
+
+def test_direct_media_recovery_never_calls_provider_submit(monkeypatch, tmp_path):
+    _reset_lane()
+    client = _FakeCurrentMediaDirectClient()
+    _patch_direct_runtime(monkeypatch, tmp_path, client)
+
+    async def go():
+        res = await mv.start_direct_media_recovery(
+            media_id=_MID, project_id="pid-1", recovery_of="direct_capture_736_live",
+            model_key="veo_3_1_r2v_fast_portrait", seed=81989,
+            confirm_recovery=True)
+        assert res["ok"] is True
+        assert res["provider_submit"] is False
+        assert res["credit_action"] == "NO_PROVIDER_SUBMIT"
+        await mv._JOBS[res["job_id"]]["_task"]
+        return mv.get_job(res["job_id"])
+
+    job = _run(go())
+    assert job["status"] == "DONE"
+    assert job["lane"] == "DIRECT_CAPTURE_RECOVERY"
+    assert not any(call[0] == "r2v" for call in client.calls)
+    assert client.media_poll_count == 2
     _reset_lane()
 
 

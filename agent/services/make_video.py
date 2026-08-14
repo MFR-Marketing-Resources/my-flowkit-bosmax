@@ -920,32 +920,217 @@ async def _direct_submit(client, plan, refs, prompt, project_id, tier, seed,
         video_model_key=plan.get("video_model_key"), seed=seed)
 
 
-async def _download_video_bytes(client, media_id, fife_url) -> tuple:
-    """DOM-free byte retrieval: prefer the poll's own fifeUrl (signed delivery
-    URL), fall back to the authenticated zero-credit get_media base64 fetch.
-    Returns (bytes, source)."""
-    url = str(fife_url or "").strip()
-    if url and _DIRECT_FIFE_URL_RE.match(url):
+def _direct_response_data(response: dict) -> dict:
+    """Unwrap a Flow RPC response without assuming the legacy operation shape."""
+    data = response.get("data", response) if isinstance(response, dict) else {}
+    return data if isinstance(data, dict) else {}
+
+
+def _direct_media_status(media: dict) -> str:
+    """Read the current media-generation status from either known nesting."""
+    if not isinstance(media, dict):
+        return ""
+    status = media.get("mediaStatus")
+    if not isinstance(status, dict):
+        status = (media.get("mediaMetadata") or {}).get("mediaStatus")
+    return str((status or {}).get("mediaGenerationStatus") or "")
+
+
+def _direct_media_entries(response: dict) -> list[dict]:
+    data = _direct_response_data(response)
+    return [m for m in (data.get("media") or []) if isinstance(m, dict)]
+
+
+def _extract_direct_media_targets(response: dict, project_id: str) -> list[dict]:
+    """Extract the current Flow media-status poll targets from a submit.
+
+    Current ``batchAsyncGenerateVideoReferenceImages`` responses expose
+    ``data.media[].name`` and ``data.workflows[].metadata.primaryMediaId``;
+    they do not expose the legacy ``data.operations`` list.  The status RPC
+    accepts only the media name and project id, so keep this target deliberately
+    small and free of provider response payloads.
+    """
+    data = _direct_response_data(response)
+    media = data.get("media") if isinstance(data.get("media"), list) else []
+    workflows = data.get("workflows") if isinstance(data.get("workflows"), list) else []
+
+    targets = []
+    seen = set()
+    for item in media:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if not name:
+            workflow_id = item.get("workflowId")
+            name = next(
+                (
+                    (w.get("metadata") or {}).get("primaryMediaId")
+                    for w in workflows
+                    if isinstance(w, dict) and w.get("name") == workflow_id
+                ),
+                None,
+            )
+        name = str(name or "").strip()
+        pid = str(item.get("projectId") or project_id or "").strip()
+        if not name or not pid or name in seen:
+            continue
+        seen.add(name)
+        targets.append({"name": name, "projectId": pid})
+
+    # A future response may expose only workflows.  The primary media id is
+    # still a valid status target, so preserve it when there is no media list.
+    if not targets:
+        for workflow in workflows:
+            if not isinstance(workflow, dict):
+                continue
+            name = str((workflow.get("metadata") or {}).get("primaryMediaId") or "").strip()
+            pid = str(project_id or "").strip()
+            if name and pid and name not in seen:
+                seen.add(name)
+                targets.append({"name": name, "projectId": pid})
+    return targets
+
+
+def _extract_direct_submission(response: dict, project_id: str) -> tuple[list[dict], list[dict]]:
+    """Return legacy operation handles and/or current media poll targets."""
+    from agent.sdk.services.operations import _extract_operations
+    operations = _extract_operations(response)
+    return operations, _extract_direct_media_targets(response, project_id)
+
+
+async def _poll_direct_media_targets(client, targets: list[dict], timeout: int) -> dict:
+    """Poll the current Flow ``{"media": [...]}`` status contract.
+
+    This path is intentionally separate from ``_poll_operations``: sending a
+    media target through the legacy ``{"operations": [...]}`` body returns an
+    empty/non-terminal response from the provider and loses the accepted render.
+    """
+    if not targets:
+        return {"error": "No media targets to poll"}
+    from agent.sdk.services import operations as sdk_operations
+
+    try:
+        interval = max(0.0, float(sdk_operations.VIDEO_POLL_INTERVAL))
+    except (TypeError, ValueError):
+        interval = 15.0
+    elapsed = 0.0
+    target_names = {str(t.get("name")) for t in targets if t.get("name")}
+    while elapsed < timeout:
+        if interval:
+            await asyncio.sleep(interval)
+            elapsed += interval
+        else:
+            # Test/failsafe configurations may set a zero interval.  Advance a
+            # logical second so a permanently pending provider cannot spin.
+            elapsed += 1.0
         try:
-            import aiohttp
-            async with aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=300)) as s:
-                async with s.get(url) as r:
-                    if r.status == 200:
-                        data = await r.read()
-                        if data and len(data) > 1024:
-                            return data, "fifeUrl"
-        except Exception:  # noqa: BLE001 — the authenticated fallback re-checks
+            status_result = await client.check_video_status_by_media(targets)
+        except Exception:  # noqa: BLE001 — transient relay failures stay pollable
+            continue
+        if not isinstance(status_result, dict) or status_result.get("error"):
+            continue
+        entries = _direct_media_entries(status_result)
+        by_name = {str(m.get("name")): m for m in entries if m.get("name")}
+        failed = [
+            (name, _direct_media_status(by_name[name]))
+            for name in target_names
+            if name in by_name
+            and _direct_media_status(by_name[name]) == "MEDIA_GENERATION_STATUS_FAILED"
+        ]
+        if failed:
+            return {"error": f"Media generation failed: {failed[0][0]}"}
+        if target_names and all(
+                name in by_name
+                and _direct_media_status(by_name[name]) == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+                for name in target_names):
+            return {"data": _direct_response_data(status_result)}
+    return {"error": f"Polling timeout after {timeout}s"}
+
+
+def _direct_media_url(media: dict) -> str | None:
+    """Find a provider delivery URL without trusting it until host validation."""
+    if not isinstance(media, dict):
+        return None
+    for key in ("fifeUrl", "servingUri", "downloadUrl", "url", "servingUrl"):
+        value = _deep(media, key)
+        if value:
+            return str(value).strip()
+    return None
+
+
+def _direct_media_generation_id(media: dict) -> str | None:
+    """Extract the v1 media resource key when the status payload exposes it."""
+    if not isinstance(media, dict):
+        return None
+    for key in ("mediaGenerationId", "media_generation_id", "generationId", "clipId"):
+        value = _deep(media, key)
+        if isinstance(value, dict):
+            value = value.get("name") or value.get("id")
+        if value:
+            return str(value).strip()
+    return None
+
+
+async def _download_from_direct_url(url: str, source: str) -> tuple | None:
+    if not url or not _DIRECT_FIFE_URL_RE.match(url):
+        return None
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=300)) as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.read()
+                    if data and len(data) > 1024:
+                        return data, source
+    except Exception:  # noqa: BLE001 — authenticated fallbacks remain available
+        pass
+    return None
+
+
+async def _download_video_bytes(client, media_id, fife_url,
+                                media_generation_id=None) -> tuple:
+    """DOM-free byte retrieval with current Flow tile fallbacks.
+
+    Prefer a trusted signed URL from the status response, then the authenticated
+    generation-resource ``get_media`` endpoint, and finally the authenticated
+    tile redirect used by the current Flow Library.  None of these paths submits
+    or retries a generation.
+    """
+    direct = await _download_from_direct_url(str(fife_url or "").strip(), "fifeUrl")
+    if direct:
+        return direct
+
+    media = None
+    media_error = None
+    try:
+        media = await client.get_media(media_id, media_generation_id=media_generation_id)
+        mdata = media.get("data", media) if isinstance(media, dict) else media
+        enc = _deep(mdata, "encodedVideo")
+        if enc:
+            return base64.b64decode(enc), "get_media"
+    except Exception as exc:  # noqa: BLE001 — try the tile redirect next
+        media_error = str(exc)
+
+    redirect_fn = getattr(client, "get_media_download_url", None)
+    if callable(redirect_fn):
+        try:
+            redirect = await redirect_fn(media_id)
+            redirect_url = _deep(redirect, "downloadUrl", "url", "servingUri", "servingUrl")
+            direct = await _download_from_direct_url(str(redirect_url or "").strip(),
+                                                     "media_redirect")
+            if direct:
+                return direct
+        except Exception:  # noqa: BLE001 — report one bounded retrieval error
             pass
-    media = await client.get_media(media_id)
-    mdata = media.get("data", media) if isinstance(media, dict) else media
-    enc = _deep(mdata, "encodedVideo")
-    if not enc:
-        status = media.get("status") if isinstance(media, dict) else None
-        raise RuntimeError(
-            f"DIRECT_MEDIA_BYTES_UNAVAILABLE: media {media_id} returned no "
-            f"encodedVideo (status={status}) and fifeUrl delivery failed")
-    return base64.b64decode(enc), "get_media"
+
+    status = media.get("status") if isinstance(media, dict) else None
+    detail = f"status={status}"
+    if media_error:
+        detail += f" get_media_error={media_error[:160]}"
+    raise RuntimeError(
+        f"DIRECT_MEDIA_BYTES_UNAVAILABLE: media {media_id} returned no "
+        f"encodedVideo ({detail}) and signed delivery failed")
 
 
 async def _direct_poll_retrieve_finish(job, client, mode, operations, plan,
@@ -1018,6 +1203,89 @@ async def _direct_poll_retrieve_finish(job, client, mode, operations, plan,
     await _record_artifacts(job, mode, collected)
 
 
+async def _direct_media_poll_retrieve_finish(job, client, mode, targets,
+                                             plan, seed, num_videos) -> None:
+    """Poll current Flow media targets, retrieve bytes, and persist artifacts."""
+    job["stage"] = f"polling media render status ({len(targets)} target(s))"
+    polled = await _poll_direct_media_targets(
+        client, targets, timeout=_direct_poll_timeout())
+    if not isinstance(polled, dict) or polled.get("error"):
+        emsg = str((polled or {}).get("error") or "empty media poll result")
+        if "timeout" in emsg.lower():
+            raise RuntimeError(
+                "video not found/retrieved in time (direct media poll timeout; "
+                f"media targets {job.get('provider_operation_ids')} remain re-pollable)")
+        raise RuntimeError(f"DIRECT_RENDER_FAILED: {emsg}")
+
+    entries = _direct_media_entries(polled)
+    by_name = {str(m.get("name")): m for m in entries if m.get("name")}
+    outdir = OUTPUT_DIR / "retrieved"
+    outdir.mkdir(parents=True, exist_ok=True)
+    collected = []
+    skipped = []
+    for target in targets:
+        mid = str(target.get("name") or "").strip()
+        media = by_name.get(mid)
+        if not mid or not media:
+            skipped.append({"media_id": mid, "reason": "NO_MEDIA_IN_SUCCESS_POLL"})
+            continue
+        generation_id = _direct_media_generation_id(media)
+        if generation_id and hasattr(client, "_media_generation_ids"):
+            client._media_generation_ids[mid] = generation_id
+        job["stage"] = f"downloading finished video {mid[:12]}"
+        data, source = await _download_video_bytes(
+            client, mid, _direct_media_url(media),
+            media_generation_id=generation_id)
+        path = outdir / f"{mid}.mp4"
+        path.write_bytes(data)
+        collected.append({
+            "media_id": mid,
+            "local_path": str(path),
+            "size_mb": round(len(data) / 1024 / 1024, 2),
+            "correlation": {
+                "media_id": mid,
+                "matched_on": "media_status",
+                "operation_name": mid,
+                "retrieval_source": source,
+                "gen_seed": seed,
+                "media_generation_id": generation_id,
+            },
+        })
+    job["direct_retrieval_skipped"] = skipped
+    if not collected:
+        raise RuntimeError(
+            "DIRECT_RETRIEVAL_EMPTY: the media poll reported success but exposed "
+            f"no retrievable media (skipped={skipped}) — re-poll the recorded targets")
+    first = collected[0]
+    job["output_correlation"] = first["correlation"]
+    job.update(status="DONE", stage="done", media_id=first["media_id"],
+               local_path=first["local_path"], size_mb=first["size_mb"],
+               artifact="video", artifacts=list(collected))
+    if len(collected) < int(num_videos or 1):
+        job["partial"] = True
+        job["partial_detail"] = (
+            f"retrieved {len(collected)}/{num_videos} requested videos")
+        job["stage"] = "done_partial"
+    _stamp_credit(job, CREDIT_MAY_HAVE_SPENT)
+    await _record_artifacts(job, mode, collected)
+
+
+def _direct_submit_handles(submit: dict, project_id: str) -> tuple[list[dict], list[dict], list[str]]:
+    """Choose the poll contract without treating an accepted media response as empty."""
+    operations, media_targets = _extract_direct_submission(submit, project_id)
+    operation_names = [
+        str(name)
+        for name in ((o.get("operation") or {}).get("name") for o in operations)
+        if name
+    ]
+    media_names = [str(target["name"]) for target in media_targets if target.get("name")]
+    # Current Flow returns media targets; legacy captures return operation
+    # handles. Prefer media targets when present because their status endpoint
+    # is the contract paired with the current response.
+    handles = media_names or operation_names
+    return operations, media_targets, handles
+
+
 async def _run_generate_direct(job_id, mode, prompt, project_id, image_media_ids,
                                aspect, tier, model, duration_s, num_videos,
                                product_id, plan):
@@ -1060,14 +1328,13 @@ async def _run_generate_direct(job_id, mode, prompt, project_id, image_media_ids
                 or (isinstance(submit.get("status"), int) and submit["status"] >= 400)):
             detail = (submit or {}).get("error") or submit
             raise RuntimeError(f"DIRECT_SUBMIT_REJECTED: {str(detail)[:300]}")
-        from agent.sdk.services.operations import _extract_operations
-        operations = _extract_operations(submit)
-        op_names = [n for n in
-                    ((o.get("operation") or {}).get("name") for o in operations) if n]
-        if not operations or not op_names:
+        operations, media_targets, op_names = _direct_submit_handles(
+            submit, project_id)
+        if not op_names:
             raise RuntimeError(
                 f"DIRECT_SUBMIT_NO_OPERATIONS: {str(submit)[:300]}")
         job["provider_operation_ids"] = op_names
+        job["direct_media_targets"] = media_targets
         # The submit acceptance IS this lane's approval: the provider accepted
         # the render request (credits may be charged from here on).
         job["approved"] = True
@@ -1084,8 +1351,12 @@ async def _run_generate_direct(job_id, mode, prompt, project_id, image_media_ids
             "operation_names": op_names,
         }
         job["identity_captured"] = True  # the operation handle IS the binding
-        await _direct_poll_retrieve_finish(job, client, mode, operations, plan,
-                                           seed, num_videos)
+        if media_targets:
+            await _direct_media_poll_retrieve_finish(
+                job, client, mode, media_targets, plan, seed, num_videos)
+        else:
+            await _direct_poll_retrieve_finish(
+                job, client, mode, operations, plan, seed, num_videos)
     except Exception as e:  # noqa: BLE001
         msg = str(e)
         if job.get("approved") is True and generating and _is_retrieval_phase_error(msg):
@@ -1180,12 +1451,11 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
             _VIDEO_LANE_JOB = None
         return {"ok": False, "job_id": job_id, "fired": fired,
                 "submit_response": submit, "error": job["error"]}
-    from agent.sdk.services.operations import _extract_operations
-    operations = _extract_operations(submit)
-    op_names = [n for n in
-                ((o.get("operation") or {}).get("name") for o in operations) if n]
+    operations, media_targets, op_names = _direct_submit_handles(
+        submit, project_id)
     job["provider_operation_ids"] = op_names
     job["approved"] = bool(op_names)
+    job["direct_media_targets"] = media_targets
     job["model_used"] = fired_model_key
     job["generation_identity"] = {"seed": seed, "expected_model": fired_model_key,
                                   "operation_names": op_names}
@@ -1197,8 +1467,12 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
             if not op_names:
                 raise RuntimeError(
                     f"DIRECT_SUBMIT_NO_OPERATIONS: {str(submit)[:300]}")
-            await _direct_poll_retrieve_finish(job, client, mode, operations,
-                                               plan, seed, 1)
+            if media_targets:
+                await _direct_media_poll_retrieve_finish(
+                    job, client, mode, media_targets, plan, seed, 1)
+            else:
+                await _direct_poll_retrieve_finish(
+                    job, client, mode, operations, plan, seed, 1)
         except Exception as e:  # noqa: BLE001
             msg = str(e)
             if job.get("approved") is True and _is_retrieval_phase_error(msg):
@@ -1214,6 +1488,99 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
     job["_task"] = asyncio.create_task(_finish())
     return {"ok": True, "job_id": job_id, "fired": fired,
             "operations": op_names, "submit_response": submit}
+
+
+async def start_direct_media_recovery(
+        media_id: str, project_id: str, mode: str = "F2V",
+        source_mode: str = "HYBRID", model_key: str | None = None,
+        duration_s: int | None = 8, seed: int | None = None,
+        recovery_of: str | None = None,
+        confirm_recovery: bool = False) -> dict:
+    """Recover one already-accepted media target without a provider submit.
+
+    This is deliberately a separate entrypoint from ``start_direct_capture``:
+    it has no generation flag and no submit call.  The explicit recovery
+    confirmation prevents an operator from confusing a status/retrieval repair
+    with a new credit-bearing capture.
+    """
+    global _VIDEO_LANE_JOB
+    if confirm_recovery is not True:
+        return {"ok": False,
+                "error": "DIRECT_RECOVERY_CONFIRMATION_REQUIRED"}
+    media_id = str(media_id or "").strip()
+    project_id = str(project_id or "").strip()
+    if not media_id or not project_id:
+        return {"ok": False, "error": "DIRECT_RECOVERY_TARGET_REQUIRED"}
+    _gc_jobs()
+    if _VIDEO_LANE_JOB and _job_active(_VIDEO_LANE_JOB):
+        return {"ok": False, "error": "VIDEO_JOB_IN_FLIGHT",
+                "active_job": _VIDEO_LANE_JOB}
+    job_id = "r_" + uuid4().hex[:12]
+    target = {"name": media_id, "projectId": project_id}
+    _JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "SUBMITTED",
+        "mode": str(mode or "F2V").upper(),
+        "source_mode": source_mode,
+        "stage": "direct media recovery",
+        "project_id": project_id,
+        "local_path": None,
+        "media_id": None,
+        "size_mb": None,
+        "artifact": None,
+        "approved": True,
+        "binding": None,
+        "model": model_key,
+        "model_used": model_key,
+        "duration_s": duration_s,
+        "num_videos": 1,
+        "artifacts": [],
+        "provider_operation_ids": [media_id],
+        "direct_media_targets": [target],
+        "product_id": None,
+        "lane": "DIRECT_CAPTURE_RECOVERY",
+        "direct_recovery": True,
+        "recovery_of": recovery_of,
+        "generation_identity": {
+            "seed": seed,
+            "expected_model": model_key,
+            "operation_names": [media_id],
+        },
+        "identity_captured": True,
+        "error": None,
+        "created": time.time(),
+    }
+    _VIDEO_LANE_JOB = job_id
+    job = _JOBS[job_id]
+    client = get_flow_client()
+    plan = {"gen_type": "reference_frame_2_video"}
+
+    async def _finish():
+        global _VIDEO_LANE_JOB
+        try:
+            await _direct_media_poll_retrieve_finish(
+                job, client, job["mode"], [target], plan, seed, 1)
+        except Exception as exc:  # noqa: BLE001 — preserve accepted-credit truth
+            msg = str(exc)
+            if _is_retrieval_phase_error(msg):
+                _apply_post_approval_failure(job, msg)
+            else:
+                job.update(status="FAILED", error=msg, stage="failed")
+                _stamp_credit(job, CREDIT_MAY_HAVE_SPENT)
+        finally:
+            if _VIDEO_LANE_JOB == job_id:
+                _VIDEO_LANE_JOB = None
+
+    job["_task"] = asyncio.create_task(_finish())
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "media_id": media_id,
+        "operations": [media_id],
+        "provider_submit": False,
+        "credit_action": "NO_PROVIDER_SUBMIT",
+        "recovery_of": recovery_of,
+    }
 
 
 async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
