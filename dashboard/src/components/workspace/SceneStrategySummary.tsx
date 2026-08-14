@@ -154,9 +154,9 @@ export default function SceneStrategySummary({
 				data-testid="scene-strategy-registry-distinction"
 				className="mt-3 border-t border-slate-800 pt-2 text-[10px] text-slate-500"
 			>
-				Scene Strategy is the product's matched strategy authority. It is
-				distinct from the Scene Registry Background override in Generation
-				Setup, which only swaps the visual backdrop.
+				Scene Strategy is the product's matched authority and is applied
+				automatically. Scene Registry images appear only in I2V as visual
+				references; T2V, F2V and Hybrid do not configure Scene Registry.
 			</div>
 		</div>
 	);

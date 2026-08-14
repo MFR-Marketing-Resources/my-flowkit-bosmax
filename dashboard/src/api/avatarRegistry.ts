@@ -92,6 +92,36 @@ export function filterRecipesToAvatarRegistry<
 }
 
 /**
+ * I2V needs a real, audit-eligible avatar image in addition to a valid registry
+ * code. Keep the product recipe order, but exclude presenters whose generated
+ * registry image cannot enter the I2V character slot.
+ */
+export function filterRecipesToEligibleAvatarAssets<
+	T extends { avatar_code?: string | null },
+>(
+	recipes: T[],
+	rows: AvatarRegistryPoolRow[],
+	eligibleAssetIds: Iterable<string>,
+): T[] {
+	const eligibleIds = new Set(
+		Array.from(eligibleAssetIds, (assetId) => String(assetId).trim()).filter(
+			Boolean,
+		),
+	);
+	const eligibleCodes = new Set(
+		rows
+			.filter((row) =>
+				eligibleIds.has(String(row.generated_asset_id || "").trim()),
+			)
+			.map((row) => avatarRegistryCode(row).toUpperCase())
+			.filter(Boolean),
+	);
+	return filterRecipesToAvatarRegistry(recipes, rows).filter((recipe) =>
+		eligibleCodes.has(String(recipe.avatar_code || "").trim().toUpperCase()),
+	);
+}
+
+/**
  * Convert only approved registry-backed visual assets into IMG picker options.
  * Composite frames and other Creative Library images are deliberately excluded.
  */

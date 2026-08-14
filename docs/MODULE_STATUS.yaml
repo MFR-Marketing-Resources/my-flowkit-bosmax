@@ -807,6 +807,8 @@ domains:
 
       # Canonical API-first reference binding surface (no DOM generation lane).
       - dashboard/src/components/workspace/CanonicalReferenceBindingControls.tsx
+      - dashboard/src/components/workspace/CanonicalReferenceBindingControls.test.tsx
+      - dashboard/src/components/workspace/CreativeDirectionSection.tsx
       - dashboard/src/components/workspace/VisualAssetPicker.tsx
       - dashboard/src/components/workspace/VisualAssetPicker.test.tsx
       - dashboard/src/components/workspace/I2VModule.tsx

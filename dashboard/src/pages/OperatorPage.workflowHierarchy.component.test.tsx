@@ -219,7 +219,7 @@ describe("OperatorPage V4 Bucket 1 rollout", () => {
 		expect(main).not.toHaveClass("overflow-y-auto");
 		fireEvent.click(screen.getByRole("button", { name: /^Presenter/ }));
 		expect(screen.getByTestId("operator-presenter-source")).toHaveTextContent(
-			"Avatar source: Avatar Registry",
+			"Avatar source: product-mapped Avatar Registry",
 		);
 		expect(screen.getByTestId("operator-presenter-source")).toHaveTextContent(
 			"F2V start/end slots remain frame references",

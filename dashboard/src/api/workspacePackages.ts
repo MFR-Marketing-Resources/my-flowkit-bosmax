@@ -428,6 +428,8 @@ export async function compileWorkspacePromptPreview(input: {
 	copy_v2_context?: Record<string, unknown> | null;
 	avatar_id?: string | null;
 	scene_context_override?: string | null;
+	scene_template_id?: string | null;
+	camera_preset_code?: string | null;
 }): Promise<WorkspacePromptPreviewResult> {
 	const request = applyDurationAuthorityDefaults({
 		duration_seconds: 8,
