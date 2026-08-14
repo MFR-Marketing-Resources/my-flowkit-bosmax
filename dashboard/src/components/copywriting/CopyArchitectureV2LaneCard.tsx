@@ -17,6 +17,7 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function text(value: unknown, fallback = "Not selected") {
+	if (typeof value === "number" && Number.isFinite(value)) return String(value);
 	return typeof value === "string" && value.trim() ? value : fallback;
 }
 
