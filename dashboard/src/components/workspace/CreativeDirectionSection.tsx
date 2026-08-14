@@ -77,10 +77,12 @@ function sceneLabel(recipe: CreativeRecipe): string {
 
 export default function CreativeDirectionSection({
 	productId,
+	allowedAvatarCodes,
 	value,
 	onChange,
 }: {
 	productId: string | null;
+	allowedAvatarCodes?: string[];
 	value: CreativeDirection;
 	onChange: (next: CreativeDirection) => void;
 }) {
@@ -92,6 +94,14 @@ export default function CreativeDirectionSection({
 	// Re-seed on a genuine product SWITCH (the old selection was for the old product);
 	// respect a caller-provided selection only on first mount.
 	const seededProductId = useRef<string | null>(null);
+	const allowedAvatarKey =
+		allowedAvatarCodes === undefined
+			? null
+			: allowedAvatarCodes
+					.map((code) => code.trim().toUpperCase())
+					.filter(Boolean)
+					.sort()
+					.join("|");
 
 	useEffect(() => {
 		if (!productId) {
@@ -106,15 +116,27 @@ export default function CreativeDirectionSection({
 		void getProductRecipes(productId)
 			.then((res) => {
 				if (!active) return;
-				setPool(res.recipes);
-				setPretick(res.recommended_pretick);
+				const allowed =
+					allowedAvatarKey === null
+						? null
+						: new Set(allowedAvatarKey ? allowedAvatarKey.split("|") : []);
+				const filterAllowed = (recipes: CreativeRecipe[]) =>
+					allowed
+						? recipes.filter((recipe) =>
+								allowed.has(recipe.avatar_code.trim().toUpperCase()),
+							)
+						: recipes;
+				const filteredPool = filterAllowed(res.recipes);
+				const filteredPretick = filterAllowed(res.recommended_pretick);
+				setPool(filteredPool);
+				setPretick(filteredPretick);
 				setCluster(res.cluster);
 				setReviewRequired(Boolean(res.review_required));
 				const isEmpty = value.recipes.length === 0;
 				const firstSeed = seededProductId.current === null;
 				seededProductId.current = productId;
 				if (firstSeed && !isEmpty) return;
-				onChange(directionFromRecipes(res.recommended_pretick));
+				onChange(directionFromRecipes(filteredPretick));
 			})
 			.catch(() => {})
 			.finally(() => {
@@ -124,7 +146,7 @@ export default function CreativeDirectionSection({
 			active = false;
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [productId]);
+	}, [productId, allowedAvatarKey]);
 
 	const selectedKeys = useMemo(
 		() => new Set(value.recipes.map(recipeKey)),

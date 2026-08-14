@@ -3,6 +3,7 @@ import {
 	avatarRegistryLabel,
 	avatarRegistryPreviewUrl,
 	buildAvatarRegistryReferenceAssets,
+	filterRecipesToEligibleAvatarAssets,
 	filterRecipesToAvatarRegistry,
 	resolveAvatarRegistryCode,
 	type AvatarRegistryPoolRow,
@@ -63,6 +64,25 @@ describe("Avatar Registry authority", () => {
 			"BOS_F_FARAH_01",
 		);
 		expect(resolveAvatarRegistryCode("ca_img_fastlane_generated", REGISTRY)).toBe("");
+	});
+
+	it("keeps I2V recipes only when the product-mapped avatar has an eligible image", () => {
+		const rows: AvatarRegistryPoolRow[] = [
+			...REGISTRY,
+			{
+				avatar_code: "BOS_F_SARA_01",
+				character_name: "Sara",
+				generated_asset_id: "ca_registry_sara",
+			},
+		];
+		const recipes = [
+			{ avatar_code: "BOS_F_FARAH_01", scene_template_id: "SCN-1" },
+			{ avatar_code: "BOS_F_SARA_01", scene_template_id: "SCN-2" },
+		];
+
+		expect(
+			filterRecipesToEligibleAvatarAssets(recipes, rows, ["ca_registry_sara"]),
+		).toEqual([recipes[1]]);
 	});
 
 	it("maps only approved registry assets into visual reference options", () => {

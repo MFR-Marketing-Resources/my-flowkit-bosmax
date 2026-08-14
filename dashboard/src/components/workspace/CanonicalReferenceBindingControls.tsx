@@ -31,6 +31,8 @@ export interface RegistryAssetRow {
 	code: string;
 	label: string;
 	assetId: string | null;
+	primaryCluster?: string | null;
+	compatibleClusters?: string[];
 }
 
 export function registryRowsForEligibleAssets(
@@ -39,6 +41,34 @@ export function registryRowsForEligibleAssets(
 ): RegistryAssetRow[] {
 	const eligibleIds = new Set(assets.map((asset) => asset.asset_id));
 	return rows.filter((row) => row.assetId && eligibleIds.has(row.assetId));
+}
+
+function normalizedAuthorityKey(value: string | null | undefined): string {
+	return String(value || "").trim().toLocaleLowerCase();
+}
+
+function registryRowsForMappedAvatar(
+	rows: RegistryAssetRow[],
+	mappedAvatarCode: string | null | undefined,
+): RegistryAssetRow[] {
+	const wanted = normalizedAuthorityKey(mappedAvatarCode);
+	if (!wanted) return [];
+	return rows.filter((row) => normalizedAuthorityKey(row.code) === wanted);
+}
+
+function registryRowsForProductCluster(
+	rows: RegistryAssetRow[],
+	productCluster: string | null | undefined,
+): RegistryAssetRow[] {
+	const wanted = normalizedAuthorityKey(productCluster);
+	if (!wanted) return [];
+	return rows.filter(
+		(row) =>
+			normalizedAuthorityKey(row.primaryCluster) === wanted ||
+			(row.compatibleClusters ?? []).some(
+				(cluster) => normalizedAuthorityKey(cluster) === wanted,
+			),
+	);
 }
 
 const BINDING_AUDIT_REASON_LABELS: Array<{
@@ -243,11 +273,17 @@ function renderSurfaceAuditCard(
 export default function CanonicalReferenceBindingControls({
 	mode,
 	productId,
+	productCluster,
+	mappedAvatarCode,
+	mappedSceneStrategyId,
 	binding,
 	onChange,
 }: {
 	mode: WorkspaceMode;
 	productId: string | null;
+	productCluster?: string | null;
+	mappedAvatarCode?: string | null;
+	mappedSceneStrategyId?: string | null;
 	binding: CanonicalReferenceBinding;
 	onChange: (next: CanonicalReferenceBinding) => void;
 }) {
@@ -310,7 +346,15 @@ export default function CanonicalReferenceBindingControls({
 			fetchAPI<{ avatars?: Array<{ avatar_code?: string; character_name?: string; generated_asset_id?: string | null }> }>(
 				"/api/workspace/avatar-registry/pool",
 			),
-			fetchAPI<{ scenes?: Array<{ scene_code?: string; scene_name?: string; generated_asset_id?: string | null }> }>(
+			fetchAPI<{
+				scenes?: Array<{
+					scene_code?: string;
+					scene_name?: string;
+					generated_asset_id?: string | null;
+					primary_cluster?: string | null;
+					compatible_clusters?: string[];
+				}>;
+			}>(
 				"/api/workspace/scene-context-registry/pool",
 			),
 		])
@@ -328,6 +372,8 @@ export default function CanonicalReferenceBindingControls({
 					code: String(scene.scene_code ?? "").trim(),
 					label: String(scene.scene_name ?? scene.scene_code ?? "Scene").trim(),
 					assetId: scene.generated_asset_id ?? null,
+					primaryCluster: scene.primary_cluster ?? null,
+					compatibleClusters: scene.compatible_clusters ?? [],
 				})),
 			);
 			})
@@ -341,7 +387,38 @@ export default function CanonicalReferenceBindingControls({
 		};
 	}, [mode]);
 
+	useEffect(() => {
+		if (mode !== "I2V" || !audits.I2V_CHARACTER_PICKER) return;
+		const mappedRows = registryRowsForMappedAvatar(
+			avatarRegistryRows,
+			mappedAvatarCode,
+		);
+		const eligibleRows = registryRowsForEligibleAssets(
+			mappedRows,
+			assets.I2V_CHARACTER_PICKER ?? [],
+		);
+		const nextAssetId = eligibleRows[0]?.assetId ?? null;
+		if (binding.characterReferenceAssetId === nextAssetId) return;
+		onChange({ ...binding, characterReferenceAssetId: nextAssetId });
+	}, [
+		mode,
+		mappedAvatarCode,
+		avatarRegistryRows,
+		assets.I2V_CHARACTER_PICKER,
+		audits.I2V_CHARACTER_PICKER,
+		binding,
+		onChange,
+	]);
+
 	if (surfaces.length === 0) return null;
+	const mappedAvatarRows = registryRowsForMappedAvatar(
+		avatarRegistryRows,
+		mappedAvatarCode,
+	);
+	const productSceneRows = registryRowsForProductCluster(
+		sceneRegistryRows,
+		productCluster,
+	);
 	return (
 		<div
 			data-testid="canonical-reference-binding"
@@ -355,6 +432,22 @@ export default function CanonicalReferenceBindingControls({
 					? "Your product's official image is the automatic anchor. The picker below is an optional override — leave it empty to use the official image."
 					: "Selections are validated and persisted into execution-package asset slots; no browser automation is used. Empty pickers show exact eligibility exclusion reasons below."}
 			</div>
+			{mode === "I2V" ? (
+				<div
+					data-testid="i2v-required-image-plan"
+					className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-100"
+				>
+					<div className="font-semibold">
+						I2V uses three required engine images
+					</div>
+					<div className="mt-1 text-emerald-100/80">
+						1. Product official image — automatic · 2. Product-mapped avatar
+						 image — {mappedAvatarCode || "resolving"} · 3. Scene image for
+						 the mapped strategy — {mappedSceneStrategyId || "resolving"}.
+						 Style remains an optional extra mood layer.
+					</div>
+				</div>
+			) : null}
 			<div className="mt-3 grid gap-3 md:grid-cols-2">
 				{surfaces.map((surface) => {
 					const field = fieldForSurface(surface);
@@ -366,12 +459,15 @@ export default function CanonicalReferenceBindingControls({
 						surface !== "HYBRID_START_FRAME_PICKER" &&
 						surface !== "I2V_STYLE_PICKER";
 					const bindable = assets[surface] ?? [];
-					const registryRows =
+					const authorityRows =
 						surface === "I2V_CHARACTER_PICKER"
-							? registryRowsForEligibleAssets(avatarRegistryRows, bindable)
+							? mappedAvatarRows
 							: surface === "I2V_SCENE_PICKER"
-								? registryRowsForEligibleAssets(sceneRegistryRows, bindable)
+								? productSceneRows
 								: null;
+					const registryRows = authorityRows
+						? registryRowsForEligibleAssets(authorityRows, bindable)
+						: null;
 					const pickerLabel =
 						surface === "HYBRID_START_FRAME_PICKER"
 							? "Product's official image — automatic anchor"
@@ -382,12 +478,12 @@ export default function CanonicalReferenceBindingControls({
 									: surface.replace(/_/g, " ");
 					const audit = audits[surface];
 					const otherProductCount = otherProductCounts[surface] ?? 0;
-					const emptyLabel = pickerPlaceholder(
-						surface,
-						audit,
-						bindable.length,
-						error,
-					);
+					const emptyLabel =
+						registryRows && registryRows.length === 0 && audit
+							? surface === "I2V_CHARACTER_PICKER"
+								? `${mappedAvatarCode || "Mapped avatar"} has no approved I2V image`
+								: `No approved ${productCluster || "product-cluster"} scene image`
+							: pickerPlaceholder(surface, audit, bindable.length, error);
 					return (
 						<div key={surface} className="space-y-2">
 							<label className="space-y-1 text-xs text-slate-200">
@@ -405,9 +501,7 @@ export default function CanonicalReferenceBindingControls({
 										className="block text-[10px] text-cyan-200/80"
 									>
 										{surface === "I2V_CHARACTER_PICKER" ? "Avatar" : "Scene"} Registry:
-										 {surface === "I2V_CHARACTER_PICKER"
-											? avatarRegistryRows.length
-											: sceneRegistryRows.length}{" "}
+										 {authorityRows?.length ?? 0}{" "}
 										rows; {registryRows.length} approved I2V image
 										{registryRows.length === 1 ? "" : "s"} available.
 									</span>

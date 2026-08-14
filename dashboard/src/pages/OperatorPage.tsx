@@ -10,7 +10,6 @@ import {
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import { fetchCreativeAssetEligibilityAudit } from "../api/creativeAssets";
 import {
-	getCreativeSetupForProduct,
 	getProductRecipes,
 	type CreativeRecipe,
 } from "../api/creativeIntelligence";
@@ -18,9 +17,8 @@ import { fetchProductCatalog } from "../api/products";
 import { fetchProductVisualReadiness } from "../api/productVisualOnboarding";
 import {
 	avatarRegistryCode,
-	avatarRegistryLabel,
-	avatarRegistryPreviewUrl,
 	fetchAvatarRegistryPool,
+	filterRecipesToEligibleAvatarAssets,
 	filterRecipesToAvatarRegistry,
 	resolveAvatarRegistryCode,
 	type AvatarRegistryPoolRow,
@@ -60,7 +58,6 @@ import type { WorkflowStepStatus } from "../components/workflow";
 import SceneStrategySummary from "../components/workspace/SceneStrategySummary";
 import ResultsSidebar, { type SessionResult } from "../components/workspace/ResultsSidebar";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
-import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
 import type {
 	Product,
 	ProductVisualReadiness,
@@ -712,10 +709,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// canonical reference picker is collapsed by default and only revealed when
 	// the operator explicitly chooses to override the anchor.
 	const [showHybridOverride, setShowHybridOverride] = useState(false);
-	// Avatar + scene are auto-picked from the product-type mapping (shown as
-	// locks). The override dropdowns stay hidden behind an "Advanced" disclosure
-	// so the presenter/scene read as mapped defaults, not free-form picks.
-	const [showPresenterOverride, setShowPresenterOverride] = useState(false);
 	const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 	const [isLoadingPackage, setIsLoadingPackage] = useState(false);
 	const [isLoadingReadiness, setIsLoadingReadiness] = useState(false);
@@ -731,26 +724,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		useState<PromptCameraStyle>("UGC_IPHONE_RAW");
 	const [characterPresence, setCharacterPresence] =
 		useState<PromptCharacterPresence>("VISIBLE_CREATOR");
-	// T2V/Hybrid presenter identity is always resolved from the approved Avatar
+	// Video-lane presenter identity is always resolved from the approved Avatar
 	// Registry; no persona-composer or legacy persona fallback reaches production.
 	const [registryAvatarId, setRegistryAvatarId] = useState("");
-	const [registrySceneCode, setRegistrySceneCode] = useState("");
 	const [avatarRegistryPool, setAvatarRegistryPool] = useState<
 		AvatarRegistryPoolRow[]
 	>([]);
-	const [sceneRegistryPool, setSceneRegistryPool] = useState<
-		Array<{
-			scene_code: string;
-			scene_name?: string;
-			generated_asset_id?: string | null;
-			background_prompt?: string;
-			image_generated?: boolean;
-			primary_cluster?: string | null;
-			compatible_clusters?: string[];
-		}>
+	const [i2vEligibleAvatarAssetIds, setI2vEligibleAvatarAssetIds] = useState<
+		string[]
 	>([]);
-	const [registryPoolsLoading, setRegistryPoolsLoading] = useState(false);
-	const [registryPreviewUrls, setRegistryPreviewUrls] = useState<Record<string, string>>({});
 	const [backendRuntimeStale, setBackendRuntimeStale] = useState(false);
 	// T2V descriptor-based creative direction (no image pickers). The primary
 	// avatar drives the load-bearing `avatar_id` generation input via
@@ -776,21 +758,13 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	);
 	useEffect(() => {
 		let cancelled = false;
-		setRegistryPoolsLoading(true);
-		Promise.all([
-			fetchAvatarRegistryPool().catch(() => []),
-			fetchAPI<{
-				scenes?: typeof sceneRegistryPool;
-				count?: number;
-			}>("/api/workspace/scene-context-registry/pool").catch(() => ({ scenes: [] })),
-		])
-			.then(([avatarResp, sceneResp]) => {
+		void fetchAvatarRegistryPool()
+			.then((avatarResp) => {
 				if (cancelled) return;
 				setAvatarRegistryPool(avatarResp);
-				setSceneRegistryPool(sceneResp.scenes ?? []);
 			})
-			.finally(() => {
-				if (!cancelled) setRegistryPoolsLoading(false);
+			.catch(() => {
+				if (!cancelled) setAvatarRegistryPool([]);
 			});
 		return () => {
 			cancelled = true;
@@ -802,10 +776,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		setRegistryAvatarId("");
 		setCreativeDirection((current) => ({ ...current, avatarCodes: [] }));
 	}, [avatarRegistryPool, registryAvatarId]);
-	useEffect(() => { void Promise.all([fetchCreativeAssetEligibilityAudit({ surface: "I2V_CHARACTER_PICKER" }), fetchCreativeAssetEligibilityAudit({ surface: "I2V_SCENE_PICKER" })]).then((results) => setRegistryPreviewUrls(Object.fromEntries(results.flatMap((result) => result.eligible_assets.map((asset) => [asset.asset_id, asset.preview_url || asset.download_url || ""]))))).catch(() => setRegistryPreviewUrls({})); }, []);
-	const selectedSceneBackground =
-		sceneRegistryPool.find((s) => s.scene_code === registrySceneCode)?.background_prompt?.trim() ||
-		"";
 	const [videoDurationSeconds, setVideoDurationSeconds] = useState(8);
 	// Canonical source-mode (ADR-008) — delegates to the hoisted pure export
 	// resolveOperatorSourceMode; identity is stable across renders.
@@ -868,6 +838,33 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const jobMode: "T2V" | "F2V" | "I2V" | "IMG" =
 		mode === "HYBRID" ? "F2V" : mode;
 
+	// I2V is the only lane that needs a registry-backed presenter IMAGE. Its
+	// presenter pool must therefore satisfy both authorities: product recipe
+	// mapping and the live I2V character eligibility audit.
+	useEffect(() => {
+		if (mode !== "I2V") {
+			setI2vEligibleAvatarAssetIds([]);
+			return;
+		}
+		let active = true;
+		void fetchCreativeAssetEligibilityAudit({
+			surface: "I2V_CHARACTER_PICKER",
+		})
+			.then((audit) => {
+				if (active) {
+					setI2vEligibleAvatarAssetIds(
+						audit.eligible_assets.map((asset) => asset.asset_id),
+					);
+				}
+			})
+			.catch(() => {
+				if (active) setI2vEligibleAvatarAssetIds([]);
+			});
+		return () => {
+			active = false;
+		};
+	}, [mode]);
+
 	// ── V4 workflow shell (guided single-page redesign) ──────────────────────
 	// V4 is the default for every OperatorPage lane. ?classic=1 always wins and
 	// keeps the existing render reachable as the transitional rollback path.
@@ -877,6 +874,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const useV4 = query.get("classic") !== "1";
 	const [v4Pool, setV4Pool] = useState<CreativeRecipe[]>([]);
 	const [v4Pretick, setV4Pretick] = useState<CreativeRecipe[]>([]);
+	const [v4RecipeCluster, setV4RecipeCluster] = useState<string | null>(null);
 	const [v4RecipesLoading, setV4RecipesLoading] = useState(false);
 	// Per-step manual open/collapse overrides; default = the active step is open.
 	const [v4Open, setV4Open] = useState<Record<number, boolean>>({});
@@ -902,56 +900,78 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		},
 		[avatarRegistryPool, handleCreativeDirectionChange],
 	);
-	// Load the product's coherent recipe pool for the V4 T2V lane; auto-pick a
-	// default presenter from the knowledge base only when none is set yet.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: the pool loads on product changes; a manual registry pick must not refetch it
+	// Load the selected product's coherent recipes on every operator view. The
+	// first eligible pretick is the deterministic default; a previous product's
+	// presenter is never carried into the new product.
 	useEffect(() => {
-		if (!useV4 || mode === "IMG" || !selectedProduct?.id) return;
+		if (mode === "IMG" || !selectedProduct?.id) {
+			setV4Pool([]);
+			setV4Pretick([]);
+			setV4RecipeCluster(null);
+			setRegistryAvatarId("");
+			setCreativeDirection(EMPTY_CREATIVE_DIRECTION);
+			return;
+		}
 		let active = true;
 		setV4RecipesLoading(true);
 		void getProductRecipes(selectedProduct.id)
 			.then((res) => {
 				if (!active) return;
-				const registryRecipes = filterRecipesToAvatarRegistry(
-					res.recipes,
-					avatarRegistryPool,
-				);
-				const registryPretick = filterRecipesToAvatarRegistry(
-					res.recommended_pretick,
-					avatarRegistryPool,
-				);
+				const filterForMode = (recipes: CreativeRecipe[]) =>
+					mode === "I2V"
+						? filterRecipesToEligibleAvatarAssets(
+								recipes,
+								avatarRegistryPool,
+								i2vEligibleAvatarAssetIds,
+							)
+						: filterRecipesToAvatarRegistry(recipes, avatarRegistryPool);
+				const registryRecipes = filterForMode(res.recipes);
+				const registryPretick = filterForMode(res.recommended_pretick);
 				setV4Pool(registryRecipes);
 				setV4Pretick(registryPretick);
-				if (!registryAvatarId) {
-					const autoAvatar =
-						registryPretick[0]?.avatar_code ??
-						registryRecipes[0]?.avatar_code ??
-						"";
-					if (autoAvatar)
-						applyV4Presenter(autoAvatar, registryRecipes, registryPretick);
+				setV4RecipeCluster(res.cluster ?? null);
+				const autoAvatar =
+					registryPretick[0]?.avatar_code ??
+					registryRecipes[0]?.avatar_code ??
+					"";
+				if (autoAvatar) {
+					applyV4Presenter(autoAvatar, registryRecipes, registryPretick);
+				} else {
+					handleCreativeDirectionChange(EMPTY_CREATIVE_DIRECTION);
 				}
 			})
-			.catch(() => {})
+			.catch(() => {
+				if (!active) return;
+				setV4Pool([]);
+				setV4Pretick([]);
+				setV4RecipeCluster(null);
+				handleCreativeDirectionChange(EMPTY_CREATIVE_DIRECTION);
+			})
 			.finally(() => {
 				if (active) setV4RecipesLoading(false);
 			});
 		return () => {
 			active = false;
 		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [useV4, mode, selectedProduct?.id, avatarRegistryPool]);
+	}, [
+		mode,
+		selectedProduct?.id,
+		avatarRegistryPool,
+		i2vEligibleAvatarAssetIds,
+		applyV4Presenter,
+		handleCreativeDirectionChange,
+	]);
 	// Keep the scene→camera recipe coherent with whoever set the presenter
 	// (creative-setup seed, manual pick). Idempotent: no-op when already in sync,
 	// when the avatar is not in this product's pool, or when the recipe is empty.
 	useEffect(() => {
-		if (!useV4 || mode === "IMG" || !registryAvatarId || v4Pool.length === 0)
+		if (mode === "IMG" || !registryAvatarId || v4Pool.length === 0)
 			return;
 		if (creativeDirection.recipes[0]?.avatar_code === registryAvatarId) return;
 		if (!v4Pool.some((r) => r.avatar_code === registryAvatarId)) return;
 		applyV4Presenter(registryAvatarId, v4Pool, v4Pretick);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
-		useV4,
 		mode,
 		registryAvatarId,
 		v4Pool,
@@ -967,6 +987,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	useEffect(() => {
 		setReferenceBinding(EMPTY_BINDING);
 	}, [mode, selectedProduct?.id]);
+	const productMappedAvatarCodes = Array.from(
+		new Set(v4Pool.map((recipe) => recipe.avatar_code)),
+	).filter(Boolean);
 	// Official-image readiness for the HYBRID anchor. Guarded to HYBRID + a
 	// selected product; any failure falls back to "not ready" copy. Never throws
 	// and never gates generation — the backend still owns the real anchor.
@@ -1019,48 +1042,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset keyed on product id only
 	useEffect(() => {
 		setSelectedCopySetId(null);
-		// Knowledge-driven pre-fill: seed the avatar picker from the product's creative
-		// setup (gender/cluster-correct saved selection, else the smart default) so the
-		// operator starts from the RIGHT avatar instead of free-picking a mismatched one.
-		// Manual override stays free. Scene stays manual until the scene-template ->
-		// scene-context mapping is wired (different registries).
-		const pid = selectedProduct?.id;
-		if (!pid) return;
-		let active = true;
-		void getCreativeSetupForProduct(pid)
-			.then((setup) => {
-				if (!active) return;
-				const avatar =
-					setup.saved_selection?.selected_avatar_codes?.[0] ||
-					setup.default_selection?.selected_avatar_codes?.[0] ||
-					"";
-				const registryAvatar = resolveAvatarRegistryCode(
-					avatar,
-					avatarRegistryPool,
-				);
-				if (registryAvatar) setRegistryAvatarId(registryAvatar);
-				// Scene pre-fill: the saved scene TEMPLATES (SCN-xxxx strategy) are a
-				// different layer from the generation scene CONTEXTS (backgrounds), so
-				// pick a cluster-appropriate scene context from the registry instead of
-				// mapping template ids. No match (e.g. cluster has no scene yet) → leave
-				// the operator's manual pick.
-				const cluster = String(setup.cluster || "").trim().toLowerCase();
-				if (cluster) {
-					const match = sceneRegistryPool.find((s) => {
-						const pc = String(s.primary_cluster || "").trim().toLowerCase();
-						const compat = (s.compatible_clusters || []).map((c) =>
-							String(c).trim().toLowerCase(),
-						);
-						return pc === cluster || compat.includes(cluster);
-					});
-					if (match?.scene_code) setRegistrySceneCode(match.scene_code);
-				}
-			})
-			.catch(() => {});
-		return () => {
-			active = false;
-		};
-	}, [selectedProduct?.id, avatarRegistryPool]);
+	}, [selectedProduct?.id]);
 
 	useEffect(() => {
 		void fetchPromptCompilerRuntimeConfig()
@@ -1910,7 +1892,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				camera_style: cameraStyle,
 				character_presence: characterPresence,
 				avatar_id: registryAvatarId || null,
-				scene_context_override: selectedSceneBackground || null,
+				scene_context_override: null,
+				scene_template_id:
+					creativeDirection.recipes[0]?.scene_template_id ?? null,
+				camera_preset_code:
+					creativeDirection.recipes[0]?.camera_preset_code ?? null,
 			});
 			setPreviewPackage(preview);
 			setNotice({
@@ -1989,11 +1975,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				camera_style: cameraStyle,
 				character_presence: characterPresence,
 				avatar_id: registryAvatarId || null,
-				scene_context_override: selectedSceneBackground || null,
-				scene_context_code: registrySceneCode || null,
+				scene_context_override: null,
+				scene_context_code: null,
 				// Recipe descriptors (Step F): the primary selected recipe's scene template
 				// + camera preset so the compiled prompt uses the coherent combination.
-				// Only T2V populates recipes; other modes send null (compiler unchanged).
+				// Every video lane uses the selected product's coherent recipe.
 				scene_template_id: creativeDirection.recipes[0]?.scene_template_id ?? null,
 				camera_preset_code: creativeDirection.recipes[0]?.camera_preset_code ?? null,
 				// Per-mode reference payload hygiene: only the selected mode's
@@ -2205,13 +2191,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			? "Choose a product or upload references, then shape the image before the operator gate."
 			: "Pick a product, message and presenter — references and camera resolve by lane.";
 		const productReady = selectedReadiness?.readiness_status === "READY";
-		const registryV4Pool = filterRecipesToAvatarRegistry(
-			v4Pool,
-			avatarRegistryPool,
-		);
-		const v4Avatars = Array.from(
-			new Set(registryV4Pool.map((r) => r.avatar_code)),
-		).filter(Boolean);
+		const registryV4Pool = v4Pool;
+		const v4Avatars = productMappedAvatarCodes;
 		const primaryRecipe = creativeDirection.recipes[0] ?? null;
 		// Single-select scene list for the chosen presenter (backend-configured
 		// recipes only — nothing invented).
@@ -2567,148 +2548,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									data-testid="operator-presenter-source"
 									className="text-[11px] text-cyan-200"
 								>
-									Avatar source: Avatar Registry
+									Avatar source: product-mapped Avatar Registry
 									{mode === "F2V"
 										? " · F2V start/end slots remain frame references"
 										: ""}
 								</div>
-								{mode === "HYBRID" ? (
-									<div
-										data-testid="operator-registry-authority"
-										className="space-y-3 rounded-xl border border-cyan-500/25 bg-cyan-500/5 p-3"
-									>
-										<div>
-											<div className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-200">
-												Registry authority
-											</div>
-											<p className="mt-1 text-[11px] text-slate-300">
-												Hybrid keeps the approved Avatar Registry presenter and
-												Scene Registry context together; the product image remains
-												the automatic reference anchor.
-											</p>
-										</div>
-										{registryPoolsLoading ? (
-											<p className="text-[11px] text-slate-400">Loading registries…</p>
-										) : null}
-										{/* FASA 2c: avatar + scene are auto-picked from the product-type
-										    mapping (the locks below). The override dropdowns are hidden
-										    behind this Advanced disclosure so they read as mapped
-										    defaults, not free-form picks. */}
-										{registryAvatarId ? (
-											<div className="text-[11px] text-cyan-100">
-												Avatar lock: {registryAvatarId}
-											</div>
-										) : null}
-										{registrySceneCode ? (
-											<div className="text-[11px] text-cyan-100">
-												Scene lock: {registrySceneCode}
-											</div>
-										) : null}
-										<button
-											type="button"
-											data-testid="presenter-advanced-override-toggle"
-											aria-expanded={showPresenterOverride}
-											onClick={() => setShowPresenterOverride((v) => !v)}
-											className="inline-flex items-center gap-1 self-start rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-[11px] font-semibold text-slate-300 transition-colors hover:bg-slate-800/60"
-										>
-											{showPresenterOverride
-												? "▾ Hide advanced"
-												: "▸ Advanced — override presenter/scene"}
-										</button>
-										{showPresenterOverride ? (
-											<>
-										<label className="block space-y-1 text-xs text-slate-200">
-											<span>Avatar registry</span>
-											<select
-												id="operator-avatar-registry"
-												data-testid="operator-avatar-registry"
-											value={registryAvatarId}
-											onChange={(e) =>
-												setRegistryAvatarId(
-													resolveAvatarRegistryCode(e.target.value, avatarRegistryPool),
-												)
-											}
-											className={selectClass}
-											>
-												<option value="">
-													{avatarRegistryPool.length
-														? "— product-seeded registry pick —"
-														: "No avatar registry rows"}
-												</option>
-												{avatarRegistryPool.map((row) => {
-													const code = String(
-														row.avatar_code || row.AvatarCode || "",
-													).trim();
-													if (!code) return null;
-													const label = avatarRegistryLabel(row);
-													return (
-														<option key={code} value={code}>
-															{label} — {code}
-														</option>
-													);
-												})}
-											</select>
-										</label>
-										<VisualAssetPicker
-											label="Avatar registry visual picker"
-											value={registryAvatarId}
-											onChange={(value) =>
-												setRegistryAvatarId(
-													resolveAvatarRegistryCode(value, avatarRegistryPool),
-												)
-											}
-											items={avatarRegistryPool
-												.map((row) => ({
-													value: String(row.avatar_code || row.AvatarCode || ""),
-													title: avatarRegistryLabel(row),
-													subtitle: String(row.avatar_code || row.AvatarCode || ""),
-													previewUrl: avatarRegistryPreviewUrl(
-														row,
-														registryPreviewUrls,
-													),
-													status: "APPROVED",
-												}))
-												.filter((row) => Boolean(row.value))}
-										/>
-										<label className="block space-y-1 text-xs text-slate-200">
-											<span>Scene registry</span>
-											<select
-												id="operator-scene-registry"
-												data-testid="operator-scene-registry"
-												value={registrySceneCode}
-												onChange={(e) => setRegistrySceneCode(e.target.value)}
-												className={selectClass}
-											>
-												<option value="">
-													{sceneRegistryPool.length
-														? "— product package scene (no override) —"
-														: "No scene registry rows"}
-												</option>
-												{sceneRegistryPool.map((row) => (
-													<option key={row.scene_code} value={row.scene_code}>
-														{row.scene_name || row.scene_code}
-														{row.image_generated ? " · img" : ""}
-													</option>
-												))}
-											</select>
-										</label>
-										<VisualAssetPicker
-											label="Scene registry visual picker"
-											value={registrySceneCode}
-											onChange={setRegistrySceneCode}
-											items={sceneRegistryPool.map((row) => ({
-												value: row.scene_code,
-												title: row.scene_name || row.scene_code,
-												subtitle: row.scene_code,
-												previewUrl:
-													registryPreviewUrls[String(row.generated_asset_id || "")] || null,
-												status: "APPROVED",
-											}))}
-										/>
-										</>
-										) : null}
-									</div>
-								) : v4RecipesLoading ? (
+								{v4RecipesLoading ? (
 									<p className="text-[11px] text-slate-500">
 										Resolving presenters…
 									</p>
@@ -2720,6 +2565,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 												<button
 													key={code}
 													type="button"
+													data-testid="operator-product-mapped-avatar"
 													onClick={() =>
 														applyV4Presenter(code, v4Pool, v4Pretick)
 													}
@@ -2990,6 +2836,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 												<CanonicalReferenceBindingControls
 													mode={mode}
 													productId={selectedProduct?.id ?? null}
+													productCluster={v4RecipeCluster}
+													mappedAvatarCode={registryAvatarId}
+													mappedSceneStrategyId={
+														primaryRecipe?.scene_template_id ?? null
+													}
 													binding={referenceBinding}
 													onChange={setReferenceBinding}
 												/>
@@ -2999,6 +2850,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										<CanonicalReferenceBindingControls
 											mode={mode}
 											productId={selectedProduct?.id ?? null}
+											productCluster={v4RecipeCluster}
+											mappedAvatarCode={registryAvatarId}
+											mappedSceneStrategyId={
+												primaryRecipe?.scene_template_id ?? null
+											}
 											binding={referenceBinding}
 											onChange={setReferenceBinding}
 										/>
@@ -3839,107 +3695,22 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							) : null}
 						</div>
 					</div>
-					{mode === "T2V" ? (
-						<div className="mt-4" data-testid="operator-creative-direction-t2v">
-							<CreativeDirectionSection
-								productId={selectedProduct?.id ?? null}
-								value={creativeDirection}
-								onChange={handleCreativeDirectionChange}
-							/>
-						</div>
-					) : mode === "HYBRID" ? (
-						<div
-							data-testid="operator-registry-authority"
-							className="mt-4 rounded-lg border border-cyan-500/25 bg-cyan-500/5 p-3"
-						>
-							<div className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-200">
-								Registry Authority (Avatar + Scene)
-							</div>
-							<div className="mt-1 text-[11px] text-slate-300">
-								Hybrid presenter identity and scene background resolve from the live
-								approved Avatar Registry and Scene Registry. The Scene Registry
-								Background is a visual override only — distinct from the product's
-								Scene Strategy authority shown in Step 2. (T2V is text-only and uses
-								the descriptor-based Creative Direction above — no image pickers.)
-							</div>
-							{registryPoolsLoading ? (
-								<div className="mt-2 text-[11px] text-slate-400">Loading registries…</div>
-							) : null}
-							<div className="mt-3 space-y-4">
-								<label className="space-y-1 text-xs text-slate-200">
-									<span>Avatar registry</span>
-									<select
-										id="operator-avatar-registry"
-										data-testid="operator-avatar-registry"
-										value={registryAvatarId}
-										onChange={(e) =>
-											setRegistryAvatarId(
-												resolveAvatarRegistryCode(e.target.value, avatarRegistryPool),
-											)
-										}
-										className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-									>
-										<option value="">
-											{avatarRegistryPool.length
-												? "— product-seeded registry pick —"
-												: "No avatar registry rows"}
-										</option>
-										{avatarRegistryPool.map((row) => {
-											const code = String(row.avatar_code || row.AvatarCode || "").trim();
-											if (!code) return null;
-											const label = avatarRegistryLabel(row);
-											return (
-												<option key={code} value={code}>
-													{label} — {code}
-												</option>
-											);
-										})}
-									</select>
-								</label>
-								<VisualAssetPicker label="Avatar registry visual picker" value={registryAvatarId} onChange={(value) => setRegistryAvatarId(resolveAvatarRegistryCode(value, avatarRegistryPool))} items={avatarRegistryPool.map((row) => ({ value: String(row.avatar_code || row.AvatarCode || ""), title: avatarRegistryLabel(row), subtitle: String(row.avatar_code || row.AvatarCode || ""), previewUrl: avatarRegistryPreviewUrl(row, registryPreviewUrls), status: "APPROVED" })).filter((row) => Boolean(row.value))} />
-								<label className="space-y-1 text-xs text-slate-200">
-									<span>Scene registry</span>
-									<select
-										id="operator-scene-registry"
-										data-testid="operator-scene-registry"
-										value={registrySceneCode}
-										onChange={(e) => setRegistrySceneCode(e.target.value)}
-										className="w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
-									>
-										<option value="">
-											{sceneRegistryPool.length
-												? "— product package scene (no override) —"
-												: "No scene registry rows"}
-										</option>
-										{sceneRegistryPool.map((row) => (
-											<option key={row.scene_code} value={row.scene_code}>
-												{row.scene_name || row.scene_code}
-												{row.image_generated ? " · img" : ""}
-											</option>
-										))}
-									</select>
-								</label>
-								<VisualAssetPicker label="Scene registry visual picker" value={registrySceneCode} onChange={setRegistrySceneCode} items={sceneRegistryPool.map((row) => ({ value: row.scene_code, title: row.scene_name || row.scene_code, subtitle: row.scene_code, previewUrl: registryPreviewUrls[String(row.generated_asset_id || "")] || null, status: "APPROVED" }))} />
-							</div>
-							{registryAvatarId ? (
-								<div className="mt-2 text-[11px] text-cyan-100">
-									Avatar lock: {registryAvatarId}
-								</div>
-							) : (
-								<div className="mt-2 text-[11px] text-slate-400">
-									Select an approved Avatar Registry avatar before generating.
-								</div>
-							)}
-							{registrySceneCode ? (
-								<div className="mt-1 text-[11px] text-cyan-100">
-									Scene lock: {registrySceneCode}
-								</div>
-							) : null}
-						</div>
-					) : null}
+					<div className="mt-4" data-testid="operator-product-mapped-creative-direction">
+						<CreativeDirectionSection
+							productId={selectedProduct?.id ?? null}
+							allowedAvatarCodes={productMappedAvatarCodes}
+							value={creativeDirection}
+							onChange={handleCreativeDirectionChange}
+						/>
+					</div>
 					<CanonicalReferenceBindingControls
 						mode={mode}
 						productId={selectedProduct?.id ?? null}
+						productCluster={v4RecipeCluster}
+						mappedAvatarCode={registryAvatarId}
+						mappedSceneStrategyId={
+							creativeDirection.recipes[0]?.scene_template_id ?? null
+						}
 						binding={referenceBinding}
 						onChange={setReferenceBinding}
 					/>

@@ -3,7 +3,7 @@
  *
  * Renders the product's EXISTING strategy_taxonomy semantics: VERIFIED,
  * REVIEW_REQUIRED, FALLBACK_ONLY coverage, and stale conditions — plus the
- * explicit distinction from the Scene Registry Background override.
+ * explicit distinction from the I2V-only Scene Registry image reference.
  */
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
@@ -122,11 +122,11 @@ describe("SceneStrategySummary — taxonomy states", () => {
 		);
 	});
 
-	it("explicitly distinguishes Scene Strategy from Scene Registry Background", () => {
+	it("explains that Scene Registry image selection belongs only to I2V", () => {
 		render(<SceneStrategySummary hasProduct taxonomy={taxonomy()} />);
 		expect(
 			screen.getByTestId("scene-strategy-registry-distinction"),
-		).toHaveTextContent("distinct from the Scene Registry Background");
+		).toHaveTextContent("Scene Registry images appear only in I2V");
 	});
 });
 
