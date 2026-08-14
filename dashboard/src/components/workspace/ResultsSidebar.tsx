@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { deleteImageArtifact } from "../../api/imgFactory";
 
 export interface SessionResult {
@@ -41,7 +41,65 @@ export default function ResultsSidebar({
 }: ResultsSidebarProps) {
 	const [busyId, setBusyId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [recoveredResults, setRecoveredResults] = useState<SessionResult[]>([]);
+	const sessionStartedAtRef = useRef(Date.now());
 	const primaryIsVideoLibrary = libraryHref.startsWith("/library/videos");
+
+	// A retrieval recovery may register the video after the original job poll has
+	// already stopped. Discover only videos created while this sidebar is mounted:
+	// historical clips stay in Video Library/Results, while an out-of-band recovery
+	// still appears here without a page refresh or another paid generation.
+	useEffect(() => {
+		if (mediaKind !== "video") {
+			setRecoveredResults([]);
+			return;
+		}
+		let alive = true;
+		let inFlight = false;
+		const loadRecovered = async () => {
+			if (!alive || inFlight || document.hidden) return;
+			inFlight = true;
+			try {
+				const response = await fetch("/api/flow/artifacts?limit=20&kind=video");
+				if (!response.ok) return;
+				const payload = await response.json();
+				const sessionFloor = sessionStartedAtRef.current - 1000;
+				const current = (Array.isArray(payload.artifacts) ? payload.artifacts : [])
+					.filter((item: { media_id?: unknown; created_at?: unknown }) => {
+						const createdAt = Date.parse(String(item.created_at ?? ""));
+						return Boolean(item.media_id) && Number.isFinite(createdAt) && createdAt >= sessionFloor;
+					})
+					.map((item: { media_id: string; size_mb?: number | null }) => ({
+						media_id: String(item.media_id),
+						kind: "video" as const,
+						size_mb: item.size_mb ?? null,
+					}));
+				if (alive) setRecoveredResults(current);
+			} catch {
+				// Best-effort discovery only; the normal prop-driven completion path remains primary.
+			} finally {
+				inFlight = false;
+			}
+		};
+		void loadRecovered();
+		const timer = window.setInterval(() => void loadRecovered(), 5000);
+		const onVisibility = () => void loadRecovered();
+		document.addEventListener("visibilitychange", onVisibility);
+		return () => {
+			alive = false;
+			window.clearInterval(timer);
+			document.removeEventListener("visibilitychange", onVisibility);
+		};
+	}, [mediaKind]);
+
+	const visibleResults = useMemo(() => {
+		const seen = new Set<string>();
+		return [...results, ...recoveredResults].filter((item) => {
+			if (seen.has(item.media_id)) return false;
+			seen.add(item.media_id);
+			return true;
+		});
+	}, [results, recoveredResults]);
 
 	const handleDelete = useCallback(
 		async (mediaId: string) => {
@@ -55,6 +113,7 @@ export default function ResultsSidebar({
 			setError(null);
 			try {
 				await deleteImageArtifact(mediaId);
+				setRecoveredResults((prev) => prev.filter((item) => item.media_id !== mediaId));
 				onRemoved?.(mediaId);
 			} catch (err) {
 				setError(err instanceof Error ? err.message : "Failed to delete image");
@@ -80,7 +139,7 @@ export default function ResultsSidebar({
 				</div>
 			) : null}
 
-			{results.length === 0 && !generating ? (
+			{visibleResults.length === 0 && !generating ? (
 				<div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/40 px-3 py-6 text-center text-[11px] text-slate-500">
 					No results yet. Press{" "}
 					<span className="text-slate-300">Generate</span> on the left —
@@ -93,7 +152,7 @@ export default function ResultsSidebar({
 							Generating {mediaKind === "video" ? "video" : "image"}… results will appear here.
 						</div>
 					) : null}
-					{results.map((r) => (
+					{visibleResults.map((r) => (
 						<div
 							key={r.media_id}
 							className="space-y-1.5 rounded-xl border border-slate-800 bg-slate-950/60 p-1.5"

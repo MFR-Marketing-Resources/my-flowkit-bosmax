@@ -502,11 +502,13 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
     """DETERMINISTIC current-run output binding (PR321/322/323 + Owner Phase-1).
 
     A candidate media id becomes this run's output ONLY when its OWN media
-    resource structurally proves it belongs to THIS submission. Captured live
-    contract (zero-credit GET /v1/media/{generation-key}, clips 12b526c5 + f0f865d6):
-    {name, video{prompt, model, seed, aspectRatio, encodedVideo}} — the resource
-    carries the generation prompt (XML envelope, inner <prompt> == the exact
-    input prompt, proven lossless), the model key and the seed.
+    resource structurally proves it belongs to THIS submission. Two captured
+    live contracts carry the same identity fields: legacy
+    ``GET /v1/media/{generation-key}``, and current
+    ``flow.projectInitialData`` when ``/v1/media/{delivery UUID}`` returns 400.
+    Both expose the generation prompt (XML envelope, inner <prompt> == the exact
+    input prompt), model and seed. The current contract then delivers bytes via
+    the authenticated ``media.getMediaUrlRedirect`` endpoint.
 
     Acceptance = the proven composite (Owner-approved contract):
       * current bound project + PROJECT_DRIFT guard (enforced by the caller);
@@ -531,43 +533,93 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
     anchors = [str(a).strip() for a in (correlation.get("sse_prompt"),
                                         correlation.get("submitted_prompt")) if a]
     gen_seed = _seed_value(correlation.get("seed"))
+    project_id = (
+        correlation.get("_project_id") if isinstance(correlation, dict) else None
+    )
     stats.setdefault("media_fetch_errors", 0)
     stats.setdefault("media_fetch_error_ids", [])
     stats.setdefault("media_fetch_error_statuses", {})
     stats.setdefault("media_not_ready", 0)
     stats.setdefault("media_not_ready_ids", [])
+    stats.setdefault("project_metadata_fallbacks", 0)
+    stats.setdefault("project_metadata_fallback_ids", [])
+    stats.setdefault("media_download_errors", 0)
+    stats.setdefault("media_download_error_ids", [])
     stats["round_rejected_ids"] = []  # per-call: completed-but-identity-rejected
+    project_media_by_id = None
     for mid in dict.fromkeys(candidates):  # de-dupe, keep order
         if mid in exclude:
             continue
+        media_error_status = None
         try:
             media = await client.get_media(mid)
         except Exception:
+            media = None
+            media_error_status = "exception"
+        media_status = media.get("status") if isinstance(media, dict) else None
+        if ((isinstance(media, dict) and media.get("error"))
+                or (isinstance(media_status, int) and media_status >= 400)):
+            media_error_status = (
+                media_status if isinstance(media_status, int) else "error")
+        from_project_metadata = False
+        if media_error_status is not None:
             # Preserve a compact retrieval trace without storing response bodies
             # or signed URLs in job telemetry.
             stats["media_fetch_errors"] += 1
             if mid not in stats["media_fetch_error_ids"]:
                 stats["media_fetch_error_ids"].append(mid)
-            stats["media_fetch_error_statuses"][mid] = "exception"
-            continue
-        media_status = media.get("status") if isinstance(media, dict) else None
-        if ((isinstance(media, dict) and media.get("error"))
-                or (isinstance(media_status, int) and media_status >= 400)):
-            stats["media_fetch_errors"] += 1
-            if mid not in stats["media_fetch_error_ids"]:
-                stats["media_fetch_error_ids"].append(mid)
-            stats["media_fetch_error_statuses"][mid] = (
-                media_status if isinstance(media_status, int) else "error")
-            continue
+            stats["media_fetch_error_statuses"][mid] = media_error_status
+
+            # Current Flow agent clips are delivery UUIDs. Their exact identity
+            # lives in the authenticated project payload even though the legacy
+            # /v1/media lookup rejects that UUID. Read the project once per poll,
+            # keep the same prompt/model/seed guard, and never accept freshness
+            # alone as correlation.
+            lister = getattr(client, "list_project_media", None)
+            if project_id and callable(lister):
+                if project_media_by_id is None:
+                    try:
+                        snapshot = await lister(project_id)
+                    except Exception:  # noqa: BLE001 — keep polling with telemetry
+                        snapshot = {"media": [], "error": "exception"}
+                    observed_project_id = str(snapshot.get("project_id") or "").strip()
+                    if observed_project_id and observed_project_id != str(project_id):
+                        stats["project_metadata_error"] = "PROJECT_DRIFT"
+                        project_media_by_id = {}
+                    else:
+                        project_media_by_id = {
+                            str(item.get("name")): item
+                            for item in (snapshot.get("media") or [])
+                            if isinstance(item, dict) and item.get("name")
+                        }
+                        if snapshot.get("error"):
+                            stats["project_metadata_error"] = str(snapshot["error"])
+                fallback = project_media_by_id.get(str(mid))
+                if fallback:
+                    media = {"status": 200, "data": fallback}
+                    from_project_metadata = True
+                    stats["project_metadata_fallbacks"] += 1
+                    if mid not in stats["project_metadata_fallback_ids"]:
+                        stats["project_metadata_fallback_ids"].append(mid)
+            if not from_project_metadata:
+                continue
         mdata = media.get("data", media) if isinstance(media, dict) else media
         enc = _deep(mdata, "encodedVideo")
-        if not enc:
+        generation_status = _deep(mdata, "mediaGenerationStatus")
+        if from_project_metadata and generation_status != "MEDIA_GENERATION_STATUS_SUCCESSFUL":
+            stats["media_not_ready"] += 1
+            if mid not in stats["media_not_ready_ids"]:
+                stats["media_not_ready_ids"].append(mid)
+            continue
+        video_meta = mdata.get("video") if isinstance(mdata, dict) else None
+        video_meta = video_meta if isinstance(video_meta, dict) else {}
+        if isinstance(video_meta.get("generatedVideo"), dict):
+            video_meta = video_meta["generatedVideo"]
+        if not enc and not from_project_metadata:
             stats["media_not_ready"] += 1
             if mid not in stats["media_not_ready_ids"]:
                 stats["media_not_ready_ids"].append(mid)
             continue  # not a finished video (or not a video resource at all)
-        video_meta = mdata.get("video") if isinstance(mdata, dict) else None
-        video_meta = video_meta if isinstance(video_meta, dict) else {}
         norm_path, vprompt = _extract_provider_prompt(video_meta.get("prompt"))
         vmodel = video_meta.get("model")
         if vprompt is None:
@@ -596,7 +648,18 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
                 stats["seed_mismatched"] += 1
                 stats["round_rejected_ids"].append(mid)
                 continue
-        vbytes = base64.b64decode(enc)
+        retrieval_source = "get_media"
+        if enc:
+            vbytes = base64.b64decode(enc)
+        else:
+            try:
+                vbytes, retrieval_source = await _download_video_bytes(
+                    client, mid, None)
+            except Exception:  # noqa: BLE001 — keep the bounded retrieval trace
+                stats["media_download_errors"] += 1
+                if mid not in stats["media_download_error_ids"]:
+                    stats["media_download_error_ids"].append(mid)
+                continue
         outdir = OUTPUT_DIR / "retrieved"
         outdir.mkdir(parents=True, exist_ok=True)
         path = outdir / f"{mid}.mp4"
@@ -614,6 +677,9 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
                              else "EVIDENCE_ONLY_SSE_SEED_ABSENT"),
             "tool_call_id": correlation.get("tool_call_id"),
             "response_id": correlation.get("response_id"),
+            "metadata_source": ("project_initial_data" if from_project_metadata
+                                else "get_media"),
+            "retrieval_source": retrieval_source,
         }
         return mid, str(path), round(len(vbytes) / 1024 / 1024, 2), evidence
     return None, None, None, None
@@ -686,7 +752,8 @@ def _zero_completed_candidates(stats) -> bool:
     """
     if not isinstance(stats, dict):
         return False
-    if stats.get("round_rejected_ids") or stats.get("unverifiable_ids"):
+    if (stats.get("round_rejected_ids") or stats.get("unverifiable_ids")
+            or stats.get("media_fetch_errors")):
         return False
     return not any(stats.get(k) for k in (
         "prompt_mismatched", "model_mismatched", "seed_mismatched", "unverifiable"))
@@ -851,7 +918,8 @@ _DIRECT_VIDEO_ASPECT = {
 # fifeUrl delivery hosts proven for Flow media (mirrors FlowClient._SAFE_URL_RE);
 # anything else falls back to the authenticated zero-credit get_media fetch.
 _DIRECT_FIFE_URL_RE = re.compile(
-    r"^https://(storage\.googleapis\.com|lh3\.googleusercontent\.com)/")
+    r"^https://(?:storage\.googleapis\.com|lh3\.googleusercontent\.com|"
+    r"(?:[a-z0-9-]+\.)?flow-content\.google)/", re.I)
 
 
 def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
@@ -1911,6 +1979,10 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         }
         job["generation_identity"] = {
             k: v for k, v in correlation.items() if k != "submitted_prompt"}
+        # Retrieval-only context, deliberately added after the durable identity
+        # snapshot so the existing five-argument correlation helper contract stays
+        # compatible with harnesses and downstream overrides.
+        correlation["_project_id"] = project_id
         # Identity-capture status (PR392 follow-up). Anchors are only captured for
         # toolNames in agent_video._GEN_TOOLS; a generation firing under any other
         # name leaves EVERY anchor None, and retrieval can then never bind an

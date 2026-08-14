@@ -80,6 +80,51 @@ async def test_media_redirect_relay_is_authenticated_and_bounded(monkeypatch):
     ]
 
 
+async def test_project_media_unwraps_current_flow_identity_payload(monkeypatch):
+    client = FlowClient()
+    calls = []
+    current_media = {
+        "name": DELIVERY_MEDIA_ID,
+        "projectId": "project-1",
+        "mediaMetadata": {
+            "mediaStatus": {
+                "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_SUCCESSFUL",
+            },
+        },
+        "video": {"generatedVideo": {"prompt": "prompt", "model": "model"}},
+    }
+
+    async def fake_send(method, params, timeout=None):
+        calls.append((method, params, timeout))
+        return {
+            "status": 200,
+            "data": {
+                "result": {
+                    "data": {
+                        "json": {
+                            "projectId": "project-1",
+                            "projectContents": {"media": [current_media]},
+                        },
+                    },
+                },
+            },
+        }
+
+    monkeypatch.setattr(client, "_send", fake_send)
+
+    result = await client.list_project_media("project-1")
+
+    assert result == {
+        "status": 200,
+        "project_id": "project-1",
+        "media": [current_media],
+    }
+    assert calls[0][0] == "trpc_request"
+    assert calls[0][1]["method"] == "GET"
+    assert "flow.projectInitialData?input=" in calls[0][1]["url"]
+    assert calls[0][2] == 30
+
+
 async def test_correlated_output_records_media_fetch_failure_without_accepting_tile(monkeypatch):
     class _Client:
         async def get_media(self, _media_id):
@@ -104,6 +149,128 @@ async def test_correlated_output_records_media_fetch_failure_without_accepting_t
     assert stats["media_fetch_errors"] == 1
     assert stats["media_fetch_error_ids"] == [DELIVERY_MEDIA_ID]
     assert stats["media_fetch_error_statuses"][DELIVERY_MEDIA_ID] == 400
+
+
+async def test_current_project_metadata_correlates_then_downloads_delivery_tile(
+        tmp_path, monkeypatch):
+    prompt = "this run"
+    project_id = "project-1"
+    download_calls = []
+
+    class _Client:
+        async def get_media(self, _media_id, media_generation_id=None):
+            return {
+                "status": 400,
+                "data": {"error": {"status": "INVALID_ARGUMENT"}},
+            }
+
+        async def list_project_media(self, observed_project_id):
+            assert observed_project_id == project_id
+            return {
+                "status": 200,
+                "project_id": project_id,
+                "media": [{
+                    "name": DELIVERY_MEDIA_ID,
+                    "projectId": project_id,
+                    "mediaMetadata": {
+                        "mediaStatus": {
+                            "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                        },
+                    },
+                    "video": {"generatedVideo": {
+                        "prompt": (
+                            "<root><instruction><prompt>this run</prompt>"
+                            "</instruction></root>"
+                        ),
+                        "model": "veo_3_1_r2v_lite",
+                        "seed": 603743,
+                    }},
+                }],
+            }
+
+    async def fake_download(_client, media_id, _url, media_generation_id=None):
+        download_calls.append(media_id)
+        return b"\x00\x00\x00\x18ftypmp42" + (b"v" * 20000), "media_redirect"
+
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(mv, "_download_video_bytes", fake_download)
+    stats = {
+        "unverifiable": 0,
+        "prompt_mismatched": 0,
+        "model_mismatched": 0,
+        "seed_mismatched": 0,
+        "unverifiable_ids": [],
+    }
+
+    mid, path, size, evidence = await mv._accept_correlated_output(
+        _Client(), [DELIVERY_MEDIA_ID], set(),
+        {"submitted_prompt": prompt, "expected_model": "veo_3_1_r2v_lite",
+         "seed": None, "_project_id": project_id},
+        stats,
+    )
+
+    assert mid == DELIVERY_MEDIA_ID
+    assert Path(path).read_bytes().startswith(b"\x00\x00\x00\x18ftyp")
+    assert size > 0
+    assert download_calls == [DELIVERY_MEDIA_ID]
+    assert evidence["metadata_source"] == "project_initial_data"
+    assert evidence["retrieval_source"] == "media_redirect"
+    assert evidence["prompt_normalization"] == "XML_INNER_PROMPT"
+    assert stats["project_metadata_fallback_ids"] == [DELIVERY_MEDIA_ID]
+
+
+async def test_current_project_metadata_still_rejects_foreign_prompt(
+        tmp_path, monkeypatch):
+    class _Client:
+        async def get_media(self, _media_id):
+            return {"status": 400}
+
+        async def list_project_media(self, _project_id):
+            return {
+                "status": 200,
+                "project_id": "project-1",
+                "media": [{
+                    "name": DELIVERY_MEDIA_ID,
+                    "mediaMetadata": {"mediaStatus": {
+                        "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                    }},
+                    "video": {"generatedVideo": {
+                        "prompt": "another run",
+                        "model": "veo_3_1_r2v_lite",
+                    }},
+                }],
+            }
+
+    async def must_not_download(*_args, **_kwargs):
+        raise AssertionError("foreign media must be rejected before download")
+
+    monkeypatch.setattr(mv, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(mv, "_download_video_bytes", must_not_download)
+    stats = {
+        "unverifiable": 0,
+        "prompt_mismatched": 0,
+        "model_mismatched": 0,
+        "seed_mismatched": 0,
+        "unverifiable_ids": [],
+    }
+
+    result = await mv._accept_correlated_output(
+        _Client(), [DELIVERY_MEDIA_ID], set(),
+        {"submitted_prompt": "this run", "seed": None,
+         "_project_id": "project-1"}, stats,
+    )
+
+    assert result == (None, None, None, None)
+    assert stats["prompt_mismatched"] == 1
+
+
+def test_flow_content_delivery_host_is_strictly_allowlisted():
+    assert mv._DIRECT_FIFE_URL_RE.match(
+        "https://flow-content.google/video/signed-token")
+    assert mv._DIRECT_FIFE_URL_RE.match(
+        "https://region.flow-content.google/video/signed-token")
+    assert not mv._DIRECT_FIFE_URL_RE.match(
+        "https://flow-content.google.attacker.example/video/signed-token")
 
 
 async def test_image_without_inline_url_uses_delivery_id_from_flow_redirect():

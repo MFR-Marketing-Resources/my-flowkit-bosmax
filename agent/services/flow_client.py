@@ -194,7 +194,9 @@ class FlowClient:
             self._sync_in_progress = False
 
     _UUID_RE = __import__("re").compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
-    _SAFE_URL_RE = __import__("re").compile(r'^https://(storage\.googleapis\.com|lh3\.googleusercontent\.com)/')
+    _SAFE_URL_RE = __import__("re").compile(
+        r'^https://(?:storage\.googleapis\.com|lh3\.googleusercontent\.com|'
+        r'(?:[a-z0-9-]+\.)?flow-content\.google)/', __import__("re").I)
 
     async def _refresh_media_urls(self, urls: list[dict]):
         """Update scene/character URLs in DB from fresh TRPC-captured signed URLs.
@@ -623,6 +625,53 @@ class FlowClient:
             },
             "body": body,
         }, timeout=30)
+
+    async def get_project_initial_data(self, project_id: str) -> dict:
+        """Read the authenticated Flow project payload through the browser relay."""
+        query = quote(json.dumps({"json": {"projectId": str(project_id)}}), safe="")
+        url = f"https://labs.google/fx/api/trpc/flow.projectInitialData?input={query}"
+        return await self._send("trpc_request", {
+            "url": url,
+            "method": "GET",
+            "headers": {"accept": "*/*"},
+        }, timeout=30)
+
+    async def list_project_media(self, project_id: str) -> dict:
+        """Return current project media from Flow's authenticated tRPC payload.
+
+        Current agent-created videos use their delivery UUID as ``media.name``
+        and expose the exact generation prompt/model/seed here even when the
+        legacy ``/v1/media/{uuid}`` endpoint returns HTTP 400.
+        """
+        result = await self.get_project_initial_data(project_id)
+        status = result.get("status") if isinstance(result, dict) else None
+        if (not isinstance(result, dict) or result.get("error")
+                or (isinstance(status, int) and status >= 400)):
+            return {
+                "status": status,
+                "project_id": str(project_id),
+                "media": [],
+                "error": (result.get("error") if isinstance(result, dict)
+                          else "invalid project initial data response"),
+            }
+        payload = result.get("data", result)
+        try:
+            project = payload["result"]["data"]["json"]
+            contents = project.get("projectContents") or {}
+            media = contents.get("media") or []
+        except (KeyError, TypeError):
+            return {
+                "status": status,
+                "project_id": str(project_id),
+                "media": [],
+                "error": "invalid project initial data payload",
+            }
+        observed_project_id = str(project.get("projectId") or "").strip()
+        return {
+            "status": status,
+            "project_id": observed_project_id,
+            "media": [item for item in media if isinstance(item, dict)],
+        }
 
     async def generate_images(self, prompt: str, project_id: str,
                                aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT",
