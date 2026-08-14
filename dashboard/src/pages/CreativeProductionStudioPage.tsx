@@ -1312,10 +1312,10 @@ export default function CreativeProductionStudioPage() {
 					</div>
 					<nav className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
 						<a
-							href="/operator/t2v"
+							href="/operator/hybrid"
 							className="rounded-lg border border-v4-accent/30 bg-v4-accent/10 px-3 py-1.5 text-v4-accent-ink"
 						>
-							Operator shell ↗
+							Hybrid workspace ↗
 						</a>
 						<a
 							href="/assets/scene-context-registry"

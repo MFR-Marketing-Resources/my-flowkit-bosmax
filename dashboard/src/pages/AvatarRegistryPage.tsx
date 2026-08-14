@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useImageGenSettings } from "../api/imageGenSettings";
+import { resolveActiveSurfacePath } from "../deactivatedSurfaces";
 import {
 	getAvatarRecommendationForCategory,
 	getCreativeSetupForProduct,
@@ -144,16 +145,21 @@ interface CsvFactoryBatchDetail {
 
 export default function AvatarRegistryPage() {
 	const navigate = useNavigate();
-	// "Back" must return to wherever the registry was opened from (Fastlane,
-	// Cockpit, …) rather than a hardcoded page. Callers pass ?from=<path>;
-	// default to IMG Cockpit for direct/legacy entry.
+	// "Back" returns to the caller when it is active; deactivated callers fall
+	// back to the active Poster Builder surface.
 	const [searchParams] = useSearchParams();
-	const backTo = searchParams.get("from") || "/assets/img-cockpit";
+	const backTo = resolveActiveSurfacePath(
+		searchParams.get("from") || "/assets/creative-library",
+	);
 	const backLabel = backTo.includes("img-fastlane")
 		? "← Back to IMG Fastlane"
 		: backTo.includes("img-cockpit")
 			? "← Back to IMG Cockpit"
-			: "← Back";
+			: backTo.includes("poster-builder")
+				? "← Back to Poster Builder"
+				: backTo.includes("creative-library")
+					? "← Back to Creative Library"
+					: "← Back";
 	const imgGen = useImageGenSettings();
 	const [aspect, setAspect] = useState<string>("9:16");
 	const [count, setCount] = useState<number>(1);
