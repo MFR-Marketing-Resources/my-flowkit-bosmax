@@ -41,6 +41,7 @@ export default function ResultsSidebar({
 }: ResultsSidebarProps) {
 	const [busyId, setBusyId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const primaryIsVideoLibrary = libraryHref.startsWith("/library/videos");
 
 	const handleDelete = useCallback(
 		async (mediaId: string) => {
@@ -152,14 +153,16 @@ export default function ResultsSidebar({
 						href={libraryHref}
 						className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-800"
 					>
-						Image Library
+						{primaryIsVideoLibrary ? "Video Library" : "Image Library"}
 					</a>
-					<a
-						href="/library/videos"
-						className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-800"
-					>
-						Video Library
-					</a>
+					{!primaryIsVideoLibrary ? (
+						<a
+							href="/library/videos"
+							className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-800"
+						>
+							Video Library
+						</a>
+					) : null}
 					<a
 						href="/results"
 						className="rounded border border-slate-700 px-2 py-0.5 text-slate-300 hover:bg-slate-800"

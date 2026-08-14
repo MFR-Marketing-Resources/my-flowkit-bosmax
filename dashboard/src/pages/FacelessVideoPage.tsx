@@ -920,6 +920,7 @@ export default function FacelessVideoPage() {
 				<ResultsSidebar
 					results={sessionResults}
 					generating={isExecuting}
+					mediaKind="video"
 					libraryHref="/library/videos"
 					onRemoved={(mediaId) =>
 						setSessionResults((prev) => prev.filter((r) => r.media_id !== mediaId))

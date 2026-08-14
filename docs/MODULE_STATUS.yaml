@@ -592,9 +592,11 @@ domains:
       - dashboard/src/components/workspace/SceneStrategySummary.tsx
       - dashboard/src/components/workspace/SceneStrategySummary.test.tsx
       - dashboard/src/components/workspace/ResultsSidebar.tsx
+      - dashboard/src/components/workspace/ResultsSidebar.test.tsx
       - dashboard/src/components/workspace/rpaSelectors.component.test.tsx
       - dashboard/src/utils/promptRepresentationUi.test.ts
       - dashboard/src/utils/promptRepresentationUi.ts
+      - dashboard/src/utils/videoSessionResults.ts
       - tests/unit/test_artifact_library_retention.py
       - tests/api/test_flow_artifacts_api.py
       - tests/ui/test_artifact_library_page_ui_contract.py

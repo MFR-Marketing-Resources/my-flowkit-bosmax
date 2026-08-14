@@ -9,7 +9,7 @@
  * are hidden; the gated final-video action remains visible.
  * Credit fire requires explicit count confirm.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useCreativeLaneSettings } from "../api/creativeLaneSettings";
 import {
 	assembleMontageRun,
@@ -44,6 +44,7 @@ import {
 	singleDurations,
 	type VideoCapabilityMatrix,
 } from "../utils/videoCapability";
+import { collectMontageSessionResults } from "../utils/videoSessionResults";
 
 const selectClass =
 	"w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100";
@@ -88,6 +89,10 @@ export default function MontagePage() {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [v4Open, setV4Open] = useState<Record<number, boolean>>({});
+	const sessionResults = useMemo(
+		() => collectMontageSessionResults(run, assembleResult),
+		[run, assembleResult],
+	);
 
 	useEffect(() => {
 		void fetchProductCatalog(250, "GENERATION")
@@ -910,8 +915,9 @@ export default function MontagePage() {
 
 				<aside className="min-h-0">
 					<ResultsSidebar
-						results={[]}
+						results={sessionResults}
 						generating={busy}
+						mediaKind="video"
 						libraryHref="/library/videos"
 					/>
 				</aside>

@@ -8,14 +8,56 @@ export interface AvatarRegistryPoolRow {
 	display_name?: string | null;
 	Name?: string | null;
 	name?: string | null;
+	variant?: string | null;
 	Variant?: string | null;
 	generated_asset_id?: string | null;
+	image_generated?: boolean | null;
 }
 
 export function avatarRegistryCode(
 	row: AvatarRegistryPoolRow | null | undefined,
 ): string {
 	return String(row?.avatar_code || row?.AvatarCode || "").trim();
+}
+
+/** Human-readable registry identity without falling back to `code — code`. */
+export function avatarRegistryLabel(
+	row: AvatarRegistryPoolRow | null | undefined,
+): string {
+	const code = avatarRegistryCode(row);
+	const name = String(
+		row?.character_name ||
+			row?.display_name ||
+			row?.Name ||
+			row?.name ||
+			"",
+	).trim();
+	const variant = String(row?.variant || row?.Variant || "").trim();
+	const descriptors = [name, variant].filter(
+		(value, index, values) =>
+			Boolean(value) &&
+			value.toUpperCase() !== code.toUpperCase() &&
+			values.findIndex(
+				(candidate) => candidate.toUpperCase() === value.toUpperCase(),
+			) === index,
+	);
+	return descriptors.join(" · ") || code || "Avatar";
+}
+
+/**
+ * Eligibility audits are narrower than the approved registry pool. A generated
+ * registry asset therefore falls back to its canonical same-origin preview.
+ */
+export function avatarRegistryPreviewUrl(
+	row: AvatarRegistryPoolRow | null | undefined,
+	knownPreviewUrls: Record<string, string>,
+): string | null {
+	const assetId = String(row?.generated_asset_id || "").trim();
+	if (!assetId) return null;
+	return (
+		knownPreviewUrls[assetId] ||
+		`/api/creative-assets/${encodeURIComponent(assetId)}/preview`
+	);
 }
 
 export function fetchAvatarRegistryPool(): Promise<AvatarRegistryPoolRow[]> {
@@ -73,14 +115,7 @@ export function buildAvatarRegistryReferenceAssets(
 			return [];
 		}
 		seen.add(asset.asset_id);
-		const label = String(
-			row.character_name ||
-			row.display_name ||
-			row.Name ||
-			row.name ||
-			row.Variant ||
-			code,
-		).trim();
+		const label = avatarRegistryLabel(row);
 		return [{ ...asset, display_name: `${label} — ${code}` }];
 	});
 }
