@@ -131,6 +131,12 @@ with open(_MODELS_FILE) as _f:
 VIDEO_MODELS = _MODELS["video_models"]
 UPSCALE_MODELS = _MODELS["upscale_models"]
 IMAGE_MODELS = _MODELS["image_models"]
+# Direct batchAsync lane per-model keys (USER SETTINGS ARE LAW): maps a registry
+# model key (video_models.py, e.g. "veo_3_1_lite") -> {gen_type -> {aspect ->
+# videoModelKey}}. Populated ONLY from live captures — an absent entry means the
+# direct lane cannot prove it can honor that model and declines to the agent
+# lane (never a silent downgrade). Empty until the live-capture gate runs.
+DIRECT_VIDEO_MODEL_KEYS = _MODELS.get("direct_video_model_keys", {})
 
 # Creative Campaign is deliberately opt-in.  Exact Commerce remains the
 # production default until a bounded live benchmark produces artifact-backed

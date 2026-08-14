@@ -8,13 +8,14 @@ Flow tab to the project + harvest the video media_id -> get_media returns the by
 import asyncio
 import base64
 import json
+import os
 import re
 import time
 from uuid import uuid4
 from urllib.parse import unquote
 
-from agent.config import OUTPUT_DIR
-from agent.services.flow_client import get_flow_client
+from agent.config import OUTPUT_DIR, DIRECT_VIDEO_MODEL_KEYS
+from agent.services.flow_client import get_flow_client, resolve_video_model_key
 from agent.services import agent_video
 from agent.services import video_models
 
@@ -320,11 +321,17 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          num_videos: int = 1, image_model: str = None,
                          max_image_attempts: int = 8,
                          collect_image_variants: bool = False,
-                         product_id: str = None,
+                         product_id: str = None, source_mode: str = None,
                          copy_execution_binding: dict | None = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
-    negotiation demands exactly that many and retrieval collects them all."""
+    negotiation demands exactly that many and retrieval collects them all.
+    source_mode (HYBRID | FRAMES | INGREDIENTS, optional) is the logical lane —
+    it selects the direct-lane RPC (HYBRID composes references; FRAMES anchors
+    start/end frames) and is recorded on the job. Under DIRECT_VIDEO_LANE_ENABLED
+    eligible video jobs run the DOM-free direct batchAsync lane; everything else
+    (and every declined job, with its reason recorded) keeps the locked agent
+    lane — never a silent downgrade."""
     global _VIDEO_LANE_JOB
     _gc_jobs()
     mode = (mode or "").upper()
@@ -353,18 +360,37 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                      "provider_operation_ids": [],
                      "max_image_attempts": max_image_attempts,
                      "collect_image_variants": bool(collect_image_variants),
-                     "product_id": product_id,
+                     "product_id": product_id, "source_mode": source_mode,
                      "error": None, "created": time.time()}
     if copy_execution_binding is not None:
         _JOBS[job_id]["copy_execution_binding"] = copy_execution_binding
     if mode in _VIDEO_MODES:
         _VIDEO_LANE_JOB = job_id  # claim the lane synchronously to avoid a race
+    lane = None
+    if mode in _VIDEO_MODES:
+        plan = _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
+                                 ref_count=_ref_count, num_videos=num_videos)
+        if plan["eligible"]:
+            lane = "DIRECT_API"
+            _JOBS[job_id]["lane"] = lane
+            _JOBS[job_id]["_task"] = asyncio.create_task(
+                _run_generate_direct(job_id, mode, prompt, project_id,
+                                     image_media_ids, aspect, tier, model,
+                                     duration_s, num_videos, product_id, plan))
+            return {"job_id": job_id, "status": "SUBMITTED", "mode": mode,
+                    "lane": lane}
+        lane = "AGENT"
+        _JOBS[job_id]["lane"] = lane
+        if direct_video_lane_enabled():
+            # The flag is on but THIS job could not provably run direct — record
+            # why, so the routing decision is auditable per job.
+            _JOBS[job_id]["direct_decline_reason"] = plan["reason"]
     _JOBS[job_id]["_task"] = asyncio.create_task(
         _run_generate(job_id, mode, prompt, project_id, image_media_ids, image_prompt,
                       aspect, tier, model, duration_s, num_videos, image_model,
                       max_image_attempts, collect_image_variants, product_id,
                       copy_execution_binding))
-    return {"job_id": job_id, "status": "SUBMITTED", "mode": mode}
+    return {"job_id": job_id, "status": "SUBMITTED", "mode": mode, "lane": lane}
 
 
 def _reference_run_dropped_reference(refs, model_used):
@@ -755,6 +781,818 @@ def _identity_captured(identity) -> bool:
     if not isinstance(identity, dict):
         return False
     return any(identity.get(k) not in (None, "") for k in _IDENTITY_ANCHORS)
+
+
+# ─── Direct API-first video lane (ADR-007 recommit, flag-gated) ─────────────
+#
+# The agent lane's retrieval is DOM-blind: it detects a finished video ONLY via
+# the extension's DOM harvest, so a labs.google React crash (error boundary,
+# tiles unmounted) makes a finished, PAID video unretrievable and the job times
+# out with empty results. This lane re-commits to the direct batchAsync RPCs the
+# SDK/worker already runs: submit -> operation handles -> poll
+# batchCheckAsyncVideoGenerationStatus -> mediaId/fifeUrl from the poll's OWN
+# metadata -> bytes -> generated_artifact. Zero DOM after submit; the operation
+# handle deterministically binds the output to THIS run (no prompt-matching
+# heuristics needed). Kill-switch defaults OFF; anything the direct lane cannot
+# PROVABLY honor (explicit model without a captured key, unproven count/duration)
+# declines to the locked agent lane — never a silent downgrade (USER SETTINGS
+# ARE LAW).
+
+def direct_video_lane_enabled() -> bool:
+    """Kill-switch for routing canonical video jobs onto the direct lane
+    (default OFF), mirroring the NATIVE_EXTEND_ENABLED pattern."""
+    return os.environ.get("DIRECT_VIDEO_LANE_ENABLED", "0").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
+def direct_capture_enabled() -> bool:
+    """Kill-switch for the one-shot live-capture branch (default OFF). Separate
+    from the routing flag so the contract capture can run while general routing
+    stays off."""
+    return os.environ.get("DIRECT_VIDEO_CAPTURE_ENABLED", "0").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
+def _direct_poll_timeout() -> int:
+    """Seconds to poll batchCheckAsyncVideoGenerationStatus before declaring the
+    render unretrieved (operations stay re-pollable for recovery)."""
+    try:
+        return max(60, int(os.environ.get("DIRECT_VIDEO_POLL_TIMEOUT", "900")))
+    except (TypeError, ValueError):
+        return 900
+
+
+_DIRECT_VIDEO_ASPECT = {
+    "9:16": "VIDEO_ASPECT_RATIO_PORTRAIT",
+    "16:9": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+}
+
+# fifeUrl delivery hosts proven for Flow media (mirrors FlowClient._SAFE_URL_RE);
+# anything else falls back to the authenticated zero-credit get_media fetch.
+_DIRECT_FIFE_URL_RE = re.compile(
+    r"^https://(storage\.googleapis\.com|lh3\.googleusercontent\.com)/")
+
+
+def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
+                      ref_count, num_videos, require_flag=True) -> dict:
+    """Decide whether a job may run on the direct batchAsync lane.
+
+    Fail-closed: any setting the direct lane cannot PROVABLY honor declines to
+    the agent lane with an explicit reason (never a silent downgrade). Returns
+    {"eligible": bool, "reason": str|None, "rpc": "r2v"|"start_frame",
+     "gen_type": str, "aspect_enum": str, "video_model_key": str|None,
+     "model_key_source": str}.
+    """
+    def _decline(reason):
+        return {"eligible": False, "reason": reason}
+
+    if require_flag and not direct_video_lane_enabled():
+        return _decline("DIRECT_LANE_DISABLED")
+    if mode not in _VIDEO_MODES:
+        return _decline("NOT_A_VIDEO_MODE")
+    if mode == "T2V":
+        # No direct text-only RPC has been captured (no batchAsync T2V endpoint
+        # exists in config); T2V stays on the conversational agent lane.
+        return _decline("NO_DIRECT_T2V_RPC")
+    aspect_enum = _DIRECT_VIDEO_ASPECT.get(str(aspect or "").strip())
+    if not aspect_enum:
+        return _decline(f"DIRECT_ASPECT_UNSUPPORTED:{aspect}")
+    if int(num_videos or 1) != 1:
+        # requests[] batch replication is not yet live-captured; a multi-count
+        # job must keep its full count on the agent lane, never be clamped.
+        return _decline("DIRECT_COUNT_UNPROVEN")
+    if ref_count < 1:
+        return _decline("DIRECT_NEEDS_REFERENCE")
+    sm = str(source_mode or "").strip().upper()
+    if mode == "F2V" and sm == "HYBRID":
+        # HYBRID = one product reference composed into a new scene (r2v) — NOT a
+        # start frame; there is no separate "Hybrid" RPC.
+        rpc, gen_type = "r2v", "reference_frame_2_video"
+    elif mode == "F2V" and sm == "FRAMES":
+        rpc = "start_frame"
+        gen_type = "start_end_frame_2_video" if ref_count >= 2 else "frame_2_video"
+    elif mode == "F2V":
+        # F2V without a declared source_mode is ambiguous: a logical-HYBRID job
+        # routed to the start-frame RPC would CHANGE semantics (the product
+        # photo becomes frame 1 instead of a composed reference). Callers that
+        # do not thread source_mode (bulk/queue lanes) keep the agent lane.
+        return _decline("DIRECT_F2V_SOURCE_MODE_UNKNOWN")
+    else:  # I2V — ingredient references compose the video (r2v)
+        rpc, gen_type = "r2v", "reference_frame_2_video"
+    video_model_key = None
+    model_key_source = "models.json default (tier, gen_type, aspect)"
+    if model:
+        try:
+            spec = video_models.resolve(model)
+        except ValueError:
+            # Unknown model must surface through the canonical fail-closed path
+            # (agent lane raises ERR_UNKNOWN_MODEL semantics), never die here.
+            return _decline(f"DIRECT_MODEL_UNKNOWN:{model}")
+        table = DIRECT_VIDEO_MODEL_KEYS.get(spec["key"]) or {}
+        video_model_key = (table.get(gen_type) or {}).get(aspect_enum)
+        if not video_model_key:
+            return _decline(f"DIRECT_MODEL_KEY_UNPROVEN:{spec['key']}")
+        model_key_source = f"direct_video_model_keys[{spec['key']}]"
+    if duration_s is not None:
+        try:
+            normalized_duration = int(duration_s)
+        except (TypeError, ValueError):
+            return _decline(f"DIRECT_DURATION_UNPROVEN:{duration_s}")
+        if normalized_duration != 8:
+            # The captured submit contract carries no duration field; only the
+            # Veo 8s default is provably delivered. Anything else keeps the
+            # agent lane.
+            return _decline(f"DIRECT_DURATION_UNPROVEN:{duration_s}")
+    return {"eligible": True, "reason": None, "rpc": rpc, "gen_type": gen_type,
+            "aspect_enum": aspect_enum, "video_model_key": video_model_key,
+            "model_key_source": model_key_source}
+
+
+async def _direct_submit(client, plan, refs, prompt, project_id, tier, seed,
+                         scene_id) -> dict:
+    """Fire the ONE direct submit the plan selected. Returns the raw response."""
+    if plan["rpc"] == "r2v":
+        return await client.generate_video_from_references(
+            refs, prompt, project_id, scene_id,
+            aspect_ratio=plan["aspect_enum"], user_paygate_tier=tier,
+            video_model_key=plan.get("video_model_key"), seed=seed)
+    return await client.generate_video(
+        refs[0], prompt, project_id, scene_id,
+        aspect_ratio=plan["aspect_enum"],
+        end_image_media_id=(refs[1] if len(refs) > 1 else None),
+        user_paygate_tier=tier,
+        video_model_key=plan.get("video_model_key"), seed=seed)
+
+
+def _direct_response_data(response: dict) -> dict:
+    """Unwrap relay/provider data envelopes without assuming one fixed depth."""
+    data = response if isinstance(response, dict) else {}
+    # The extension relay may return ``{id,status,data:<provider>}``, while
+    # provider responses can themselves carry ``data:{media/workflows}``.
+    # Unwrap only bounded dictionaries; never walk arbitrary response values.
+    for _ in range(3):
+        nested = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(nested, dict):
+            break
+        data = nested
+    return data
+
+
+def _direct_media_status(media: dict) -> str:
+    """Read the current media-generation status from either known nesting."""
+    if not isinstance(media, dict):
+        return ""
+    status = media.get("mediaStatus")
+    if not isinstance(status, dict):
+        status = (media.get("mediaMetadata") or {}).get("mediaStatus")
+    return str((status or {}).get("mediaGenerationStatus") or "")
+
+
+def _direct_media_entries(response: dict) -> list[dict]:
+    data = _direct_response_data(response)
+    return [m for m in (data.get("media") or []) if isinstance(m, dict)]
+
+
+def _extract_direct_media_targets(response: dict, project_id: str) -> list[dict]:
+    """Extract the current Flow media-status poll targets from a submit.
+
+    Current ``batchAsyncGenerateVideoReferenceImages`` responses expose
+    ``data.media[].name`` and ``data.workflows[].metadata.primaryMediaId``;
+    they do not expose the legacy ``data.operations`` list.  The status RPC
+    accepts only the media name and project id, so keep this target deliberately
+    small and free of provider response payloads.
+    """
+    data = _direct_response_data(response)
+    media = data.get("media") if isinstance(data.get("media"), list) else []
+    workflows = data.get("workflows") if isinstance(data.get("workflows"), list) else []
+
+    targets = []
+    seen = set()
+    for item in media:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if not name:
+            workflow_id = item.get("workflowId")
+            name = next(
+                (
+                    (w.get("metadata") or {}).get("primaryMediaId")
+                    for w in workflows
+                    if isinstance(w, dict) and w.get("name") == workflow_id
+                ),
+                None,
+            )
+        name = str(name or "").strip()
+        pid = str(item.get("projectId") or project_id or "").strip()
+        if not name or not pid or name in seen:
+            continue
+        seen.add(name)
+        targets.append({"name": name, "projectId": pid})
+
+    # A future response may expose only workflows.  The primary media id is
+    # still a valid status target, so preserve it when there is no media list.
+    if not targets:
+        for workflow in workflows:
+            if not isinstance(workflow, dict):
+                continue
+            name = str((workflow.get("metadata") or {}).get("primaryMediaId") or "").strip()
+            pid = str(project_id or "").strip()
+            if name and pid and name not in seen:
+                seen.add(name)
+                targets.append({"name": name, "projectId": pid})
+    return targets
+
+
+def _extract_direct_submission(response: dict, project_id: str) -> tuple[list[dict], list[dict]]:
+    """Return legacy operation handles and/or current media poll targets."""
+    from agent.sdk.services.operations import _extract_operations
+    operations = _extract_operations(response)
+    return operations, _extract_direct_media_targets(response, project_id)
+
+
+async def _poll_direct_media_targets(client, targets: list[dict], timeout: int) -> dict:
+    """Poll the current Flow ``{"media": [...]}`` status contract.
+
+    This path is intentionally separate from ``_poll_operations``: sending a
+    media target through the legacy ``{"operations": [...]}`` body returns an
+    empty/non-terminal response from the provider and loses the accepted render.
+    """
+    if not targets:
+        return {"error": "No media targets to poll"}
+    from agent.sdk.services import operations as sdk_operations
+
+    try:
+        interval = max(0.0, float(sdk_operations.VIDEO_POLL_INTERVAL))
+    except (TypeError, ValueError):
+        interval = 15.0
+    elapsed = 0.0
+    target_names = {str(t.get("name")) for t in targets if t.get("name")}
+    while elapsed < timeout:
+        if interval:
+            await asyncio.sleep(interval)
+            elapsed += interval
+        else:
+            # Test/failsafe configurations may set a zero interval.  Advance a
+            # logical second so a permanently pending provider cannot spin.
+            elapsed += 1.0
+        try:
+            status_result = await client.check_video_status_by_media(targets)
+        except Exception:  # noqa: BLE001 — transient relay failures stay pollable
+            continue
+        if not isinstance(status_result, dict) or status_result.get("error"):
+            continue
+        entries = _direct_media_entries(status_result)
+        by_name = {str(m.get("name")): m for m in entries if m.get("name")}
+        failed = [
+            (name, _direct_media_status(by_name[name]))
+            for name in target_names
+            if name in by_name
+            and _direct_media_status(by_name[name]) == "MEDIA_GENERATION_STATUS_FAILED"
+        ]
+        if failed:
+            return {"error": f"Media generation failed: {failed[0][0]}"}
+        if target_names and all(
+                name in by_name
+                and _direct_media_status(by_name[name]) == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+                for name in target_names):
+            return {"data": _direct_response_data(status_result)}
+    return {"error": f"Polling timeout after {timeout}s"}
+
+
+def _direct_media_url(media: dict) -> str | None:
+    """Find a provider delivery URL without trusting it until host validation."""
+    if not isinstance(media, dict):
+        return None
+    for key in ("fifeUrl", "servingUri", "downloadUrl", "url", "servingUrl"):
+        value = _deep(media, key)
+        if value:
+            return str(value).strip()
+    return None
+
+
+def _direct_media_generation_id(media: dict) -> str | None:
+    """Extract the v1 media resource key when the status payload exposes it."""
+    if not isinstance(media, dict):
+        return None
+    for key in ("mediaGenerationId", "media_generation_id", "generationId", "clipId"):
+        value = _deep(media, key)
+        if isinstance(value, dict):
+            value = value.get("name") or value.get("id")
+        if value:
+            return str(value).strip()
+    return None
+
+
+async def _download_from_direct_url(url: str, source: str) -> tuple | None:
+    if not url or not _DIRECT_FIFE_URL_RE.match(url):
+        return None
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=300)) as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.read()
+                    if data and len(data) > 1024:
+                        return data, source
+    except Exception:  # noqa: BLE001 — authenticated fallbacks remain available
+        pass
+    return None
+
+
+async def _download_video_bytes(client, media_id, fife_url,
+                                media_generation_id=None) -> tuple:
+    """DOM-free byte retrieval with current Flow tile fallbacks.
+
+    Prefer a trusted signed URL from the status response, then the authenticated
+    generation-resource ``get_media`` endpoint, and finally the authenticated
+    tile redirect used by the current Flow Library.  None of these paths submits
+    or retries a generation.
+    """
+    direct = await _download_from_direct_url(str(fife_url or "").strip(), "fifeUrl")
+    if direct:
+        return direct
+
+    media = None
+    media_error = None
+    try:
+        media = await client.get_media(media_id, media_generation_id=media_generation_id)
+        mdata = media.get("data", media) if isinstance(media, dict) else media
+        enc = _deep(mdata, "encodedVideo")
+        if enc:
+            return base64.b64decode(enc), "get_media"
+    except Exception as exc:  # noqa: BLE001 — try the tile redirect next
+        media_error = str(exc)
+
+    redirect_fn = getattr(client, "get_media_download_url", None)
+    if callable(redirect_fn):
+        try:
+            redirect = await redirect_fn(media_id)
+            redirect_url = _deep(redirect, "downloadUrl", "url", "servingUri", "servingUrl")
+            direct = await _download_from_direct_url(str(redirect_url or "").strip(),
+                                                     "media_redirect")
+            if direct:
+                return direct
+        except Exception:  # noqa: BLE001 — report one bounded retrieval error
+            pass
+
+    status = media.get("status") if isinstance(media, dict) else None
+    detail = f"status={status}"
+    if media_error:
+        detail += f" get_media_error={media_error[:160]}"
+    raise RuntimeError(
+        f"DIRECT_MEDIA_BYTES_UNAVAILABLE: media {media_id} returned no "
+        f"encodedVideo ({detail}) and signed delivery failed")
+
+
+async def _direct_poll_retrieve_finish(job, client, mode, operations, plan,
+                                       seed, num_videos) -> None:
+    """Poll the operation handles to terminal, download every finished video,
+    persist generated_artifact rows and mark the job DONE. DOM-free end to end;
+    raises on failure (caller classifies)."""
+    from agent.sdk.services.operations import _poll_operations
+    from agent.worker._parsing import _extract_uuid_from_url
+    job["stage"] = f"polling render status ({len(operations)} operation(s))"
+    polled = await _poll_operations(client, operations,
+                                    timeout=_direct_poll_timeout())
+    if not isinstance(polled, dict) or polled.get("error"):
+        emsg = str((polled or {}).get("error") or "empty poll result")
+        if "timeout" in emsg.lower():
+            # Exact marker string: classifies as a retrieval-phase failure
+            # (GENERATED_BUT_UNRETRIEVED) — the operations stay re-pollable.
+            raise RuntimeError(
+                "video not found/retrieved in time (direct poll timeout; "
+                f"operations {job.get('provider_operation_ids')} remain re-pollable)")
+        raise RuntimeError(f"DIRECT_RENDER_FAILED: {emsg}")
+    final_ops = (polled.get("data") or {}).get("operations", [])
+    outdir = OUTPUT_DIR / "retrieved"
+    outdir.mkdir(parents=True, exist_ok=True)
+    collected = []
+    skipped = []
+    for op in final_ops:
+        op_name = (op.get("operation") or {}).get("name")
+        video_meta = ((op.get("operation") or {}).get("metadata") or {}).get("video") or {}
+        mid = str(video_meta.get("mediaId") or "").strip()
+        fife = video_meta.get("fifeUrl")
+        if not mid and fife:
+            mid = _extract_uuid_from_url(str(fife))
+        if not mid:
+            skipped.append({"operation": op_name, "reason": "NO_MEDIA_ID_IN_METADATA"})
+            continue
+        job["stage"] = f"downloading finished video {mid[:12]}"
+        data, source = await _download_video_bytes(client, mid, fife)
+        path = outdir / f"{mid}.mp4"
+        path.write_bytes(data)
+        collected.append({
+            "media_id": mid,
+            "local_path": str(path),
+            "size_mb": round(len(data) / 1024 / 1024, 2),
+            "correlation": {
+                "media_id": mid,
+                "matched_on": "operation_handle",
+                "operation_name": op_name,
+                "retrieval_source": source,
+                "gen_seed": seed,
+            },
+        })
+    job["direct_retrieval_skipped"] = skipped
+    if not collected:
+        raise RuntimeError(
+            "DIRECT_RETRIEVAL_EMPTY: the poll reported success but exposed no "
+            f"retrievable mediaId (skipped={skipped}) — do not assume no video "
+            "exists; re-poll the recorded operations")
+    first = collected[0]
+    job["output_correlation"] = first["correlation"]
+    job.update(status="DONE", stage="done", media_id=first["media_id"],
+               local_path=first["local_path"], size_mb=first["size_mb"],
+               artifact="video", artifacts=list(collected))
+    if len(collected) < int(num_videos or 1):
+        job["partial"] = True
+        job["partial_detail"] = (
+            f"retrieved {len(collected)}/{num_videos} requested videos")
+        job["stage"] = "done_partial"
+    _stamp_credit(job, CREDIT_MAY_HAVE_SPENT)
+    await _record_artifacts(job, mode, collected)
+
+
+async def _direct_media_poll_retrieve_finish(job, client, mode, targets,
+                                             plan, seed, num_videos) -> None:
+    """Poll current Flow media targets, retrieve bytes, and persist artifacts."""
+    job["stage"] = f"polling media render status ({len(targets)} target(s))"
+    polled = await _poll_direct_media_targets(
+        client, targets, timeout=_direct_poll_timeout())
+    if not isinstance(polled, dict) or polled.get("error"):
+        emsg = str((polled or {}).get("error") or "empty media poll result")
+        if "timeout" in emsg.lower():
+            raise RuntimeError(
+                "video not found/retrieved in time (direct media poll timeout; "
+                f"media targets {job.get('provider_operation_ids')} remain re-pollable)")
+        raise RuntimeError(f"DIRECT_RENDER_FAILED: {emsg}")
+
+    entries = _direct_media_entries(polled)
+    by_name = {str(m.get("name")): m for m in entries if m.get("name")}
+    outdir = OUTPUT_DIR / "retrieved"
+    outdir.mkdir(parents=True, exist_ok=True)
+    collected = []
+    skipped = []
+    for target in targets:
+        mid = str(target.get("name") or "").strip()
+        media = by_name.get(mid)
+        if not mid or not media:
+            skipped.append({"media_id": mid, "reason": "NO_MEDIA_IN_SUCCESS_POLL"})
+            continue
+        generation_id = _direct_media_generation_id(media)
+        if generation_id and hasattr(client, "_media_generation_ids"):
+            client._media_generation_ids[mid] = generation_id
+        job["stage"] = f"downloading finished video {mid[:12]}"
+        data, source = await _download_video_bytes(
+            client, mid, _direct_media_url(media),
+            media_generation_id=generation_id)
+        path = outdir / f"{mid}.mp4"
+        path.write_bytes(data)
+        collected.append({
+            "media_id": mid,
+            "local_path": str(path),
+            "size_mb": round(len(data) / 1024 / 1024, 2),
+            "correlation": {
+                "media_id": mid,
+                "matched_on": "media_status",
+                "operation_name": mid,
+                "retrieval_source": source,
+                "gen_seed": seed,
+                "media_generation_id": generation_id,
+            },
+        })
+    job["direct_retrieval_skipped"] = skipped
+    if not collected:
+        raise RuntimeError(
+            "DIRECT_RETRIEVAL_EMPTY: the media poll reported success but exposed "
+            f"no retrievable media (skipped={skipped}) — re-poll the recorded targets")
+    first = collected[0]
+    job["output_correlation"] = first["correlation"]
+    job.update(status="DONE", stage="done", media_id=first["media_id"],
+               local_path=first["local_path"], size_mb=first["size_mb"],
+               artifact="video", artifacts=list(collected))
+    if len(collected) < int(num_videos or 1):
+        job["partial"] = True
+        job["partial_detail"] = (
+            f"retrieved {len(collected)}/{num_videos} requested videos")
+        job["stage"] = "done_partial"
+    _stamp_credit(job, CREDIT_MAY_HAVE_SPENT)
+    await _record_artifacts(job, mode, collected)
+
+
+def _direct_submit_handles(submit: dict, project_id: str) -> tuple[list[dict], list[dict], list[str]]:
+    """Choose the poll contract without treating an accepted media response as empty."""
+    operations, media_targets = _extract_direct_submission(submit, project_id)
+    operation_names = [
+        str(name)
+        for name in ((o.get("operation") or {}).get("name") for o in operations)
+        if name
+    ]
+    media_names = [str(target["name"]) for target in media_targets if target.get("name")]
+    # Current Flow returns media targets; legacy captures return operation
+    # handles. Prefer media targets when present because their status endpoint
+    # is the contract paired with the current response.
+    handles = media_names or operation_names
+    return operations, media_targets, handles
+
+
+async def _run_generate_direct(job_id, mode, prompt, project_id, image_media_ids,
+                               aspect, tier, model, duration_s, num_videos,
+                               product_id, plan):
+    """API-first direct video lane: submit -> poll -> retrieve -> persist.
+
+    The Flow tab's DOM is never consulted after submit, so a labs.google React
+    crash cannot lose a finished, paid video (the root cause of the empty
+    results/library incidents). The only DOM touch is the optional pre-submit
+    editor binding when no project_id was provided."""
+    global _VIDEO_LANE_JOB
+    job = _JOBS[job_id]
+    client = get_flow_client()
+    generating = False
+    try:
+        refs = [m for m in (image_media_ids or []) if m]
+        job["direct_plan"] = {k: plan.get(k) for k in
+                              ("rpc", "gen_type", "aspect_enum", "model_key_source")}
+        # 1) project context: explicit id wins; else bind to the OPEN editor
+        # (read-only DOM touch, pre-submit and pre-credits — fail-closed).
+        if not project_id:
+            job["status"], job["stage"] = "SETUP", "binding to open Flow editor"
+            binding = await _bind_with_recovery(client, None, job)
+            project_id = binding["project_id"]
+            job["binding"] = binding
+        job["project_id"] = project_id
+
+        seed = int(time.time()) % 100000
+        fired_model_key = resolve_video_model_key(
+            tier, plan["gen_type"], plan["aspect_enum"],
+            override=plan.get("video_model_key"))
+        if not fired_model_key:
+            raise RuntimeError(
+                f"DIRECT_MODEL_KEY_MISSING: no captured videoModelKey for "
+                f"tier={tier} gen_type={plan['gen_type']} aspect={plan['aspect_enum']}")
+        job["status"] = "GENERATING"
+        job["stage"] = f"submitting direct render ({plan['gen_type']})"
+        submit = await _direct_submit(client, plan, refs, prompt, project_id,
+                                      tier, seed, str(uuid4()))
+        if (not isinstance(submit, dict) or submit.get("error")
+                or (isinstance(submit.get("status"), int) and submit["status"] >= 400)):
+            detail = (submit or {}).get("error") or submit
+            raise RuntimeError(f"DIRECT_SUBMIT_REJECTED: {str(detail)[:300]}")
+        operations, media_targets, op_names = _direct_submit_handles(
+            submit, project_id)
+        if not op_names:
+            raise RuntimeError(
+                f"DIRECT_SUBMIT_NO_OPERATIONS: {str(submit)[:300]}")
+        job["provider_operation_ids"] = op_names
+        job["direct_media_targets"] = media_targets
+        # The submit acceptance IS this lane's approval: the provider accepted
+        # the render request (credits may be charged from here on).
+        job["approved"] = True
+        generating = True
+        job["model_used"] = fired_model_key
+        job["model_ok"] = True if model else None
+        job["model_key_source"] = plan.get("model_key_source")
+        # Duration is not expressible in the captured submit contract; the Veo
+        # default (8s) is expected but not asserted — flagged, never invented.
+        job["duration_unverified"] = True
+        job["generation_identity"] = {
+            "seed": seed,
+            "expected_model": fired_model_key,
+            "operation_names": op_names,
+        }
+        job["identity_captured"] = True  # the operation handle IS the binding
+        if media_targets:
+            await _direct_media_poll_retrieve_finish(
+                job, client, mode, media_targets, plan, seed, num_videos)
+        else:
+            await _direct_poll_retrieve_finish(
+                job, client, mode, operations, plan, seed, num_videos)
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        if job.get("approved") is True and generating and _is_retrieval_phase_error(msg):
+            _apply_post_approval_failure(job, msg)
+        else:
+            job.update(status="FAILED", error=msg, stage="failed")
+            _stamp_credit(
+                job,
+                CREDIT_MAY_HAVE_SPENT
+                if (job.get("approved") is True and generating)
+                else CREDIT_NOT_SPENT,
+            )
+    finally:
+        if _VIDEO_LANE_JOB == job_id:
+            _VIDEO_LANE_JOB = None
+
+
+async def start_direct_capture(mode: str, prompt: str, project_id: str,
+                               refs: list, aspect: str = "9:16",
+                               tier: str = "PAYGATE_TIER_ONE",
+                               source_mode: str = None, model: str = None,
+                               duration_s: int = None,
+                               confirm_live_credit_burn: bool = False) -> dict:
+    """LIVE-CAPTURE GATE (owner-authorized, DIRECT_VIDEO_CAPTURE_ENABLED): fire
+    ONE direct batchAsync submit, return the RAW submit response for contract
+    capture, and poll/retrieve/persist in the background so the spent credit
+    still yields a real artifact. Single-flight like every video job. The
+    confirmation flag is mandatory; explicit model and duration settings are
+    forwarded and fail closed when their direct contract is unproven."""
+    global _VIDEO_LANE_JOB
+    if not direct_capture_enabled():
+        return {"ok": False, "error": "DIRECT_CAPTURE_DISABLED: set "
+                                      "DIRECT_VIDEO_CAPTURE_ENABLED=1"}
+    if confirm_live_credit_burn is not True:
+        return {"ok": False, "error":
+                "DIRECT_CAPTURE_CONFIRMATION_REQUIRED: explicit credit "
+                "authorization is required before the live submit"}
+    refs = [m for m in (refs or []) if m]
+    plan = _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
+                             ref_count=len(refs), num_videos=1,
+                             require_flag=False)
+    if not plan["eligible"]:
+        return {"ok": False, "error": f"DIRECT_CAPTURE_INELIGIBLE: {plan['reason']}"}
+    _gc_jobs()
+    if _VIDEO_LANE_JOB and _job_active(_VIDEO_LANE_JOB):
+        return {"ok": False, "error": "VIDEO_JOB_IN_FLIGHT",
+                "active_job": _VIDEO_LANE_JOB}
+    job_id = "g_" + uuid4().hex[:12]
+    _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "mode": mode,
+                     "stage": "direct capture submit", "project_id": project_id,
+                     "local_path": None, "media_id": None, "size_mb": None,
+                     "artifact": None, "approved": None, "binding": None,
+                     "model": model, "duration_s": duration_s,
+                     "num_videos": 1, "artifacts": [],
+                     "provider_operation_ids": [], "product_id": None,
+                     "lane": "DIRECT_CAPTURE", "source_mode": source_mode,
+                     "error": None, "created": time.time()}
+    _VIDEO_LANE_JOB = job_id
+    job = _JOBS[job_id]
+    client = get_flow_client()
+    try:
+        if not project_id:
+            job["status"], job["stage"] = "SETUP", "binding to open Flow editor"
+            binding = await _bind_with_recovery(client, None, job)
+            project_id = binding["project_id"]
+            job["binding"] = binding
+        job["project_id"] = project_id
+        seed = int(time.time()) % 100000
+        fired_model_key = resolve_video_model_key(
+            tier, plan["gen_type"], plan["aspect_enum"],
+            override=plan.get("video_model_key"))
+        job["status"], job["stage"] = "GENERATING", "direct capture submit"
+        submit = await _direct_submit(client, plan, refs, prompt, project_id,
+                                      tier, seed, str(uuid4()))
+    except Exception as e:  # noqa: BLE001
+        job.update(status="FAILED", error=str(e), stage="failed")
+        _stamp_credit(job, CREDIT_NOT_SPENT)
+        if _VIDEO_LANE_JOB == job_id:
+            _VIDEO_LANE_JOB = None
+        return {"ok": False, "job_id": job_id, "error": str(e)}
+    fired = {"rpc": plan["rpc"], "gen_type": plan["gen_type"],
+             "aspect_enum": plan["aspect_enum"], "video_model_key": fired_model_key,
+             "seed": seed, "refs": refs, "project_id": project_id, "tier": tier,
+             "model": model, "duration_s": duration_s}
+    job["direct_capture_fired"] = fired
+    if (not isinstance(submit, dict) or submit.get("error")
+            or (isinstance(submit.get("status"), int) and submit["status"] >= 400)):
+        job.update(status="FAILED", stage="failed",
+                   error=f"DIRECT_SUBMIT_REJECTED: {str((submit or {}).get('error') or submit)[:300]}")
+        _stamp_credit(job, CREDIT_NOT_SPENT)
+        if _VIDEO_LANE_JOB == job_id:
+            _VIDEO_LANE_JOB = None
+        return {"ok": False, "job_id": job_id, "fired": fired,
+                "submit_response": submit, "error": job["error"]}
+    operations, media_targets, op_names = _direct_submit_handles(
+        submit, project_id)
+    job["provider_operation_ids"] = op_names
+    job["approved"] = bool(op_names)
+    job["direct_media_targets"] = media_targets
+    job["model_used"] = fired_model_key
+    job["generation_identity"] = {"seed": seed, "expected_model": fired_model_key,
+                                  "operation_names": op_names}
+    job["identity_captured"] = bool(op_names)
+
+    async def _finish():
+        global _VIDEO_LANE_JOB
+        try:
+            if not op_names:
+                raise RuntimeError(
+                    f"DIRECT_SUBMIT_NO_OPERATIONS: {str(submit)[:300]}")
+            if media_targets:
+                await _direct_media_poll_retrieve_finish(
+                    job, client, mode, media_targets, plan, seed, 1)
+            else:
+                await _direct_poll_retrieve_finish(
+                    job, client, mode, operations, plan, seed, 1)
+        except Exception as e:  # noqa: BLE001
+            msg = str(e)
+            if job.get("approved") is True and _is_retrieval_phase_error(msg):
+                _apply_post_approval_failure(job, msg)
+            else:
+                job.update(status="FAILED", error=msg, stage="failed")
+                _stamp_credit(job, CREDIT_MAY_HAVE_SPENT if job.get("approved")
+                              else CREDIT_NOT_SPENT)
+        finally:
+            if _VIDEO_LANE_JOB == job_id:
+                _VIDEO_LANE_JOB = None
+
+    job["_task"] = asyncio.create_task(_finish())
+    return {"ok": True, "job_id": job_id, "fired": fired,
+            "operations": op_names, "submit_response": submit}
+
+
+async def start_direct_media_recovery(
+        media_id: str, project_id: str, mode: str = "F2V",
+        source_mode: str = "HYBRID", model_key: str | None = None,
+        duration_s: int | None = 8, seed: int | None = None,
+        recovery_of: str | None = None,
+        confirm_recovery: bool = False) -> dict:
+    """Recover one already-accepted media target without a provider submit.
+
+    This is deliberately a separate entrypoint from ``start_direct_capture``:
+    it has no generation flag and no submit call.  The explicit recovery
+    confirmation prevents an operator from confusing a status/retrieval repair
+    with a new credit-bearing capture.
+    """
+    global _VIDEO_LANE_JOB
+    if confirm_recovery is not True:
+        return {"ok": False,
+                "error": "DIRECT_RECOVERY_CONFIRMATION_REQUIRED"}
+    media_id = str(media_id or "").strip()
+    project_id = str(project_id or "").strip()
+    if not media_id or not project_id:
+        return {"ok": False, "error": "DIRECT_RECOVERY_TARGET_REQUIRED"}
+    _gc_jobs()
+    if _VIDEO_LANE_JOB and _job_active(_VIDEO_LANE_JOB):
+        return {"ok": False, "error": "VIDEO_JOB_IN_FLIGHT",
+                "active_job": _VIDEO_LANE_JOB}
+    job_id = "r_" + uuid4().hex[:12]
+    target = {"name": media_id, "projectId": project_id}
+    _JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "SUBMITTED",
+        "mode": str(mode or "F2V").upper(),
+        "source_mode": source_mode,
+        "stage": "direct media recovery",
+        "project_id": project_id,
+        "local_path": None,
+        "media_id": None,
+        "size_mb": None,
+        "artifact": None,
+        "approved": True,
+        "binding": None,
+        "model": model_key,
+        "model_used": model_key,
+        "duration_s": duration_s,
+        "num_videos": 1,
+        "artifacts": [],
+        "provider_operation_ids": [media_id],
+        "direct_media_targets": [target],
+        "product_id": None,
+        "lane": "DIRECT_CAPTURE_RECOVERY",
+        "direct_recovery": True,
+        "recovery_of": recovery_of,
+        "generation_identity": {
+            "seed": seed,
+            "expected_model": model_key,
+            "operation_names": [media_id],
+        },
+        "identity_captured": True,
+        "error": None,
+        "created": time.time(),
+    }
+    _VIDEO_LANE_JOB = job_id
+    job = _JOBS[job_id]
+    client = get_flow_client()
+    plan = {"gen_type": "reference_frame_2_video"}
+
+    async def _finish():
+        global _VIDEO_LANE_JOB
+        try:
+            await _direct_media_poll_retrieve_finish(
+                job, client, job["mode"], [target], plan, seed, 1)
+        except Exception as exc:  # noqa: BLE001 — preserve accepted-credit truth
+            msg = str(exc)
+            if _is_retrieval_phase_error(msg):
+                _apply_post_approval_failure(job, msg)
+            else:
+                job.update(status="FAILED", error=msg, stage="failed")
+                _stamp_credit(job, CREDIT_MAY_HAVE_SPENT)
+        finally:
+            if _VIDEO_LANE_JOB == job_id:
+                _VIDEO_LANE_JOB = None
+
+    job["_task"] = asyncio.create_task(_finish())
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "media_id": media_id,
+        "operations": [media_id],
+        "provider_submit": False,
+        "credit_action": "NO_PROVIDER_SUBMIT",
+        "recovery_of": recovery_of,
+    }
 
 
 async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,

@@ -391,29 +391,11 @@ class OperationService:
 
         logger.info("Video gen submitted, polling %d operations...", len(operations))
 
-        # Trigger DOM automation for visual feedback and prompt insertion
-        try:
-            # Determine true intent from request type if available
-            is_explicit_f2v = False
-            if request_id:
-                req_row = await crud.get_request(request_id)
-                if req_row and req_row.get("type") == "TRUE_F2V":
-                    is_explicit_f2v = True
-
-            job = {
-                "mode": "F2V" if (is_explicit_f2v or end_id) else "I2V",
-                "aspectRatio": "9:16" if orientation == "VERTICAL" else "16:9",
-                "count": 1,
-                "modelLabel": "Veo 3.1 - Lite",
-                "prompt": prompt,
-                "startImageMediaId": image_media_id,
-                "endImageMediaId": end_id
-            }
-            report = await self._client.execute_flow_job(job)
-            if request_id and report:
-                await crud.update_request(request_id, automation_report=json.dumps(report))
-        except Exception as e:
-            logger.warning("DOM automation failed (continuing with API result): %s", e)
+        # ADR-007: the DOM-automation "visual feedback" side-fire that used to
+        # live here (execute_flow_job with a hardcoded 9:16 + 'Veo 3.1 - Lite')
+        # is DELETED — execute_flow_job refuses every canonical mode over the
+        # bridge, so the block only ever threw and was swallowed. The API poll
+        # below is the sole authority.
 
         return await _poll_operations(self._client, operations)
 
@@ -527,19 +509,7 @@ class OperationService:
 
         logger.info("R2V submitted with %d refs, polling %d operations...", len(ref_ids), len(operations))
 
-        # Trigger DOM automation for visual feedback
-        try:
-            job = {
-                "mode": "I2V", # R2V is closest to I2V in DOM (Ingredients)
-                "aspectRatio": "9:16" if orientation == "VERTICAL" else "16:9",
-                "count": 1,
-                "modelLabel": "Veo 3.1 - Lite",
-                "prompt": prompt,
-                "startImageMediaId": ref_ids[0] if ref_ids else None
-            }
-            await self._client.execute_flow_job(job)
-        except Exception as e:
-            logger.warning("DOM automation failed for R2V: %s", e)
+        # ADR-007: dead DOM-automation side-fire deleted (see generate_scene_video).
 
         return await _poll_operations(self._client, operations)
 

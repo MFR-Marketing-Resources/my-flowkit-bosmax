@@ -82,6 +82,39 @@ ADR-007 win.
   reproduced defect. Check the existing final artifact and evidence BEFORE spending
   any credits.
 
+## DIRECT API-FIRST VIDEO LANE (flag-gated, capture-gated — 2026-08-14)
+- Root cause of "video generates but never appears in results/library": the agent
+  lane's retrieval is DOM-blind — it detects a finished video ONLY via the
+  extension DOM harvest, so a labs.google React crash (error boundary) loses a
+  finished, PAID clip. Two layers of fix landed:
+  1. **Extension rescue (always on):** `handleHarvestVideoUrls` merges the
+     passively captured `flowMediaGenerationIds` (fetch-intercept, DOM-independent)
+     into the harvest candidates, so a crashed DOM still yields the id and the
+     existing correlation guard binds it.
+  2. **DIRECT lane (`DIRECT_VIDEO_LANE_ENABLED=1`, default OFF):** eligible
+     F2V/HYBRID/I2V jobs run submit → poll
+     `batchCheckAsyncVideoGenerationStatus` → mediaId/fifeUrl from the poll's own
+     metadata → bytes → `generated_artifact`. Zero DOM after submit; the
+     operation handle IS the output binding. Anything the lane cannot PROVABLY
+     honor (explicit model without a captured key in models.json
+     `direct_video_model_keys`, count>1, non-8s duration, T2V/Omni Flash)
+     declines to the locked agent lane with the reason on the job
+     (`direct_decline_reason`) — never a silent downgrade.
+- **Before flipping the flag, run the LIVE-CAPTURE GATE** (owner-authorized,
+  ≈1 video credit): set `DIRECT_VIDEO_CAPTURE_ENABLED=1`, fire the manual lane
+  with body key `_direct_capture: true` (HYBRID/I2V with resolved refs) and
+  `confirm_live_credit_burn: true`. The request is terminal: disabled,
+  unconfirmed, or ineligible capture never falls through to normal generation.
+  It returns the RAW submit response (contract capture) and retrieves + persists
+  the artifact in the background. Requested model/duration are forwarded;
+  unproven explicit model keys or non-8s durations are rejected before submit.
+  Captured per-model videoModelKey strings go into models.json
+  `direct_video_model_keys` (data-only change) to widen explicit-model
+  eligibility.
+- `DIRECT_VIDEO_POLL_TIMEOUT` (default 900 s) bounds the direct poll; on timeout
+  the job reports GENERATED_BUT_UNRETRIEVED with re-pollable
+  `provider_operation_ids` — never a false "no video".
+
 ## THE ONE ARCHITECTURE (ADR-007 — final, do not relitigate)
 - Generation is **API-first**. The Chrome extension is **authenticated
   transport only** (session, reCAPTCHA, fetch relay, harvest). There is NO

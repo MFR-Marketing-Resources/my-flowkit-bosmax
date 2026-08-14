@@ -1517,11 +1517,13 @@ async def generate(body: GenerateRequest):
         max_image_attempts=1 if creative_campaign else 8,
         collect_image_variants=creative_campaign,
         product_id=body.product_id,
+        source_mode=body.source_mode,
         copy_execution_binding=(
             v2_resolution.to_metadata(
                 consumer_context=body.copy_v2_context
             ) if v2_resolution and v2_resolution.v2_enabled else None
-        ))
+        ),
+    )
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)
         raise HTTPException(409, result.get("error") or "rejected")
@@ -1541,6 +1543,35 @@ async def generate_job(job_id: str):
     if not j:
         raise HTTPException(404, "job not found")
     return j
+
+
+@router.post("/direct-capture/recover")
+async def recover_direct_capture(body: dict):
+    """Recover an already-submitted direct media target without resubmitting it."""
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+    if body.get("confirm_recovery") is not True:
+        raise HTTPException(409, "DIRECT_RECOVERY_CONFIRMATION_REQUIRED")
+    media_id = str(body.get("media_id") or "").strip()
+    project_id = str(body.get("project_id") or "").strip()
+    if not media_id or not project_id:
+        raise HTTPException(422, "DIRECT_RECOVERY_TARGET_REQUIRED")
+    from agent.services import make_video as _mv
+    result = await _mv.start_direct_media_recovery(
+        media_id=media_id,
+        project_id=project_id,
+        mode=body.get("mode") or "F2V",
+        source_mode=body.get("source_mode") or "HYBRID",
+        model_key=body.get("model_key"),
+        duration_s=body.get("duration_s", 8),
+        seed=body.get("seed"),
+        recovery_of=body.get("recovery_of") or body.get("request_id"),
+        confirm_recovery=True,
+    )
+    if not result.get("ok"):
+        raise HTTPException(409, result.get("error") or "DIRECT_RECOVERY_REJECTED")
+    return {"lane": "DIRECT_CAPTURE_RECOVERY", **result}
 
 
 @router.get("/product/{product_id}/visual-grounding")
@@ -3542,7 +3573,8 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
 
     # ── Owner Phase-2B: composer-driven initial lane (mutually exclusive) ───
     from agent.services import google_flow_ui_driver as _ui_drv
-    if _ui_drv.ui_driver_enabled() and mode in ("T2V", "I2V", "F2V"):
+    if (_ui_drv.ui_driver_enabled() and mode in ("T2V", "I2V", "F2V")
+            and body.get("_direct_capture") is not True):
         try:
             ui_initial = await _ui_drv.run_initial_block1_via_composer(
                 client,
@@ -3573,6 +3605,33 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                 request_id, "API_LANE_REJECTED",
                 f"{exc.code}: {exc.detail}", exc.code)
 
+    # ── LIVE-CAPTURE GATE (owner-fired, DIRECT_VIDEO_CAPTURE_ENABLED): fire ONE
+    # direct batchAsync submit with the resolved refs/project/settings and return
+    # the RAW submit response so the real contract (operation handles, accepted
+    # videoModelKey/aspect shape) is captured; poll+retrieve+persist continue in
+    # the background so the spent credit still yields an artifact.  An explicit
+    # capture request is terminal: it must never fall through to normal
+    # start_generate when disabled, unconfirmed, or otherwise ineligible.
+    if body.get("_direct_capture") is True:
+        capture_project_id = created_project_id or (
+            diag.get("projectId") if isinstance(diag, dict) else None)
+        cap = await _mv.start_direct_capture(
+            mode, prompt, capture_project_id, refs, aspect=aspect, tier=tier,
+            source_mode=_authority_source_mode, model=model_key,
+            duration_s=duration_s,
+            confirm_live_credit_burn=bool(body.get("confirm_live_credit_burn")))
+        await crud.add_stage_event(
+            request_id,
+            "API_DIRECT_CAPTURE_FIRED" if cap.get("ok")
+            else "API_DIRECT_CAPTURE_REJECTED",
+            "WAITING_FLOW" if cap.get("ok") else "FAILED",
+            f"ok={cap.get('ok')} error={cap.get('error')} job={cap.get('job_id')} "
+            f"fired={json.dumps(cap.get('fired') or {})[:400]} "
+            f"operations={cap.get('operations')}", "backend")
+        return {"ok": bool(cap.get("ok")), "lane": "DIRECT_CAPTURE",
+                "request_id": request_id, "mode": mode,
+                "source_mode": _authority_source_mode, **cap}
+
     res = await _mv.start_generate(
         mode, prompt, project_id=created_project_id,
         image_media_ids=refs or None,
@@ -3582,13 +3641,15 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         collect_image_variants=creative_campaign,
         image_model=body.get("image_model") if creative_campaign else None,
         product_id=body.get("product_id"),
+        source_mode=_authority_source_mode,
         copy_execution_binding=(
             v2_resolution.to_metadata(
                 consumer_context=body.get("copy_v2_context")
             )
             if v2_resolution is not None and v2_resolution.v2_enabled
             else None
-        ))
+        ),
+    )
     if not isinstance(res, dict) or not res.get("job_id"):
         code = str((res or {}).get("error") or "VIDEO_JOB_IN_FLIGHT")
         await _fail_manual_request(
