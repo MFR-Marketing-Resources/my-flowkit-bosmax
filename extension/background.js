@@ -521,7 +521,7 @@ function normalizeChromeMessageError(rawError) {
 	) {
 		return { error: "ERR_TAB_RELOADED", detail: message };
 	}
-	if (/message port closed before a response was received/i.test(message)) {
+	if (/(?:message port|message channel) closed before a response was received/i.test(message)) {
 		return { error: "ERR_MESSAGE_RESPONSE_TIMEOUT", detail: message };
 	}
 	return {
@@ -637,7 +637,17 @@ function sendRuntimeMessageNoThrow(payload) {
 	// Contract (frozen harness: "One-way runtime telemetry omits callback lane"):
 	// telemetry beacons are strictly fire-and-forget — no callback, no response port.
 	try {
-		chrome.runtime.sendMessage(payload);
+		const pending = chrome.runtime.sendMessage(payload);
+		if (pending && typeof pending.catch === "function") {
+			pending.catch((error) => {
+				if (!shouldSilenceChromeMessageError(error)) {
+					console.warn(
+						"[FlowAgent] one-way runtime message rejected:",
+						error?.message || error,
+					);
+				}
+			});
+		}
 	} catch (error) {
 		console.warn("[FlowAgent] runtime message exception:", error);
 	}
@@ -679,7 +689,9 @@ function isRecoverableFlowDomBridgeError(error) {
 		/Extension context invalidated/i.test(message) ||
 		/Could not establish connection/i.test(message) ||
 		/Receiving end does not exist/i.test(message) ||
-		/message port closed before a response was received/i.test(message)
+		/(?:message port|message channel) closed before a response was received/i.test(
+			message,
+		)
 	);
 }
 
