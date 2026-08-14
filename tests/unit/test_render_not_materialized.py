@@ -87,6 +87,19 @@ def test_timeout_with_rejected_ids_but_zero_counters_stays_conservative():
     assert j["status"] == "GENERATED_BUT_UNRETRIEVED"
 
 
+def test_timeout_with_media_fetch_errors_stays_conservative():
+    """A visible candidate whose metadata transport failed is not a phantom."""
+    stats = dict(
+        _FRESH_STATS,
+        media_fetch_errors=1,
+        media_fetch_error_ids=["delivery-media-id"],
+    )
+    j = _job(stats)
+    mv._apply_post_approval_failure(j, _TIMEOUT_MSG)
+    assert j["status"] == "GENERATED_BUT_UNRETRIEVED"
+    assert j["credit_state"] == "MAY_HAVE_SPENT"
+
+
 def test_missing_stats_stays_conservative():
     """Tab lost mid-poll: stats never persisted — the video may well exist."""
     j = _job(stats=None)
@@ -107,6 +120,7 @@ def test_zero_completed_candidates_semantics():
     assert mv._zero_completed_candidates(dict(_FRESH_STATS, prompt_mismatched=1)) is False
     assert mv._zero_completed_candidates(dict(_FRESH_STATS, unverifiable=1)) is False
     assert mv._zero_completed_candidates(dict(_FRESH_STATS, round_rejected_ids=["x"])) is False
+    assert mv._zero_completed_candidates(dict(_FRESH_STATS, media_fetch_errors=1)) is False
     assert mv._zero_completed_candidates(None) is False
     assert mv._zero_completed_candidates("junk") is False
 
