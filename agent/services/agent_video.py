@@ -17,6 +17,7 @@ VEO_LITE_COST = 10  # legacy default; pricing now lives in video_models (cost = 
 DENIED = "PERMISSION_ACTION_DENIED"
 APPROVED = "PERMISSION_ACTION_APPROVED"
 RATE_LIMITED = "RATE_LIMITED"
+SAFETY_FILTERED = "SAFETY_FILTERED"
 
 # Google anti-abuse / rate-limiter signature on the flowCreationAgent stream. This fires
 # PRE-APPROVE (0 credits): a 403 PERMISSION_DENIED carrying reCAPTCHA / PUBLIC_ERROR_
@@ -91,20 +92,30 @@ _REFERENCE_MISSING_PHRASES = (
 _RENDER_FAILED_PHRASES = (
     "something went wrong. please try again",
     "generation failed",
+    "video generation has failed",
     "failed to generate",
     "video generation was unsuccessful",
+)
+_SAFETY_FILTER_PHRASES = (
+    "safety filter",
+    "safety filters",
+    "policy restriction regarding prominent people",
+    "prominent people",
 )
 
 
 def classify_agent_failure(text) -> str | None:
     """Classify an agent reply into a failure kind, or None if it is not a failure.
     'REFERENCE_IMAGE_MISSING' → re-attach/re-upload the start image (NEVER just
-    'regenerate'); 'RENDER_FAILED' → generic server-side render failure."""
+    'regenerate'); 'SAFETY_FILTERED' → provider policy rejected the prompt;
+    'RENDER_FAILED' → generic server-side render failure."""
     low = str(text or "").lower()
     if not low:
         return None
     if any(p in low for p in _REFERENCE_MISSING_PHRASES):
         return "REFERENCE_IMAGE_MISSING"
+    if any(p in low for p in _SAFETY_FILTER_PHRASES):
+        return SAFETY_FILTERED
     if any(p in low for p in _RENDER_FAILED_PHRASES):
         return "RENDER_FAILED"
     return None

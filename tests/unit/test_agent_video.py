@@ -213,6 +213,18 @@ def test_classify_agent_failure_generic_and_none():
     assert av.classify_agent_failure(None) is None
 
 
+def test_classify_agent_failure_provider_safety_exact_live_reply():
+    reply = (
+        "The video generation has failed. It was flagged by the system's safety "
+        "filters because mentioning the creator's name triggered a policy restriction "
+        "regarding prominent people."
+    )
+    assert av.classify_agent_failure(reply) == av.SAFETY_FILTERED
+    assert av.classify_agent_failure(
+        "The video generation has failed for an unknown server reason."
+    ) == "RENDER_FAILED"
+
+
 # --- provider rate-limiter classification (incident: F2V "stuck/rejected" was actually
 #     Google anti-abuse, 0 credits — CURRENT_STATE OPEN ITEM #2). API-lane only; the
 #     negotiation DECISION logic is untouched, only error labelling. ---

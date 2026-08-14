@@ -3,6 +3,7 @@ import pytest
 from agent.services.ugc_video_prompt_compiler_service import (
     _compact_overlay,
     _clean_name_for_dialog,
+    _provider_safe_product,
     compile_ugc_video_prompt,
 )
 
@@ -78,6 +79,56 @@ def test_workspace_entrypoint_uses_sweet_wps_by_default():
     block = result["prompt_blocks"][0]
     assert block["dialogue_word_budget"] == 22
     assert block["engine_prompt_text"].count("SECTION 6 - SPOKEN DIALOGUE") == 1
+
+
+def test_provider_prompt_removes_shop_corroborated_creator_byline():
+    product = {
+        "id": "d2f8fd58-437b-4447-8730-694b782eef17",
+        "product_display_name": "Sambal Nyet Berapi by Khairulaming",
+        "product_short_name": "Sambal Nyet Berapi by",
+        "raw_product_title": "Sambal Nyet Berapi by Khairulaming",
+        "shop_name": "khairulamingbrand",
+        "category": "Food & Beverage",
+        "type": "Sambal",
+    }
+    result = compile_ugc_video_prompt(
+        product=product,
+        approved_package={"mode": "F2V", "scene_context": "Bright home kitchen"},
+        avatar_id="BOS_F_ALYA_01",
+        mode="F2V",
+        source_mode="HYBRID",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        copy_intelligence={
+            "angle": "everyday spicy-food convenience",
+            "hook": "Kau memang kaki pedas?",
+            "cta": "Grab Sambal Nyet Berapi sekarang dan rasa sendiri!",
+        },
+    )
+
+    final = result["final_compiled_prompt_text"]
+    assert "Sambal Nyet Berapi by Khairulaming" not in final
+    assert "Sambal Nyet Berapi" in final
+    assert result["provider_prompt_safety"] == {
+        "applied": True,
+        "reason": "CREATOR_BYLINE_REMOVED",
+        "original_name": "Sambal Nyet Berapi by Khairulaming",
+        "provider_safe_name": "Sambal Nyet Berapi",
+        "removed_attribution": "Khairulaming",
+    }
+    assert "PROVIDER_SAFETY_CREATOR_BYLINE_REMOVED" in result["warnings"]
+    # Compiler projection must never rewrite immutable catalog/source data in-place.
+    assert product["product_display_name"] == "Sambal Nyet Berapi by Khairulaming"
+
+
+def test_provider_prompt_does_not_guess_uncorroborated_by_title():
+    product = {
+        "product_display_name": "Designed by Nature",
+        "shop_name": "unrelated-shop",
+    }
+    projected, safety = _provider_safe_product(product)
+    assert safety == {"applied": False}
+    assert projected == product
 
 
 def test_compiler_generates_extend_continuation_lineage():

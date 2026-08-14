@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import aiohttp
 from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Any, Optional
 from agent.services.flow_client import get_flow_client
@@ -884,6 +885,35 @@ def _is_multi_block_prompt(prompt: str) -> bool:
     return (prompt or "").count(_BLOCK_HEADER_MARKER) > 1
 
 
+async def _provider_safety_stale_prompt_error(
+    product_id: str | None,
+    prompt: str,
+) -> str | None:
+    """Fail closed on an old package that still carries a known creator byline.
+
+    New packages are normalized by the canonical compiler.  This zero-credit guard
+    protects already-persisted packages at the final API boundary so deploying the
+    fix cannot accidentally resend the exact prompt Google already rejected.
+    """
+    normalized_product_id = str(product_id or "").strip()
+    if not normalized_product_id:
+        return None
+    product = await crud.get_product(normalized_product_id)
+    if not product:
+        return None
+    from agent.services.ugc_video_prompt_compiler_service import _provider_safe_product
+
+    _projected, safety = _provider_safe_product(product)
+    original = str(safety.get("original_name") or "").strip()
+    if (
+        safety.get("applied")
+        and original
+        and original.casefold() in str(prompt or "").casefold()
+    ):
+        return "ERR_PROVIDER_SAFETY_PACKAGE_STALE_RECOMPILE_REQUIRED"
+    return None
+
+
 def _is_product_reference_asset(
     asset: object,
     slot_key: str,
@@ -1365,6 +1395,13 @@ async def generate(body: GenerateRequest):
         raise HTTPException(
             422, "MULTI_BLOCK_PROMPT_REJECTED: one generation carries ONE block's "
             "prompt; block 2+ text belongs to the Extend step on the finished video")
+    if mode in ("T2V", "I2V", "F2V"):
+        stale_prompt_error = await _provider_safety_stale_prompt_error(
+            body.product_id,
+            body.prompt,
+        )
+        if stale_prompt_error:
+            raise HTTPException(409, stale_prompt_error)
 
     generation_prompt = body.prompt
     request_refs = dict(body.refs or {})
@@ -1529,7 +1566,15 @@ async def generate(body: GenerateRequest):
     )
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)
-        raise HTTPException(409, result.get("error") or "rejected")
+        error = result.get("error") or "rejected"
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": error,
+                "error": error,
+                "active_job": result.get("active_job"),
+            },
+        )
     if v2_resolution is not None and v2_resolution.v2_enabled:
         result["copy_architecture_v2"] = v2_resolution.to_metadata(
             consumer_context=body.copy_v2_context
@@ -3314,6 +3359,19 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             request_id, "API_LANE_REJECTED",
             "prompt carries more than one compiled block — submit block 1 only; "
             "block 2+ belongs to the Extend step", "ERR_MULTI_BLOCK_PROMPT")
+    if mode in ("T2V", "I2V", "F2V"):
+        stale_prompt_error = await _provider_safety_stale_prompt_error(
+            body.get("product_id"),
+            prompt,
+        )
+        if stale_prompt_error:
+            await _fail_manual_request(
+                request_id,
+                "API_LANE_REJECTED",
+                "The persisted prompt package contains a creator attribution that "
+                "Google Flow rejects. Recompile the package before generation.",
+                stale_prompt_error,
+            )
 
     if mode in ("I2V", "F2V") and body.get("product_id"):
         # Apply the same server-owned visual authority used by /generate.  The

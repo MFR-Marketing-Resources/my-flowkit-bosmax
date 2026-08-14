@@ -599,7 +599,9 @@ domains:
       - dashboard/src/utils/videoSessionResults.ts
       - tests/unit/test_artifact_library_retention.py
       - tests/api/test_flow_artifacts_api.py
+      - tests/api/test_generate_validation.py
       - tests/ui/test_artifact_library_page_ui_contract.py
+      - tests/ui/test_video_inflight_recovery_ui_contract.py
       - requirements.txt
       - agent/services/prompt_package_dryrun_service.py
       - agent/services/ugc_video_prompt_compiler_service.py

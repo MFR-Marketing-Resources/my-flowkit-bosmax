@@ -186,6 +186,20 @@ def test_img_not_blocked_by_video_lane():
         mv._JOBS.clear()
 
 
+def test_terminal_agent_failure_messages_are_stable_and_actionable():
+    safety = mv._terminal_agent_failure_error(mv.agent_video.SAFETY_FILTERED)
+    assert safety.startswith("FAILED_PROVIDER_SAFETY_FILTER:")
+    assert "creator attribution" in safety
+    assert "do not auto-retry" in safety
+    assert mv._terminal_agent_failure_error("REFERENCE_IMAGE_MISSING").startswith(
+        "FAILED_REFERENCE_IMAGE_MISSING:"
+    )
+    assert mv._terminal_agent_failure_error("RENDER_FAILED").startswith(
+        "FAILED_RENDER_REPORTED_BY_AGENT:"
+    )
+    assert mv._terminal_agent_failure_error(None) is None
+
+
 def test_gc_drops_old_finished_jobs():
     mv._JOBS.clear()
     mv._JOBS["old"] = {"status": "DONE", "created": mv.time.time() - (mv._JOB_TTL + 10)}
