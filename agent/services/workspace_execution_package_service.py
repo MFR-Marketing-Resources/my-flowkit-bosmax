@@ -22,7 +22,7 @@ from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
     copy_v2_handoff_context,
     lane_for_request,
-    resolve_copy_execution_binding,
+    resolve_persisted_copy_execution_binding,
 )
 from agent.services.claim_safe_rewrite_service import get_stored_claim_safe_package
 from agent.services.product_intelligence import enrich_product
@@ -308,7 +308,7 @@ async def create_workspace_execution_package(
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
     try:
-        v2_resolution = resolve_copy_execution_binding(
+        v2_resolution = await resolve_persisted_copy_execution_binding(
             product_id,
             str((copy_v2_context or {}).get("lane") or lane_for_request(normalized_mode, source_mode=source_mode)),
             copy_v2_context,
@@ -697,7 +697,7 @@ async def compile_workspace_prompt_preview(
     normalized_mode = normalize_mode(mode)
     if copy_v2_resolution is None:
         try:
-            copy_v2_resolution = resolve_copy_execution_binding(
+            copy_v2_resolution = await resolve_persisted_copy_execution_binding(
                 product_id,
                 str((copy_v2_context or {}).get("lane") or lane_for_request(normalized_mode, source_mode=source_mode)),
                 copy_v2_context,

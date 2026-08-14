@@ -46,26 +46,16 @@ def _sample_copy_set(**over):
     return base
 
 
-def test_generate_returns_copy_set(monkeypatch):
-    async def fake_generate(request):
-        return {"copy_set": _sample_copy_set(), "created": True, "dedupe_match": False}
-
-    monkeypatch.setattr(svc, "generate_copy_set", fake_generate)
+def test_legacy_generate_is_disabled():
     response = _client().post("/api/copy-sets/generate", json={"product_id": "prod-001"})
-    assert response.status_code == 200
-    body = response.json()
-    assert body["created"] is True
-    assert body["copy_set"]["copy_set_id"] == "cs-001"
+    assert response.status_code == 410
+    assert response.json()["detail"]["error"] == "LEGACY_COPY_GENERATION_DISABLED"
 
 
-def test_generate_product_not_found(monkeypatch):
-    async def fake_generate(request):
-        raise svc.CopySetError("PRODUCT_NOT_FOUND", status_code=404, detail={"product_id": "x"})
-
-    monkeypatch.setattr(svc, "generate_copy_set", fake_generate)
+def test_legacy_generate_does_not_reenter_product_or_provider_path():
     response = _client().post("/api/copy-sets/generate", json={"product_id": "x"})
-    assert response.status_code == 404
-    assert response.json()["detail"]["error"] == "PRODUCT_NOT_FOUND"
+    assert response.status_code == 410
+    assert response.json()["detail"]["error"] == "LEGACY_COPY_GENERATION_DISABLED"
 
 
 def test_get_copy_set_not_found(monkeypatch):
@@ -177,12 +167,8 @@ def test_patch_and_reject_and_regenerate(monkeypatch):
     async def fake_reject(copy_set_id, request):
         return _sample_copy_set(status="COPY_REJECTED", reviewer_note="angle salah")
 
-    async def fake_regen(copy_set_id, request):
-        return _sample_copy_set(status="DRAFT_COPY")
-
     monkeypatch.setattr(svc, "patch_copy_set", fake_patch)
     monkeypatch.setattr(svc, "reject_copy_set", fake_reject)
-    monkeypatch.setattr(svc, "regenerate_copy_set", fake_regen)
 
     client = _client()
     patched = client.patch("/api/copy-sets/cs-001", json={"hook": "Hook baru"})
@@ -194,12 +180,12 @@ def test_patch_and_reject_and_regenerate(monkeypatch):
     assert rejected.json()["status"] == "COPY_REJECTED"
 
     regenerated = client.post("/api/copy-sets/cs-001/regenerate", json={"angle": "Angle baru"})
-    assert regenerated.status_code == 200
-    assert regenerated.json()["status"] == "DRAFT_COPY"
+    assert regenerated.status_code == 410
+    assert regenerated.json()["detail"]["error"] == "LEGACY_COPY_GENERATION_DISABLED"
 
-    # Regenerate also works with no body (product is derived from the Copy Set).
+    # Historical regenerate remains addressable only to return the explicit gate.
     regenerated_empty = client.post("/api/copy-sets/cs-001/regenerate")
-    assert regenerated_empty.status_code == 200
+    assert regenerated_empty.status_code == 410
 
 
 def test_delete_copy_set(monkeypatch):

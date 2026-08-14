@@ -34,6 +34,8 @@ from agent.models.copy_blueprint_v2 import (
     EvidenceRegistry,
     FormulaStage,
     ProductTruthLineage,
+    ProductionReadinessProof,
+    SemanticReviewProof,
     StageTextDigest,
     SupersessionRef,
     V2_BINDING_VERSION,
@@ -159,6 +161,20 @@ def _compare_approval_artifact(blueprint: CopyBlueprintV2, issues: list[V2Valida
                 "approved Product Truth snapshot changed after approval",
             )
         )
+    if snapshot.semantic_review != blueprint.semantic_review:
+        issues.append(
+            _issue(
+                "COPY_V2_APPROVAL_MUTATED",
+                "semantic review proof no longer matches the immutable approval snapshot",
+            )
+        )
+    if snapshot.readiness_proof != blueprint.readiness_proof:
+        issues.append(
+            _issue(
+                "COPY_V2_APPROVAL_MUTATED",
+                "production readiness proof no longer matches the immutable approval snapshot",
+            )
+        )
 
 
 def validate_copy_blueprint_v2(
@@ -167,6 +183,7 @@ def validate_copy_blueprint_v2(
     current_product_truth: ProductTruthLineage | None = None,
     evidence_registry: EvidenceRegistry | None = None,
     require_approval: bool = False,
+    require_semantic_review: bool = False,
     duration_word_limit: int | None = None,
     max_words_per_second: float | None = None,
 ) -> CopyBlueprintV2ValidationResult:
@@ -331,6 +348,15 @@ def validate_copy_blueprint_v2(
     )
     if require_approval and not has_approval:
         issues.append(_issue("COPY_V2_APPROVAL_MISSING", "production binding requires explicit human approval"))
+    if require_semantic_review:
+        proof = blueprint.semantic_review
+        if proof is None or proof.decision != "APPROVED":
+            issues.append(
+                _issue(
+                    "COPY_V2_SEMANTIC_REVIEW_REQUIRED",
+                    "production V2 copy requires an explicit approved semantic review proof",
+                )
+            )
 
     error_codes = tuple(dict.fromkeys(issue.code for issue in issues))
     structural_valid = not error_codes
@@ -355,6 +381,8 @@ def approve_copy_blueprint_v2(
     current_product_truth: ProductTruthLineage,
     evidence_registry: EvidenceRegistry,
     approved_at: str | None = None,
+    semantic_review: SemanticReviewProof | None = None,
+    readiness_proof: ProductionReadinessProof | None = None,
 ) -> CopyBlueprintV2:
     """Perform the explicit human approval transition.
 
@@ -366,8 +394,24 @@ def approve_copy_blueprint_v2(
         raise CopyBlueprintV2Error("COPY_V2_APPROVER_REQUIRED", "human approver identity is required")
     if blueprint.status in {"APPROVED", "PRODUCTION_VALID"}:
         raise CopyBlueprintV2Error("COPY_V2_ALREADY_APPROVED", "approved V2 artifacts cannot be approved in place")
+    artifact_updates = {}
+    if semantic_review is not None:
+        artifact_updates["semantic_review"] = semantic_review
+    if readiness_proof is not None:
+        artifact_updates["readiness_proof"] = readiness_proof
+    artifact = blueprint.model_copy(update=artifact_updates) if artifact_updates else blueprint
+    if semantic_review is not None and semantic_review.decision != "APPROVED":
+        raise CopyBlueprintV2Error(
+            "COPY_V2_SEMANTIC_REVIEW_REQUIRED",
+            "semantic review must be explicitly approved before copy approval",
+        )
+    if readiness_proof is not None and not all(readiness_proof.model_dump(mode="python").values()):
+        raise CopyBlueprintV2Error(
+            "COPY_V2_READINESS_REQUIRED",
+            "All production readiness gates must be explicitly proven before approval.",
+        )
     result = validate_copy_blueprint_v2(
-        blueprint,
+        artifact,
         current_product_truth=current_product_truth,
         evidence_registry=evidence_registry,
     )
@@ -378,23 +422,25 @@ def approve_copy_blueprint_v2(
             details=result.model_dump(mode="json"),
         )
     timestamp = approved_at or datetime.now(timezone.utc).isoformat()
-    execution = _approved_text(blueprint.stages)
-    refs = _unique_refs(list(blueprint.evidence_refs))
+    execution = _approved_text(artifact.stages)
+    refs = _unique_refs(list(artifact.evidence_refs))
     snapshot = ApprovalSnapshot(
-        approval_snapshot_id=f"approval:{blueprint.blueprint_id}:{blueprint.revision}:{_blueprint_digest(blueprint)[:16]}",
-        blueprint_id=blueprint.blueprint_id,
-        revision=blueprint.revision,
-        blueprint_digest=_blueprint_digest(blueprint),
-        formula_id=strict_formula_id(blueprint.formula_id),
-        formula_version=formula_version(blueprint.formula_id),
+        approval_snapshot_id=f"approval:{artifact.blueprint_id}:{artifact.revision}:{_blueprint_digest(artifact)[:16]}",
+        blueprint_id=artifact.blueprint_id,
+        revision=artifact.revision,
+        blueprint_digest=_blueprint_digest(artifact),
+        formula_id=strict_formula_id(artifact.formula_id),
+        formula_version=formula_version(artifact.formula_id),
         product_truth_snapshot_id=current_product_truth.snapshot_id,
-        stage_text_digests=_stage_text_digests(blueprint.stages),
+        stage_text_digests=_stage_text_digests(artifact.stages),
         approved_execution_text=execution,
         evidence_digest=_evidence_digest(refs),
         approved_by=approved_by.strip(),
         approved_at=timestamp,
+        semantic_review=artifact.semantic_review,
+        readiness_proof=artifact.readiness_proof,
     )
-    return blueprint.model_copy(
+    return artifact.model_copy(
         update={
             "status": "APPROVED",
             "approval_snapshot": snapshot,
@@ -432,6 +478,8 @@ def create_blueprint_revision(
             "product_truth_lineage": product_truth_lineage,
             "approval_snapshot": None,
             "approved_execution_text": (),
+            "semantic_review": None,
+            "readiness_proof": None,
             "approved_at": None,
             "approved_by": None,
             "supersedes": SupersessionRef(blueprint_id=previous.blueprint_id, revision=previous.revision),

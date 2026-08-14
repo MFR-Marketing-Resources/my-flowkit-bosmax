@@ -1372,11 +1372,11 @@ async def generate(body: GenerateRequest):
         from agent.services.copy_execution_resolver import (
             CopyExecutionResolutionError,
             lane_for_request,
-            resolve_copy_execution_binding,
+            resolve_persisted_copy_execution_binding,
         )
 
         requested_v2_lane = str((body.copy_v2_context or {}).get("lane") or "")
-        v2_resolution = resolve_copy_execution_binding(
+        v2_resolution = await resolve_persisted_copy_execution_binding(
             body.product_id or "request-product",
             requested_v2_lane
             or lane_for_request(
@@ -3311,11 +3311,11 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         from agent.services.copy_execution_resolver import (
             CopyExecutionResolutionError,
             lane_for_request,
-            resolve_copy_execution_binding,
+            resolve_persisted_copy_execution_binding,
         )
 
         requested_lane = str((body.get("copy_v2_context") or {}).get("lane") or "")
-        v2_resolution = resolve_copy_execution_binding(
+        v2_resolution = await resolve_persisted_copy_execution_binding(
             str(body.get("product_id") or "request-product"),
             requested_lane
             or lane_for_request(

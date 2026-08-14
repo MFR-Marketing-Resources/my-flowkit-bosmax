@@ -270,42 +270,39 @@ async def _build_item_payload(
         v2_blockers.append(
             "COPY_V2_BINDING_NOT_READY:" + str(v2_handoff.get("status") or "UNKNOWN")
         )
-    if plan_v2_context is not None:
-        # Queue/start is a second consumer boundary. Revalidate the same
-        # context before a P6 item can be emitted, and require the compiled
-        # item to carry its durable receipt so V2 cannot silently disappear.
-        from agent.services.copy_execution_resolver import (
-            CopyExecutionResolutionError,
-            resolve_copy_execution_binding,
-        )
+    # Queue/start is a second consumer boundary. Revalidate the persisted
+    # identity before a P6 item can be emitted, and require the compiled item
+    # to carry the same durable receipt so V2 cannot silently disappear.
+    from agent.services.copy_execution_resolver import (
+        CopyExecutionResolutionError,
+        resolve_persisted_copy_execution_binding,
+    )
 
-        validation_context = dict(plan_v2_context)
-        persisted_binding = v2_handoff.get("binding")
-        if isinstance(persisted_binding, dict) and persisted_binding.get("bound_at"):
-            validation_context["bound_at"] = persisted_binding["bound_at"]
-        validation_lane = (
-            "POSTER_BUILDER"
-            if media_type == "POSTER"
-            else "IMAGE_GEN"
-            if media_type == "IMAGE"
-            else "PRODUCTION_STUDIO_P6"
+    validation_context = dict(plan_v2_context or {})
+    persisted_binding = v2_handoff.get("binding")
+    validation_lane = (
+        "POSTER_BUILDER"
+        if media_type == "POSTER"
+        else "IMAGE_GEN"
+        if media_type == "IMAGE"
+        else "PRODUCTION_STUDIO_P6"
+    )
+    try:
+        validation = await resolve_persisted_copy_execution_binding(
+            str(item.get("product_id") or plan.get("product_id") or ""),
+            validation_lane,
+            validation_context,
         )
-        try:
-            validation = resolve_copy_execution_binding(
-                str(item.get("product_id") or plan.get("product_id") or ""),
-                validation_lane,
-                validation_context,
-            )
-        except CopyExecutionResolutionError as exc:
-            v2_blockers.append(exc.code)
-        else:
-            if validation.v2_enabled:
-                if not v2_handoff:
-                    v2_blockers.append("COPY_V2_BINDING_REQUIRED")
-                elif validation.binding is not None and validation.binding.model_dump(
-                    mode="json"
-                ) != persisted_binding:
-                    v2_blockers.append("COPY_V2_BINDING_MISMATCH")
+    except CopyExecutionResolutionError as exc:
+        v2_blockers.append(exc.code)
+    else:
+        if validation.v2_enabled:
+            if not v2_handoff:
+                v2_blockers.append("COPY_V2_BINDING_REQUIRED")
+            elif validation.binding is not None and validation.binding.model_dump(
+                mode="json"
+            ) != persisted_binding:
+                v2_blockers.append("COPY_V2_BINDING_MISMATCH")
 
     def _with_v2(payload: dict[str, Any]) -> dict[str, Any]:
         if v2_handoff.get("v2_enabled"):

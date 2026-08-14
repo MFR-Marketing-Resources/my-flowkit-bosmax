@@ -44,7 +44,7 @@ from agent.services.workspace_execution_package_service import (
 )
 from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
-    resolve_copy_execution_binding,
+    resolve_persisted_copy_execution_binding,
 )
 
 router = APIRouter(prefix="/montage", tags=["montage"])
@@ -176,19 +176,17 @@ async def montage_plan(body: MontagePlanRequest) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     beats = body.beats or _default_beats()
-    copy_resolution = None
-    if body.copy_v2_context is not None:
-        try:
-            copy_resolution = resolve_copy_execution_binding(
-                body.product_id,
-                "MONTAGE",
-                body.copy_v2_context,
-            )
-        except CopyExecutionResolutionError as exc:
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail={"error": exc.code, "detail": exc.details or str(exc)},
-            ) from exc
+    try:
+        copy_resolution = await resolve_persisted_copy_execution_binding(
+            body.product_id,
+            "MONTAGE",
+            body.copy_v2_context,
+        )
+    except CopyExecutionResolutionError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "detail": exc.details or str(exc)},
+        ) from exc
     plans = plan_scenes_from_story(
         story_beats=beats,
         default_policy=default_policy,

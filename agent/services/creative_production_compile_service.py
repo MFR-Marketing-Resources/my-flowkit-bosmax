@@ -25,7 +25,7 @@ from agent.services.creative_production_plan_service import (
 from agent.services.poster_prompt_draft_service import PosterPromptDraftService
 from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
-    resolve_copy_execution_binding,
+    resolve_persisted_copy_execution_binding,
 )
 
 
@@ -300,21 +300,19 @@ async def _compile_poster(
     dimensions: dict[str, Any],
 ) -> tuple[None, str, dict[str, Any]]:
     copy_v2_context = _plan_copy_v2_context(plan)
-    v2_resolution = None
-    if copy_v2_context is not None:
-        try:
-            v2_resolution = resolve_copy_execution_binding(
-                item["product_id"],
-                "POSTER_BUILDER",
-                copy_v2_context,
-            )
-        except CopyExecutionResolutionError as exc:
-            raise CreativeProductionError(
-                exc.code,
-                str(exc),
-                status_code=exc.status_code,
-                details=exc.details,
-            ) from exc
+    try:
+        v2_resolution = await resolve_persisted_copy_execution_binding(
+            item["product_id"],
+            "POSTER_BUILDER",
+            copy_v2_context,
+        )
+    except CopyExecutionResolutionError as exc:
+        raise CreativeProductionError(
+            exc.code,
+            str(exc),
+            status_code=exc.status_code,
+            details=exc.details,
+        ) from exc
     poster_fields = {}
     if v2_resolution is not None and v2_resolution.v2_enabled:
         derived = v2_resolution.projection.derived_copy

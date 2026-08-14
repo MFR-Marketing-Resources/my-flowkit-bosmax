@@ -29,11 +29,20 @@ from agent.models.copy_set import (
     CopySetRejectRequest,
     CopySetSemanticReviewRequest,
 )
-from agent.services import ai_copy_assist_service as ai_svc
-from agent.services import ai_copy_provider_adapter as ai_provider
 from agent.services import copy_set_service as svc
 
 router = APIRouter(prefix="/copy-sets", tags=["copy-sets"])
+
+
+def _legacy_generation_disabled() -> None:
+    """Keep historical CopySet APIs addressable but closed for new authoring."""
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "error": "LEGACY_COPY_GENERATION_DISABLED",
+            "detail": "Use /api/copy-register/v2/blueprints/generate for new formula-native copy.",
+        },
+    )
 
 
 def _raise(error: svc.CopySetError):
@@ -42,10 +51,7 @@ def _raise(error: svc.CopySetError):
 
 @router.post("/generate")
 async def generate_copy_set(request: CopySetGenerateRequest):
-    try:
-        return await svc.generate_copy_set(request)
-    except svc.CopySetError as error:
-        _raise(error)
+    _legacy_generation_disabled()
 
 
 @router.post("/ai-assist")
@@ -53,18 +59,7 @@ async def ai_assist_copy_candidate(request: AICopyAssistRequest):
     """AI Copy Assist — generate reviewable candidate Copy Set(s). Candidates are
     saved COPY_REVIEW_REQUIRED (never approved, never bound). Fails closed when the
     provider is not configured or returns an invalid response."""
-    try:
-        return await ai_svc.generate_ai_copy_candidate(request)
-    except ai_provider.AICopyProviderNotConfigured as error:
-        raise HTTPException(
-            status_code=409, detail={"error": error.code}
-        ) from error
-    except ai_provider.AICopyProviderError as error:
-        raise HTTPException(
-            status_code=502, detail={"error": error.code, "detail": error.detail}
-        ) from error
-    except svc.CopySetError as error:
-        _raise(error)
+    _legacy_generation_disabled()
 
 
 @router.post("/generate-batch")
@@ -76,18 +71,7 @@ async def generate_copy_set_batch(request: AICopyAssistBatchRequest):
 
     Fails closed when the provider is not configured or returns invalid data.
     """
-    try:
-        return await ai_svc.generate_ai_copy_candidates_batch(request)
-    except ai_provider.AICopyProviderNotConfigured as error:
-        raise HTTPException(
-            status_code=409, detail={"error": error.code}
-        ) from error
-    except ai_provider.AICopyProviderError as error:
-        raise HTTPException(
-            status_code=502, detail={"error": error.code, "detail": error.detail}
-        ) from error
-    except svc.CopySetError as error:
-        _raise(error)
+    _legacy_generation_disabled()
 
 
 @router.get("/product/{product_id}")
@@ -160,11 +144,7 @@ async def reject_copy_set(copy_set_id: str, request: CopySetRejectRequest):
 
 @router.post("/{copy_set_id}/regenerate")
 async def regenerate_copy_set(copy_set_id: str, request: CopySetRegenerateRequest | None = None):
-    overrides = request.model_dump(exclude_none=True) if request else None
-    try:
-        return await svc.regenerate_copy_set(copy_set_id, overrides or None)
-    except svc.CopySetError as error:
-        _raise(error)
+    _legacy_generation_disabled()
 
 
 @router.post("/{copy_set_id}/revalidate")

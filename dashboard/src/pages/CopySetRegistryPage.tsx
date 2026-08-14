@@ -1,1150 +1,411 @@
-import { PenLine } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { PenLine, ShieldCheck } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-	approveCopySet,
-	cloneCopySetToProduct,
-	type CopyGroundingSummary,
-	deleteCopySet,
-	type CopyFormula,
-	fetchCopyFormulas,
-	fetchCopyGrounding,
-	generateCopySet,
-	generateCopySetBatch,
-	listCopySetsForProduct,
-	patchCopySet,
-	rejectCopySet,
-	revalidateCopySet,
-	runSimilarityBackfill,
-	submitSemanticReview,
-} from "../api/copySets";
-import { fetchProductCatalog, prepareProductForCopywriting } from "../api/products";
-import {
-	Badge,
-	type BadgeTone,
-	ConfirmActionModal,
-	DataTable,
-	type DataTableColumn,
-	FormField,
-	HelperText,
-	Section,
-} from "../components/ui";
+	approveFormulaBlueprint,
+	fetchCopyRegisterFormulas,
+	fetchCopyRegisterTruth,
+	generateCopyRegisterAngles,
+	generateFormulaCopyBlueprint,
+	listCopyRegisterBlueprints,
+	regenerateFormulaStage,
+	type CopyAngleOptionV2,
+	type CopyBlueprintV2Record,
+	type CopyFormulaV2,
+	type CopyTruthProofV2,
+} from "../api/copyRegisterV2";
+import { fetchProductCatalog } from "../api/products";
+import { Badge, type BadgeTone, FormField, HelperText, Section } from "../components/ui";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
-import CopyComponentsPanel from "../components/CopyComponentsPanel";
-import type { CopySet, CopySetStatus, Product } from "../types";
+import type { Product } from "../types";
 
-const GENERATE_COUNT = 5;
-const DELETE_PHRASE = "DELETE";
-// Owner decision 2026-07-19: one script reused (with different visuals) at
-// most 15x before rotation retires it. Display-only here; the cap itself is
-// enforced server-side by copy_rotation_service.
-const REUSE_CAP = 15;
+const INPUT_CLASS =
+	"mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200";
 
-const STATUS_TONE: Record<CopySetStatus, BadgeTone> = {
-	DRAFT_COPY: "neutral",
-	COPY_REVIEW_REQUIRED: "warn",
-	COPY_APPROVED: "success",
-	COPY_REJECTED: "danger",
-};
-const STATUS_LABEL: Record<CopySetStatus, string> = {
-	DRAFT_COPY: "Draft",
-	COPY_REVIEW_REQUIRED: "Review required",
-	COPY_APPROVED: "Approved",
-	COPY_REJECTED: "Rejected",
+const EMPTY_APPROVAL_CHECKS = {
+	semantic: false,
+	provenance: false,
+	safety: false,
+	bridge: false,
+	duration: false,
 };
 
-// ---- Edit modal ---------------------------------------------------------
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : "Copy Register V2 request failed.";
+}
 
-function EditCopySetModal({
-	set,
+function truthTone(truth: CopyTruthProofV2 | null): BadgeTone {
+	return truth?.ready_for_copy ? "success" : "warn";
+}
+
+function BlueprintCard({
+	blueprint,
+	onRegenerate,
 	busy,
-	onSave,
-	onCancel,
 }: {
-	set: CopySet;
+	blueprint: CopyBlueprintV2Record;
+	onRegenerate: (stageKey: string) => void;
 	busy: boolean;
-	onSave: (patch: {
-		angle: string;
-		hook: string;
-		subhook: string;
-		usp_set: string[];
-		cta: string;
-	}) => void;
-	onCancel: () => void;
 }) {
-	const [angle, setAngle] = useState(set.angle);
-	const [hook, setHook] = useState(set.hook);
-	const [subhook, setSubhook] = useState(set.subhook);
-	const [usp1, setUsp1] = useState(set.usp_set[0] ?? "");
-	const [usp2, setUsp2] = useState(set.usp_set[1] ?? "");
-	const [usp3, setUsp3] = useState(set.usp_set[2] ?? "");
-	const [cta, setCta] = useState(set.cta);
-
-	const inputCls =
-		"mt-1 w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200";
+	const formulaValid = blueprint.stages.every(
+		(stage, index) => stage.order === index && stage.validation.valid,
+	);
+	const evidenceValid = blueprint.stages.every(
+		(stage) => !stage.claim_bearing || stage.fact_refs.length > 0,
+	);
+	const bridgeValid = blueprint.stages.every(
+		(stage, index) =>
+			Boolean(stage.bridge.entry && stage.bridge.exit) &&
+			(index === 0 || blueprint.stages[index - 1].bridge.exit === stage.bridge.entry),
+	);
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-			<div
-				className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-950 p-5"
-				data-testid="edit-copy-set-modal"
-			>
-				<h3 className="text-sm font-bold text-slate-100">Edit copywriting set</h3>
-				<p className="mt-1 text-xs text-slate-400">
-					Editing re-derives status and clears any previous approval.
+		<div
+			className="rounded-xl border border-slate-800 bg-slate-950/70 p-4"
+			data-testid="v2-blueprint-card"
+		>
+			<div className="flex flex-wrap items-start justify-between gap-3">
+				<div>
+					<div className="flex flex-wrap items-center gap-2">
+						<span className="font-mono text-xs text-blue-200">{blueprint.blueprint_id}</span>
+						<span className="text-xs text-slate-500">revision {blueprint.revision}</span>
+					</div>
+					<p className="mt-1 text-xs text-slate-400">
+						{blueprint.formula_id} · {blueprint.formula_version}
+					</p>
+				</div>
+				<Badge tone={blueprint.status === "PRODUCTION_VALID" ? "success" : "warn"}>
+					{blueprint.v2_badge ?? blueprint.status}
+				</Badge>
+			</div>
+			<div className="mt-4 grid gap-3 md:grid-cols-2">
+				<div>
+					<p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Objective</p>
+					<p className="mt-1 text-sm text-slate-200">{blueprint.objective.definition}</p>
+				</div>
+				<div>
+					<p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Selected angle</p>
+					<p className="mt-1 text-sm text-slate-200">{blueprint.angle.definition}</p>
+				</div>
+			</div>
+			<div className="mt-4 space-y-2">
+				<p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+					Ordered formula stages (source of truth)
 				</p>
-				<div className="mt-4 grid gap-3 md:grid-cols-2">
-					<FormField label="Angle">
-						<input className={inputCls} value={angle} onChange={(e) => setAngle(e.target.value)} />
-					</FormField>
-					<FormField label="Hook">
-						<input className={inputCls} value={hook} onChange={(e) => setHook(e.target.value)} />
-					</FormField>
-					<FormField label="Subhook" className="md:col-span-2">
-						<input className={inputCls} value={subhook} onChange={(e) => setSubhook(e.target.value)} />
-					</FormField>
-					<FormField label="USP 1">
-						<input className={inputCls} value={usp1} onChange={(e) => setUsp1(e.target.value)} />
-					</FormField>
-					<FormField label="USP 2">
-						<input className={inputCls} value={usp2} onChange={(e) => setUsp2(e.target.value)} />
-					</FormField>
-					<FormField label="USP 3">
-						<input className={inputCls} value={usp3} onChange={(e) => setUsp3(e.target.value)} />
-					</FormField>
-					<FormField label="CTA">
-						<input className={inputCls} value={cta} onChange={(e) => setCta(e.target.value)} />
-					</FormField>
-				</div>
-				<div className="mt-5 flex justify-end gap-2">
-					<button
-						type="button"
-						onClick={onCancel}
-						disabled={busy}
-						className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300"
+				{blueprint.stages.map((stage) => (
+					<div
+						key={stage.stage_key}
+						className="rounded-lg border border-slate-800 bg-slate-900/80 p-3"
+						data-testid={`v2-stage-${stage.formula_stage_key}`}
 					>
-						Cancel
-					</button>
-					<button
-						type="button"
-						data-testid="save-copy-set-edit"
-						disabled={busy}
-						onClick={() =>
-							onSave({
-								angle,
-								hook,
-								subhook,
-								usp_set: [usp1, usp2, usp3].map((u) => u.trim()).filter(Boolean),
-								cta,
-							})
-						}
-						className="rounded-lg border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40"
-					>
-						{busy ? "Saving…" : "Save changes"}
-					</button>
-				</div>
+						<div className="flex items-center justify-between gap-2">
+							<span className="text-[10px] font-bold uppercase text-blue-200">
+								{stage.order + 1}. {stage.formula_stage_key}
+							</span>
+							{blueprint.status !== "PRODUCTION_VALID" ? (
+								<button
+									type="button"
+									data-testid={`regenerate-v2-stage-${stage.formula_stage_key}`}
+									disabled={busy}
+									onClick={() => onRegenerate(stage.stage_key)}
+									className="rounded border border-violet-500/40 px-2 py-1 text-[10px] font-bold uppercase text-violet-200 disabled:opacity-40"
+								>
+									Regenerate revision
+								</button>
+							) : null}
+						</div>
+						<p className="mt-2 text-sm leading-6 text-slate-200">{stage.authored_text}</p>
+						<div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-slate-500">
+							<span>{stage.claim_bearing ? "evidence-backed" : "non-claim CTA"}</span>
+							{stage.fact_refs.map((ref) => (
+								<span key={ref.fact_id} className="rounded bg-slate-800 px-1.5 py-0.5 font-mono">
+									{ref.fact_id}
+								</span>
+							))}
+						</div>
+					</div>
+				))}
+			</div>
+			<div className="mt-4 grid gap-2 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-300 sm:grid-cols-2">
+				<span>{formulaValid ? "✓" : "✕"} Formula order and stage validation</span>
+				<span>{evidenceValid ? "✓" : "✕"} Stable evidence lineage</span>
+				<span>{bridgeValid ? "✓" : "✕"} Bridge continuity</span>
+				<span>
+					Duration readiness: {blueprint.estimated_word_count} words
+					{blueprint.target_duration_seconds
+						? ` / ${blueprint.target_duration_seconds}s`
+						: " · reviewer confirmation required"}
+				</span>
 			</div>
 		</div>
 	);
 }
-
-// ---- Clone modal --------------------------------------------------------
-// Owner rule: similar products (e.g. two vanilla car perfumes) share scripts
-// via EXPLICIT clone only — the clone re-enters review against the TARGET
-// product and starts with a fresh reuse budget.
-
-function CloneCopySetModal({
-	set,
-	products,
-	busy,
-	onClone,
-	onCancel,
-}: {
-	set: CopySet;
-	products: Product[];
-	busy: boolean;
-	onClone: (target: Product) => void;
-	onCancel: () => void;
-}) {
-	const [target, setTarget] = useState<Product | null>(null);
-	const candidates = useMemo(
-		() => products.filter((p) => p.id !== set.product_id),
-		[products, set.product_id],
-	);
-	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-			<div
-				className="w-full max-w-xl rounded-2xl border border-slate-700 bg-slate-950 p-5"
-				data-testid="clone-copy-set-modal"
-			>
-				<h3 className="text-sm font-bold text-slate-100">
-					Clone the script to similar products
-				</h3>
-				<p className="mt-1 text-xs text-slate-400">
-					Hook: “{set.hook || set.angle}”. The clone re-enters as{" "}
-					<span className="font-semibold text-amber-200">Review required</span>{" "}
-					with a claim-safety scan against the target product — never
-					auto-approved. Usage starts at 0 (fresh reuse budget).
-				</p>
-				<div className="mt-4">
-					<SearchableProductSelect
-						products={candidates}
-						selectedProduct={target}
-						onSelect={setTarget}
-					/>
-				</div>
-				<div className="mt-5 flex justify-end gap-2">
-					<button
-						type="button"
-						onClick={onCancel}
-						disabled={busy}
-						className="rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300"
-					>
-						Cancel
-					</button>
-					<button
-						type="button"
-						data-testid="confirm-clone-copy-set"
-						disabled={busy || !target}
-						onClick={() => target && onClone(target)}
-						className="rounded-lg border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"
-					>
-						{busy ? "Cloning…" : "Clone to this product"}
-					</button>
-				</div>
-			</div>
-		</div>
-	);
-}
-
-// ---- Page ---------------------------------------------------------------
 
 export default function CopySetRegistryPage() {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [products, setProducts] = useState<Product[]>([]);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-	const [sets, setSets] = useState<CopySet[]>([]);
-	const [loading, setLoading] = useState(false);
-	const [generating, setGenerating] = useState(false);
-	const [busyId, setBusyId] = useState<string | null>(null);
+	const [truth, setTruth] = useState<CopyTruthProofV2 | null>(null);
+	const [formulas, setFormulas] = useState<CopyFormulaV2[]>([]);
+	const [formulaId, setFormulaId] = useState("");
+	const [angles, setAngles] = useState<CopyAngleOptionV2[]>([]);
+	const [selectedAngleId, setSelectedAngleId] = useState("");
+	const [facts, setFacts] = useState<CopyTruthProofV2["facts"]>([]);
+	const [selectedFactIds, setSelectedFactIds] = useState<string[]>([]);
+	const [blueprints, setBlueprints] = useState<CopyBlueprintV2Record[]>([]);
+	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 	const [success, setSuccess] = useState("");
-	const [editTarget, setEditTarget] = useState<CopySet | null>(null);
-	const [deleteTarget, setDeleteTarget] = useState<CopySet | null>(null);
-	const [cloneTarget, setCloneTarget] = useState<CopySet | null>(null);
-	const [scanning, setScanning] = useState(false);
-	const [bulkApproving, setBulkApproving] = useState(false);
-	const [bulkApproveOpen, setBulkApproveOpen] = useState(false);
-	const [rejectTarget, setRejectTarget] = useState<CopySet | null>(null);
-	const [semanticReviewTarget, setSemanticReviewTarget] = useState<CopySet | null>(null);
-	const [scanConfirm, setScanConfirm] = useState<Awaited<
-		ReturnType<typeof runSimilarityBackfill>
-	> | null>(null);
-	const [grounding, setGrounding] = useState<CopyGroundingSummary | null>(null);
-	const [formulas, setFormulas] = useState<CopyFormula[]>([]);
-	const [formulaId, setFormulaId] = useState("");
-	const [preparing, setPreparing] = useState(false);
-	useEffect(() => {
-		void fetchCopyFormulas()
-			.then((r) => setFormulas(r.formulas))
-			.catch(() => setFormulas([]));
-	}, []);
+	const [reviewer, setReviewer] = useState("operator");
+	const [approvalChecks, setApprovalChecks] = useState(EMPTY_APPROVAL_CHECKS);
+
+	const selectedAngle = useMemo(
+		() => angles.find((angle) => angle.angle_id === selectedAngleId) ?? null,
+		[angles, selectedAngleId],
+	);
+	const latestBlueprint = blueprints[0] ?? null;
+	const reviewableBlueprint = blueprints.find((item) => item.status !== "PRODUCTION_VALID") ?? null;
+	const approvalReady = Object.values(approvalChecks).every(Boolean);
 
 	useEffect(() => {
 		void fetchProductCatalog(500)
-			.then((r) => setProducts(r.items ?? []))
-			.catch((e: Error) => setError(e.message || "Failed to load the product catalog."));
+			.then((response) => setProducts(response.items ?? []))
+			.catch((reason) => setError(errorMessage(reason)));
+		void fetchCopyRegisterFormulas()
+			.then((response) => setFormulas(response.formulas ?? []))
+			.catch((reason) => setError(errorMessage(reason)));
 	}, []);
 
 	useEffect(() => {
-		const pid = searchParams.get("product_id");
-		if (!pid || products.length === 0) return;
-		const match = products.find((p) => p.id === pid);
-		if (match && match.id !== selectedProduct?.id) setSelectedProduct(match);
-	}, [searchParams, products, selectedProduct?.id]);
-
-	const loadSets = useCallback(async (productId: string) => {
-		setLoading(true);
-		setError("");
-		try {
-			const [res, g] = await Promise.all([
-				listCopySetsForProduct(productId),
-				fetchCopyGrounding(productId).catch(() => null),
-			]);
-			setSets(res.items ?? []);
-			setGrounding(g);
-		} catch (e) {
-			setSets([]);
-			setError(e instanceof Error ? e.message : "Failed to load copywriting sets.");
-		} finally {
-			setLoading(false);
-		}
-	}, []);
+		const productId = searchParams.get("product_id");
+		if (!productId || !products.length) return;
+		const product = products.find((item) => item.id === productId);
+		if (product && product.id !== selectedProduct?.id) setSelectedProduct(product);
+	}, [products, searchParams, selectedProduct?.id]);
 
 	useEffect(() => {
 		if (!selectedProduct) {
-			setSets([]);
+			setTruth(null);
+			setBlueprints([]);
+			setAngles([]);
+			setFacts([]);
+			setSelectedFactIds([]);
 			return;
 		}
-		const cur = searchParams.get("product_id");
-		if (cur !== selectedProduct.id) {
-			setSearchParams({ product_id: selectedProduct.id }, { replace: true });
-		}
+		setError("");
 		setSuccess("");
-		void loadSets(selectedProduct.id);
-		// eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when product id changes
-	}, [selectedProduct?.id]);
+		void Promise.all([
+			fetchCopyRegisterTruth(selectedProduct.id),
+			listCopyRegisterBlueprints(selectedProduct.id),
+		])
+			.then(([truthResponse, blueprintResponse]) => {
+				setTruth(truthResponse);
+				setFacts(truthResponse.facts);
+				setBlueprints(blueprintResponse.items ?? []);
+			})
+			.catch((reason) => setError(errorMessage(reason)));
+	}, [selectedProduct]);
 
-	// AI generation is EXPLICIT-only (button click). Never fired on product select.
-	const handleGenerate = async () => {
-		if (!selectedProduct || generating) return;
-		setGenerating(true);
+	const selectProduct = (product: Product | null) => {
+		setSelectedProduct(product);
+		setSearchParams(product ? { product_id: product.id } : {});
+		setFormulaId("");
+		setSelectedAngleId("");
+		setAngles([]);
+		setSelectedFactIds([]);
+		setApprovalChecks(EMPTY_APPROVAL_CHECKS);
+	};
+
+	const handleGenerateAngles = async () => {
+		if (!selectedProduct || !formulaId) return;
+		setBusy(true);
 		setError("");
 		setSuccess("");
 		try {
-			const res = await generateCopySetBatch({
+			const response = await generateCopyRegisterAngles({
 				product_id: selectedProduct.id,
-				requested_count: GENERATE_COUNT,
-				formula_family: formulaId || undefined,
+				formula_id: formulaId,
+				objective: "conversion",
 			});
-			setSuccess(
-				`${res.created_count} new sets generated${res.deduped_count ? ` · ${res.deduped_count} duplicates filtered` : ""}. Review & approve before use.`,
-			);
-			await loadSets(selectedProduct.id);
-		} catch (e) {
-			const msg = e instanceof Error ? e.message : "Failed to generate copywriting sets.";
-			setError(
-				/409|NOT_CONFIGURED/i.test(msg)
-					? "The AI lane (DeepSeek text_assist) is not configured. Set it in Cockpit Settings / AI Providers first."
-					: /COPY_GROUNDING_INSUFFICIENT/i.test(msg)
-						? "This product has no approved Product Knowledge + Customer Avatar yet. Press 'Prepare Product for Copywriting' first, or approve a snapshot in Products > Intelligence."
-						: msg,
-			);
+			setAngles(response.angles);
+			setFacts(response.facts);
+			setSelectedAngleId("");
+			setSelectedFactIds([]);
+			setSuccess("Grounded angle options generated from the approved Product Truth.");
+		} catch (reason) {
+			setError(errorMessage(reason));
 		} finally {
-			setGenerating(false);
+			setBusy(false);
 		}
 	};
 
-	const handleAddDeterministic = async () => {
-		if (!selectedProduct || generating) return;
-		setGenerating(true);
+	const toggleFact = (factId: string) => {
+		setSelectedFactIds((current) => {
+			if (current.includes(factId)) return current.filter((item) => item !== factId);
+			if (current.length >= 5) return current;
+			return [...current, factId];
+		});
+	};
+
+	const handleGenerateBlueprint = async () => {
+		if (!selectedProduct || !selectedAngle || !formulaId || selectedFactIds.length === 0) return;
+		setBusy(true);
 		setError("");
 		setSuccess("");
 		try {
-			await generateCopySet({ product_id: selectedProduct.id });
-			setSuccess("1 deterministic set (no AI) added.");
-			await loadSets(selectedProduct.id);
-		} catch (e) {
-			setError(e instanceof Error ? e.message : "Failed to add the set.");
-		} finally {
-			setGenerating(false);
-		}
-	};
-
-	const handlePrepare = async () => {
-		if (!selectedProduct || preparing) return;
-		setPreparing(true);
-		setError("");
-		setSuccess("");
-		try {
-			const r = await prepareProductForCopywriting(selectedProduct.id);
-			setSuccess(
-				`AI drafts Product Knowledge + Customer Avatar (formula: ${r.recommended_formula}). Review & approve in Products > Intelligence before generating grounded copy.`,
-			);
-			void loadSets(selectedProduct.id);
-		} catch (e) {
-			const msg = e instanceof Error ? e.message : "Failed to prepare the product.";
-			setError(
-				/503|NOT_CONFIGURED/i.test(msg)
-					? "The AI lane (DeepSeek text_assist) is not configured."
-					: msg,
-			);
-		} finally {
-			setPreparing(false);
-		}
-	};
-
-	const withBusy = async (id: string, fn: () => Promise<unknown>) => {
-		setBusyId(id);
-		setError("");
-		try {
-			await fn();
-			if (selectedProduct) await loadSets(selectedProduct.id);
-		} catch (e) {
-			setError(e instanceof Error ? e.message : "Action failed.");
-		} finally {
-			setBusyId(null);
-		}
-	};
-
-	const handleApprove = (s: CopySet) =>
-		void withBusy(s.copy_set_id, async () => {
-			await approveCopySet(s.copy_set_id, { approved_by: "operator" });
-			setSuccess("Set approved (APPROVED).");
-		});
-
-	const handleReject = (s: CopySet) => setRejectTarget(s);
-	const handleRevalidate = (s: CopySet) =>
-		void withBusy(s.copy_set_id, async () => {
-			const result = await revalidateCopySet(s.copy_set_id);
-			setSuccess(
-				result.revalidation.production_valid
-					? "Revalidation complete: set is production-valid."
-					: `Revalidation complete; still blocked — ${result.revalidation.validity_reasons.slice(0, 3).join(", ") || "review the validity details"}.`,
-			);
-		});
-	const confirmSemanticReview = (rationale: string) => {
-		const target = semanticReviewTarget;
-		if (!target) return;
-		setSemanticReviewTarget(null);
-		void withBusy(target.copy_set_id, async () => {
-			const result = await submitSemanticReview(target.copy_set_id, {
-				reviewer: "operator",
-				decision: "APPROVED",
-				rationale: rationale.trim(),
+			const response = await generateFormulaCopyBlueprint({
+				product_id: selectedProduct.id,
+				formula_id: formulaId,
+				objective_id: "conversion",
+				objective_definition: "Help a qualified buyer choose a grounded next step.",
+				angle_id: selectedAngle.angle_id,
+				angle_definition: selectedAngle.definition,
+				evidence_fact_ids: selectedFactIds,
 			});
-			setSuccess(
-				result.semantic_review.production_valid
-					? "Semantic review recorded: set is production-valid."
-					: `Semantic review recorded; still blocked — ${result.semantic_review.validity_reasons.slice(0, 3).join(", ") || "review the validity details"}.`,
-			);
-		});
-	};
-	const confirmReject = (reason: string) => {
-		const s = rejectTarget;
-		if (!s) return;
-		setRejectTarget(null);
-		void withBusy(s.copy_set_id, async () => {
-			await rejectCopySet(s.copy_set_id, reason || "Not suitable");
-			setSuccess("Set rejected.");
-		});
-	};
-
-	const handleSaveEdit = (patch: {
-		angle: string;
-		hook: string;
-		subhook: string;
-		usp_set: string[];
-		cta: string;
-	}) => {
-		if (!editTarget) return;
-		const target = editTarget;
-		void withBusy(target.copy_set_id, async () => {
-			await patchCopySet(target.copy_set_id, patch);
-			setSuccess("Set updated.");
-			setEditTarget(null);
-		});
-	};
-
-	const confirmDelete = () => {
-		if (!deleteTarget) return;
-		const target = deleteTarget;
-		void withBusy(target.copy_set_id, async () => {
-			await deleteCopySet(target.copy_set_id);
-			setSuccess("Set deleted.");
-			setDeleteTarget(null);
-		});
-	};
-
-	const handleClone = (targetProduct: Product) => {
-		if (!cloneTarget) return;
-		const source = cloneTarget;
-		void withBusy(source.copy_set_id, async () => {
-			const res = await cloneCopySetToProduct(source.copy_set_id, targetProduct.id);
-			setSuccess(
-				res.created
-					? `Script cloned to "${targetProduct.product_display_name ?? targetProduct.id}" — re-enters review on that product.`
-					: "A similar script already exists on the target product (dedupe match) — no new clone.",
-			);
-			setCloneTarget(null);
-		});
-	};
-
-	// Near-dup backfill scan: dry-run first (report), operator confirms apply.
-	const handleScan = async () => {
-		if (!selectedProduct || scanning) return;
-		setScanning(true);
-		setError("");
-		setSuccess("");
-		try {
-			const dry = await runSimilarityBackfill({ product_id: selectedProduct.id });
-			if (dry.scanned === 0) {
-				setSuccess("No scripts to scan.");
-				return;
-			}
-			setScanConfirm(dry);
-		} catch (e) {
-			setError(e instanceof Error ? e.message : "Scan failed.");
+			setBlueprints((current) => [response.blueprint, ...current.filter((item) => item.blueprint_id !== response.blueprint.blueprint_id)]);
+			setApprovalChecks(EMPTY_APPROVAL_CHECKS);
+			setSuccess(`New V2 blueprint ${response.blueprint.blueprint_id} created as DRAFT. Review is still required.`);
+		} catch (reason) {
+			setError(errorMessage(reason));
 		} finally {
-			setScanning(false);
+			setBusy(false);
 		}
 	};
 
-	const cancelScan = () => {
-		const dry = scanConfirm;
-		setScanConfirm(null);
-		if (dry) {
-			setSuccess(
-				`Dry-run only: ${dry.scanned} scripts scanned, ${dry.flagged} near-dups detected. Nothing was written.`,
-			);
-		}
-	};
-	const confirmScanApply = () => {
-		if (!selectedProduct || !scanConfirm) return;
-		setScanConfirm(null);
-		void (async () => {
-			setScanning(true);
-			setError("");
-			setSuccess("");
-			try {
-				const applied = await runSimilarityBackfill({
-					product_id: selectedProduct.id,
-					apply: true,
-				});
-				setSuccess(
-					`Scan complete: ${applied.scanned} scripts, ${applied.flagged} near-dups, ${applied.updated} rows updated.`,
-				);
-				await loadSets(selectedProduct.id);
-			} catch (e) {
-				setError(e instanceof Error ? e.message : "Scan failed.");
-			} finally {
-				setScanning(false);
-			}
-		})();
-	};
-	const reviewRequired = sets.filter((s) => s.status === "COPY_REVIEW_REQUIRED");
-
-	// Bulk approve = approve every review-required set for this product,
-	// serially through the SAME approval endpoint (phrase + gates intact).
-	const confirmBulkApprove = async () => {
-		if (bulkApproving || reviewRequired.length === 0) {
-			setBulkApproveOpen(false);
-			return;
-		}
-		setBulkApproving(true);
+	const handleRegenerate = async (stageKey: string) => {
+		if (!reviewableBlueprint) return;
+		setBusy(true);
 		setError("");
-		let ok = 0;
-		const failures: string[] = [];
-		for (const s of reviewRequired) {
-			try {
-				await approveCopySet(s.copy_set_id, { approved_by: "operator" });
-				ok += 1;
-			} catch (e) {
-				failures.push(
-					`${s.hook || s.copy_set_id}: ${e instanceof Error ? e.message : "failed"}`,
-				);
-			}
+		try {
+			const response = await regenerateFormulaStage(reviewableBlueprint.blueprint_id, stageKey);
+			setBlueprints((current) => [response.blueprint, ...current.filter((item) => item.blueprint_id !== response.blueprint.blueprint_id)]);
+			setApprovalChecks(EMPTY_APPROVAL_CHECKS);
+			setSuccess(`Stage regenerated as revision ${response.new_revision}; the approved parent remains immutable.`);
+		} catch (reason) {
+			setError(errorMessage(reason));
+		} finally {
+			setBusy(false);
 		}
-		setBulkApproving(false);
-		setBulkApproveOpen(false);
-		if (failures.length) {
-			setError(
-				`${failures.length} sets failed to approve (gate rejected): ${failures.slice(0, 3).join(" · ")}${failures.length > 3 ? " · …" : ""}`,
-			);
-		}
-		if (ok) setSuccess(`${ok} sets approved (bulk).`);
-		if (selectedProduct) await loadSets(selectedProduct.id);
 	};
 
-	const columns: DataTableColumn<CopySet>[] = useMemo(
-		() => [
-			{
-				key: "status",
-				header: "Status",
-				sortValue: (r) => r.status,
-				render: (r) => (
-					<Badge tone={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>
-				),
-			},
-			{
-				key: "validity",
-				header: "Production validity",
-				sortValue: (r) => (r.production_valid ? "0" : "1") + (r.validity_class ?? ""),
-				render: (r) => (
-					<div
-						data-testid={`validity-cell-${r.copy_set_id}`}
-						className={r.status !== "COPY_APPROVED" ? "text-slate-500" : r.production_valid ? "text-emerald-300" : "text-amber-300"}
-						title={(r.validity_reasons || []).join(", ") || undefined}
-					>
-						{r.status !== "COPY_APPROVED"
-							? "—"
-							: r.production_valid
-								? "VALID"
-								: r.validity_class_label || r.validity_class || "BLOCKED"}
-					</div>
-				),
-			},
-			{
-				key: "angle",
-				header: "Angle",
-				sortValue: (r) => r.angle,
-				render: (r) => <span className="text-slate-200">{r.angle || "—"}</span>,
-			},
-			{
-				key: "hook",
-				header: "Hook",
-				render: (r) => (
-					<span className="text-slate-100">{r.hook || "—"}</span>
-				),
-			},
-			{
-				key: "subhook",
-				header: "Subhook",
-				render: (r) => (
-					<span className="text-slate-400">{r.subhook || "—"}</span>
-				),
-			},
-			{
-				key: "usp",
-				header: "USPs",
-				render: (r) => (
-					<span className="text-slate-400">
-						{r.usp_set.filter(Boolean).join(" · ") || "—"}
-					</span>
-				),
-			},
-			{
-				key: "cta",
-				header: "CTA",
-				render: (r) => <span className="text-slate-300">{r.cta || "—"}</span>,
-			},
-			{
-				key: "library",
-				header: "Library",
-				sortValue: (r) => r.usage_count ?? 0,
-				render: (r) => {
-					const usage = r.usage_count ?? 0;
-					const capped = usage >= REUSE_CAP;
-					const uniq = r.uniqueness_score;
-					return (
-						<div
-							className="space-y-0.5 text-[10px]"
-							data-testid={`library-cell-${r.copy_set_id}`}
-						>
-							<div
-								className={capped ? "font-bold text-rose-300" : "text-slate-300"}
-								title={
-									r.last_used_at
-										? `Last used: ${r.last_used_at}${r.used_in_modes.length ? ` · modes: ${r.used_in_modes.join(", ")}` : ""}`
-										: "Never used"
-								}
-							>
-								Use {usage}/{REUSE_CAP}
-								{capped ? " · RETIRED" : ""}
-							</div>
-							{r.similar_to_copy_set_id ? (
-								<div
-									className="font-bold text-amber-300"
-									title={`Nearly identical to set ${r.similar_to_copy_set_id}`}
-								>
-									NEAR-DUP{" "}
-									{r.similarity_score != null
-										? `${Math.round(r.similarity_score * 100)}%`
-										: ""}
-								</div>
-							) : null}
-							{uniq != null ? (
-								<div className={uniq < 0.4 ? "text-amber-300" : "text-slate-500"}>
-									uniq {Math.round(uniq * 100)}%
-								</div>
-							) : null}
-						</div>
-					);
+	const handleApprove = async () => {
+		if (!reviewableBlueprint || !reviewer.trim() || !approvalReady) return;
+		setBusy(true);
+		setError("");
+		try {
+			const response = await approveFormulaBlueprint({
+				blueprint_id: reviewableBlueprint.blueprint_id,
+				approved_by: reviewer.trim(),
+				semantic_review: {
+					decision: "APPROVED",
+					reviewer: reviewer.trim(),
+					rationale: "Reviewed against the displayed Product Truth, evidence lineage, formula continuity and safety gates.",
+					reviewed_at: new Date().toISOString(),
 				},
-			},
-			{
-				key: "formula",
-				header: "Formula / QA",
-				sortValue: (r) => r.claim_review?.formula_id || r.formula_family,
-				render: (r) => {
-					const cr = r.claim_review ?? {};
-					const fid = cr.formula_id || r.formula_family;
-					const val = cr.formula_validation;
-					const isDraft =
-						!!cr.formula_definition_status &&
-						cr.formula_definition_status !== "CANONICAL";
-					const issues = val?.violations?.length ?? 0;
-					const clarity = cr.sales_clarity?.clarity_score;
-					const slots = val?.slot_coverage
-						? Object.entries(val.slot_coverage)
-								.map(([s, ok]) => `${s}:${ok ? "ok" : "MISSING"}`)
-								.join("  ")
-						: "";
-					const breakdown = cr.formula_breakdown
-						? Object.entries(cr.formula_breakdown)
-								.map(([s, t]) => `${s}: ${t}`)
-								.join("\n")
-						: "";
-					return (
-						<div
-							className="text-[10px]"
-							data-testid={`formula-cell-${r.copy_set_id}`}
-							title={[slots, breakdown].filter(Boolean).join("\n")}
-						>
-							<span className="font-bold uppercase text-slate-200">{fid}</span>
-							{r.formula_family && r.formula_family !== fid ? (
-								<span className="text-slate-500"> → {r.formula_family}</span>
-							) : null}
-							{isDraft ? <span className="text-amber-300"> (draft)</span> : null}
-							<div className={issues ? "text-amber-300" : "text-emerald-300"}>
-								{val ? (issues ? `⚠ ${issues} issue(s)` : "✓ formula ok") : "—"}
-								{clarity != null ? ` · clarity ${clarity}` : ""}
-							</div>
-						</div>
-					);
+				readiness_proof: {
+					readiness_validated: true,
+					provenance_validated: true,
+					safety_validated: true,
+					bridge_validated: true,
+					duration_validated: true,
 				},
-			},
-			{
-				key: "source",
-				header: "Source",
-				sortValue: (r) => r.source,
-				render: (r) => (
-					<span className="text-[10px] uppercase text-slate-500">{r.source || "—"}</span>
-				),
-			},
-		],
-		[],
-	);
-
-	const filters = useMemo(
-		() => [
-			{
-				key: "status",
-				label: "Status",
-				value: (r: CopySet) => r.status,
-				options: [
-					{ value: "COPY_APPROVED", label: "Approved" },
-					{ value: "COPY_REVIEW_REQUIRED", label: "Review required" },
-					{ value: "DRAFT_COPY", label: "Draft" },
-					{ value: "COPY_REJECTED", label: "Rejected" },
-				],
-			},
-		],
-		[],
-	);
-
-	const rowActions = (r: CopySet) => {
-		const busy = busyId === r.copy_set_id;
-		const needsSemanticReview =
-			r.validity_class === "APPROVED_COPY_MISSING_REVIEW" ||
-			r.recommended_action === "SEMANTIC_REVIEW_REQUIRED";
-		return (
-			<div className="flex flex-wrap justify-end gap-1.5">
-				{r.status !== "COPY_APPROVED" && r.status !== "COPY_REJECTED" ? (
-					<button
-						type="button"
-						data-testid={`approve-${r.copy_set_id}`}
-						disabled={busy}
-						onClick={() => handleApprove(r)}
-						className="rounded border border-emerald-500/40 px-2 py-1 text-[10px] font-bold uppercase text-emerald-200 disabled:opacity-40"
-					>
-						Approve
-					</button>
-				) : null}
-				{r.status !== "COPY_REJECTED" ? (
-					<button
-						type="button"
-						data-testid={`reject-${r.copy_set_id}`}
-						disabled={busy}
-						onClick={() => handleReject(r)}
-						className="rounded border border-amber-500/40 px-2 py-1 text-[10px] font-bold uppercase text-amber-200 disabled:opacity-40"
-					>
-						Reject
-					</button>
-				) : null}
-				{r.status === "COPY_APPROVED" ? (
-					<>
-						{r.production_valid !== true ? (
-							<button
-								type="button"
-								data-testid={`revalidate-${r.copy_set_id}`}
-								disabled={busy}
-								onClick={() => handleRevalidate(r)}
-								className="rounded border border-blue-500/40 px-2 py-1 text-[10px] font-bold uppercase text-blue-200 disabled:opacity-40"
-							>
-								{busy ? "Checking…" : "Revalidate"}
-							</button>
-						) : null}
-						{needsSemanticReview ? (
-							<button
-								type="button"
-								data-testid={`semantic-review-${r.copy_set_id}`}
-								disabled={busy}
-								onClick={() => setSemanticReviewTarget(r)}
-								className="rounded border border-violet-500/40 px-2 py-1 text-[10px] font-bold uppercase text-violet-200 disabled:opacity-40"
-							>
-								Semantic review
-							</button>
-						) : null}
-					<button
-						type="button"
-						data-testid={`clone-${r.copy_set_id}`}
-						disabled={busy}
-						onClick={() => setCloneTarget(r)}
-						title="Share the script with similar products (re-enters review there)"
-						className="rounded border border-blue-500/40 px-2 py-1 text-[10px] font-bold uppercase text-blue-200 disabled:opacity-40"
-					>
-						Clone
-					</button>
-					</>
-				) : null}
-				<button
-					type="button"
-					data-testid={`edit-${r.copy_set_id}`}
-					disabled={busy}
-					onClick={() => setEditTarget(r)}
-					className="rounded border border-slate-600 px-2 py-1 text-[10px] font-bold uppercase text-slate-200 disabled:opacity-40"
-				>
-					Edit
-				</button>
-				<button
-					type="button"
-					data-testid={`delete-${r.copy_set_id}`}
-					disabled={busy}
-					onClick={() => setDeleteTarget(r)}
-					className="rounded border border-rose-500/40 px-2 py-1 text-[10px] font-bold uppercase text-rose-200 disabled:opacity-40"
-				>
-					Delete
-				</button>
-			</div>
-		);
+			});
+			setBlueprints((current) => [response.blueprint, ...current.filter((item) => !(item.blueprint_id === response.blueprint.blueprint_id && item.revision === response.blueprint.revision))]);
+			setApprovalChecks(EMPTY_APPROVAL_CHECKS);
+			setSuccess("Explicit approval recorded. This blueprint is now V2 PRODUCTION_VALID.");
+		} catch (reason) {
+			setError(errorMessage(reason));
+		} finally {
+			setBusy(false);
+		}
 	};
-
-	const approvedCount = sets.filter((s) => s.status === "COPY_APPROVED").length;
 
 	return (
-		<div
-			className="mx-auto max-w-6xl space-y-6 p-4 md:p-8"
-			data-testid="copy-set-registry-page"
-		>
+		<div className="mx-auto max-w-6xl space-y-6 p-4 md:p-8" data-testid="copy-set-registry-page">
 			<header>
 				<div className="flex items-center gap-2 text-blue-300">
 					<PenLine size={20} />
-					<span className="text-[10px] font-bold uppercase tracking-[0.2em]">
-						Creative
-					</span>
+					<span className="text-[10px] font-bold uppercase tracking-[0.2em]">Creative</span>
 				</div>
-				<h1 className="mt-1 text-2xl font-bold text-slate-100">
-					Copywriting Set Registry
-				</h1>
+				<h1 className="mt-1 text-2xl font-bold text-slate-100">Copy Register V2</h1>
 				<p className="mt-2 max-w-3xl text-sm text-slate-400">
-					One copywriting-set database per product (angle → hook → subhook → USP →
-					CTA). Press Generate, AI (DeepSeek) fills the set. Approved sets are used by
-					Poster Builder and video generation (T2V/F2V/Hybrid/I2V). Each row =
-					one complete MAPPING set.
+					Create one formula-native, evidence-backed blueprint. This workflow has its own V2
+					persistence and does not read, write, migrate, or reuse historical CopySet records.
 				</p>
 			</header>
 
-			{error ? (
-				<p
-					className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100"
-					data-testid="copy-registry-error"
-				>
-					{error}
-				</p>
-			) : null}
-			{success ? (
-				<p
-					className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100"
-					data-testid="copy-registry-success"
-				>
-					{success}
-				</p>
-			) : null}
+			{error ? <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100" data-testid="copy-registry-error">{error}</p> : null}
+			{success ? <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100" data-testid="copy-registry-success">{success}</p> : null}
 
-			<Section title="Product" helper="Select a product to manage its copywriting sets.">
+			<Section title="1. Select product" helper="Only a product with a current approved Product Truth snapshot can continue.">
 				<div className="max-w-xl">
-					<SearchableProductSelect
-						products={products}
-						selectedProduct={selectedProduct}
-						onSelect={setSelectedProduct}
-					/>
+					<SearchableProductSelect products={products} selectedProduct={selectedProduct} onSelect={selectProduct} />
 				</div>
 			</Section>
 
 			{selectedProduct ? (
 				<>
-					{grounding ? (
-						<Section
-							title="Copy grounding"
-							helper="Is the copy generated from real product knowledge + customer avatar?"
-							action={
-								<Badge
-									tone={
-										grounding.source === "APPROVED_SNAPSHOT"
-											? "success"
-											: grounding.source === "FRAMEWORK_FAMILY"
-												? "info"
-												: "danger"
-									}
-								>
-									{grounding.source === "APPROVED_SNAPSHOT"
-										? "Grounded · approved snapshot"
-										: grounding.source === "FRAMEWORK_FAMILY"
-											? "Grounded · BOSMAX framework"
-											: "Ungrounded · generic"}
-								</Badge>
-							}
-						>
-							<div
-								data-testid="copy-grounding-banner"
-								className="space-y-2 text-xs text-slate-300"
-							>
-								<p>
-									<span className="text-slate-500">Family: </span>
-									{grounding.family || "—"}
-									{grounding.is_stealth ? (
-										<span className="ml-2 rounded bg-amber-600/20 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-200">
-											STEALTH
-										</span>
-									) : null}
-									<span className="ml-2 text-slate-500">· route </span>
-									{grounding.effective_route}
-									<span className="ml-2 text-slate-500">· claim </span>
-									{grounding.claim_guardrails.claim_gate || "—"}
-								</p>
-								{grounding.buyer_persona.audience ? (
-									<p>
-										<span className="text-slate-500">Avatar: </span>
-										{grounding.buyer_persona.audience}
-									</p>
-								) : null}
-								{grounding.angle_strategies.length ? (
-									<div className="flex flex-wrap items-center gap-1.5">
-										<span className="text-slate-500">Angle strategies:</span>
-										{grounding.angle_strategies.map((a) => (
-											<span
-												key={a}
-												className="rounded border border-slate-700 px-1.5 py-0.5 text-[10px] text-slate-300"
-											>
-												{a}
-											</span>
-										))}
-									</div>
-								) : null}
-								{grounding.source !== "APPROVED_SNAPSHOT" ? (
-									<HelperText tone="warn">
-										Grounded at the framework-family level. For the most
-										accurate (benefit / USP / real persona), author one Product
-										Knowledge snapshot for this product.
-										{grounding.missing.length
-											? ` Missing: ${grounding.missing.join("; ")}.`
-											: ""}
-									</HelperText>
-								) : null}
-							</div>
-						</Section>
-					) : null}
-
-					<CopyComponentsPanel
-						productId={selectedProduct.id}
-						onComposed={() => void loadSets(selectedProduct.id)}
-					/>
-
 					<Section
-						title="Generate copywriting sets"
-						helper={`AI generates ${GENERATE_COUNT} sets per press (max ${GENERATE_COUNT} for quality). Press again to add more. New sets are "Review required" — approve before use.`}
-						action={
-							<div className="flex flex-wrap items-center gap-2">
-								<select
-									data-testid="formula-picker"
-									value={formulaId}
-									onChange={(e) => setFormulaId(e.target.value)}
-									title="Formula for generation (empty = system recommends)"
-									className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200"
-								>
-									<option value="">Formula: auto (recommended)</option>
-									{formulas.map((f) => (
-										<option key={f.formula_id} value={f.formula_id}>
-											{f.display_name}
-											{f.definition_status !== "CANONICAL" ? " (draft)" : ""}
-										</option>
-									))}
-								</select>
-								<button
-									type="button"
-									data-testid="generate-copy-sets"
-									disabled={generating}
-									onClick={handleGenerate}
-									className="rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"
-								>
-									{generating ? "Generating…" : `Generate ${GENERATE_COUNT} sets (AI)`}
-								</button>
-								<button
-									type="button"
-									data-testid="add-deterministic-copy-set"
-									disabled={generating}
-									onClick={handleAddDeterministic}
-									className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-bold uppercase text-slate-300 disabled:opacity-40"
-								>
-									Add 1 (no AI)
-								</button>
-								<button
-									type="button"
-									data-testid="prepare-product-copywriting"
-									disabled={preparing}
-									onClick={handlePrepare}
-									title="Draft Product Knowledge + Customer Avatar + formula via DeepSeek. Review & approve in Products > Intelligence."
-									className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40"
-								>
-									{preparing ? "Preparing…" : "Prepare Product for Copywriting"}
-								</button>
-							</div>
-						}
+						title="2. Product Truth proof"
+						helper="Read-only upstream authority; V2 records carry its snapshot ID and digest."
+						action={truth ? <Badge tone={truthTone(truth)}>{truth.ready_for_copy ? "APPROVED · READY" : "BLOCKED"}</Badge> : null}
 					>
-						<HelperText tone="warn">
-							Generate uses DeepSeek tokens — only runs when you press the
-							button, not automatic. {approvedCount} sets approved so far.
-						</HelperText>
+						{truth ? (
+							<div className="space-y-3 text-xs text-slate-300" data-testid="product-truth-proof">
+								<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+									{[
+										["Category", truth.product.category],
+										["Subcategory", truth.product.subcategory],
+										["Type", truth.product.product_type],
+										["Family / cluster", [truth.product.product_family, truth.product.cluster].filter(Boolean).join(" · ")],
+									].map(([label, value]) => <div key={label}><span className="text-slate-500">{label}: </span>{value || "—"}</div>)}
+								</div>
+								{truth.product_truth.snapshot ? <p><span className="text-slate-500">Approved snapshot: </span><span className="font-mono">{truth.product_truth.snapshot.snapshot_id}</span> · v{truth.product_truth.snapshot.version} · digest <span className="font-mono">{truth.product_truth.snapshot.digest.slice(0, 16)}…</span></p> : null}
+								<p><span className="text-slate-500">Avatar/persona: </span>{JSON.stringify(truth.product_truth.persona) || "—"}</p>
+								<p><span className="text-slate-500">Allowed claims: </span>{truth.product_truth.allowed_claims.join(" · ") || "—"}</p>
+								{truth.blockers.length ? <HelperText tone="warn">Blockers: {truth.blockers.join("; ")}</HelperText> : <HelperText className="text-emerald-300/80">Product Truth lineage and claim gate are ready for formula copy.</HelperText>}
+							</div>
+						) : <p className="text-sm text-slate-400">Loading Product Truth…</p>}
 					</Section>
 
-					<Section
-						title="Copywriting sets"
-						helper="Edit / Approve / Reject / Delete. Approved sets are auto-used by the builder & video. Library column: usage x/15 (rotation cap) + NEAR-DUP flag."
-						action={
-							<div className="flex flex-wrap items-center gap-2">
-								<button
-									type="button"
-									data-testid="scan-near-dup"
-									disabled={scanning || loading || sets.length === 0}
-									onClick={() => void handleScan()}
-									title="Recompute near-dup + uniqueness metadata for all this product's scripts (dry-run first, confirm before writing). Status is untouched."
-									className="rounded-xl border border-amber-500/40 px-4 py-2 text-xs font-bold uppercase text-amber-200 disabled:opacity-40"
-								>
-									{scanning ? "Scanning…" : "Scan Near-Dup"}
-								</button>
-								<button
-									type="button"
-									data-testid="bulk-approve"
-									disabled={bulkApproving || loading || reviewRequired.length === 0}
-									onClick={() => setBulkApproveOpen(true)}
-									className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40"
-								>
-									{bulkApproving
-										? "Approving…"
-										: `Approve all in review (${reviewRequired.length})`}
-								</button>
-							</div>
-						}
-					>
-						{loading && sets.length === 0 ? (
-							<p className="text-sm text-slate-400">Loading…</p>
-						) : (
-							<DataTable<CopySet>
-								rows={sets}
-								columns={columns}
-								getRowId={(r) => r.copy_set_id}
-								pageSize={25}
-								searchText={(r) =>
-									`${r.angle} ${r.hook} ${r.subhook} ${r.usp_set.join(" ")} ${r.cta}`
-								}
-								searchPlaceholder="Search angle / hook / CTA…"
-								filters={filters}
-								initialSort={{ key: "status", dir: "asc" }}
-								rowActions={rowActions}
-								emptyLabel="No copywriting sets yet. Press Generate to start."
-								minWidthClassName="min-w-[900px]"
-							/>
-						)}
+					<Section title="3. Choose explicit formula" helper="Formula is mandatory. V2 never selects HSO or another default silently.">
+						<div className="max-w-xl">
+							<label className="text-xs font-semibold text-slate-300" htmlFor="v2-formula-picker">Repository formula</label>
+							<select id="v2-formula-picker" data-testid="v2-formula-picker" value={formulaId} onChange={(event) => { setFormulaId(event.target.value); setAngles([]); setSelectedAngleId(""); }} className={INPUT_CLASS}>
+								<option value="">Select formula — required</option>
+								{formulas.map((formula) => <option key={formula.formula_id} value={formula.formula_id}>{formula.display_name} · {formula.formula_id}</option>)}
+							</select>
+							{formulaId ? <HelperText className="text-emerald-300/80">{formulas.find((formula) => formula.formula_id === formulaId)?.formula_version}</HelperText> : <HelperText tone="warn">No default formula is allowed.</HelperText>}
+						</div>
 					</Section>
+
+					<Section title="4. Generate grounded angle options" helper="This is an explicit authoring action; options are derived from Product Truth facts.">
+						<button type="button" data-testid="generate-angle-options" disabled={busy || !formulaId || !truth?.ready_for_copy} onClick={() => void handleGenerateAngles()} className="rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{busy ? "Generating…" : "Generate Angle Options"}</button>
+						{angles.length ? <div className="mt-4 grid gap-2 md:grid-cols-2" data-testid="angle-options">{angles.map((angle) => <label key={angle.angle_id} className={`cursor-pointer rounded-lg border p-3 text-sm ${selectedAngleId === angle.angle_id ? "border-blue-400 bg-blue-500/10 text-blue-100" : "border-slate-800 text-slate-300"}`}><input type="radio" name="v2-angle" value={angle.angle_id} checked={selectedAngleId === angle.angle_id} onChange={() => setSelectedAngleId(angle.angle_id)} className="mr-2" />{angle.definition}<span className="mt-1 block text-[10px] text-slate-500">{angle.evidence_fact_ids.join(", ")}</span></label>)}</div> : <p className="mt-3 text-xs text-slate-500">Press the button after selecting a formula.</p>}
+					</Section>
+
+					<Section title="5. Select evidence-backed USP facts" helper="Maximum five facts. Every claim-bearing stage will carry stable snapshot/fact/digest references.">
+						<div className="space-y-2" data-testid="evidence-facts">
+							{facts.map((fact) => <label key={fact.fact_id} className="flex cursor-pointer gap-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-300"><input type="checkbox" checked={selectedFactIds.includes(fact.fact_id)} onChange={() => toggleFact(fact.fact_id)} disabled={!selectedFactIds.includes(fact.fact_id) && selectedFactIds.length >= 5} /><span><span className="font-mono text-[10px] text-blue-200">{fact.fact_id}</span><span className="ml-2 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] uppercase text-slate-500">{fact.fact_kind}</span><span className="mt-1 block">{fact.text}</span></span></label>)}
+							{facts.length === 0 ? <p className="text-xs text-slate-500">Generate angle options to load approved evidence facts.</p> : null}
+						</div>
+						<p className="mt-3 text-xs text-slate-500">Selected {selectedFactIds.length}/5</p>
+					</Section>
+
+					<Section title="6. Generate the complete formula blueprint" helper="One coherent ordered blueprint; this creates a new V2 ID and only a DRAFT.">
+						<button type="button" data-testid="generate-new-formula-copy" disabled={busy || !truth?.ready_for_copy || !formulaId || !selectedAngle || selectedFactIds.length === 0} onClick={() => void handleGenerateBlueprint()} className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40">{busy ? "Generating…" : "GENERATE NEW FORMULA COPY"}</button>
+						<HelperText className="text-blue-300/80">No historical CopySet ID is read or reused. Provider calls: 0 in this deterministic local path.</HelperText>
+					</Section>
+
+					{latestBlueprint ? <Section title="7. Review, revise, and approve" helper="Approved text is immutable. Regeneration always produces a new revision."><BlueprintCard blueprint={latestBlueprint} onRegenerate={(stageKey) => void handleRegenerate(stageKey)} busy={busy} />{reviewableBlueprint ? <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4" data-testid="v2-approval-panel"><div className="flex items-center gap-2 text-sm font-semibold text-amber-100"><ShieldCheck size={16} />Explicit human approval</div><FormField label="Reviewer" className="mt-3 max-w-sm"><input className={INPUT_CLASS} value={reviewer} onChange={(event) => setReviewer(event.target.value)} /></FormField><div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">{[
+						["semantic", "I reviewed every authored stage against Product Truth."],
+						["provenance", "Product Truth and evidence lineage match the selected product."],
+						["safety", "Allowed claims and warnings were reviewed; no unsafe claim was added."],
+						["bridge", "Formula order and bridge continuity are coherent."],
+						["duration", "Word count and target-lane duration readiness were reviewed."],
+					].map(([key, label]) => <label key={key} className="flex cursor-pointer items-start gap-2 rounded border border-slate-800 p-2"><input type="checkbox" data-testid={`approval-check-${key}`} checked={approvalChecks[key as keyof typeof approvalChecks]} onChange={(event) => setApprovalChecks((current) => ({ ...current, [key]: event.target.checked }))} /><span>{label}</span></label>)}</div><button type="button" data-testid="approve-v2-blueprint" disabled={busy || !reviewer.trim() || !approvalReady} onClick={() => void handleApprove()} className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40">{busy ? "Approving…" : "Approve → PRODUCTION_VALID"}</button></div> : <HelperText className="text-emerald-300/80">V2 PRODUCTION_VALID is immutable and ready for persisted lane binding.</HelperText>}</Section> : <Section title="7. Review, revise, and approve" helper="Your new formula blueprint will appear here after generation."><p className="text-sm text-slate-500">No V2 blueprint yet.</p></Section>}
 				</>
-			) : (
-				<Section title="Copywriting sets">
-					<p className="text-sm text-slate-500">
-						Select a product first to view & generate copywriting sets.
-					</p>
-				</Section>
-			)}
-
-			{editTarget ? (
-				<EditCopySetModal
-					set={editTarget}
-					busy={busyId === editTarget.copy_set_id}
-					onSave={handleSaveEdit}
-					onCancel={() => setEditTarget(null)}
-				/>
-			) : null}
-
-			{cloneTarget ? (
-				<CloneCopySetModal
-					set={cloneTarget}
-					products={products}
-					busy={busyId === cloneTarget.copy_set_id}
-					onClone={handleClone}
-					onCancel={() => setCloneTarget(null)}
-				/>
-			) : null}
-
-			<ConfirmActionModal
-				open={bulkApproveOpen}
-				title={`Approve ${reviewRequired.length} sets at once?`}
-				body="Every set goes through the SAME approval endpoint (the formula/claim gate stays in force — sets rejected by the gate are reported as failed). Approved sets enter the Script Library rotation directly."
-				confirmLabel={`Approve ${reviewRequired.length} sets`}
-				busy={bulkApproving}
-				onConfirm={() => void confirmBulkApprove()}
-				onCancel={() => setBulkApproveOpen(false)}
-			/>
-
-			<ConfirmActionModal
-				open={!!deleteTarget}
-				tone="danger"
-				title="Delete copywriting set?"
-				body={
-					deleteTarget
-						? `Set "${deleteTarget.angle || deleteTarget.hook || deleteTarget.copy_set_id}" will be permanently deleted. Use Reject if you only want to mark it as unsuitable.`
-						: ""
-				}
-				requiredPhrase={DELETE_PHRASE}
-				confirmLabel="Delete permanently"
-				busy={!!deleteTarget && busyId === deleteTarget.copy_set_id}
-				onConfirm={confirmDelete}
-				onCancel={() => setDeleteTarget(null)}
-			/>
-
-			<ConfirmActionModal
-				open={!!rejectTarget}
-				tone="danger"
-				title="Reject this copywriting set?"
-				body={
-					rejectTarget
-						? `"${rejectTarget.hook || rejectTarget.angle || rejectTarget.copy_set_id}" will be marked rejected. Add a short reviewer note.`
-						: ""
-				}
-				reasonLabel="Reason (reviewer note)"
-				reasonDefault="Not suitable"
-				confirmLabel="Reject set"
-				onConfirm={confirmReject}
-				onCancel={() => setRejectTarget(null)}
-			/>
-
-			<ConfirmActionModal
-				open={!!scanConfirm}
-				title="Write near-duplicate metadata?"
-				body={
-					scanConfirm
-						? `Dry-run found ${scanConfirm.scanned} scripts, ${scanConfirm.flagged} near-dups; ${scanConfirm.items.filter((i) => i.changed).length} rows will be updated. Status is NOT touched — you still approve/reject each set.`
-						: ""
-				}
-				confirmLabel="Write metadata"
-				onConfirm={confirmScanApply}
-				onCancel={cancelScan}
-			/>
-
-			<ConfirmActionModal
-				open={!!semanticReviewTarget}
-				title="Submit semantic review?"
-				body={
-					semanticReviewTarget
-						? `This records an explicit semantic decision for “${semanticReviewTarget.hook || semanticReviewTarget.angle || semanticReviewTarget.copy_set_id}”. It does not change the Copy Set text, workflow approval, or Product Truth lineage.`
-						: ""
-				}
-				reasonLabel="Reviewer rationale"
-				reasonDefault="Reviewed against the current approved Product Truth and confirmed as product-specific."
-				confirmLabel="Submit semantic review"
-				busy={!!semanticReviewTarget && busyId === semanticReviewTarget.copy_set_id}
-				onConfirm={confirmSemanticReview}
-				onCancel={() => setSemanticReviewTarget(null)}
-			/>
+			) : <Section title="Copy Register V2" helper="Select a product to begin the guarded workflow."><p className="text-sm text-slate-500">Select a Product Truth-approved product first.</p></Section>}
 		</div>
 	);
 }

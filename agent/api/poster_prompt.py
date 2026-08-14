@@ -19,7 +19,7 @@ from agent.services.poster_prompt_draft_service import (
 from agent.services.creative_direction_service import CreativeDirectionError
 from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
-    resolve_copy_execution_binding,
+    resolve_persisted_copy_execution_binding,
 )
 from agent.models.poster_campaign_design_brief import (
     CampaignCopyRoutesRequest,
@@ -91,7 +91,7 @@ async def get_poster_builder_settings() -> PosterBuilderSettingsResponse:
 async def create_poster_prompt_draft(body: PosterPromptDraftRequest):
     """Assemble a poster prompt package from product readiness + operator copy fields."""
     try:
-        resolution = resolve_copy_execution_binding(
+        resolution = await resolve_persisted_copy_execution_binding(
             body.product_id,
             "POSTER_BUILDER",
             body.copy_v2_context,

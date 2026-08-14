@@ -19,7 +19,7 @@ from agent.services.montage_scene_reference_policy import SceneReferencePolicy
 from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
     copy_v2_handoff_context,
-    resolve_copy_execution_binding,
+    resolve_persisted_copy_execution_binding,
 )
 
 
@@ -170,37 +170,35 @@ async def execute_scene_plan(
 ) -> SceneJobState:
     """Run one planned scene through existing package (+ optional generate) path."""
     resolved_copy_v2_context = copy_v2_context
-    v2_resolution = None
-    if copy_v2_context is not None:
-        try:
-            v2_resolution = resolve_copy_execution_binding(
-                product_id,
-                "MONTAGE",
-                copy_v2_context,
-            )
-        except CopyExecutionResolutionError as exc:
-            return SceneJobState(
-                scene_id=plan.scene_id,
-                beat_id=plan.beat_id,
-                block_index=plan.block_index,
-                route=plan.route.value,
-                transport_mode=plan.transport_mode,
-                source_mode=plan.source_mode,
-                reference_policy=plan.reference_policy.value,
-                product_media_id=plan.product_media_id,
-                status="PACKAGE_FAILED",
-                error_code=exc.code,
-                detail=str(exc)[:400],
-            )
-        if v2_resolution.v2_enabled:
-            resolved_copy_v2_context = copy_v2_handoff_context(
-                copy_v2_context,
-                v2_resolution,
-            )
-        else:
-            # An explicitly supplied flag-off context must not alter the
-            # legacy package call shape or accidentally select a V2 lane.
-            resolved_copy_v2_context = None
+    try:
+        v2_resolution = await resolve_persisted_copy_execution_binding(
+            product_id,
+            "MONTAGE",
+            copy_v2_context,
+        )
+    except CopyExecutionResolutionError as exc:
+        return SceneJobState(
+            scene_id=plan.scene_id,
+            beat_id=plan.beat_id,
+            block_index=plan.block_index,
+            route=plan.route.value,
+            transport_mode=plan.transport_mode,
+            source_mode=plan.source_mode,
+            reference_policy=plan.reference_policy.value,
+            product_media_id=plan.product_media_id,
+            status="PACKAGE_FAILED",
+            error_code=exc.code,
+            detail=str(exc)[:400],
+        )
+    if v2_resolution.v2_enabled:
+        resolved_copy_v2_context = copy_v2_handoff_context(
+            copy_v2_context,
+            v2_resolution,
+        )
+    else:
+        # An explicitly supplied flag-off context must not alter the legacy
+        # package call shape or accidentally select a V2 lane.
+        resolved_copy_v2_context = None
     state = SceneJobState(
         scene_id=plan.scene_id,
         beat_id=plan.beat_id,
@@ -431,24 +429,23 @@ async def orchestrate_montage_scenes(
         product_media_id=product_media_id,
     )
     resolved_copy_v2_context = copy_v2_context
-    if copy_v2_context is not None:
-        try:
-            v2 = resolve_copy_execution_binding(
-                product_id,
-                "MONTAGE",
+    try:
+        v2 = await resolve_persisted_copy_execution_binding(
+            product_id,
+            "MONTAGE",
+            copy_v2_context,
+        )
+        if v2.v2_enabled:
+            # Every scene receives the same persisted binding identity; scene
+            # fan-out never reinterprets or rotates copy.
+            resolved_copy_v2_context = copy_v2_handoff_context(
                 copy_v2_context,
+                v2,
             )
-            if v2.v2_enabled:
-                resolved_copy_v2_context = dict(copy_v2_context)
-                resolved_copy_v2_context["lane"] = "MONTAGE"
-                if v2.binding is not None:
-                    # Every scene receives the same binding timestamp/identity;
-                    # scene fan-out never reinterprets or rotates copy.
-                    resolved_copy_v2_context["bound_at"] = v2.binding.bound_at
-        except CopyExecutionResolutionError:
-            # Let each package boundary surface the same fail-closed blocker in
-            # its scene ledger; no scene is silently downgraded to legacy copy.
-            resolved_copy_v2_context = copy_v2_context
+    except CopyExecutionResolutionError:
+        # Let each package boundary surface the same fail-closed blocker in its
+        # scene ledger; no scene is silently downgraded to legacy copy.
+        resolved_copy_v2_context = copy_v2_context
     report = MontageOrchestrationReport(
         product_id=product_id,
         credit_spend=generate_fn is not None,

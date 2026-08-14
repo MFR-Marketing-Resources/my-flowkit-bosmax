@@ -51,7 +51,6 @@ def phase4_context() -> dict:
     approved = approve_copy_blueprint_v2(
         _blueprint(
             blueprint_id="bp-phase4-synthetic-001",
-            copy_set_id="v2-phase4-synthetic-copy-set",
         ),
         approved_by="phase4-synthetic-reviewer",
         current_product_truth=_lineage(),
@@ -267,9 +266,26 @@ async def test_phase4_p6_binding_survives_compile_scheduler_queue_and_item(
     """Synthetic P6 proof: one binding survives every local handoff boundary."""
 
     import agent.services.creative_production_compile_service as compile_service
+    import agent.services.copy_execution_resolver as resolver_service
     import agent.services.creative_production_scheduler_service as scheduler_service
 
     context = copy.deepcopy(phase4_context)
+
+    async def synthetic_persisted_resolver(product_id, lane, request_context=None, **_kwargs):
+        """Phase-4's immutable fixture predates the persistent test ledger.
+
+        The clean-cutover suite separately proves real DB persistence.  This
+        transport test keeps its original deterministic fixture while exercising
+        the now-async persisted consumer boundary.
+        """
+
+        return resolve_copy_execution_binding(product_id, lane, request_context)
+
+    monkeypatch.setattr(
+        resolver_service,
+        "resolve_persisted_copy_execution_binding",
+        synthetic_persisted_resolver,
+    )
     treatment = {
         "treatment_id": "treatment-phase4-001",
         "treatment_sha256": "a" * 64,
@@ -398,10 +414,20 @@ async def test_phase4_p6_binding_survives_compile_scheduler_queue_and_item(
 
 @pytest.mark.asyncio
 async def test_phase4_montage_uses_one_binding_across_all_scenes(
+    monkeypatch,
     phase4_context,
 ):
-    from agent.services.montage_scene_orchestrator import orchestrate_montage_scenes
+    import agent.services.montage_scene_orchestrator as montage_orchestrator
     from agent.services.montage_scene_reference_policy import SceneReferencePolicy
+
+    async def synthetic_persisted_resolver(product_id, lane, request_context=None, **_kwargs):
+        return resolve_copy_execution_binding(product_id, lane, request_context)
+
+    monkeypatch.setattr(
+        montage_orchestrator,
+        "resolve_persisted_copy_execution_binding",
+        synthetic_persisted_resolver,
+    )
 
     captured_contexts: list[dict] = []
 
@@ -425,7 +451,7 @@ async def test_phase4_montage_uses_one_binding_across_all_scenes(
         SimpleNamespace(beat_id="scene-a", objective="hook", visual_action="open"),
         SimpleNamespace(beat_id="scene-b", objective="proof", visual_action="show"),
     ]
-    report = await orchestrate_montage_scenes(
+    report = await montage_orchestrator.orchestrate_montage_scenes(
         product_id=PRODUCT_ID,
         story_beats=story_beats,
         package_factory=fake_package_factory,

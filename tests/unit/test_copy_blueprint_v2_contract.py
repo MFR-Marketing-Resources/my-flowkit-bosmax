@@ -88,7 +88,6 @@ def _blueprint(**overrides) -> CopyBlueprintV2:
     values = {
         "blueprint_id": "bp-001",
         "product_id": "product-1",
-        "copy_set_id": "v2-copy-set-001",
         "revision": 1,
         "status": "DRAFT",
         "formula_id": "PAS",

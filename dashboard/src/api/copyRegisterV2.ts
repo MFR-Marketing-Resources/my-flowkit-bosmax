@@ -1,0 +1,188 @@
+import { getAPI, postAPI } from "./client";
+
+export interface CopyFormulaV2 {
+	formula_id: string;
+	formula_version: string;
+	display_name: string;
+	definition_status: string;
+	compiler_family: string;
+	slots: Array<{ slot_id: string; purpose: string; required: boolean }>;
+	best_for: string[];
+	unsuitable_for: string[];
+}
+
+export interface EvidenceFactV2 {
+	snapshot_id: string;
+	fact_id: string;
+	product_id: string;
+	fact_kind: string;
+	text: string;
+	text_digest: string;
+	snapshot_version: number;
+	snapshot_status: string;
+	approved: boolean;
+	source_ref?: string | null;
+}
+
+export interface CopyAngleOptionV2 {
+	angle_id: string;
+	definition: string;
+	evidence_fact_ids: string[];
+	source: string;
+}
+
+export interface CopyTruthProofV2 {
+	product_id: string;
+	product: {
+		display_name: string;
+		category: string;
+		subcategory: string;
+		product_type: string;
+		product_family: string;
+		cluster: string;
+	};
+	product_truth: {
+		approved: boolean;
+		snapshot: {
+			snapshot_id: string;
+			version: number;
+			status: string;
+			digest: string;
+			approved_by?: string | null;
+			approved_at?: string | null;
+		} | null;
+		lineage: Record<string, unknown> | null;
+		persona: Record<string, unknown>;
+		allowed_claims: string[];
+		blocked_claims: string[];
+		warnings: string[];
+	};
+	facts: EvidenceFactV2[];
+	blockers: string[];
+	ready_for_copy: boolean;
+}
+
+export interface CopyBlueprintV2Record {
+	version: "2";
+	blueprint_id: string;
+	product_id: string;
+	revision: number;
+	status: string;
+	formula_id: string;
+	formula_version: string;
+	objective: { objective_id: string; definition: string };
+	angle: { angle_id: string; definition: string };
+	stages: Array<{
+		stage_key: string;
+		order: number;
+		authored_text: string;
+		semantic_role: string;
+		formula_stage_key: string;
+		bridge: {
+			entry: string;
+			exit: string;
+			continuity_requirements: string[];
+		};
+		claim_bearing: boolean;
+		fact_refs: Array<{ fact_id: string; text_digest: string; fact_kind: string }>;
+		validation: { valid: boolean; error_codes: string[] };
+	}>;
+	evidence_refs: Array<{ fact_id: string; text_digest: string; fact_kind: string }>;
+	product_truth_lineage: Record<string, unknown>;
+	approval_snapshot?: Record<string, unknown> | null;
+	semantic_review?: Record<string, unknown> | null;
+	readiness_proof?: Record<string, unknown> | null;
+	approved_execution_text: Array<{ stage_key: string; text: string }>;
+	target_duration_seconds?: number | null;
+	wps_profile?: string | null;
+	estimated_word_count: number;
+	derived_projection?: Record<string, unknown> | null;
+	v2_badge?: string | null;
+}
+
+export async function fetchCopyRegisterFormulas(): Promise<{ formulas: CopyFormulaV2[] }> {
+	return getAPI<{ formulas: CopyFormulaV2[] }>("/api/copy-register/v2/formulas");
+}
+
+export async function fetchCopyRegisterTruth(productId: string): Promise<CopyTruthProofV2> {
+	return getAPI<CopyTruthProofV2>(
+		`/api/copy-register/v2/product/${encodeURIComponent(productId)}/truth`,
+	);
+}
+
+export async function generateCopyRegisterAngles(input: {
+	product_id: string;
+	formula_id: string;
+	objective?: string;
+}): Promise<{
+	angles: CopyAngleOptionV2[];
+	facts: EvidenceFactV2[];
+	formula_id: string;
+	formula_version: string;
+}> {
+	return postAPI<{
+		angles: CopyAngleOptionV2[];
+		facts: EvidenceFactV2[];
+		formula_id: string;
+		formula_version: string;
+	}>("/api/copy-register/v2/angle-options", input);
+}
+
+export async function listCopyRegisterBlueprints(productId: string): Promise<{
+	product_id: string;
+	items: CopyBlueprintV2Record[];
+}> {
+	return getAPI<{ product_id: string; items: CopyBlueprintV2Record[] }>(
+		`/api/copy-register/v2/product/${encodeURIComponent(productId)}/blueprints`,
+	);
+}
+
+export async function generateFormulaCopyBlueprint(input: {
+	product_id: string;
+	formula_id: string;
+	objective_id: string;
+	objective_definition: string;
+	angle_id: string;
+	angle_definition: string;
+	evidence_fact_ids: string[];
+	target_duration_seconds?: number;
+}): Promise<{ blueprint: CopyBlueprintV2Record; production_valid: boolean }> {
+	return postAPI<{ blueprint: CopyBlueprintV2Record; production_valid: boolean }>(
+		"/api/copy-register/v2/blueprints/generate",
+		input,
+	);
+}
+
+export async function regenerateFormulaStage(
+	blueprintId: string,
+	stageKey: string,
+): Promise<{ blueprint: CopyBlueprintV2Record; new_revision: number }> {
+	return postAPI<{ blueprint: CopyBlueprintV2Record; new_revision: number }>(
+		`/api/copy-register/v2/blueprints/${encodeURIComponent(blueprintId)}/stages/${encodeURIComponent(stageKey)}/regenerate`,
+		{},
+	);
+}
+
+export async function approveFormulaBlueprint(input: {
+	blueprint_id: string;
+	approved_by: string;
+	semantic_review: {
+		decision: "APPROVED";
+		reviewer: string;
+		rationale: string;
+		reviewed_at: string;
+	};
+	readiness_proof: {
+		readiness_validated: boolean;
+		provenance_validated: boolean;
+		safety_validated: boolean;
+		bridge_validated: boolean;
+		duration_validated: boolean;
+	};
+}): Promise<{ blueprint: CopyBlueprintV2Record; production_valid: boolean; badge: string | null }> {
+	const { blueprint_id, ...body } = input;
+	return postAPI<{ blueprint: CopyBlueprintV2Record; production_valid: boolean; badge: string | null }>(
+		`/api/copy-register/v2/blueprints/${encodeURIComponent(blueprint_id)}/approve`,
+		body,
+	);
+}

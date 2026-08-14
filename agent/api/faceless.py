@@ -17,7 +17,7 @@ from agent.services.workspace_execution_package_service import (
 )
 from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
-    resolve_copy_execution_binding,
+    resolve_persisted_copy_execution_binding,
 )
 
 router = APIRouter(prefix="/faceless", tags=["faceless"])
@@ -255,7 +255,7 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
     gen_mode = str(body.generation_mode or "SINGLE").strip().upper()
     reference_override = bool(str(body.start_frame_asset_id or "").strip())
     try:
-        v2_resolution = resolve_copy_execution_binding(
+        v2_resolution = await resolve_persisted_copy_execution_binding(
             body.product_id,
             "FACELESS",
             body.copy_v2_context,

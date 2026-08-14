@@ -514,10 +514,169 @@ def copy_v2_handoff_context(
     return context
 
 
+async def resolve_persisted_copy_execution_binding(
+    product_id: str,
+    lane: str,
+    request_context: Mapping[str, Any] | BaseModel | None = None,
+    feature_flag_state: CopyBlueprintV2FeatureFlagState | Mapping[str, Any] | None = None,
+) -> CopyExecutionResolution:
+    """Resolve a consumer from the durable V2 binding ledger.
+
+    The ordinary resolver remains a pure boundary validator for callers that
+    carry an in-memory blueprint context.  This entry point is for production
+    consumers after the Copy Register cutover: when V2 is enabled it loads the
+    persisted binding, its exact blueprint revision, and current Product Truth
+    from the V2 service, then revalidates the complete envelope.  It never
+    accepts a caller-supplied binding and it never reads the legacy CopySet
+    ledger.  With V2 disabled it returns the existing compatibility receipt
+    without touching the V2 database.
+    """
+
+    context = _context_dict(request_context)
+    flags = _flag_state(context, feature_flag_state)
+    if not flags.enabled or flags.state == "OFF":
+        return resolve_copy_execution_binding(
+            product_id,
+            lane,
+            context,
+            feature_flag_state=flags,
+        )
+
+    # Local import avoids making the pure resolver depend on the persistence
+    # service at module import time, and keeps the legacy path untouched.
+    from agent.services import copy_register_v2_service as register_service
+
+    try:
+        descriptor = get_lane_descriptor(lane)
+    except ValueError as exc:
+        raise CopyExecutionResolutionError("COPY_V2_UNKNOWN_LANE", str(exc)) from exc
+
+    if descriptor.copy_policy == "NOT_REQUIRED":
+        # Copy-free image lanes still revalidate current Product Truth and the
+        # non-copy readiness/provenance/safety proof.  Their explicit contract
+        # is that no binding row exists or is silently invented.
+        try:
+            truth = await register_service.get_product_truth_proof(product_id)
+        except register_service.CopyRegisterV2Error as exc:
+            raise CopyExecutionResolutionError(exc.code, str(exc), details=exc.details) from exc
+        if not truth.get("ready_for_copy"):
+            raise CopyExecutionResolutionError(
+                "COPY_V2_PRODUCT_TRUTH_STALE",
+                "Copy-free V2 image execution still requires a ready Product Truth envelope.",
+                details={"blockers": truth.get("blockers", [])},
+            )
+        copy_free_context = dict(context)
+        copy_free_context.update(
+            {
+                "current_product_truth": truth.get("product_truth", {}).get("lineage"),
+                "evidence_facts": truth.get("facts", []),
+            }
+        )
+        return resolve_copy_execution_binding(
+            product_id,
+            descriptor.lane_id,
+            copy_free_context,
+            feature_flag_state=flags,
+        )
+
+    try:
+        persisted = await register_service.get_binding(product_id, descriptor.lane_id)
+        blueprint = await register_service.get_blueprint(
+            persisted.blueprint_id,
+            persisted.revision,
+        )
+        truth = await register_service.get_product_truth_proof(product_id)
+    except register_service.CopyRegisterV2Error as exc:
+        raise CopyExecutionResolutionError(
+            exc.code,
+            str(exc),
+            details=exc.details,
+        ) from exc
+
+    if persisted.feature_flag_state != flags:
+        raise CopyExecutionResolutionError(
+            "COPY_V2_FEATURE_FLAG_STATE_MISMATCH",
+            "The persisted V2 binding was created under a different feature-flag state.",
+        )
+
+    current_lineage = truth.get("product_truth", {}).get("lineage")
+    facts = truth.get("facts", [])
+    proof = blueprint.readiness_proof
+    semantic_review = blueprint.semantic_review
+    adapter_context = dict(_as_dict(context.get("adapter_context") or context.get("context")))
+    adapter_context.update(
+        {
+            "product_id": product_id,
+            "product_truth_lineage": current_lineage,
+            "readiness_validated": bool(proof and proof.readiness_validated),
+            "provenance_validated": bool(proof and proof.provenance_validated),
+            "safety_validated": bool(proof and proof.safety_validated),
+            "semantic_review_validated": bool(
+                semantic_review and semantic_review.decision == "APPROVED"
+            ),
+        }
+    )
+    persisted_context = dict(context)
+    # A durable handoff may carry the previously emitted binding as metadata.
+    # Never trust or re-submit it to the pure resolver: the binding loaded from
+    # copy_execution_binding_v2 above is the only authoritative identity.
+    persisted_context.pop("binding", None)
+    persisted_context.pop("copy_execution_binding", None)
+    persisted_context.update(
+        {
+            "blueprint": blueprint.model_dump(mode="python"),
+            "current_product_truth": current_lineage,
+            "evidence_facts": facts,
+            "adapter_context": adapter_context,
+            "compiler_binding_version": persisted.compiler_binding_version,
+            "bound_at": persisted.bound_at,
+        }
+    )
+    # The pure resolver validates the blueprint/evidence/feature-flag envelope
+    # and builds its deterministic projection.  Replace only the ephemeral
+    # binding object with the already-persisted identity after equivalence is
+    # proven below.
+    try:
+        resolved = resolve_copy_execution_binding(
+            product_id,
+            persisted.lane,
+            persisted_context,
+            feature_flag_state=flags,
+        )
+    except CopyExecutionResolutionError:
+        raise
+
+    generated = resolved.binding
+    if generated is None:
+        raise CopyExecutionResolutionError(
+            "COPY_V2_PERSISTED_BINDING_INVALID",
+            "A required persisted V2 binding did not produce a binding during revalidation.",
+        )
+    if generated.model_copy(update={"binding_id": persisted.binding_id, "bound_at": persisted.bound_at}) != persisted:
+        raise CopyExecutionResolutionError(
+            "COPY_V2_PERSISTED_BINDING_MISMATCH",
+            "Persisted V2 binding lineage does not match its blueprint and current Product Truth.",
+        )
+    return CopyExecutionResolution(
+        lane=resolved.lane,
+        media_kind=resolved.media_kind,
+        copy_policy=resolved.copy_policy,
+        feature_flags=resolved.feature_flags,
+        v2_enabled=resolved.v2_enabled,
+        status=resolved.status,
+        binding=persisted,
+        projection=resolved.projection,
+        compiler_copy_intelligence=resolved.compiler_copy_intelligence,
+        approved_dialogue=resolved.approved_dialogue,
+        metadata=resolved.metadata,
+    )
+
+
 __all__ = [
     "CopyExecutionResolution",
     "CopyExecutionResolutionError",
     "copy_v2_handoff_context",
     "lane_for_request",
     "resolve_copy_execution_binding",
+    "resolve_persisted_copy_execution_binding",
 ]
