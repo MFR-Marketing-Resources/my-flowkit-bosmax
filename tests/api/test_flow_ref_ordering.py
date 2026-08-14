@@ -19,6 +19,10 @@ def _a(name):
 def test_ref_slot_order_is_the_canonical_contract():
     assert REF_SLOT_ORDER == (
         ("productAsset", "Product"),
+        ("productLabelAsset", "ProductLabel"),
+        ("productLogoAsset", "ProductLogo"),
+        ("productScaleAsset", "ProductScale"),
+        ("productCutoutAsset", "ProductCutout"),
         ("subjectAsset", "Subject"),
         ("sceneAsset", "Scene"),
         ("styleAsset", "Style"),
@@ -46,6 +50,20 @@ def test_f2v_start_frame_leads_then_product_ref():
     slots = ordered_ref_slots(_a("start_frame"), {"imageAsset": _a("product_ref")})
     assert [label for label, _ in slots] == ["Start", "Image"]
     assert [asset["assetId"] for _, asset in slots] == ["start_frame", "product_ref"]
+
+
+def test_f2v_end_frame_is_retained_after_start_frame():
+    slots = ordered_ref_slots(
+        _a("start_frame"),
+        {"imageAsset": _a("product_ref")},
+        end_asset=_a("end_frame"),
+    )
+    assert [label for label, _ in slots] == ["Start", "End", "Image"]
+    assert [asset["assetId"] for _, asset in slots] == [
+        "start_frame",
+        "end_frame",
+        "product_ref",
+    ]
 
 
 def test_hybrid_start_first_then_product_subject_scene_style():

@@ -376,9 +376,18 @@ function ResultCard({
 							alt="Result preview"
 							className="h-full w-full object-cover"
 						/>
-					) : (
-						<Film size={26} className="text-slate-600 group-hover:text-blue-300" />
-					)
+									) : (
+										<>
+											{/* biome-ignore lint/a11y/useMediaCaption: generated previews ship no caption track */}
+											<video
+												src={item.retrieved_url}
+												muted
+												playsInline
+												preload="metadata"
+												className="h-full w-full object-cover"
+											/>
+										</>
+									)
 				) : (
 					<div className="flex flex-col items-center gap-1 text-slate-600">
 						{item.artifact_kind === "image" ? (
@@ -442,7 +451,16 @@ export default function ResultsHubPage() {
 	}, [kind]);
 
 	useEffect(() => {
-		void refresh();
+		const loadWhenVisible = () => {
+			if (!document.hidden) void refresh();
+		};
+		loadWhenVisible();
+		document.addEventListener("visibilitychange", loadWhenVisible);
+		const timer = window.setInterval(loadWhenVisible, 5000);
+		return () => {
+			document.removeEventListener("visibilitychange", loadWhenVisible);
+			window.clearInterval(timer);
+		};
 	}, [refresh]);
 
 	return (

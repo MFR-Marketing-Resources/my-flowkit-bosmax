@@ -790,6 +790,7 @@ class GenerateRequest(BaseModel):
     count: int = 1                             # USER count setting (1-4): negotiate AND retrieve N videos
     refs: Optional[dict] = None
     startAsset: Optional[dict] = None
+    endAsset: Optional[dict] = None             # optional F2V end frame
     # Operator-surface capability declaration (Step-1). When `engine` is present
     # with SINGLE generation_mode, the tuple is validated fail-closed against the
     # capability matrix. Bare programmatic callers omit these and keep the
@@ -1491,7 +1492,9 @@ async def generate(body: GenerateRequest):
         if mode == "IMG" or drop_legacy_video_media_ids
         else list(body.image_media_ids or [])
     )
-    for slot_label, ref_asset in ordered_ref_slots(effective_start_asset, request_refs):
+    for slot_label, ref_asset in ordered_ref_slots(
+        effective_start_asset, request_refs, end_asset=body.endAsset
+    ):
         media_id = await _resolve_asset_to_media_id(client, ref_asset, slot_label)
         if media_id and media_id not in resolved_ids:
             resolved_ids.append(media_id)

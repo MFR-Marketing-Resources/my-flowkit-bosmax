@@ -1467,14 +1467,37 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					const mediaMatch = completedMsg.match(
 						/media_id=([0-9a-fA-F]{8}-[0-9a-fA-F-]{27})/,
 					);
+					const allMediaMatch = completedMsg.match(
+						/all_media_ids=([0-9a-fA-F-]+(?:,[0-9a-fA-F-]+)*)/,
+					);
 					const sizeMatch = completedMsg.match(/size_mb=([\d.]+)/);
-					if (mediaMatch) {
+					const mediaIds = Array.from(
+						new Set(
+							[
+								...(allMediaMatch?.[1]?.split(",") ?? []),
+								...(mediaMatch ? [mediaMatch[1]] : []),
+							].filter((id) => /^[0-9a-fA-F-]{20,}$/.test(id)),
+						),
+					);
+					const primaryMediaId = mediaIds[0] || mediaMatch?.[1] || "";
+					if (primaryMediaId) {
 						setCompletedArtifact({
-							mediaId: mediaMatch[1],
-							url: `/api/flow/retrieved/${mediaMatch[1]}`,
+							mediaId: primaryMediaId,
+							url: `/api/flow/retrieved/${primaryMediaId}`,
 							kind: "video",
 							sizeMb: sizeMatch ? sizeMatch[1] : null,
 						});
+						setSessionResults((prev) => [
+							...mediaIds.map((media_id) => ({
+								media_id,
+								kind: "video" as const,
+								size_mb: media_id === primaryMediaId && sizeMatch
+									? Number(sizeMatch[1])
+									: null,
+								url: `/api/flow/retrieved/${encodeURIComponent(media_id)}`,
+							})),
+							...prev.filter((r) => !mediaIds.includes(r.media_id)),
+						]);
 					}
 					setNotice({
 						tone: "success",
