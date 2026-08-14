@@ -15,7 +15,7 @@ No Google Flow execution, no credit spend, no compiler mutation — this router
 only creates/reviews/approves Copy Sets. Errors fail closed with operator-readable
 codes.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from agent.models.copy_set import (
@@ -30,8 +30,13 @@ from agent.models.copy_set import (
     CopySetSemanticReviewRequest,
 )
 from agent.services import copy_set_service as svc
+from agent.api.legacy_copy_guard import require_legacy_copy_maintenance
 
-router = APIRouter(prefix="/copy-sets", tags=["copy-sets"])
+router = APIRouter(
+    prefix="/copy-sets",
+    tags=["copy-sets"],
+    dependencies=[Depends(require_legacy_copy_maintenance)],
+)
 
 
 def _legacy_generation_disabled() -> None:

@@ -27,6 +27,7 @@ from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
     resolve_persisted_copy_execution_binding,
 )
+from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
 
 
 def _prompt_sha(prompt: str) -> str:
@@ -58,8 +59,8 @@ async def _compile_video(
     aspect = str(execution_policy.get("aspect") or "9:16")
     logical_mode = str(plan["logical_mode"])
     treatment = await resolve_item_treatment(dimensions, plan)
-    segment_plan = treatment.get("segment_plan") or []
-    if generation_mode == "EXTEND" and not isinstance(segment_plan, dict):
+    segment_plan = (treatment or {}).get("segment_plan") or []
+    if treatment and generation_mode == "EXTEND" and not isinstance(segment_plan, dict):
         raise CreativeProductionError(
             "TREATMENT_SEGMENT_PLAN_INVALID",
             "Governed EXTEND compilation requires immutable segment lineage.",
@@ -77,9 +78,13 @@ async def _compile_video(
             generation_mode="EXTEND",
             requested_total_duration_seconds=total_duration,
             source_mode=str(
-                treatment["compatibility_profile"].get("source_mode") or ""
+                (treatment or {}).get("compatibility_profile", {}).get("source_mode") or ""
             ) or None,
-            copy_set_id=treatment["copy_set_id"],
+            copy_set_id=(
+                treatment.get("copy_set_id")
+                if legacy_copy_maintenance_enabled()
+                else None
+            ),
             avatar_id=dimensions.get("avatar_code") or None,
             scene_context_override=(
                 dimensions.get("scene_strategy_context") or None
@@ -125,7 +130,11 @@ async def _compile_video(
             total_duration if generation_mode == "EXTEND" else None
         ),
         "batch_run_id": plan["plan_id"],
-        "copy_set_id": dimensions.get("copy_set_id") or None,
+        "copy_set_id": (
+            dimensions.get("copy_set_id") or None
+            if legacy_copy_maintenance_enabled()
+            else None
+        ),
         "scene_context_override": (
             dimensions.get("scene_strategy_context") or None
         ),
@@ -215,24 +224,28 @@ async def _compile_video(
             "workspace_execution_package_id": workspace_execution_package_id,
             "video_job_id": None,
             "video_job_plan_fingerprint": None,
-            "treatment_lineage": {
-                "treatment_id": treatment["treatment_id"],
-                "treatment_sha256": treatment["treatment_sha256"],
-                "visual_fingerprint_sha256": treatment[
-                    "visual_fingerprint_sha256"
-                ],
-                "dependency_hashes": treatment["dependency_hashes"],
-                "variation_group": treatment["variation_group"],
-                "format": treatment["format"],
-                "generation_mode": generation_mode,
-                "segment_plan_sha256": segment_plan.get(
-                    "segment_plan_sha256"
-                ) if isinstance(segment_plan, dict) else None,
-                "ordered_segment_sha256s": segment_plan.get(
-                    "ordered_segment_sha256s", []
-                ) if isinstance(segment_plan, dict) else [],
-            },
-            "compiled_shot_grammar": treatment["shot_grammar"],
+            "treatment_lineage": (
+                {
+                    "treatment_id": treatment["treatment_id"],
+                    "treatment_sha256": treatment["treatment_sha256"],
+                    "visual_fingerprint_sha256": treatment[
+                        "visual_fingerprint_sha256"
+                    ],
+                    "dependency_hashes": treatment["dependency_hashes"],
+                    "variation_group": treatment["variation_group"],
+                    "format": treatment["format"],
+                    "generation_mode": generation_mode,
+                    "segment_plan_sha256": segment_plan.get(
+                        "segment_plan_sha256"
+                    ) if isinstance(segment_plan, dict) else None,
+                    "ordered_segment_sha256s": segment_plan.get(
+                        "ordered_segment_sha256s", []
+                    ) if isinstance(segment_plan, dict) else [],
+                }
+                if treatment
+                else None
+            ),
+            "compiled_shot_grammar": treatment["shot_grammar"] if treatment else [],
             "status": package.get("status"),
             "copy_architecture_v2": package.get("copy_architecture_v2"),
             "copy_execution_binding": package.get("copy_execution_binding"),
@@ -320,25 +333,35 @@ async def _compile_poster(
             "hook": derived.hook if derived else "",
             "usp_1": derived.body if derived else "",
             "cta": derived.cta if derived else "",
-            "copy_source": "APPROVED_COPY_SET",
+            "copy_source": "COPY_BLUEPRINT_V2_APPROVED",
             "copy_fallback_confirmed": False,
             "poster_copy_set_id": "",
         }
+    draft_values = {
+        "product_id": item["product_id"],
+        "poster_objective": dimensions.get("marketing_angle") or "",
+        "hook": dimensions.get("hook") or "",
+        "cta": dimensions.get("cta") or "",
+        "copy_source": (
+            "APPROVED_COPY_SET"
+            if legacy_copy_maintenance_enabled()
+            else "COPY_BLUEPRINT_V2_APPROVED"
+        ),
+        "poster_copy_set_id": (
+            dimensions.get("copy_set_id") or ""
+            if legacy_copy_maintenance_enabled()
+            else ""
+        ),
+        "poster_recipe_id": dimensions.get("layout_id") or "",
+        "operator_notes": (
+            "P6 immutable content-matrix item "
+            f"{item['item_id']} DNA {item['creative_dna_sha256']}"
+        ),
+        "copy_v2_context": copy_v2_context,
+    }
+    draft_values.update(poster_fields)
     response = await PosterPromptDraftService.build_draft(
-        PosterPromptDraftRequest(
-            product_id=item["product_id"],
-            poster_objective=dimensions.get("marketing_angle") or "",
-            hook=dimensions.get("hook") or "",
-            cta=dimensions.get("cta") or "",
-            copy_source="APPROVED_COPY_SET",
-            poster_copy_set_id=dimensions.get("copy_set_id") or "",
-            poster_recipe_id=dimensions.get("layout_id") or "",
-            operator_notes=(
-                "P6 immutable content-matrix item "
-                f"{item['item_id']} DNA {item['creative_dna_sha256']}"
-            ),
-            **poster_fields,
-        )
+        PosterPromptDraftRequest(**draft_values)
     )
     package = response.model_dump(mode="json")
     if v2_resolution is not None and v2_resolution.v2_enabled:

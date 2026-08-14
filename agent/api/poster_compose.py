@@ -30,6 +30,7 @@ from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
     resolve_persisted_copy_execution_binding,
 )
+from agent.api.legacy_copy_guard import require_legacy_copy_maintenance
 
 router = APIRouter(prefix="/poster", tags=["poster-compose"])
 
@@ -77,6 +78,8 @@ async def composition_plan_preview(req: CompositionPlanPreviewRequest):
     Read-only: resolves the SAME canonical plan a compile would preserve (same
     resolver, same constraint assembly). No mutation, no generation, no credit
     spend."""
+    if req.poster_copy_set_id:
+        require_legacy_copy_maintenance()
     try:
         return await PosterDeliverableService.preview_composition_plan(
             product_id=req.product_id,
@@ -94,6 +97,8 @@ async def composition_plan_preview(req: CompositionPlanPreviewRequest):
 
 @router.post("/compose")
 async def compose_poster(req: ComposeRequest):
+    if req.poster_copy_set_id:
+        require_legacy_copy_maintenance()
     try:
         resolution = await resolve_persisted_copy_execution_binding(
             req.product_id,
@@ -126,6 +131,9 @@ async def compose_poster(req: ComposeRequest):
             )
             if resolution.binding is not None:
                 result["copy_execution_binding"] = resolution.binding.model_dump(mode="json")
+            deliverable = dict(result.get("deliverable") or {})
+            deliverable.pop("poster_copy_set_id", None)
+            result["deliverable"] = deliverable
         return result
     except CopyExecutionResolutionError as exc:
         raise HTTPException(
@@ -204,6 +212,7 @@ async def campaign_variants(
     poster_deliverable_id: str,
     req: CampaignVariantsRequest = CampaignVariantsRequest(),
 ):
+    require_legacy_copy_maintenance()
     try:
         return await build_campaign_variants(poster_deliverable_id, req)
     except CampaignVariantError as exc:
@@ -212,6 +221,7 @@ async def campaign_variants(
 
 @router.get("/deliverables/{poster_deliverable_id}/variants/{variant_id}/output")
 async def campaign_variant_output(poster_deliverable_id: str, variant_id: str):
+    require_legacy_copy_maintenance()
     try:
         out_path, selected = await render_campaign_variant(
             poster_deliverable_id, variant_id

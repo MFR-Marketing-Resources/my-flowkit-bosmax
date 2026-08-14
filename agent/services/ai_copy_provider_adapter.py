@@ -80,6 +80,7 @@ _provider_call_count = 0
 # "last call" receipt races when provider calls run in a thread pool, so usage is
 # also recorded keyed by the unique call_id and drained by generate_candidate.
 _usage_by_call_id: dict[int, dict[str, float]] = {}
+_provider_call_receipt_by_id: dict[int, dict[str, Any]] = {}
 _last_provider_call_receipt: dict[str, Any] | None = None
 
 
@@ -142,7 +143,7 @@ def _begin_provider_call(
     with _provider_call_lock:
         _provider_call_count += 1
         call_id = _provider_call_count
-        _last_provider_call_receipt = {
+        receipt = {
             "call_id": call_id,
             "lane": LANE,
             "provider_id": provider_id,
@@ -162,6 +163,10 @@ def _begin_provider_call(
             "diagnostic_metadata": {},
             "usage": {},
         }
+        _provider_call_receipt_by_id[call_id] = dict(receipt)
+        while len(_provider_call_receipt_by_id) > 512:
+            _provider_call_receipt_by_id.pop(next(iter(_provider_call_receipt_by_id)))
+        _last_provider_call_receipt = receipt
         return call_id
 
 
@@ -182,6 +187,20 @@ def _finish_provider_call(
         # cannot grow it without limit in a long-running process.
         while len(_usage_by_call_id) > 512:
             _usage_by_call_id.pop(next(iter(_usage_by_call_id)))
+        completed_at = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(),
+        )
+        exact_receipt = _provider_call_receipt_by_id.get(call_id)
+        if exact_receipt is not None:
+            _provider_call_receipt_by_id[call_id] = {
+                **exact_receipt,
+                "completed_at": completed_at,
+                "response_status": response_status,
+                "http_status": http_status,
+                "finish_reason": finish_reason,
+                "usage": dict(usage or {}),
+            }
         if (
             _last_provider_call_receipt is None
             or _last_provider_call_receipt.get("call_id") != call_id
@@ -189,10 +208,7 @@ def _finish_provider_call(
             return
         _last_provider_call_receipt = {
             **_last_provider_call_receipt,
-            "completed_at": time.strftime(
-                "%Y-%m-%dT%H:%M:%SZ",
-                time.gmtime(),
-            ),
+            "completed_at": completed_at,
             "response_status": response_status,
             "http_status": http_status,
             "finish_reason": finish_reason,
@@ -209,6 +225,14 @@ def _record_json_parse_result(
 ) -> None:
     global _last_provider_call_receipt
     with _provider_call_lock:
+        exact_receipt = _provider_call_receipt_by_id.get(call_id)
+        if exact_receipt is not None:
+            _provider_call_receipt_by_id[call_id] = {
+                **exact_receipt,
+                "json_parse_status": status,
+                "diagnostic_category": diagnostic_category,
+                "diagnostic_metadata": dict(diagnostic_metadata or {}),
+            }
         if (
             _last_provider_call_receipt is None
             or _last_provider_call_receipt.get("call_id") != call_id
@@ -603,6 +627,19 @@ def _pop_usage(call_id: int) -> dict[str, float]:
         return _usage_by_call_id.pop(call_id, {})
 
 
+def _pop_provider_call_receipt(call_id: int) -> dict[str, Any]:
+    """Drain and return the secret-free receipt for one exact provider call."""
+
+    with _provider_call_lock:
+        receipt = dict(_provider_call_receipt_by_id.pop(call_id, {}))
+        if receipt:
+            receipt["usage"] = dict(receipt.get("usage") or {})
+            receipt["diagnostic_metadata"] = dict(
+                receipt.get("diagnostic_metadata") or {}
+            )
+        return receipt
+
+
 def generate_candidate(brief: str) -> dict[str, Any]:
     """Single mockable seam. Fail closed when unconfigured; otherwise call the
     provider and return the parsed candidate JSON dict (with reliable __usage__)."""
@@ -613,17 +650,26 @@ def generate_candidate(brief: str) -> dict[str, Any]:
         obj = _extract_json_object(message_text, finish_reason=finish_reason)
     except Exception:
         _pop_usage(call_id)  # B3: drain on parse failure — never leak
+        _pop_provider_call_receipt(call_id)
         raise
     usage = _pop_usage(call_id)
+    _pop_provider_call_receipt(call_id)
     if isinstance(obj, dict):
         obj["__usage__"] = usage
     return obj
 
 
-def complete_json(system: str, user: str) -> dict[str, Any]:
-    """Generic structured-JSON call via the configured text_assist lane. Fail-closed
-    when the lane is unconfigured (raises AICopyProviderNotConfigured). Reuses the
-    SAME provider/key/model/transport as copy — no new secrets, no hardcoded model."""
+def complete_json_with_receipt(
+    system: str,
+    user: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return parsed JSON plus provenance for the exact call that produced it.
+
+    The process-global latest-call receipt remains available for diagnostics, but
+    production lineage must use this per-call return value so concurrent requests
+    cannot be associated with one another.
+    """
+
     if not is_configured():
         raise AICopyProviderNotConfigured(ERR_NOT_CONFIGURED)
     text, finish_reason, call_id = _complete(
@@ -639,8 +685,19 @@ def complete_json(system: str, user: str) -> dict[str, Any]:
             diagnostic_category=exc.diagnostic_category,
             diagnostic_metadata=exc.diagnostic_metadata,
         )
-        _pop_usage(call_id)  # B3: drain on parse failure — never leak
+        _pop_usage(call_id)
+        _pop_provider_call_receipt(call_id)
         raise
     _record_json_parse_result(call_id, status="VALID")
-    _pop_usage(call_id)  # B3: drain — complete_json does not surface usage
+    usage = _pop_usage(call_id)
+    receipt = _pop_provider_call_receipt(call_id)
+    receipt["usage"] = usage
+    return parsed, receipt
+
+
+def complete_json(system: str, user: str) -> dict[str, Any]:
+    """Generic structured-JSON call via the configured text_assist lane. Fail-closed
+    when the lane is unconfigured (raises AICopyProviderNotConfigured). Reuses the
+    SAME provider/key/model/transport as copy — no new secrets, no hardcoded model."""
+    parsed, _receipt = complete_json_with_receipt(system, user)
     return parsed

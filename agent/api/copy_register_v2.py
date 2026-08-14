@@ -2,8 +2,9 @@
 
 The route surface is intentionally separate from the legacy copy endpoints.
 No handler in this module calls the legacy copy service or returns a legacy
-row.  Generation uses a deterministic local authoring adapter; a live text
-provider is not called by the API tests or by startup/read paths.
+row.  The existing text_assist provider is called only by the three explicit
+authoring actions (angle generation, complete formula generation, and stage
+regeneration). Startup, reads, approval, binding, and tests make no live call.
 """
 from __future__ import annotations
 
@@ -57,7 +58,6 @@ class BindBlueprintRequest(BaseModel):
 
     blueprint_id: str = Field(min_length=1)
     lane: str = Field(min_length=1)
-    feature_flags: CopyBlueprintV2FeatureFlagState = Field(default_factory=CopyBlueprintV2FeatureFlagState)
 
 
 def _raise(error: service.CopyRegisterV2Error) -> None:
@@ -117,7 +117,7 @@ async def generate_blueprint(request: GenerateBlueprintRequest):
             "blueprint": _blueprint_payload(blueprint),
             "status": blueprint.status,
             "production_valid": False,
-            "provider_calls": 0,
+            "provider_calls": 1,
             "credit_spend": 0,
             "legacy_copy_rows_written": 0,
         }
@@ -146,7 +146,7 @@ async def get_blueprint(blueprint_id: str, revision: int | None = Query(default=
 async def regenerate_stage(blueprint_id: str, stage_key: str):
     try:
         blueprint = await service.regenerate_stage(blueprint_id, stage_key)
-        return {"blueprint": _blueprint_payload(blueprint), "new_revision": blueprint.revision, "provider_calls": 0, "credit_spend": 0}
+        return {"blueprint": _blueprint_payload(blueprint), "new_revision": blueprint.revision, "provider_calls": 1, "credit_spend": 0}
     except service.CopyRegisterV2Error as error:
         _raise(error)
 
@@ -174,12 +174,32 @@ async def approve_blueprint(blueprint_id: str, request: ApproveBlueprintRequest)
 @router.post("/bindings")
 async def bind_blueprint(request: BindBlueprintRequest):
     try:
+        canonical_flags = CopyBlueprintV2FeatureFlagState.from_environment()
         binding = await service.bind_blueprint(
             blueprint_id=request.blueprint_id,
             lane=request.lane,
-            feature_flags=request.feature_flags,
+            feature_flags=canonical_flags,
         )
         return {"binding": binding.model_dump(mode="json"), "persisted": True, "compiler_mutation": False}
+    except service.CopyRegisterV2Error as error:
+        _raise(error)
+
+
+@router.post("/blueprints/{blueprint_id}/activate")
+async def activate_blueprint(blueprint_id: str):
+    """Atomically bind one human-approved blueprint to all required lanes."""
+
+    try:
+        bindings = await service.activate_blueprint_for_required_lanes(blueprint_id)
+        return {
+            "blueprint_id": blueprint_id,
+            "activated": True,
+            "bindings": [binding.model_dump(mode="json") for binding in bindings],
+            "required_lane_count": len(bindings),
+            "automatic_approval": False,
+            "provider_calls": 0,
+            "credit_spend": 0,
+        }
     except service.CopyRegisterV2Error as error:
         _raise(error)
 
@@ -190,6 +210,38 @@ async def get_binding(product_id: str, lane: str):
         return {"binding": (await service.get_binding(product_id, lane)).model_dump(mode="json")}
     except service.CopyRegisterV2Error as error:
         _raise(error)
+
+
+@router.get("/bindings/{product_id}/{lane}/resolution")
+async def get_binding_resolution(product_id: str, lane: str):
+    """Return the same persisted, revalidated projection used by consumers."""
+
+    from agent.services.copy_execution_resolver import (
+        CopyExecutionResolutionError,
+        resolve_persisted_copy_execution_binding,
+    )
+
+    try:
+        resolution = await resolve_persisted_copy_execution_binding(product_id, lane)
+        payload = resolution.to_metadata()
+        payload.update(
+            {
+                "ready": resolution.ready,
+                "blueprint_id": resolution.binding.blueprint_id if resolution.binding else None,
+                "revision": resolution.binding.revision if resolution.binding else None,
+                "formula_id": resolution.binding.formula_id if resolution.binding else None,
+                "formula_version": resolution.binding.formula_version if resolution.binding else None,
+                "approval_snapshot_id": (
+                    resolution.binding.approval_snapshot_id if resolution.binding else None
+                ),
+            }
+        )
+        return payload
+    except CopyExecutionResolutionError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"error": error.code, "detail": error.details or str(error)},
+        ) from error
 
 
 __all__ = ["router"]

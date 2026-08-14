@@ -1,11 +1,10 @@
-"""Phase 3 Copy Architecture V2 consumer boundary.
+"""Copy Architecture V2 consumer boundary.
 
 This module is deliberately the only consumer-facing V2 resolver.  It does
 not read CopySet rows, write database state, approve copy, invoke a compiler,
-or call a provider.  With the feature flag OFF it returns a compatibility
-receipt and leaves the caller's legacy path untouched.  With the flag ON it
-requires a complete V2 request context and fails closed on every missing or
-stale lineage element.
+or call a provider.  V2 is the only normal production authority.  Historical
+flag-OFF compatibility is available solely in explicit maintenance mode;
+otherwise every missing or stale lineage element fails closed.
 """
 from __future__ import annotations
 
@@ -26,6 +25,7 @@ from agent.models.copy_blueprint_v2 import (
     ImageCopyProjection,
     ProductTruthLineage,
     VideoCopyProjection,
+    legacy_copy_maintenance_enabled,
 )
 from agent.services.copy_blueprint_v2_service import (
     CopyBlueprintV2Error,
@@ -132,33 +132,43 @@ def _flag_state(
             pilot_scope=pilot_scope,
         )
     if isinstance(raw, CopyBlueprintV2FeatureFlagState):
-        return raw
-    values = _as_dict(raw)
-    enabled = bool(values.get("enabled", False))
-    shadow_mode = bool(values.get("shadow_mode", False))
-    scope = str(values.get("scope") or context.get("scope") or "").strip()
-    pilot_scope = tuple(
-        str(item)
-        for item in (values.get("pilot_scope") or context.get("pilot_scope") or ())
-    )
-    if shadow_mode and enabled:
-        state = "SHADOW"
-    elif enabled and scope and scope in pilot_scope:
-        state = "PILOT"
-    elif enabled:
-        state = "ON"
+        resolved = raw
     else:
-        state = "OFF"
-    values.update(
-        {
-            "enabled": enabled,
-            "shadow_mode": shadow_mode,
-            "scope": scope,
-            "pilot_scope": pilot_scope,
-            "state": state,
-        }
-    )
-    return CopyBlueprintV2FeatureFlagState.model_validate(values)
+        values = _as_dict(raw)
+        enabled = bool(values.get("enabled", False))
+        shadow_mode = bool(values.get("shadow_mode", False))
+        scope = str(values.get("scope") or context.get("scope") or "").strip()
+        pilot_scope = tuple(
+            str(item)
+            for item in (values.get("pilot_scope") or context.get("pilot_scope") or ())
+        )
+        if shadow_mode and enabled:
+            state = "SHADOW"
+        elif enabled and scope and scope in pilot_scope:
+            state = "PILOT"
+        elif enabled:
+            state = "ON"
+        else:
+            state = "OFF"
+        values.update(
+            {
+                "enabled": enabled,
+                "shadow_mode": shadow_mode,
+                "scope": scope,
+                "pilot_scope": pilot_scope,
+                "state": state,
+            }
+        )
+        resolved = CopyBlueprintV2FeatureFlagState.model_validate(values)
+
+    if not legacy_copy_maintenance_enabled() and (
+        not resolved.enabled or resolved.state != "ON"
+    ):
+        raise CopyExecutionResolutionError(
+            "COPY_V2_ONLY_REQUIRED",
+            "Copy Register V2 is the sole active authority; legacy or shadow mode is disabled.",
+        )
+    return resolved
 
 
 def lane_for_request(
@@ -170,7 +180,7 @@ def lane_for_request(
 ) -> str:
     """Map the current transport request to one of the eleven matrix lanes."""
 
-    explicit = str(lane or visual_lane_id or "").strip()
+    explicit = str(lane or "").strip()
     if explicit:
         token = explicit.upper().replace("-", "_")
         if "POSTER" in token:
@@ -182,6 +192,19 @@ def lane_for_request(
         return get_lane_descriptor(token).lane_id
     normalized_mode = str(mode or "").strip().upper()
     normalized_source = str(source_mode or "").strip().upper()
+    visual_token = str(visual_lane_id or "").strip().upper().replace("-", "_")
+    if visual_token:
+        if "POSTER" in visual_token:
+            return "POSTER_BUILDER"
+        if "FASTLANE" in visual_token:
+            return "IMG_FASTLANE"
+        if "COCKPIT" in visual_token:
+            return "IMG_COCKPIT"
+        if normalized_mode != "IMG":
+            return get_lane_descriptor(visual_token).lane_id
+        # visual_lane_id is an IMG recipe/asset-lane identifier, not necessarily
+        # one of the eleven copy lanes. Generic IMG recipes use IMAGE_GEN.
+        return "IMAGE_GEN"
     if normalized_mode == "FACELESS":
         return "FACELESS"
     if normalized_mode == "MONTAGE":
@@ -306,6 +329,11 @@ def resolve_copy_execution_binding(
         raise CopyExecutionResolutionError("COPY_V2_UNKNOWN_LANE", str(exc)) from exc
     flags = _flag_state(context, feature_flag_state)
     if not flags.enabled or flags.state == "OFF":
+        if not legacy_copy_maintenance_enabled():
+            raise CopyExecutionResolutionError(
+                "COPY_V2_ONLY_REQUIRED",
+                "Copy Register V2 is the sole active authority.",
+            )
         return CopyExecutionResolution(
             lane=descriptor.lane_id,
             media_kind=descriptor.media_kind,
@@ -528,8 +556,7 @@ async def resolve_persisted_copy_execution_binding(
     persisted binding, its exact blueprint revision, and current Product Truth
     from the V2 service, then revalidates the complete envelope.  It never
     accepts a caller-supplied binding and it never reads the legacy CopySet
-    ledger.  With V2 disabled it returns the existing compatibility receipt
-    without touching the V2 database.
+    ledger.  Flag-OFF compatibility is limited to explicit maintenance mode.
     """
 
     context = _context_dict(request_context)
@@ -570,6 +597,17 @@ async def resolve_persisted_copy_execution_binding(
             {
                 "current_product_truth": truth.get("product_truth", {}).get("lineage"),
                 "evidence_facts": truth.get("facts", []),
+                "adapter_context": {
+                    "product_id": product_id,
+                    "product_truth_lineage": truth.get("product_truth", {}).get("lineage"),
+                    "readiness_validated": bool(truth.get("ready_for_copy")),
+                    "provenance_validated": bool(
+                        truth.get("product_truth", {}).get("lineage")
+                        and truth.get("facts")
+                    ),
+                    "safety_validated": not bool(truth.get("blockers")),
+                    "semantic_review_validated": True,
+                },
             }
         )
         return resolve_copy_execution_binding(

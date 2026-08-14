@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agent.models.product_treatment_factory import (
     CreateFactoryPlanRequest,
@@ -8,11 +8,13 @@ from agent.models.product_treatment_factory import (
     PrepareFactoryPlanRequest,
 )
 from agent.services import product_treatment_factory_service as factory
+from agent.api.legacy_copy_guard import require_legacy_copy_maintenance
 
 
 router = APIRouter(
     prefix="/product-treatment-factory",
     tags=["product-treatment-factory"],
+    dependencies=[Depends(require_legacy_copy_maintenance)],
 )
 
 

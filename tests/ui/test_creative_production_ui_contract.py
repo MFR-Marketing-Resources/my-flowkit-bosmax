@@ -11,15 +11,15 @@ def _read(path: str) -> str:
 def test_p6_production_studio_is_the_primary_direct_route():
     app = _read("dashboard/src/App.tsx")
     assert 'to: "/production-studio"' in app
-    assert 'label: "Production Studio (P6)"' in app
+    assert 'label: "Production Studio"' in app
     assert 'path="/production-studio"' in app
     assert "CreativeProductionStudioPage" in app
 
 
-def test_legacy_studio_route_remains_compatible_but_not_primary():
+def test_removed_legacy_studio_route_cannot_bypass_the_primary_surface():
     app = _read("dashboard/src/App.tsx")
     page = _read("dashboard/src/pages/CreativeProductionStudioPage.tsx")
-    assert 'path="/rpa-production-studio"' in app
+    assert 'path="/rpa-production-studio"' not in app
     assert 'path="/production-studio"' in app
     assert 'studioMode === "LEGACY_INCOMPLETE_PLAN"' in page
     assert "This legacy plan is missing" in page
@@ -60,20 +60,21 @@ def test_live_and_dry_run_are_visibly_separate():
     assert "live_media_authorization_granted" not in page
 
 
-def test_p6_v4_frame_is_opt_in_and_preserves_batch_matrix_ia():
+def test_p6_v4_frame_is_default_and_preserves_batch_matrix_ia():
     page = _read("dashboard/src/pages/CreativeProductionStudioPage.tsx")
-    assert 'searchParams.get("v4") === "1"' in page
+    assert 'searchParams.get("v4") === "1"' not in page
     assert 'searchParams.get("classic") !== "1"' in page
     assert '"p6-v4-shell"' in page
     assert '"p6-v4-header"' in page
     assert "WorkflowStep" in page
-    assert "OperatorCockpit" in page
+    assert "Creative Library ↗" in page
+    assert "Scene Registry" not in page
     assert "Batch, matrix, waves, QA, and live confirmation remain the P6 IA" in page
     assert "p6-content-matrix" in page
     assert "p6-attempt-list" in page
     assert "p6-qa-list" in page
     assert 'href="/production-studio?classic=1"' in page
-    assert 'label: "Start production · gated"' in page
+    assert '"Start production"' in page
 
 
 def test_p6_v4_guided_flow_progressively_discloses_advanced_metadata():
@@ -92,26 +93,22 @@ def test_p6_v4_guided_flow_progressively_discloses_advanced_metadata():
     assert "Advanced workspace · factory, matrix, history and diagnostics" in page
 
 
-def test_poster_v4_frame_is_opt_in_and_preserves_bespoke_modes():
+def test_poster_is_formula_native_v2_only():
     page = _read("dashboard/src/pages/PosterBuilderPage.tsx")
-    assert 'searchParams.get("v4") === "1"' in page
-    assert 'searchParams.get("classic") !== "1"' in page
-    assert 'data-testid="poster-builder-v4-shell"' in page
-    assert 'data-variant="v4"' in page
-    assert "WorkflowStep" in page
-    assert "OperatorCockpit" in page
-    assert "Auto, Guided, and Controlled modes preserved" in page
-    assert "Auto · Guided · Controlled remain available" in page
-    assert 'href="/creative/poster-builder?classic=1"' in page
-    assert 'label: "Generate poster · gated"' in page
+    assert 'data-testid="poster-builder-v2-only"' in page
+    assert "CopyArchitectureV2LaneCard" in page
+    assert "createPosterPromptDraft" in page
+    assert "composePosterV2" in page
+    assert "PosterBuilderLegacyPanel" not in page
+    assert "legacy poster Copy Set" in page
 
 
-def test_poster_v4_links_to_adjacent_governed_surfaces():
+def test_poster_links_only_to_active_adjacent_governed_surfaces():
     page = _read("dashboard/src/pages/PosterBuilderPage.tsx")
-    assert 'href="/assets/img-cockpit"' in page
+    assert 'href="/assets/img-cockpit"' not in page
+    assert 'href="/library/images"' in page
     assert 'href="/creative/copy-registry"' in page
-    assert 'data-testid="poster-advanced-diagnostics"' in page
-    assert "PosterBuilderLegacyPanel" in page
+    assert "PosterBuilderLegacyPanel" not in page
 
 
 def test_p6_uses_visual_multi_product_allocation_and_governed_video_controls():
@@ -133,13 +130,15 @@ def test_p6_uses_visual_multi_product_allocation_and_governed_video_controls():
     assert "Approved model keys (comma separated)" not in page
 
 
-def test_p7_and_technical_evidence_are_collapsed_without_being_deleted():
+def test_v2_and_visual_treatment_evidence_replace_legacy_p7_copy_supply():
     page = _read("dashboard/src/pages/CreativeProductionStudioPage.tsx")
-    assert 'data-testid="p7-compact-summary"' in page
-    assert "<CreativeSupplyFactoryPanel />" in page
+    assert 'data-testid="p7-compact-summary"' not in page
+    assert "CreativeSupplyFactoryPanel" not in page
+    assert "CopyArchitectureV2LaneCard" in page
+    assert 'data-testid="p6-treatment-availability"' in page
+    assert "Copy text always comes from Copy Register V2." in page
     assert "Technical details" in page
     assert "Technical execution-lane status" in page
-    assert "Technical details" in page
 
 
 def test_plan_state_is_explicit_and_canonical_data_is_not_reconstructed():
@@ -159,14 +158,16 @@ def test_plan_state_is_explicit_and_canonical_data_is_not_reconstructed():
     assert "product_scope.map" not in page
 
 
-def test_universal_factory_is_embedded_in_the_existing_production_studio():
+def test_legacy_copy_dependent_factory_is_not_embedded_in_production_studio():
     page = _read("dashboard/src/pages/CreativeProductionStudioPage.tsx")
     panel = _read(
         "dashboard/src/components/production-studio/"
         "ProductTreatmentFactoryPanel.tsx"
     )
-    assert "ProductTreatmentFactoryPanel" in page
-    assert "<ProductTreatmentFactoryPanel />" in page
+    assert "ProductTreatmentFactoryPanel" not in page
+    assert "<ProductTreatmentFactoryPanel />" not in page
+    assert "fetchTreatmentAvailability" in page
+    assert 'data-testid="p6-selected-treatment-authority"' in page
     assert 'id="product-treatment-factory"' in panel
     assert 'href="/production-studio#product-treatment-factory"' in panel
     assert "/product-treatment-factory" not in _read("dashboard/src/App.tsx")

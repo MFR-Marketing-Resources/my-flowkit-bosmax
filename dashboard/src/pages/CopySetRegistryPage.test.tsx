@@ -17,11 +17,13 @@ vi.mock("../api/copyRegisterV2", () => ({
 	listCopyRegisterBlueprints: vi.fn(),
 	regenerateFormulaStage: vi.fn(),
 	approveFormulaBlueprint: vi.fn(),
+	activateFormulaBlueprint: vi.fn(),
 }));
 
 import { fetchProductCatalog } from "../api/products";
 import {
 	approveFormulaBlueprint,
+	activateFormulaBlueprint,
 	fetchCopyRegisterFormulas,
 	fetchCopyRegisterTruth,
 	generateCopyRegisterAngles,
@@ -36,6 +38,7 @@ const mockedAngles = vi.mocked(generateCopyRegisterAngles);
 const mockedGenerate = vi.mocked(generateFormulaCopyBlueprint);
 const mockedList = vi.mocked(listCopyRegisterBlueprints);
 const mockedApprove = vi.mocked(approveFormulaBlueprint);
+const mockedActivate = vi.mocked(activateFormulaBlueprint);
 
 const product = {
 	id: "p1",
@@ -151,6 +154,12 @@ describe("CopySetRegistryPage V2 cutover", () => {
 		});
 		mockedGenerate.mockResolvedValue({ blueprint: blueprint(), production_valid: false });
 		mockedApprove.mockResolvedValue({ blueprint: blueprint("PRODUCTION_VALID"), production_valid: true, badge: "V2 PRODUCTION_VALID" });
+		mockedActivate.mockResolvedValue({
+			blueprint_id: "bpv2_test",
+			activated: true,
+			bindings: [],
+			required_lane_count: 8,
+		});
 	});
 
 	it("walks product → truth → formula → angle/evidence → new V2 blueprint → approval", async () => {
@@ -179,5 +188,8 @@ describe("CopySetRegistryPage V2 cutover", () => {
 			readiness_proof: expect.objectContaining({ safety_validated: true }),
 		})));
 		expect(await screen.findByText("V2 PRODUCTION_VALID")).toBeInTheDocument();
+		fireEvent.click(await screen.findByTestId("activate-v2-blueprint"));
+		await waitFor(() => expect(mockedActivate).toHaveBeenCalledWith("bpv2_test"));
+		expect(await screen.findByText("ACTIVE · 8 REQUIRED LANES")).toBeInTheDocument();
 	});
 });

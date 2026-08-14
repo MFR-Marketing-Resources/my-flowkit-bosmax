@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
 	approveFormulaBlueprint,
+	activateFormulaBlueprint,
 	fetchCopyRegisterFormulas,
 	fetchCopyRegisterTruth,
 	generateCopyRegisterAngles,
@@ -158,6 +159,7 @@ export default function CopySetRegistryPage() {
 	const [success, setSuccess] = useState("");
 	const [reviewer, setReviewer] = useState("operator");
 	const [approvalChecks, setApprovalChecks] = useState(EMPTY_APPROVAL_CHECKS);
+	const [activatedBlueprintId, setActivatedBlueprintId] = useState("");
 
 	const selectedAngle = useMemo(
 		() => angles.find((angle) => angle.angle_id === selectedAngleId) ?? null,
@@ -214,6 +216,24 @@ export default function CopySetRegistryPage() {
 		setAngles([]);
 		setSelectedFactIds([]);
 		setApprovalChecks(EMPTY_APPROVAL_CHECKS);
+		setActivatedBlueprintId("");
+	};
+
+	const handleActivate = async (blueprint: CopyBlueprintV2Record) => {
+		setBusy(true);
+		setError("");
+		setSuccess("");
+		try {
+			const response = await activateFormulaBlueprint(blueprint.blueprint_id);
+			setActivatedBlueprintId(blueprint.blueprint_id);
+			setSuccess(
+				`V2 blueprint activated as the sole authority for all ${response.required_lane_count} copy-required lanes.`,
+			);
+		} catch (reason) {
+			setError(errorMessage(reason));
+		} finally {
+			setBusy(false);
+		}
 	};
 
 	const handleGenerateAngles = async () => {
@@ -394,16 +414,16 @@ export default function CopySetRegistryPage() {
 
 					<Section title="6. Generate the complete formula blueprint" helper="One coherent ordered blueprint; this creates a new V2 ID and only a DRAFT.">
 						<button type="button" data-testid="generate-new-formula-copy" disabled={busy || !truth?.ready_for_copy || !formulaId || !selectedAngle || selectedFactIds.length === 0} onClick={() => void handleGenerateBlueprint()} className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40">{busy ? "Generating…" : "GENERATE NEW FORMULA COPY"}</button>
-						<HelperText className="text-blue-300/80">No historical CopySet ID is read or reused. Provider calls: 0 in this deterministic local path.</HelperText>
+						<HelperText className="text-blue-300/80">One configured text-assist call runs only when you press this button. No historical CopySet is read or reused, and no video/image credit is spent.</HelperText>
 					</Section>
 
-					{latestBlueprint ? <Section title="7. Review, revise, and approve" helper="Approved text is immutable. Regeneration always produces a new revision."><BlueprintCard blueprint={latestBlueprint} onRegenerate={(stageKey) => void handleRegenerate(stageKey)} busy={busy} />{reviewableBlueprint ? <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4" data-testid="v2-approval-panel"><div className="flex items-center gap-2 text-sm font-semibold text-amber-100"><ShieldCheck size={16} />Explicit human approval</div><FormField label="Reviewer" className="mt-3 max-w-sm"><input className={INPUT_CLASS} value={reviewer} onChange={(event) => setReviewer(event.target.value)} /></FormField><div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">{[
+					{latestBlueprint ? <Section title="7. Review, approve, and activate" helper="Approved text is immutable. Activation atomically makes this blueprint authoritative for all required lanes."><BlueprintCard blueprint={latestBlueprint} onRegenerate={(stageKey) => void handleRegenerate(stageKey)} busy={busy} />{reviewableBlueprint ? <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4" data-testid="v2-approval-panel"><div className="flex items-center gap-2 text-sm font-semibold text-amber-100"><ShieldCheck size={16} />Explicit human approval</div><FormField label="Reviewer" className="mt-3 max-w-sm"><input className={INPUT_CLASS} value={reviewer} onChange={(event) => setReviewer(event.target.value)} /></FormField><div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">{[
 						["semantic", "I reviewed every authored stage against Product Truth."],
 						["provenance", "Product Truth and evidence lineage match the selected product."],
 						["safety", "Allowed claims and warnings were reviewed; no unsafe claim was added."],
 						["bridge", "Formula order and bridge continuity are coherent."],
 						["duration", "Word count and target-lane duration readiness were reviewed."],
-					].map(([key, label]) => <label key={key} className="flex cursor-pointer items-start gap-2 rounded border border-slate-800 p-2"><input type="checkbox" data-testid={`approval-check-${key}`} checked={approvalChecks[key as keyof typeof approvalChecks]} onChange={(event) => setApprovalChecks((current) => ({ ...current, [key]: event.target.checked }))} /><span>{label}</span></label>)}</div><button type="button" data-testid="approve-v2-blueprint" disabled={busy || !reviewer.trim() || !approvalReady} onClick={() => void handleApprove()} className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40">{busy ? "Approving…" : "Approve → PRODUCTION_VALID"}</button></div> : <HelperText className="text-emerald-300/80">V2 PRODUCTION_VALID is immutable and ready for persisted lane binding.</HelperText>}</Section> : <Section title="7. Review, revise, and approve" helper="Your new formula blueprint will appear here after generation."><p className="text-sm text-slate-500">No V2 blueprint yet.</p></Section>}
+					].map(([key, label]) => <label key={key} className="flex cursor-pointer items-start gap-2 rounded border border-slate-800 p-2"><input type="checkbox" data-testid={`approval-check-${key}`} checked={approvalChecks[key as keyof typeof approvalChecks]} onChange={(event) => setApprovalChecks((current) => ({ ...current, [key]: event.target.checked }))} /><span>{label}</span></label>)}</div><button type="button" data-testid="approve-v2-blueprint" disabled={busy || !reviewer.trim() || !approvalReady} onClick={() => void handleApprove()} className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40">{busy ? "Approving…" : "Approve → PRODUCTION_VALID"}</button></div> : <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4"><HelperText className="text-emerald-300/80">V2 PRODUCTION_VALID is immutable. Activation never changes its approved text.</HelperText><button type="button" data-testid="activate-v2-blueprint" disabled={busy || activatedBlueprintId === latestBlueprint.blueprint_id} onClick={() => void handleActivate(latestBlueprint)} className="mt-3 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{activatedBlueprintId === latestBlueprint.blueprint_id ? "ACTIVE · 8 REQUIRED LANES" : busy ? "Activating…" : "ACTIVATE FOR VIDEO + POSTER LANES"}</button></div>}</Section> : <Section title="7. Review, approve, and activate" helper="Your new formula blueprint will appear here after generation."><p className="text-sm text-slate-500">No V2 blueprint yet.</p></Section>}
 				</>
 			) : <Section title="Copy Register V2" helper="Select a product to begin the guarded workflow."><p className="text-sm text-slate-500">Select a Product Truth-approved product first.</p></Section>}
 		</div>

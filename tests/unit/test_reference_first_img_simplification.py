@@ -224,12 +224,13 @@ def test_f_lane_aware_metadata_handling():
 
 @pytest.mark.asyncio
 async def test_g_existing_regressions():
-    """Test G: Mock isolation fails closed in production; exact & poster strategies remain deterministic."""
+    """Test G: V2 readiness fails before transport; visual strategies remain deterministic."""
     from agent.api.flow import GenerateRequest, generate
 
     req = GenerateRequest(mode="IMG", prompt="Test prompt")
 
-    # Production extension disconnected -> HTTP 503
+    # IMG is explicitly copy-free, but production still requires Product Truth
+    # readiness/provenance before extension connectivity or provider work.
     with patch("agent.api.flow.get_flow_client") as mock_get_client, \
          patch.dict(os.environ, {}, clear=True):
         mock_client = MagicMock()
@@ -238,8 +239,9 @@ async def test_g_existing_regressions():
 
         with pytest.raises(HTTPException) as exc_info:
             await generate(req)
-        assert exc_info.value.status_code == 503
-        assert "Extension not connected" in exc_info.value.detail
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail["error"] == "PRODUCT_NOT_FOUND"
+        mock_get_client.assert_not_called()
 
     # Exact product strategy is deterministic
     strat_exact = resolve_generation_strategy("PRODUCT_ONLY_HERO", "prod-1", is_product_only=True)

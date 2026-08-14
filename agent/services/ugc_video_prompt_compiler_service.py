@@ -1006,7 +1006,7 @@ def compile_ugc_video_prompt(
     resolved_copy = dict(copy_intelligence or {})
     if not resolved_copy:
         resolved_copy = _landbank.lookup(str(product.get("id") or "")) or {}
-    if treatment:
+    if treatment and approved_dialogue is None:
         resolved_copy = {
             **resolved_copy,
             "angle": str(treatment.get("content_angle") or ""),
@@ -1154,6 +1154,35 @@ def compile_ugc_video_prompt(
             ],
             "block_allocations": segment_allocations,
         }
+        if approved_dialogue is not None:
+            planner = _storyboard.plan_full_storyboard(
+                route_id=resolved_route,
+                source_mode=resolved_source_mode,
+                product=product,
+                copy_intelligence=resolved_copy,
+                resolved_block_plan=[
+                    int(block["duration_seconds"]) for block in normalized_blocks
+                ],
+                target_language=resolved_target_language,
+                wps_mode=wps_mode,
+                scene_context=_clean(approved_package.get("scene_context")),
+                dialogue_enabled=dialogue_enabled,
+                approved_dialogue=approved_dialogue,
+                shot_count_by_block=[
+                    get_shot_policy(int(block["duration_seconds"]))["recommended"]
+                    for block in normalized_blocks
+                ],
+            )
+            copy_planner_result = planner.to_dict()
+            segment_allocations = list(copy_planner_result["block_allocations"])
+            planner_result = {
+                **planner_result,
+                **copy_planner_result,
+                "treatment_segment_plan_sha256": treatment_segment_plan.get(
+                    "segment_plan_sha256"
+                ),
+                "copy_authority": "COPY_BLUEPRINT_V2_APPROVED",
+            }
         allocation_by_block = {
             int(allocation["block_index"]): allocation
             for allocation in segment_allocations
@@ -1207,11 +1236,16 @@ def compile_ugc_video_prompt(
             segment = treatment_segment_plan["segments"][
                 int(block["block_index"]) - 1
             ]
+            segment_dialogue = (
+                str((allocation or {}).get("exact_dialogue_slice") or "")
+                if approved_dialogue is not None
+                else str(segment["exact_dialogue_slice"])
+            )
             block_treatment = {
                 **treatment,
                 "action_sequence": segment["action_sequence"],
                 "shot_grammar": segment["shot_grammar"],
-                "dialogue_text": segment["exact_dialogue_slice"],
+                "dialogue_text": segment_dialogue,
                 "active_segment_index": segment["segment_index"],
                 "active_segment_sha256": segment["segment_sha256"],
                 "active_segment_duration_seconds": segment["duration_seconds"],
@@ -1236,9 +1270,12 @@ def compile_ugc_video_prompt(
             shot_count_hint=_shot_policy["recommended"],
             allocation=allocation,
             approved_dialogue=(
-                str(block_treatment.get("dialogue_text") or "")
-                or approved_dialogue
-                or None
+                (
+                    str((allocation or {}).get("exact_dialogue_slice") or "")
+                    or approved_dialogue
+                )
+                if approved_dialogue is not None
+                else str(block_treatment.get("dialogue_text") or "") or None
             ),
             creative_treatment=block_treatment or None,
         )

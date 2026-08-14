@@ -35,6 +35,10 @@ from agent.models.poster_copy_set import (
     poster_fields_to_zone_fields,
     serialize_poster_copy_set,
 )
+from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
+from agent.services.copy_execution_resolver import (
+    resolve_persisted_copy_execution_binding,
+)
 from agent.services.poster_template_service import (
     PosterTemplateError,
     template_contract,
@@ -401,6 +405,39 @@ class PosterPromptDraftService:
         if not product_id:
             raise PosterPromptDraftValidationError("product_id is required")
 
+        if not legacy_copy_maintenance_enabled():
+            if _norm(request.copy_set_id) or _norm(request.poster_copy_set_id):
+                raise PosterPromptDraftValidationError(
+                    "LEGACY_COPY_STORAGE_DISABLED",
+                    field_errors=[
+                        "Poster drafts accept only the active Copy Register V2 binding."
+                    ],
+                )
+            resolution = await resolve_persisted_copy_execution_binding(
+                product_id,
+                "POSTER_BUILDER",
+                request.copy_v2_context,
+            )
+            derived = (
+                resolution.projection.derived_copy
+                if resolution.projection is not None
+                else None
+            )
+            request = request.model_copy(
+                update={
+                    "hook": derived.hook if derived else "",
+                    "subhook": "",
+                    "usp_1": derived.body if derived else "",
+                    "usp_2": "",
+                    "usp_3": "",
+                    "cta": derived.cta if derived else "",
+                    "copy_source": "COPY_BLUEPRINT_V2_APPROVED",
+                    "copy_fallback_confirmed": False,
+                    "copy_set_id": "",
+                    "poster_copy_set_id": "",
+                }
+            )
+
         row = await crud.get_product(product_id)
         if not row:
             raise PosterPromptDraftValidationError("PRODUCT_NOT_FOUND")
@@ -638,7 +675,12 @@ class PosterPromptDraftService:
             )
         if (
             copy_source
-            and copy_source not in ("APPROVED_COPY_SET", "APPROVED_POSTER_COPY_SET")
+            and copy_source
+            not in (
+                "APPROVED_COPY_SET",
+                "APPROVED_POSTER_COPY_SET",
+                "COPY_BLUEPRINT_V2_APPROVED",
+            )
             and not request.copy_fallback_confirmed
         ):
             validation_warnings.append("UNGROUNDED_COPY_REVIEW_ONLY")

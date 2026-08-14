@@ -1,14 +1,17 @@
+import { useEffect, useState } from "react";
 import {
 	useCopyArchitectureV2Lane,
 	type CopyArchitectureV2Execution,
 	type CopyArchitectureV2Lane,
 } from "../../api/copyArchitectureV2";
+import { fetchCopyBindingResolution } from "../../api/copyRegisterV2";
 
 interface CopyArchitectureV2LaneCardProps {
 	lane: CopyArchitectureV2Lane;
 	productId?: string | null;
 	/** Metadata returned by a prepared package, compile, or queue boundary. */
 	execution?: CopyArchitectureV2Execution | null;
+	onReadyChange?: (ready: boolean) => void;
 }
 function record(value: unknown): Record<string, unknown> {
 	return value && typeof value === "object" && !Array.isArray(value)
@@ -25,21 +28,61 @@ export default function CopyArchitectureV2LaneCard({
 	lane,
 	productId,
 	execution,
+	onReadyChange,
 }: CopyArchitectureV2LaneCardProps) {
 	const { descriptor, status, loading, error } = useCopyArchitectureV2Lane(lane);
+	const [persistedExecution, setPersistedExecution] =
+		useState<CopyArchitectureV2Execution | null>(null);
+	const [resolutionLoading, setResolutionLoading] = useState(false);
+	const [resolutionError, setResolutionError] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (execution || !productId) {
+			setPersistedExecution(null);
+			setResolutionError(null);
+			setResolutionLoading(false);
+			return;
+		}
+		let active = true;
+		setResolutionLoading(true);
+		setResolutionError(null);
+		void fetchCopyBindingResolution(productId, lane)
+			.then((response) => {
+				if (active) setPersistedExecution(response);
+			})
+			.catch((reason: unknown) => {
+				if (!active) return;
+				setPersistedExecution(null);
+				setResolutionError(
+					reason instanceof Error ? reason.message : "V2 binding resolution failed",
+				);
+			})
+			.finally(() => {
+				if (active) setResolutionLoading(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, [execution, lane, productId]);
+
+	const effectiveExecution = execution ?? persistedExecution;
 	const flags = status?.feature_flags;
-	const binding = record(execution?.binding);
+	const binding = record(effectiveExecution?.binding);
 	const enabled = Boolean(flags?.enabled);
-	const executionStatus = text(execution?.status, "NOT_RESOLVED");
+	const executionStatus = text(effectiveExecution?.status, "NOT_RESOLVED");
 	const ready = enabled && executionStatus === "READY";
 	const copyFree = descriptor?.copy_policy === "NOT_REQUIRED";
 
+	useEffect(() => {
+		onReadyChange?.(ready);
+	}, [onReadyChange, ready]);
+
 	const readiness = error
 		? "UNAVAILABLE — readiness not asserted"
-		: loading
+		: loading || resolutionLoading
 			? "CHECKING V2 CONTRACT"
 			: !enabled
-				? "V2 OFF — LEGACY COMPATIBLE"
+				? "V2 MAINTENANCE MODE"
 				: ready
 					? "READY"
 					: "BLOCKED — V2 BINDING REQUIRED";
@@ -52,21 +95,23 @@ export default function CopyArchitectureV2LaneCard({
 				: "NO";
 
 	const blueprintId = text(
-		execution?.blueprint_id ?? binding.blueprint_id,
+		effectiveExecution?.blueprint_id ?? binding.blueprint_id,
 		copyFree ? "N/A — copy-free lane" : "Not selected",
 	);
 	const revision = text(
-		execution?.revision ?? binding.revision,
+		effectiveExecution?.revision ?? binding.revision,
 		copyFree ? "N/A" : "Not selected",
 	);
 	const formula = copyFree
 		? "N/A — copy-free lane"
-		: `${text(execution?.formula_id ?? binding.formula_id)} · ${text(execution?.formula_version ?? binding.formula_version)}`;
-	const blocker = execution?.blocker ?? execution?.error ?? execution?.blockers;
+		: `${text(effectiveExecution?.formula_id ?? binding.formula_id)} · ${text(effectiveExecution?.formula_version ?? binding.formula_version)}`;
+	const blocker = effectiveExecution?.blocker ?? effectiveExecution?.error ?? effectiveExecution?.blockers;
 	const blockers = Array.isArray(blocker)
 		? blocker.map(String)
-		: blocker
+			: blocker
 			? [String(blocker)]
+			: resolutionError
+				? [resolutionError]
 			: enabled && !ready
 				? [
 					copyFree
@@ -123,11 +168,11 @@ export default function CopyArchitectureV2LaneCard({
 			<div className="mt-3 grid gap-2 sm:grid-cols-3">
 				<div data-testid="copy-v2-revalidation">
 					<span className="text-slate-500">Revalidation:</span>{" "}
-					{text(execution?.revalidation_action, enabled ? "REQUIRED before binding" : "Not asserted")}
+					{text(effectiveExecution?.revalidation_action, enabled ? "REQUIRED before binding" : "Not asserted")}
 				</div>
 				<div data-testid="copy-v2-semantic-review">
 					<span className="text-slate-500">Semantic review:</span>{" "}
-					{text(execution?.semantic_review_action, enabled ? "REQUIRED before binding" : "Not asserted")}
+					{text(effectiveExecution?.semantic_review_action, enabled ? "REQUIRED before binding" : "Not asserted")}
 				</div>
 				<div data-testid="copy-v2-action-availability">
 					<span className="text-slate-500">Action:</span>{" "}
@@ -135,7 +180,7 @@ export default function CopyArchitectureV2LaneCard({
 						? "Available — V2 binding proven"
 						: enabled
 						? "Blocked until V2 binding is proven"
-						: "Legacy controls unchanged; V2 action not asserted"}
+						: "V2 maintenance mode; production action unavailable"}
 				</div>
 			</div>
 

@@ -1,5 +1,13 @@
 """Shared pytest fixtures for Flow Kit tests."""
 
+import os
+
+# The pre-cutover suites exercise historical CopySet APIs and flag-OFF golden
+# behavior.  ADR-011 permits that only in explicit test/maintenance mode.  New
+# V2-only tests remove this flag locally to prove the production default.
+os.environ.setdefault("COPY_LEGACY_MAINTENANCE_MODE", "1")
+os.environ.setdefault("COPY_BLUEPRINT_V2_ENABLED", "0")
+
 import pytest
 from agent.config import DB_PATH
 from agent.db.schema import init_db, close_db

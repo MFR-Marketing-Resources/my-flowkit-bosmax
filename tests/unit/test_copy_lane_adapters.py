@@ -53,6 +53,12 @@ def test_matrix_covers_exactly_all_required_lanes_and_current_seams():
         assert row["current_page_entry_point"]
         assert row["copy_policy"] in {"REQUIRED", "NOT_REQUIRED"}
         assert row["adapter"] in {"VideoCopyProjection", "ImageCopyProjection"}
+        assert row["ui_surface_state"] in {"ACTIVE", "DORMANT_REDIRECTED"}
+    assert {
+        row["lane_id"]
+        for row in rows
+        if row["ui_surface_state"] == "DORMANT_REDIRECTED"
+    } == {"T2V", "F2V", "I2V", "IMAGE_GEN", "IMG_FASTLANE", "IMG_COCKPIT"}
     poster = LANE_MATRIX["POSTER_BUILDER"]
     assert "/api/poster/prompt-draft" in poster.current_api_entry_point
 

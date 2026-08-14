@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from typing import Any, Optional
 from agent.services.flow_client import get_flow_client
 from agent.db import crud
+from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
 
 __all__ = ["router", "cleanup_old_staging_files"]
 
@@ -1274,6 +1275,7 @@ async def _run_creative_campaign_pre_provider_lint(
     *,
     product_id: str,
     poster_copy_set_id: str | None,
+    copy_v2_resolution: object | None = None,
     prompt: str,
     image_model: str | None,
     output_intent: str | None,
@@ -1284,14 +1286,11 @@ async def _run_creative_campaign_pre_provider_lint(
 
     The Poster Prompt Draft endpoint is a useful earlier check, but it is not
     the final transport authority. This read-only gate re-resolves the approved
-    copy set, campaign brief and reference pack at the same request boundary so
-    a stale or hand-crafted IMG payload cannot bypass Campaign governance.
+    V2 binding (or the maintenance-only historical copy set), campaign brief
+    and reference pack at the same request boundary so a stale or hand-crafted
+    IMG payload cannot bypass Campaign governance.
     """
     from agent import config
-    from agent.models.poster_copy_set import (
-        STATUS_POSTER_COPY_APPROVED,
-        serialize_poster_copy_set,
-    )
     from agent.services.poster_campaign_design_service import (
         build_campaign_design_brief,
         score_campaign_copy_route,
@@ -1300,17 +1299,41 @@ async def _run_creative_campaign_pre_provider_lint(
     from agent.services.product_reference_pack_service import get_reference_pack
 
     copy_id = str(poster_copy_set_id or "").strip()
-    if not copy_id:
-        raise HTTPException(422, "POSTER_COPY_SET_REQUIRED_FOR_CREATIVE_CAMPAIGN")
-    copy_row = await crud.get_poster_copy_set(copy_id)
-    if not copy_row:
-        raise HTTPException(404, "POSTER_COPY_SET_NOT_FOUND")
-    if str(copy_row.get("product_id") or "").strip() != str(product_id).strip():
-        raise HTTPException(422, "POSTER_COPY_SET_PRODUCT_MISMATCH")
-    if copy_row.get("status") != STATUS_POSTER_COPY_APPROVED:
-        raise HTTPException(409, "POSTER_COPY_SET_APPROVAL_REQUIRED")
+    if not legacy_copy_maintenance_enabled():
+        if copy_id:
+            raise HTTPException(410, "LEGACY_POSTER_COPY_INPUT_DISABLED")
+        resolution = copy_v2_resolution
+        binding = getattr(resolution, "binding", None)
+        projection = getattr(resolution, "projection", None)
+        derived = getattr(projection, "derived_copy", None)
+        if binding is None or derived is None or getattr(resolution, "lane", "") != "POSTER_BUILDER":
+            raise HTTPException(409, "COPY_V2_POSTER_BINDING_REQUIRED")
+        copy_id = str(binding.binding_id)
+        copy_set = {
+            "objective": "Product Hero",
+            "angle": str(getattr(derived, "hook", "") or ""),
+            "primary_message": str(getattr(derived, "hook", "") or ""),
+            "support_message": str(getattr(derived, "body", "") or ""),
+            "proof_points": [str(getattr(derived, "body", "") or "")],
+            "cta": str(getattr(derived, "cta", "") or ""),
+            "campaign_copy_route_id": copy_id,
+        }
+    else:
+        from agent.models.poster_copy_set import (
+            STATUS_POSTER_COPY_APPROVED,
+            serialize_poster_copy_set,
+        )
 
-    copy_set = serialize_poster_copy_set(copy_row)
+        if not copy_id:
+            raise HTTPException(422, "POSTER_COPY_SET_REQUIRED_FOR_CREATIVE_CAMPAIGN")
+        copy_row = await crud.get_poster_copy_set(copy_id)
+        if not copy_row:
+            raise HTTPException(404, "POSTER_COPY_SET_NOT_FOUND")
+        if str(copy_row.get("product_id") or "").strip() != str(product_id).strip():
+            raise HTTPException(422, "POSTER_COPY_SET_PRODUCT_MISMATCH")
+        if copy_row.get("status") != STATUS_POSTER_COPY_APPROVED:
+            raise HTTPException(409, "POSTER_COPY_SET_APPROVAL_REQUIRED")
+        copy_set = serialize_poster_copy_set(copy_row)
     brief = await build_campaign_design_brief(
         product_id,
         objective=str(copy_set.get("objective") or "Product Hero"),
@@ -1463,6 +1486,7 @@ async def generate(body: GenerateRequest):
             await _run_creative_campaign_pre_provider_lint(
                 product_id=body.product_id,
                 poster_copy_set_id=body.poster_copy_set_id,
+                copy_v2_resolution=v2_resolution,
                 prompt=generation_prompt,
                 image_model=body.image_model,
                 output_intent=body.output_intent,
@@ -3469,6 +3493,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                 await _run_creative_campaign_pre_provider_lint(
                     product_id=str(body["product_id"]),
                     poster_copy_set_id=body.get("poster_copy_set_id"),
+                    copy_v2_resolution=v2_resolution,
                     prompt=prompt,
                     image_model=body.get("image_model"),
                     output_intent=body.get("output_intent"),

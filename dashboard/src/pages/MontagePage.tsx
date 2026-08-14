@@ -89,6 +89,7 @@ export default function MontagePage() {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [v4Open, setV4Open] = useState<Record<number, boolean>>({});
+	const [v2CopyReady, setV2CopyReady] = useState(false);
 	const sessionResults = useMemo(
 		() => collectMontageSessionResults(run, assembleResult),
 		[run, assembleResult],
@@ -139,7 +140,10 @@ export default function MontagePage() {
 		clipDuration,
 	);
 	const canOperate =
-		Boolean(selectedProduct) && settingsAvailable && Boolean(validSelection);
+		Boolean(selectedProduct) &&
+		settingsAvailable &&
+		Boolean(validSelection) &&
+		v2CopyReady;
 	const packageCount =
 		run?.scenes?.filter((s) => s.workspace_execution_package_id).length ?? 0;
 
@@ -201,6 +205,7 @@ export default function MontagePage() {
 				product_media_id: selectedProduct.media_id ?? null,
 				model: validSelection.model,
 				duration_seconds: validSelection.durationSeconds,
+				copy_v2_context: { lane: "MONTAGE" },
 			});
 			setPlan(next);
 		} catch (err: unknown) {
@@ -231,6 +236,7 @@ export default function MontagePage() {
 				product_media_id: selectedProduct.media_id ?? null,
 				model: validSelection.model,
 				duration_seconds: validSelection.durationSeconds,
+				copy_v2_context: { lane: "MONTAGE" },
 			});
 			setRun(res);
 			try {
@@ -410,6 +416,7 @@ export default function MontagePage() {
 					| Record<string, unknown>
 					| undefined
 				}
+				onReadyChange={setV2CopyReady}
 			/>
 
 			<div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">

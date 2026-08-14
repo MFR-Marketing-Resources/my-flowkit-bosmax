@@ -24,6 +24,7 @@ from agent.services.copy_execution_resolver import (
     lane_for_request,
     resolve_persisted_copy_execution_binding,
 )
+from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
 from agent.services.claim_safe_rewrite_service import get_stored_claim_safe_package
 from agent.services.product_intelligence import enrich_product
 from agent.services.production_prompt_approval_service import scan_prompt_text
@@ -316,6 +317,12 @@ async def create_workspace_execution_package(
     except CopyExecutionResolutionError as exc:
         raise CopyBindingError(exc.code, status_code=exc.status_code, detail=exc.details or str(exc)) from exc
     v2_enabled = v2_resolution.v2_enabled
+    if copy_set_id and not legacy_copy_maintenance_enabled():
+        raise CopyBindingError(
+            "LEGACY_COPY_STORAGE_DISABLED",
+            status_code=410,
+            detail="Client-selected legacy CopySet IDs are disabled; the persisted V2 binding is authoritative.",
+        )
     # Preserve the existing flag-off production-copy gate exactly. V2-enabled
     # video requests never reach this branch: they carry a validated V2 binding.
     if normalized_mode != "IMG" and not copy_set_id and not v2_enabled:

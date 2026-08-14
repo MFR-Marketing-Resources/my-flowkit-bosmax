@@ -30,6 +30,7 @@ from agent.services.poster_campaign_design_service import (
     build_campaign_design_brief,
     generate_campaign_copy_routes,
 )
+from agent.api.legacy_copy_guard import require_legacy_copy_maintenance
 
 router = APIRouter(prefix="/poster", tags=["poster"])
 
@@ -57,6 +58,7 @@ async def campaign_design_brief(body: CampaignDesignBriefRequest):
 @router.post("/campaign-copy-routes")
 async def campaign_copy_routes(body: CampaignCopyRoutesRequest):
     """Return five scored routes; provider invocation is explicit and bounded."""
+    require_legacy_copy_maintenance()
     try:
         brief = await build_campaign_design_brief(
             body.product_id,
@@ -90,6 +92,8 @@ async def get_poster_builder_settings() -> PosterBuilderSettingsResponse:
 @router.post("/prompt-draft")
 async def create_poster_prompt_draft(body: PosterPromptDraftRequest):
     """Assemble a poster prompt package from product readiness + operator copy fields."""
+    if body.copy_set_id or body.poster_copy_set_id:
+        require_legacy_copy_maintenance()
     try:
         resolution = await resolve_persisted_copy_execution_binding(
             body.product_id,
@@ -107,7 +111,7 @@ async def create_poster_prompt_draft(body: PosterPromptDraftRequest):
                     "usp_2": "",
                     "usp_3": "",
                     "cta": derived.cta if derived else "",
-                    "copy_source": "APPROVED_COPY_SET",
+                    "copy_source": "COPY_BLUEPRINT_V2_APPROVED",
                     "copy_fallback_confirmed": False,
                     "poster_copy_set_id": "",
                 }
@@ -152,6 +156,7 @@ async def create_poster_prompt_draft(body: PosterPromptDraftRequest):
 @router.post("/copy-recommendations")
 async def poster_copy_recommendations(body: PosterCopyRecommendationRequest):
     """Recommend poster copy kits from approved/draft copy sets, AI assist, or safe fallbacks."""
+    require_legacy_copy_maintenance()
     try:
         result = await PosterCopyRecommendationService.recommend(body)
     except ValueError as exc:
@@ -183,4 +188,5 @@ async def poster_copy_fit(body: PosterCopyFitRequest):
     EXPLICIT-only (operator-initiated), suggestion-only (returns candidate fields;
     never persists/approves/binds), and fail-closed when the text_assist provider
     lane is unconfigured — the original copy is returned untouched with a reason."""
+    require_legacy_copy_maintenance()
     return fit_poster_copy(body).model_dump(mode="json")

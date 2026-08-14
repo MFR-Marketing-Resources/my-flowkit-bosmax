@@ -26,6 +26,7 @@ export interface CopyArchitectureV2LaneDescriptor {
 	current_page_entry_point: string;
 	adapter: "VideoCopyProjection" | "ImageCopyProjection";
 	phase3_scope: string;
+	ui_surface_state: "ACTIVE" | "DORMANT_REDIRECTED";
 }
 export interface CopyArchitectureV2FeatureFlags {
 	flag_name: string;
@@ -38,6 +39,8 @@ export interface CopyArchitectureV2FeatureFlags {
 
 export interface CopyArchitectureV2ConsumerStatus {
 	version: "2";
+	v2_only: boolean;
+	legacy_storage_enabled: boolean;
 	feature_flags: CopyArchitectureV2FeatureFlags;
 	legacy_path_unchanged: boolean;
 	binding_required_when_enabled: boolean;

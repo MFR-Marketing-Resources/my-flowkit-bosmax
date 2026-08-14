@@ -71,3 +71,50 @@ def test_complete_json_drains(monkeypatch):
     p._usage_by_call_id.clear()
     p.complete_json("sys", "user")
     assert p._usage_by_call_id == {}  # complete_json does not surface usage; it drains
+
+
+def test_complete_json_receipt_is_bound_to_exact_call_under_interleaving(monkeypatch):
+    def fake_complete(messages, **kw):
+        exact_call = p._begin_provider_call(
+            provider_id="deepseek",
+            model="exact-model",
+            transport="openai_compatible",
+            structured_output_requested=True,
+            json_output_mode="json_object",
+        )
+        later_call = p._begin_provider_call(
+            provider_id="openai",
+            model="later-model",
+            transport="openai_compatible",
+            structured_output_requested=True,
+            json_output_mode="json_object",
+        )
+        p._finish_provider_call(
+            exact_call,
+            response_status="SUCCEEDED",
+            http_status=200,
+            usage={"prompt_tokens": 3},
+            finish_reason="stop",
+        )
+        p._finish_provider_call(
+            later_call,
+            response_status="SUCCEEDED",
+            http_status=201,
+            usage={"prompt_tokens": 9},
+            finish_reason="stop",
+        )
+        return '{"ok": 1}', "stop", exact_call
+
+    monkeypatch.setattr(p, "is_configured", lambda: True)
+    monkeypatch.setattr(p, "_complete", fake_complete)
+    parsed, receipt = p.complete_json_with_receipt("sys", "user")
+
+    assert parsed == {"ok": 1}
+    assert receipt["provider_id"] == "deepseek"
+    assert receipt["model_id"] == "exact-model"
+    assert receipt["http_status"] == 200
+    assert receipt["json_parse_status"] == "VALID"
+    assert receipt["usage"] == {"prompt_tokens": 3}
+    assert p.provider_call_receipt()["last_call"]["model_id"] == "later-model"
+    p._pop_usage(receipt["call_id"] + 1)
+    p._pop_provider_call_receipt(receipt["call_id"] + 1)

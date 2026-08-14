@@ -506,7 +506,7 @@ def bind_copy_blueprint_v2(
             "COPY_V2_BINDING_NOT_REQUIRED",
             f"lane {descriptor.lane_id} is explicitly copy-free and needs no binding",
         )
-    flags = feature_flags or CopyBlueprintV2FeatureFlagState()
+    flags = feature_flags or CopyBlueprintV2FeatureFlagState.from_environment()
     if not flags.enabled or flags.state == "OFF":
         raise CopyBlueprintV2Error("COPY_V2_FEATURE_FLAG_OFF", "V2 binding is disabled by default")
     if flags.shadow_mode or flags.state == "SHADOW":

@@ -1,9 +1,9 @@
-"""Additive Copy Architecture V2 domain contracts.
+"""Copy Architecture V2 domain contracts.
 
-The legacy ``CopySet`` remains the production authority while the V2 flag is
-off.  These models are deliberately self-contained: they describe a versioned
-blueprint, its evidence/approval lineage, and the execution binding without
-changing the legacy database rows or compiler input shape.
+Copy Register V2 is the sole active production copy authority.  These models
+are deliberately self-contained: they describe a versioned blueprint, its
+evidence/approval lineage, and the execution binding without depending on the
+archived legacy copy ledgers.
 
 The ordered ``stages`` tuple is the only authored V2 copy source of truth.
 Hook/body/CTA are exposed by :meth:`CopyBlueprintV2.derived_projections` and
@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 V2_SCHEMA_VERSION = "2"
 V2_FEATURE_FLAG = "COPY_BLUEPRINT_V2_ENABLED"
 V2_SHADOW_FLAG = "COPY_BLUEPRINT_V2_SHADOW_MODE"
+LEGACY_COPY_MAINTENANCE_FLAG = "COPY_LEGACY_MAINTENANCE_MODE"
 V2_BINDING_VERSION = "copy-execution-binding-v2"
 
 BlueprintStatus = Literal[
@@ -38,6 +39,17 @@ CopyPolicy = Literal["REQUIRED", "NOT_REQUIRED"]
 FeatureFlagStateValue = Literal["OFF", "SHADOW", "PILOT", "ON"]
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def legacy_copy_maintenance_enabled() -> bool:
+    """Return whether an operator explicitly enabled pre-cutover recovery mode."""
+
+    return os.getenv(LEGACY_COPY_MAINTENANCE_FLAG, "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def canonicalize_evidence_text(value: str) -> str:
@@ -422,7 +434,12 @@ class EvidenceLineage(BaseModel):
 
 
 class CopyBlueprintV2FeatureFlagState(BaseModel):
-    """Default-off rollout state carried by every V2 binding."""
+    """V2-only production state carried by every execution binding.
+
+    ADR-011 made V2 the normal runtime authority.  OFF/SHADOW remain modelled
+    only so an immutable pre-cutover release can be exercised in explicit
+    maintenance mode; ordinary production requests cannot select them.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -448,19 +465,30 @@ class CopyBlueprintV2FeatureFlagState(BaseModel):
 
     @classmethod
     def from_environment(cls, *, scope: str = "", pilot_scope: tuple[str, ...] = ()) -> "CopyBlueprintV2FeatureFlagState":
+        effective_scope = scope or "global"
+        maintenance = legacy_copy_maintenance_enabled()
+        if not maintenance:
+            return cls(
+                enabled=True,
+                shadow_mode=False,
+                scope=effective_scope,
+                pilot_scope=pilot_scope,
+                state="ON",
+            )
+
         enabled = os.getenv(V2_FEATURE_FLAG, "0").strip().lower() in {"1", "true", "yes", "on"}
         shadow = os.getenv(V2_SHADOW_FLAG, "0").strip().lower() in {"1", "true", "yes", "on"}
         state = "OFF"
         if enabled and shadow:
             state = "SHADOW"
-        elif enabled and scope and scope in pilot_scope:
+        elif enabled and effective_scope in pilot_scope:
             state = "PILOT"
         elif enabled:
             state = "ON"
         return cls(
             enabled=enabled,
             shadow_mode=shadow,
-            scope=scope,
+            scope=effective_scope,
             pilot_scope=pilot_scope,
             state=state,
         )

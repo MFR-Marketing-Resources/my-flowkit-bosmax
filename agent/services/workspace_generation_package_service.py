@@ -35,6 +35,7 @@ from agent.services.copy_execution_resolver import (
     lane_for_request,
     resolve_persisted_copy_execution_binding,
 )
+from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
 from agent.services import creative_recipe_service as _recipe
 from agent.services.i2v_semantic_slot_resolver_service import resolve_i2v_semantic_slots
 from agent.models.i2v_semantic_slot_resolver import I2VSemanticSlotResolverRequest
@@ -327,6 +328,12 @@ async def create_f2v_generation_package(
         source_mode=resolved_source_lane,
         context=copy_v2_context,
     )
+    if copy_set_id and not legacy_copy_maintenance_enabled():
+        raise CopyBindingError(
+            "LEGACY_COPY_STORAGE_DISABLED",
+            status_code=410,
+            detail="Client-selected legacy CopySet IDs are disabled; use the active V2 binding.",
+        )
     copy_intelligence = await _resolve_bound_copy_intelligence(
         product_id,
         None if v2_resolution.v2_enabled else copy_set_id,
@@ -581,6 +588,12 @@ async def create_i2v_generation_package(
         mode=mode,
         context=copy_v2_context,
     )
+    if copy_set_id and not legacy_copy_maintenance_enabled():
+        raise CopyBindingError(
+            "LEGACY_COPY_STORAGE_DISABLED",
+            status_code=410,
+            detail="Client-selected legacy CopySet IDs are disabled; use the active V2 binding.",
+        )
     copy_intelligence = await _resolve_bound_copy_intelligence(
         product_id,
         None if v2_resolution.v2_enabled else copy_set_id,
@@ -939,6 +952,12 @@ async def create_t2v_generation_package(
         mode=mode,
         context=copy_v2_context,
     )
+    if copy_set_id and not legacy_copy_maintenance_enabled():
+        raise CopyBindingError(
+            "LEGACY_COPY_STORAGE_DISABLED",
+            status_code=410,
+            detail="Client-selected legacy CopySet IDs are disabled; use the active V2 binding.",
+        )
     copy_intelligence = await _resolve_bound_copy_intelligence(
         product_id,
         None if v2_resolution.v2_enabled else copy_set_id,
@@ -1966,6 +1985,83 @@ def _copy_preview_compile_identity(
     return logical_mode, source_mode
 
 
+def _v2_authority_metadata(resolution: CopyExecutionResolution) -> dict[str, Any]:
+    """Return the immutable identity used by V2-only batch/readiness seams."""
+
+    binding = resolution.binding
+    return {
+        "copy_authority": "COPY_BLUEPRINT_V2",
+        "copy_policy": resolution.copy_policy,
+        "lane": resolution.lane,
+        "binding_id": binding.binding_id if binding is not None else None,
+        "blueprint_id": binding.blueprint_id if binding is not None else None,
+        "revision": binding.revision if binding is not None else None,
+        "formula_id": binding.formula_id if binding is not None else None,
+        "formula_version": binding.formula_version if binding is not None else None,
+        "approval_snapshot_id": (
+            binding.approval_snapshot_id if binding is not None else None
+        ),
+    }
+
+
+async def _resolve_v2_batch_authority(
+    product_id: str,
+    *,
+    logical_mode: str,
+    source_mode: str | None = None,
+) -> CopyExecutionResolution | None:
+    """Resolve V2 before a batch boundary, or preserve explicit maintenance.
+
+    Returning ``None`` is possible only under the owner-controlled legacy
+    maintenance kill-switch.  Normal runtime therefore cannot enter a legacy
+    CopySet rotation/read path by accident.
+    """
+
+    if legacy_copy_maintenance_enabled():
+        return None
+    return await _resolve_v2_package_context(
+        product_id,
+        mode=logical_mode,
+        source_mode=source_mode,
+    )
+
+
+async def _compile_v2_authority_preview(
+    *,
+    product_id: str,
+    logical_mode: str,
+    source_mode: str | None,
+    generation_mode: str,
+    duration_seconds: int,
+    requested_total_duration_seconds: int | None,
+    target_language: str,
+    resolution: CopyExecutionResolution,
+) -> dict:
+    """Compile one persisted V2 authority without any legacy identifier."""
+
+    from agent.services import workspace_execution_package_service as _wxp
+
+    compile_mode, compile_source_mode = _copy_preview_compile_identity(
+        logical_mode, source_mode
+    )
+    return await _wxp.compile_workspace_prompt_preview(
+        product_id=product_id,
+        mode=compile_mode,
+        duration_seconds=int(duration_seconds),
+        generation_mode=generation_mode,
+        target_language=target_language,
+        source_mode=compile_source_mode,
+        engine_duration_target=(
+            "GOOGLE_FLOW"
+            if str(generation_mode or "").strip().upper() == "EXTEND"
+            else None
+        ),
+        requested_total_duration_seconds=requested_total_duration_seconds,
+        copy_set_id=None,
+        copy_v2_context=copy_v2_handoff_context(None, resolution),
+    )
+
+
 async def evaluate_copy_pool_readiness(
     *,
     product_id: str,
@@ -1993,15 +2089,88 @@ async def evaluate_copy_pool_readiness(
     """
     import hashlib
 
-    from agent.services import batch_prompt_planner as _planner  # noqa: F401
-    from agent.services import copy_rotation_service as _rotation
-    from agent.services import workspace_execution_package_service as _wxp
-
     mode = str(logical_mode or "").strip().upper()
     compile_mode, compile_source_mode = _copy_preview_compile_identity(mode, source_mode)
     n = int(quantity)
     if n < 1 or n > QUANTITY_PREVIEW_MAX:
         raise ValueError(f"QUANTITY_OUT_OF_RANGE:1..{QUANTITY_PREVIEW_MAX}")
+
+    v2_resolution = await _resolve_v2_batch_authority(
+        product_id,
+        logical_mode=mode,
+        source_mode=source_mode,
+    )
+    if v2_resolution is not None:
+        authority = _v2_authority_metadata(v2_resolution)
+        if v2_resolution.copy_policy == "NOT_REQUIRED":
+            return {
+                "product_id": product_id,
+                "quantity_requested": n,
+                "quantity_max": QUANTITY_PREVIEW_MAX,
+                "approved_copy_count": 0,
+                "approved_blueprint_count": 0,
+                "unique_dialogue_count": 0,
+                "shortage_count": 0,
+                "readiness_status": READINESS_READY,
+                "duplicate_fingerprint_groups": [],
+                "scanned_copy_set_count": 0,
+                "scanned_blueprint_count": 0,
+                "pool_scan_capped": False,
+                "compile_errors": [],
+                "next_action": None,
+                "copy_free_explicit": True,
+                **authority,
+                "credit": "NONE",
+                "provider_calls": 0,
+                "flow_calls": 0,
+            }
+
+        compiled = await _compile_v2_authority_preview(
+            product_id=product_id,
+            logical_mode=mode,
+            source_mode=source_mode,
+            generation_mode=generation_mode,
+            duration_seconds=duration_seconds,
+            requested_total_duration_seconds=requested_total_duration_seconds,
+            target_language=target_language,
+            resolution=v2_resolution,
+        )
+        dialogue = _norm_dialogue(_preview_dialogue_text(compiled))
+        approved_dialogue = _norm_dialogue(v2_resolution.approved_dialogue or "")
+        if not dialogue or dialogue != approved_dialogue:
+            raise ValueError("COPY_V2_COMPILER_MUTATION")
+        unique_dialogue_count = 1
+        shortage = max(0, n - unique_dialogue_count)
+        return {
+            "product_id": product_id,
+            "quantity_requested": n,
+            "quantity_max": QUANTITY_PREVIEW_MAX,
+            "approved_copy_count": 1,
+            "approved_blueprint_count": 1,
+            "unique_dialogue_count": unique_dialogue_count,
+            "shortage_count": shortage,
+            "readiness_status": (
+                READINESS_READY if shortage == 0 else READINESS_SHORTAGE
+            ),
+            "duplicate_fingerprint_groups": [],
+            "scanned_copy_set_count": 0,
+            "scanned_blueprint_count": 1,
+            "pool_scan_capped": False,
+            "compile_errors": [],
+            "next_action": (
+                None if shortage == 0 else "V2_MULTI_BLUEPRINT_ROTATION_REQUIRED"
+            ),
+            **authority,
+            "credit": "NONE",
+            "provider_calls": 0,
+            "flow_calls": 0,
+        }
+
+    # Explicit maintenance mode only: preserve the historical CopySet pool
+    # implementation byte-for-byte below this boundary.
+    from agent.services import batch_prompt_planner as _planner  # noqa: F401
+    from agent.services import copy_rotation_service as _rotation
+    from agent.services import workspace_execution_package_service as _wxp
 
     is_extend = str(generation_mode or "").strip().upper() == "EXTEND"
     engine_duration_target = "GOOGLE_FLOW" if is_extend else None
@@ -2951,10 +3120,6 @@ async def preview_quantity_copy_plans(
     """
     import hashlib
 
-    from agent.services import batch_prompt_planner as _planner
-    from agent.services import copy_rotation_service as _rotation
-    from agent.services import workspace_execution_package_service as _wxp
-
     mode = str(logical_mode or "").strip().upper()
     compile_mode, compile_source_mode = _copy_preview_compile_identity(mode, source_mode)
     n = int(quantity)
@@ -2962,6 +3127,120 @@ async def preview_quantity_copy_plans(
         raise ValueError(f"QUANTITY_OUT_OF_RANGE:1..{QUANTITY_PREVIEW_MAX}")
 
     is_extend = str(generation_mode or "").strip().upper() == "EXTEND"
+
+    v2_resolution = await _resolve_v2_batch_authority(
+        product_id,
+        logical_mode=mode,
+        source_mode=source_mode,
+    )
+    if v2_resolution is not None:
+        authority = _v2_authority_metadata(v2_resolution)
+        if v2_resolution.copy_policy == "NOT_REQUIRED":
+            return {
+                "quantity_requested": n,
+                "quantity_max": QUANTITY_PREVIEW_MAX,
+                "planned_item_count": n,
+                "logical_mode": mode,
+                "generation_mode": generation_mode,
+                "variation_strategy": variation_strategy,
+                "copy_source": "COPY_NOT_REQUIRED",
+                "copy_rotation_warnings": [],
+                "items": [
+                    {
+                        "item_index": index,
+                        "variation_salt": f"v{index + 1}",
+                        "copy_variant_id": None,
+                        "hook": None,
+                        "dialogue_summary": None,
+                        "dialogue_fingerprint": None,
+                        "seam_voice": None,
+                        "compile_error": None,
+                        "copy_free_explicit": True,
+                    }
+                    for index in range(n)
+                ],
+                "dialogue_uniqueness_status": "NOT_APPLICABLE_COPY_NOT_REQUIRED",
+                "duplicate_dialogue_groups": [],
+                "blockers": [],
+                "preview_ready": True,
+                "copy_free_explicit": True,
+                **authority,
+                **_live_bulk_status_fields(),
+                "credit": "NONE",
+                "provider_calls": 0,
+                "flow_calls": 0,
+            }
+
+        compiled = await _compile_v2_authority_preview(
+            product_id=product_id,
+            logical_mode=mode,
+            source_mode=source_mode,
+            generation_mode=generation_mode,
+            duration_seconds=duration_seconds,
+            requested_total_duration_seconds=requested_total_duration_seconds,
+            target_language=target_language,
+            resolution=v2_resolution,
+        )
+        dialogue = _preview_dialogue_text(compiled)
+        norm = _norm_dialogue(dialogue)
+        approved_norm = _norm_dialogue(v2_resolution.approved_dialogue or "")
+        if not norm or norm != approved_norm:
+            raise ValueError("COPY_V2_COMPILER_MUTATION")
+        dialogue_fingerprint = hashlib.sha1(norm.encode("utf-8")).hexdigest()
+        collapsed = " ".join(dialogue.split())
+        summary = (collapsed[:220] + "…") if len(collapsed) > 220 else collapsed
+        derived = getattr(v2_resolution.projection, "derived_copy", None)
+        hook = getattr(derived, "hook", None)
+        items = [
+            {
+                "item_index": index,
+                "variation_salt": f"v{index + 1}",
+                "copy_variant_id": authority["binding_id"],
+                "blueprint_id": authority["blueprint_id"],
+                "revision": authority["revision"],
+                "hook": hook,
+                "dialogue_summary": summary,
+                "dialogue_fingerprint": dialogue_fingerprint,
+                "seam_voice": (
+                    _extract_seam_voice_preview(compiled) if is_extend else None
+                ),
+                "compile_error": None,
+            }
+            for index in range(n)
+        ]
+        verdict = _evaluate_preview_uniqueness(items)
+        blockers = list(verdict["blockers"])
+        if n > 1:
+            blockers.append(
+                "V2_MULTI_BLUEPRINT_ROTATION_REQUIRED:"
+                "one_authoritative_binding_cannot_supply_unique_batch_dialogue"
+            )
+        return {
+            "quantity_requested": n,
+            "quantity_max": QUANTITY_PREVIEW_MAX,
+            "planned_item_count": len(items),
+            "logical_mode": mode,
+            "generation_mode": generation_mode,
+            "variation_strategy": variation_strategy,
+            "copy_source": "COPY_BLUEPRINT_V2",
+            "copy_rotation_warnings": [],
+            "items": items,
+            "dialogue_uniqueness_status": verdict["status"],
+            "duplicate_dialogue_groups": verdict["duplicate_groups"],
+            "blockers": blockers,
+            "preview_ready": verdict["status"] == "UNIQUE" and not blockers,
+            **authority,
+            **_live_bulk_status_fields(),
+            "credit": "NONE",
+            "provider_calls": 0,
+            "flow_calls": 0,
+        }
+
+    # Explicit maintenance mode only: preserve historical Script Library/
+    # CopySet rotation.  Normal runtime returned above and cannot enter here.
+    from agent.services import batch_prompt_planner as _planner
+    from agent.services import copy_rotation_service as _rotation
+    from agent.services import workspace_execution_package_service as _wxp
 
     # Resolve up to N approved copy sets (deterministic LRU) — the dialogue source.
     # B-12: a variant's dialogue is a pure function of (product, lane, copy set) —
@@ -3220,15 +3499,41 @@ async def start_batch_prompt_run(
         except Exception:
             resolved_avatars = []
 
-    # Script source priority (Script Library P2): explicit hooks win, then
-    # the approved Script Library via deterministic LRU rotation, then the
-    # claim-safe hook angles from product truth (legacy fallback so products
-    # with an empty library keep working).
-    resolved_hooks = [h for h in (hook_angles or []) if h]
+    v2_resolution = await _resolve_v2_batch_authority(
+        product_id,
+        logical_mode=logical_mode,
+        source_mode=("HYBRID" if logical_mode == "HYBRID" else None),
+    )
+    v2_authority = (
+        _v2_authority_metadata(v2_resolution)
+        if v2_resolution is not None
+        else None
+    )
+
+    # Normal runtime accepts copy only from the persisted immutable V2 binding.
+    # Caller-supplied hook angles would be unapproved execution text, so they
+    # fail closed instead of overriding the registered blueprint.  The
+    # historical Script Library and claim-safe fallback remain reachable only
+    # under the explicit maintenance kill-switch.
+    requested_hooks = [h for h in (hook_angles or []) if h]
+    if v2_resolution is not None and requested_hooks:
+        raise CopyBindingError(
+            "COPY_V2_UNAPPROVED_TEXT_INPUT",
+            status_code=410,
+            detail=(
+                "Batch hook overrides are disabled in V2-only runtime; activate "
+                "approved wording in Copy Register V2."
+            ),
+        )
+    resolved_hooks = [] if v2_resolution is not None else requested_hooks
     resolved_copy_set_ids: list[str] = []
     copy_rotation_warnings: list[str] = []
-    copy_source = "EXPLICIT_HOOKS" if resolved_hooks else None
-    if not resolved_hooks:
+    copy_source = (
+        "COPY_BLUEPRINT_V2"
+        if v2_resolution is not None
+        else ("EXPLICIT_HOOKS" if resolved_hooks else None)
+    )
+    if v2_resolution is None and not resolved_hooks:
         try:
             from agent.services import copy_rotation_service as _rotation
             selection = await _rotation.select_rotation_copy_sets(product_id, quantity)
@@ -3247,7 +3552,7 @@ async def start_batch_prompt_run(
         except Exception as exc:
             _batch_logger.warning("BatchPrompt: script library unavailable: %s", exc)
             resolved_hooks, resolved_copy_set_ids = [], []
-    if not resolved_hooks and product_row:
+    if v2_resolution is None and not resolved_hooks and product_row:
         try:
             payload = json.loads(product_row.get("claim_safe_copy_payload") or "{}")
             resolved_hooks = [h for h in (payload.get("safe_hook_angles") or []) if h]
@@ -3304,6 +3609,7 @@ async def start_batch_prompt_run(
         "copy_source": copy_source,
         "copy_set_ids": resolved_copy_set_ids,
         "copy_rotation_warnings": copy_rotation_warnings,
+        "copy_architecture_v2": v2_authority,
         "finished_frame_asset_id": finished_frame_asset_id,
         "product_reference_asset_id": product_reference_asset_id,
         "anchor_warnings": anchor_warnings,
@@ -3379,6 +3685,33 @@ async def start_batch_generation(
         raise ValueError(
             "COPY_INELIGIBLE:" + ";".join(
                 f"{e['product_id']}={','.join(e['reasons'])}" for e in _inelig))
+
+    v2_authorities: list[dict[str, Any]] = []
+    if not legacy_copy_maintenance_enabled():
+        normalized_modes = [str(mode or "").strip().upper() for mode in modes]
+        unsupported = [mode for mode in normalized_modes if mode not in _MODE_CREATORS]
+        if unsupported:
+            raise ValueError(
+                "COPY_V2_UNKNOWN_LANE:" + ",".join(unsupported or ["UNKNOWN"])
+            )
+        # Prove every product/lane authority before the run row or background
+        # task exists.  A missing/stale binding therefore cannot create a
+        # partially populated batch that later falls back to legacy copy.
+        for batch_product_id in all_product_ids:
+            for batch_mode in normalized_modes:
+                resolution = await _resolve_v2_batch_authority(
+                    str(batch_product_id),
+                    logical_mode=batch_mode,
+                    source_mode=("HYBRID" if batch_mode == "HYBRID" else None),
+                )
+                assert resolution is not None
+                v2_authorities.append(
+                    {
+                        "product_id": str(batch_product_id),
+                        **_v2_authority_metadata(resolution),
+                    }
+                )
+        modes = normalized_modes
     char_slots = character_asset_ids or [None]
     scene_slots = scene_asset_ids or [None]
     style_slots = style_asset_ids or [None]
@@ -3397,6 +3730,7 @@ async def start_batch_generation(
         "scene_asset_ids": scene_asset_ids or [],
         "style_asset_ids": style_asset_ids or [],
         "img_prompt_template": img_prompt_template,
+        "copy_architecture_v2_authorities": v2_authorities,
     }
 
     run = await crud.create_batch_generation_run(

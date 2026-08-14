@@ -136,16 +136,22 @@ domains:
       - docs/copywriting/COPY_ARCHITECTURE_V2_PHASE3_CUTOVER.md
       # Formula-native Copy Register V2 clean cutover: isolated persistence,
       # explicit approval, persisted consumer bindings, and zero-credit proof.
+      - agent/api/legacy_copy_guard.py
       - agent/api/copy_register_v2.py
       - agent/services/copy_register_v2_service.py
       - dashboard/src/api/copyRegisterV2.ts
+      - dashboard/src/api/posterV2.ts
+      - scripts/migrate_copy_register_v2_only.py
       - tests/api/test_copy_register_v2_api.py
       - tests/unit/test_copy_register_v2_cutover.py
+      - tests/unit/test_copy_register_v2_only_guards.py
+      - tests/unit/test_copy_register_v2_only_migration.py
       - tests/unit/test_copy_architecture_v2_phase4_activation.py
       - docs/COPY_SELECTION_AND_COMPILER_BINDING_FOUNDATION_V1.md
       - docs/COPY_FALLBACK_EXPLICIT_CONFIRMATION_V1.md
       - agent/services/ai_copy_assist_service.py
       - agent/services/ai_copy_provider_adapter.py
+      - tests/unit/test_ai_copy_provider_usage_map.py
       - tests/unit/test_ai_copy_assist_service.py
       - tests/api/test_ai_copy_assist_api.py
       - docs/AI_COPY_ASSIST_CANDIDATE_COPY_SET_V1.md

@@ -217,21 +217,24 @@ def test_v2_approved_dialogue_is_immutable_at_compiler_boundary() -> None:
     )
     assert compiled["prompt_blocks"][0]["exact_dialogue_slice"] == approved
 
-    with pytest.raises(ValueError, match="COPY_V2_COMPILER_MUTATION"):
-        compile_ugc_video_prompt(
-            product={
-                "id": "rempah-product",
-                "name": "Rempah Nasi Khowmok",
-                "category": "SPICE_SEASONING",
-            },
-            approved_package={"mode": "F2V", "scene_context": "dapur rumah"},
-            mode="F2V",
-            source_mode="FRAMES",
-            generation_mode="SINGLE",
-            duration_seconds=8,
-            creative_treatment=treatment,
-            approved_dialogue="Approved wording that the treatment must not rewrite.",
-        )
+    replacement = "Approved wording that the treatment must not rewrite."
+    v2_compiled = compile_ugc_video_prompt(
+        product={
+            "id": "rempah-product",
+            "name": "Rempah Nasi Khowmok",
+            "category": "SPICE_SEASONING",
+        },
+        approved_package={"mode": "F2V", "scene_context": "dapur rumah"},
+        mode="F2V",
+        source_mode="FRAMES",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        creative_treatment=treatment,
+        approved_dialogue=replacement,
+    )
+    assert v2_compiled["prompt_blocks"][0]["exact_dialogue_slice"] == replacement
+    assert treatment["dialogue_text"] not in v2_compiled["final_compiled_prompt_text"]
+    assert v2_compiled["treatment_lineage"]["treatment_id"] == treatment["treatment_id"]
 def test_treatment_prompt_hash_is_deterministic() -> None:
     first = _compile("CINEMATIC")
     second = _compile("CINEMATIC")

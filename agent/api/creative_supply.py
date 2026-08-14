@@ -8,12 +8,17 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from agent.services import creative_supply_factory_service as service
+from agent.api.legacy_copy_guard import require_legacy_copy_maintenance
 
-router = APIRouter(prefix="/creative-supply", tags=["creative-supply"])
+router = APIRouter(
+    prefix="/creative-supply",
+    tags=["creative-supply"],
+    dependencies=[Depends(require_legacy_copy_maintenance)],
+)
 
 
 class RosterItem(BaseModel):

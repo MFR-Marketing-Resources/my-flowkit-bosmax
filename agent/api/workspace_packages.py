@@ -269,6 +269,11 @@ async def post_quantity_preview(request: QuantityPreviewRequest):
             quantity=request.quantity,
             target_language=request.target_language,
         )
+    except CopyBindingError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "detail": exc.detail},
+        ) from exc
     except ValueError as exc:
         message = str(exc)
         status_code = 404 if message == "PRODUCT_NOT_FOUND" else 422
@@ -294,6 +299,11 @@ async def post_copy_pool_readiness(request: QuantityPreviewRequest):
             quantity=request.quantity,
             target_language=request.target_language,
         )
+    except CopyBindingError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "detail": exc.detail},
+        ) from exc
     except ValueError as exc:
         message = str(exc)
         status_code = 404 if message == "PRODUCT_NOT_FOUND" else 422
@@ -320,6 +330,11 @@ async def post_bulk_fanout_plan(request: QuantityPreviewRequest):
             quantity=request.quantity,
             target_language=request.target_language,
         )
+    except CopyBindingError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "detail": exc.detail},
+        ) from exc
     except ValueError as exc:
         message = str(exc)
         status_code = 404 if message == "PRODUCT_NOT_FOUND" else 422
@@ -368,6 +383,11 @@ async def post_bulk_fanout_prepare(request: BulkFanoutPrepareRequest):
             character_reference_asset_id=request.character_reference_asset_id,
             scene_context_reference_asset_id=request.scene_context_reference_asset_id,
         )
+    except CopyBindingError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "detail": exc.detail},
+        ) from exc
     except ValueError as exc:
         message = str(exc)
         status_code = 404 if message == "PRODUCT_NOT_FOUND" else 409

@@ -12,7 +12,7 @@ Flow or spends video credits.
 """
 import json
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from agent.db import crud
@@ -20,8 +20,13 @@ from agent.services import ai_copy_provider_adapter as ai_provider
 from agent.services import copy_angle_derivation
 from agent.services import copy_component_author_service as author_svc
 from agent.services import copy_component_service as pool_svc
+from agent.api.legacy_copy_guard import require_legacy_copy_maintenance
 
-router = APIRouter(prefix="/copy-components", tags=["copy-components"])
+router = APIRouter(
+    prefix="/copy-components",
+    tags=["copy-components"],
+    dependencies=[Depends(require_legacy_copy_maintenance)],
+)
 
 
 class AuthorRequest(BaseModel):

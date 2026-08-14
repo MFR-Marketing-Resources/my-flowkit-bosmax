@@ -41,6 +41,12 @@ from agent.services.scene_strategy_library import (
     resolve_scene_strategy,
     select_scene_strategy_variant,
 )
+from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
+from agent.services.copy_execution_resolver import (
+    CopyExecutionResolutionError,
+    resolve_persisted_copy_execution_binding,
+)
+from agent.services import copy_register_v2_service
 
 
 MAX_ENUMERATED_COMBINATIONS = 250_000
@@ -72,6 +78,66 @@ def _stable_json(value: Any) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
+
+
+async def _v2_copy_authority_record(product_id: str, lane: str) -> dict[str, Any]:
+    """Project the canonical persisted V2 authority into P6's DNA dimensions."""
+
+    try:
+        resolution = await resolve_persisted_copy_execution_binding(product_id, lane)
+    except CopyExecutionResolutionError as exc:
+        raise CreativeProductionError(
+            exc.code,
+            str(exc),
+            status_code=exc.status_code,
+            details={"product_id": product_id, "lane": lane, "upstream": exc.details},
+        ) from exc
+
+    derived = getattr(resolution.projection, "derived_copy", None)
+    if resolution.copy_policy == "NOT_REQUIRED":
+        return {
+            "copy_set_id": f"copy-not-required:{product_id}:{lane}",
+            "copy_binding_id": None,
+            "blueprint_id": None,
+            "product_id": product_id,
+            "angle": "COPY_NOT_REQUIRED",
+            "hook": "",
+            "subhook": "",
+            "usp_set_json": "[]",
+            "cta": "",
+            "formula_family": "COPY_NOT_REQUIRED",
+            "usage_count": 0,
+            "copy_architecture_v2": resolution.to_metadata(),
+        }
+    if resolution.binding is None or derived is None:
+        raise CreativeProductionError(
+            "V2 BINDING REQUIRED",
+            "P6 requires a persisted formula-native V2 binding.",
+            status_code=409,
+            details={"product_id": product_id, "lane": lane},
+        )
+    blueprint = await copy_register_v2_service.get_blueprint(
+        resolution.binding.blueprint_id,
+        resolution.binding.revision,
+    )
+    return {
+        # Kept as a JSON dimension key for historical P6 row compatibility; the
+        # value is a V2 binding identity and is never looked up in copy_set.
+        "copy_set_id": resolution.binding.binding_id,
+        "copy_binding_id": resolution.binding.binding_id,
+        "blueprint_id": resolution.binding.blueprint_id,
+        "revision": resolution.binding.revision,
+        "product_id": product_id,
+        "angle": blueprint.angle.definition,
+        "hook": derived.hook,
+        "subhook": "",
+        "usp_set_json": _stable_json([derived.body] if derived.body else []),
+        "cta": derived.cta,
+        "formula_family": resolution.binding.formula_id,
+        "formula_version": resolution.binding.formula_version,
+        "usage_count": 0,
+        "copy_architecture_v2": resolution.to_metadata(),
+    }
 
 
 def _sha(value: Any) -> str:
@@ -658,6 +724,37 @@ def _treatment_error(
     )
 
 
+def _v2_visual_treatment_projection(projection: dict[str, Any]) -> dict[str, Any]:
+    """Remove retired copy authority from an active P6 treatment projection."""
+
+    result = json.loads(_stable_json(projection))
+    for field in (
+        "copy_set_id",
+        "copy_set_sha256",
+        "content_angle",
+        "dialogue_text",
+        "dialogue_sha256",
+    ):
+        result.pop(field, None)
+    dependencies = dict(result.get("dependency_hashes") or {})
+    dependencies.pop("copy_set_sha256", None)
+    dependencies.pop("dialogue_sha256", None)
+    result["dependency_hashes"] = dependencies
+    segment_plan = result.get("segment_plan")
+    if isinstance(segment_plan, dict):
+        for segment in segment_plan.get("segments") or []:
+            if not isinstance(segment, dict):
+                continue
+            segment["exact_dialogue_slice"] = ""
+            allocation = segment.get("planner_allocation")
+            if isinstance(allocation, dict):
+                allocation["exact_dialogue_slice"] = ""
+                allocation.pop("full_dialogue_text", None)
+    result["copy_authority"] = "COPY_REGISTER_V2_ONLY"
+    result["historical_copy_excluded"] = True
+    return result
+
+
 async def resolve_treatment_authority(
     treatment_id: str,
     *,
@@ -734,7 +831,11 @@ async def resolve_treatment_authority(
             details={"treatment_id": treatment_id},
         )
     try:
-        current = await treatment_service._revalidate(row)
+        current = (
+            await treatment_service._revalidate(row)
+            if legacy_copy_maintenance_enabled()
+            else treatment_service.revalidate_stored_treatment_receipt(row)
+        )
     except treatment_service.CreativeTreatmentError as exc:
         code = (
             "TREATMENT_HASH_STALE"
@@ -883,9 +984,13 @@ async def resolve_treatment_authority(
         },
     }
     if expected is not None:
-        if expected.get("dependency_hashes") != projection[
-            "dependency_hashes"
-        ]:
+        expected_dependencies = dict(expected.get("dependency_hashes") or {})
+        current_dependencies = dict(projection["dependency_hashes"])
+        if not legacy_copy_maintenance_enabled():
+            for field in ("copy_set_sha256", "dialogue_sha256"):
+                expected_dependencies.pop(field, None)
+                current_dependencies.pop(field, None)
+        if expected_dependencies != current_dependencies:
             raise _treatment_error(
                 "TREATMENT_DEPENDENCY_STALE",
                 "Stored P6 treatment dependencies no longer match authority.",
@@ -911,7 +1016,11 @@ async def resolve_treatment_authority(
                 status_code=409,
                 details={"treatment_id": treatment_id},
             )
-    return projection
+    return (
+        projection
+        if legacy_copy_maintenance_enabled()
+        else _v2_visual_treatment_projection(projection)
+    )
 
 
 async def resolve_treatment_availability(
@@ -1234,6 +1343,14 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
         "controlled_reuse_max_per_dna": body.controlled_reuse_max_per_dna,
         "product_video_allocations": allocation_snapshot,
     }
+    if not legacy_copy_maintenance_enabled():
+        pool_snapshot.update(
+            {
+                "copy_set_ids": [],
+                "poster_copy_set_ids": [],
+                "copy_authority": "COPY_REGISTER_V2_ONLY",
+            }
+        )
     if body.copy_v2_context is not None:
         pool_snapshot["copy_v2_context"] = body.copy_v2_context
     if availability is not None:
@@ -1641,20 +1758,45 @@ async def get_governed_pool_authority(
     }
     copy_sets: list[dict[str, Any]] = []
     poster_copy_sets: list[dict[str, Any]] = []
+    copy_bindings: list[dict[str, Any]] = []
     avatar_profiles: list[dict[str, Any]] = []
     blockers: list[dict[str, Any]] = []
     avatar_index = {
         str(row["avatar_code"]): row for row in avatar_registry.list_pool()
     }
     for product_id in body.product_ids:
-        copy_sets.extend(
-            await copy_rotation_service.list_eligible_copy_sets(product_id)
-        )
-        poster_copy_sets.extend(
-            row
-            for row in await crud.list_poster_copy_sets_for_product(product_id)
-            if row.get("status") == "POSTER_COPY_APPROVED"
-        )
+        if legacy_copy_maintenance_enabled():
+            copy_sets.extend(
+                await copy_rotation_service.list_eligible_copy_sets(product_id)
+            )
+            poster_copy_sets.extend(
+                row
+                for row in await crud.list_poster_copy_sets_for_product(product_id)
+                if row.get("status") == "POSTER_COPY_APPROVED"
+            )
+        else:
+            for lane in ("PRODUCTION_STUDIO_P6", "POSTER_BUILDER"):
+                try:
+                    authority = await _v2_copy_authority_record(product_id, lane)
+                    copy_bindings.append(
+                        {
+                            "product_id": product_id,
+                            "lane": lane,
+                            "binding_id": authority.get("copy_binding_id"),
+                            "blueprint_id": authority.get("blueprint_id"),
+                            "revision": authority.get("revision"),
+                            "formula_id": authority.get("formula_family"),
+                        }
+                    )
+                except CreativeProductionError as exc:
+                    blockers.append(
+                        {
+                            "code": exc.code,
+                            "product_id": product_id,
+                            "lane": lane,
+                            "details": exc.details,
+                        }
+                    )
         selection = await crud.get_creative_product_selection(product_id)
         avatar_code = str(
             (selection or {}).get("selected_avatar_code") or ""
@@ -1702,6 +1844,12 @@ async def get_governed_pool_authority(
         "products": [products[pid] for pid in body.product_ids if products[pid]],
         "copy_sets": copy_sets,
         "poster_copy_sets": poster_copy_sets,
+        "copy_bindings": copy_bindings,
+        "copy_authority": (
+            "LEGACY_MAINTENANCE"
+            if legacy_copy_maintenance_enabled()
+            else "COPY_REGISTER_V2_ONLY"
+        ),
         "avatar_profiles": avatar_profiles,
         # Deliberately empty: product visuals are resolved per product from
         # Product Registration's approved Official Product Visual at compile /
@@ -1875,56 +2023,84 @@ async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
             creative_selections[product_id] = selection
 
     copy_sets: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for copy_set_id in _unique(pool.get("copy_set_ids") or []):
-        row = await crud.get_copy_set(copy_set_id)
-        if (
-            row is None
-            or row.get("status") != "COPY_APPROVED"
-            or int(row.get("archived") or 0)
-            or int(row.get("usage_count") or 0)
-            >= copy_rotation_service.REUSE_CAP
-        ):
-            blockers.append(
-                {
-                    "code": "COPY_SET_NOT_ROTATION_ELIGIBLE",
-                    "copy_set_id": copy_set_id,
-                }
-            )
-            continue
-        product_id = str(row.get("product_id") or "")
-        if product_id not in products:
-            blockers.append(
-                {
-                    "code": "COPY_SET_PRODUCT_OUT_OF_SCOPE",
-                    "copy_set_id": copy_set_id,
-                    "product_id": product_id,
-                }
-            )
-            continue
-        copy_sets[product_id].append(row)
-
     poster_copy_sets: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for copy_set_id in _unique(pool.get("poster_copy_set_ids") or []):
-        row = await crud.get_poster_copy_set(copy_set_id)
-        if row is None or row.get("status") != "POSTER_COPY_APPROVED":
-            blockers.append(
-                {
-                    "code": "POSTER_COPY_SET_NOT_APPROVED",
-                    "poster_copy_set_id": copy_set_id,
-                }
-            )
-            continue
-        product_id = str(row.get("product_id") or "")
-        if product_id not in products:
-            blockers.append(
-                {
-                    "code": "POSTER_COPY_SET_PRODUCT_OUT_OF_SCOPE",
-                    "poster_copy_set_id": copy_set_id,
-                    "product_id": product_id,
-                }
-            )
-            continue
-        poster_copy_sets[product_id].append(row)
+    image_copy_authorities: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    if legacy_copy_maintenance_enabled():
+        for copy_set_id in _unique(pool.get("copy_set_ids") or []):
+            row = await crud.get_copy_set(copy_set_id)
+            if (
+                row is None
+                or row.get("status") != "COPY_APPROVED"
+                or int(row.get("archived") or 0)
+                or int(row.get("usage_count") or 0)
+                >= copy_rotation_service.REUSE_CAP
+            ):
+                blockers.append(
+                    {
+                        "code": "COPY_SET_NOT_ROTATION_ELIGIBLE",
+                        "copy_set_id": copy_set_id,
+                    }
+                )
+                continue
+            product_id = str(row.get("product_id") or "")
+            if product_id not in products:
+                blockers.append(
+                    {
+                        "code": "COPY_SET_PRODUCT_OUT_OF_SCOPE",
+                        "copy_set_id": copy_set_id,
+                        "product_id": product_id,
+                    }
+                )
+                continue
+            copy_sets[product_id].append(row)
+
+        for copy_set_id in _unique(pool.get("poster_copy_set_ids") or []):
+            row = await crud.get_poster_copy_set(copy_set_id)
+            if row is None or row.get("status") != "POSTER_COPY_APPROVED":
+                blockers.append(
+                    {
+                        "code": "POSTER_COPY_SET_NOT_APPROVED",
+                        "poster_copy_set_id": copy_set_id,
+                    }
+                )
+                continue
+            product_id = str(row.get("product_id") or "")
+            if product_id not in products:
+                blockers.append(
+                    {
+                        "code": "POSTER_COPY_SET_PRODUCT_OUT_OF_SCOPE",
+                        "poster_copy_set_id": copy_set_id,
+                        "product_id": product_id,
+                    }
+                )
+                continue
+            poster_copy_sets[product_id].append(row)
+    else:
+        for product_id in products:
+            try:
+                if int(plan.get("target_video_count") or 0) > 0:
+                    copy_sets[product_id].append(
+                        await _v2_copy_authority_record(
+                            product_id,
+                            "PRODUCTION_STUDIO_P6",
+                        )
+                    )
+                if int(plan.get("target_image_count") or 0) > 0:
+                    image_copy_authorities[product_id].append(
+                        await _v2_copy_authority_record(product_id, "IMAGE_GEN")
+                    )
+                if int(plan.get("target_poster_count") or 0) > 0:
+                    poster_copy_sets[product_id].append(
+                        await _v2_copy_authority_record(product_id, "POSTER_BUILDER")
+                    )
+            except CreativeProductionError as exc:
+                blockers.append(
+                    {
+                        "code": exc.code,
+                        "product_id": product_id,
+                        "details": exc.details,
+                    }
+                )
 
     avatar_index = {
         str(row["avatar_code"]): row for row in avatar_registry.list_pool()
@@ -2093,6 +2269,7 @@ async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
         "products": products,
         "copy_sets": copy_sets,
         "poster_copy_sets": poster_copy_sets,
+        "image_copy_authorities": image_copy_authorities,
         "avatar_profiles": avatar_profiles,
         "assets": assets,
         "approved_layouts": {
@@ -2341,6 +2518,15 @@ def _product_dimension_rows(
             for treatment in approved["treatments"]
             if treatment["product_id"] == product_id
         ]
+        v2_copy_dimensions: dict[str, str] | None = None
+        if not legacy_copy_maintenance_enabled():
+            copy_authorities = approved["copy_sets"].get(product_id) or []
+            if not copy_authorities:
+                blockers.append(
+                    {"code": "V2 BINDING REQUIRED", "product_id": product_id}
+                )
+                return len(treatment_rows), [], blockers
+            v2_copy_dimensions = _copy_dimensions(copy_authorities[0], near_threshold)
         rows: list[dict[str, Any]] = []
         for treatment in treatment_rows:
             asset_by_role = {
@@ -2389,24 +2575,27 @@ def _product_dimension_rows(
                 )
                 continue
             group = treatment.get("variation_group") or {}
+            copy_dimensions = v2_copy_dimensions or {
+                "copy_set_id": treatment["copy_set_id"],
+                "copy_identity_sha256": treatment["dependency_hashes"][
+                    "copy_set_sha256"
+                ],
+                "marketing_angle": treatment["content_angle"],
+                "hook": treatment["dialogue_text"],
+                "cta": "",
+                "formula_family": "CREATIVE_TREATMENT",
+                "claim_safety_status": "APPROVED",
+                "copy_usage_count": "0",
+                "near_duplicate_status": "CLEAR",
+                "near_duplicate_score": "0.0",
+                "similar_to_copy_set_id": "",
+            }
             rows.append(
                 {
                     "product_id": product_id,
                     "media_type": "VIDEO",
                     "logical_mode": logical_mode,
-                    "copy_set_id": treatment["copy_set_id"],
-                    "copy_identity_sha256": treatment["dependency_hashes"][
-                        "copy_set_sha256"
-                    ],
-                    "marketing_angle": treatment["content_angle"],
-                    "hook": treatment["dialogue_text"],
-                    "cta": "",
-                    "formula_family": "CREATIVE_TREATMENT",
-                    "claim_safety_status": "APPROVED",
-                    "copy_usage_count": "0",
-                    "near_duplicate_status": "CLEAR",
-                    "near_duplicate_score": "0.0",
-                    "similar_to_copy_set_id": "",
+                    **copy_dimensions,
                     "avatar_code": treatment["avatar_code"],
                     "age_band": "",
                     "wardrobe": treatment["wardrobe_text"],
@@ -2484,6 +2673,26 @@ def _product_dimension_rows(
         if not layouts:
             blockers.append(
                 {"code": "NO_APPROVED_LAYOUT_POOL", "product_id": product_id}
+            )
+        visual_rows = [
+            {
+                "product_reference_asset_id": "",
+                "finished_frame_asset_id": "",
+                "character_asset_id": "",
+                "avatar_code": "",
+                "age_band": "",
+                "wardrobe": "",
+                "avatar_variant": "",
+                "scene_asset_id": str(scene.get("asset_id") or ""),
+                "style_asset_id": str(style.get("asset_id") or ""),
+            }
+            for scene, style in itertools.product(scenes or [{}], styles or [{}])
+        ]
+    elif media_type == "IMAGE" and not legacy_copy_maintenance_enabled():
+        copies = approved["image_copy_authorities"].get(product_id) or []
+        if not copies:
+            blockers.append(
+                {"code": "COPY_NOT_REQUIRED_PROOF_MISSING", "product_id": product_id}
             )
         visual_rows = [
             {

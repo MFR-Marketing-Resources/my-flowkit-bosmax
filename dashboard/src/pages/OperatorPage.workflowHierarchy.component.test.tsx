@@ -3,7 +3,7 @@
  *
  * Proves the approved five-step operator sequence renders in DOM order:
  *   Step 1  Select Product
- *   Step 2  Creative Direction (Scene Strategy authority + Copy Set/Angle/Hook)
+ *   Step 2  Creative Direction (Scene Strategy + Copy Register V2 authority)
  *   Step 3  Generation Setup (UGC prompt compiler controls)
  *   Step 4  Compile & Review (4a Load Package, 4b Generate Final Prompt)
  *   Step 5  Generate Video
@@ -47,6 +47,11 @@ vi.mock("../api/workspaceGenerationPackages", () => ({
 	createI2VGenerationPackage: vi.fn(),
 }));
 vi.mock("../components/BackendVersionBanner", () => ({ default: () => null }));
+vi.mock("../components/copywriting/CopyArchitectureV2LaneCard", () => ({
+	default: ({ lane }: { lane: string }) => (
+		<div data-testid="copy-v2-lane-card-mock">{lane}</div>
+	),
+}));
 vi.mock("../components/NativeExtendPanel", () => ({ default: () => null }));
 vi.mock("../components/copywriting/CopywritingReadinessCard", () => ({
 	default: () => <div data-testid="copywriting-readiness-mock" />,
@@ -123,19 +128,16 @@ describe("Workflow Upgrade V1 — five-step order", () => {
 		expect(step1).toContainElement(screen.getByTestId("product-select-mock"));
 	});
 
-	it("Step 2 is Creative Direction and contains Scene Strategy + Copy Selection", () => {
+	it("Step 2 is Creative Direction and links only to Copy Register V2", () => {
 		renderOperator("HYBRID");
 		const step2 = screen.getByTestId("workflow-step-2");
 		expect(step2).toHaveTextContent("Step 2 — Creative Direction");
 		expect(step2).toContainElement(
 			screen.getByTestId("scene-strategy-summary"),
 		);
-		expect(step2).toContainElement(
-			screen.getByTestId("copy-selection-panel-mock"),
-		);
-		expect(step2).toContainElement(
-			screen.getByTestId("copywriting-readiness-mock"),
-		);
+		expect(step2.querySelector('a[href="/creative/copy-registry"]')).not.toBeNull();
+		expect(screen.queryByTestId("copy-selection-panel-mock")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("copywriting-readiness-mock")).not.toBeInTheDocument();
 		// No product selected in this fixture -> Creative Direction is NOT_READY.
 		expect(step2).toHaveAttribute("data-state", "NOT_READY");
 	});

@@ -7,7 +7,6 @@ import {
 	packageSlotResolvedAsset,
 	resolvedAssetToGenerateAsset,
 } from "../faceless/facelessLane";
-import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import { fetchCreativeAssetEligibilityAudit } from "../api/creativeAssets";
 import {
 	getProductRecipes,
@@ -35,7 +34,6 @@ import {
 } from "../api/workspacePackages";
 import BackendVersionBanner from "../components/BackendVersionBanner";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
-import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
 import NativeExtendPanel from "../components/NativeExtendPanel";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
@@ -43,7 +41,6 @@ import CanonicalReferenceBindingControls, {
 	type CanonicalReferenceBinding,
 	EMPTY_BINDING,
 } from "../components/workspace/CanonicalReferenceBindingControls";
-import CopySelectionPanel from "../components/workspace/CopySelectionPanel";
 import CreativeDirectionSection, {
 	type CreativeDirection,
 	EMPTY_CREATIVE_DIRECTION,
@@ -698,13 +695,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		useState<WorkspaceExecutionPackage | null>(statePackage ?? null);
 	const [previewPackage, setPreviewPackage] =
 		useState<WorkspacePromptPreviewResult | null>(null);
-	// Copy Selection & Compiler Binding V1: operator-selected approved Copy Set
-	// bound into the preview/final prompt request payload for the selected product.
-	const [selectedCopySetId, setSelectedCopySetId] = useState<string | null>(
-		null,
-	);
-	const { readiness: copyReadiness, loading: copyReadinessLoading } =
-		useCopywritingReadiness(selectedProduct?.id ?? null);
+	const [v2CopyReady, setV2CopyReady] = useState(false);
 	// HYBRID anchor is auto-locked from the product's official image, so the
 	// canonical reference picker is collapsed by default and only revealed when
 	// the operator explicitly chooses to override the anchor.
@@ -1036,13 +1027,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			)
 			.finally(() => setIsLoadingProducts(false));
 	}, []);
-
-	// Clear any bound Copy Set when the product changes — a copy_set_id is only
-	// valid for the product it belongs to (backend fails closed on mismatch).
-	// biome-ignore lint/correctness/useExhaustiveDependencies: reset keyed on product id only
-	useEffect(() => {
-		setSelectedCopySetId(null);
-	}, [selectedProduct?.id]);
 
 	useEffect(() => {
 		void fetchPromptCompilerRuntimeConfig()
@@ -1631,6 +1615,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						data.mode === "IMG"
 							? undefined
 							: capabilityMatrix?.capability_matrix_version,
+					copy_v2_context: data.copy_v2_context,
 				}),
 			});
 
@@ -1886,7 +1871,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				product_id: selectedProduct.id,
 				mode: jobMode,
 				source_mode: resolveSourceMode(mode),
-				copy_set_id: selectedCopySetId,
 				...durationAuthority.payload,
 				target_language: targetLanguage,
 				camera_style: cameraStyle,
@@ -1966,7 +1950,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				product_id: selectedProduct.id,
 				mode: jobMode,
 				source_mode: resolveSourceMode(mode),
-				copy_set_id: selectedCopySetId,
 				// Record the operator-selected video model on the package so the
 				// runtime + reload use the same tuple (was previously unset → "").
 				model: videoModel,
@@ -2029,8 +2012,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		}
 	};
 
-	// Click handler: final prompt generation requires a selected production-valid
-	// approved Copy Set. The backend repeats the same fail-closed check.
+	// The persisted V2 binding is resolved server-side.  No client-selected
+	// legacy copy identifier is accepted or sent.
 	const handleGeneratePackage = () => {
 		if (extendTotalRequired) {
 			setNotice({
@@ -2042,12 +2025,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			});
 			return;
 		}
-		if (!selectedCopySetId) {
+		if (!v2CopyReady) {
 			setNotice({
 				tone: "warning",
-				title: "Production-valid Copy Set required",
+				title: "V2 binding required",
 				detail:
-					"Select a currently production-valid approved Copy Set in Copy Selection. Revalidate or submit semantic review there when the set is blocked.",
+					"Approve and activate a production-valid blueprint in Copy Register V2. This lane does not accept legacy CopySet IDs.",
 				requestId: null,
 			});
 			return;
@@ -2234,16 +2217,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 		const lengthLabel = isExtendMode
 			? `${requestedTotalDuration ?? "—"}s · Extended`
 			: `${videoDurationSeconds}s · Single`;
-		const copyBound = Boolean(selectedCopySetId);
-		// APPROVED_COPY_STALE: approved copy exists for this product but none is
-		// production-valid anymore (product truth moved on). Surface a direct
-		// "fix copy" path to the product's Copy Registry so the operator can
-		// revalidate before generating instead of silently shipping stale copy.
-		const copyApprovedButStale =
-			!!copyReadiness &&
-			copyReadiness.copy_applicable !== false &&
-			copyReadiness.approved_copy_set_count > 0 &&
-			(copyReadiness.valid_approved_copy_set_count ?? 0) === 0;
+		const copyBound = v2CopyReady;
 		// SINGLE-clip generation: the compiled single-block prompt from the prepared
 		// execution package. Fired through the LIVE one-door lane (/api/flow/generate),
 		// the same proven lane IMG uses — NOT the retired DOM lane (ADR-007 compliant).
@@ -2411,6 +2385,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						lane={mode === "HYBRID" ? "HYBRID" : mode}
 						productId={selectedProduct?.id}
 						execution={workspacePackage?.copy_architecture_v2}
+						onReadyChange={setV2CopyReady}
 					/>
 				) : null}
 
@@ -2474,8 +2449,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							status={s2}
 							open={v4IsOpen(2, s2)}
 							onToggleOpen={() => v4Toggle(2, v4IsOpen(2, s2))}
-							summary={copyBound ? "Production-valid copy set bound" : "Copy Set required"}
-							helper="Bind a production-valid approved Copy Set before preparing the final video prompt."
+							summary={copyBound ? "V2 blueprint binding ready" : "V2 binding required"}
+							helper="This lane resolves the product's active formula-native V2 binding; no legacy CopySet can be selected."
 						>
 							<div className="space-y-3">
 								<SceneStrategySummary
@@ -2483,47 +2458,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									productName={selectedProduct?.product_display_name ?? null}
 									taxonomy={selectedProduct?.strategy_taxonomy ?? null}
 								/>
-								<CopywritingReadinessCard
-									readiness={copyReadiness}
-									loading={copyReadinessLoading}
-									onPrepare={() =>
-										window.location.assign(
-											selectedProduct
-												? `/products?product_id=${encodeURIComponent(selectedProduct.id)}`
-												: "/products",
-										)
-									}
-									onOpenCopyRegistry={() =>
-										window.location.assign(
-											selectedProduct
-												? `/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}`
-												: "/creative/copy-registry",
-										)
-									}
-								/>
-								{copyApprovedButStale ? (
-									<button
-										type="button"
-										data-testid="copy-stale-fix-link"
-										onClick={() =>
-											window.location.assign(
-												selectedProduct
-													? `/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}`
-													: "/creative/copy-registry",
-											)
-										}
-										className="inline-flex items-center gap-1 self-start rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-amber-100 transition-colors hover:bg-amber-500/20"
-									>
-										Fix copy for this product →
-									</button>
-								) : null}
-								<CopySelectionPanel
-									productId={selectedProduct?.id ?? null}
-									productName={selectedProduct?.product_display_name ?? null}
-									selectedCopySetId={selectedCopySetId}
-									onSelect={setSelectedCopySetId}
-									disabled={isLoadingPreview || isLoadingPackage}
-								/>
+								<a
+									href={selectedProduct ? `/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}` : "/creative/copy-registry"}
+									className="inline-flex rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-[11px] font-bold uppercase text-blue-100"
+								>
+									Open Copy Register V2
+								</a>
 							</div>
 						</WorkflowStep>
 
@@ -3044,9 +2984,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										onClick={() => void handleGeneratePackage()}
 						disabled={
 											isLoadingPackage ||
-											!selectedCopySetId ||
-											copyReadinessLoading ||
-											copyReadiness?.ready_for_generation !== true ||
+											!v2CopyReady ||
 											extendTotalRequired ||
 											backendRuntimeStale
 										}
@@ -3410,7 +3348,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				data-state={
 					!selectedProduct
 						? "NOT_READY"
-						: selectedCopySetId
+						: v2CopyReady
 							? "COMPLETED"
 							: "READY"
 				}
@@ -3420,8 +3358,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					Step 2 — Creative Direction
 				</div>
 				<div className="mb-4 text-[11px] text-slate-400">
-					Review the selected product's Scene Strategy authority, then bind the
-					approved Copy Set / Angle / Hook before configuring generation.
+					Review the selected product's Scene Strategy authority. Copy is loaded
+					from the product's active formula-native V2 binding only.
 				</div>
 				<div className="mb-4">
 					<SceneStrategySummary
@@ -3430,37 +3368,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						taxonomy={selectedProduct?.strategy_taxonomy ?? null}
 					/>
 				</div>
-			{/* ── Copywriting readiness (video modes only) ─── */}
-			{mode !== "IMG" && (
-				<div className="mb-4">
-					<CopywritingReadinessCard
-						readiness={copyReadiness}
-						loading={copyReadinessLoading}
-						onPrepare={() =>
-							window.location.assign(
-								selectedProduct
-									? `/products?product_id=${encodeURIComponent(selectedProduct.id)}`
-									: "/products",
-							)
-						}
-						onOpenCopyRegistry={() =>
-							window.location.assign(
-								selectedProduct
-									? `/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}`
-									: "/creative/copy-registry",
-							)
-						}
-					/>
-				</div>
-			)}
-			{/* ── Copy Selection & Compiler Binding ─── */}
-			<CopySelectionPanel
-				productId={selectedProduct?.id ?? null}
-				productName={selectedProduct?.product_display_name ?? null}
-				selectedCopySetId={selectedCopySetId}
-				onSelect={setSelectedCopySetId}
-				disabled={isLoadingPreview || isLoadingPackage}
-			/>
+			<a
+				href={selectedProduct ? `/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}` : "/creative/copy-registry"}
+				className="inline-flex rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-[11px] font-bold uppercase text-blue-100"
+			>
+				Open Copy Register V2
+			</a>
 			</div>
 
 			{/* ── STEP 3: Generation Setup — UGC Prompt Compiler Controls (video modes only) ── */}
@@ -3917,10 +3830,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						using your configured settings above. Review the prompt preview
 						before generating.
 					</div>
-					{!selectedCopySetId ? (
+					{!v2CopyReady ? (
 						<div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
-							No approved Copy Set selected. Compiler may use fallback copy
-							(product landbank / claim-safe angles).
+							No active V2 binding. Compilation fails closed; there is no legacy or
+							landbank fallback.
 						</div>
 					) : null}
 					{extendTotalRequired ? (
@@ -3980,20 +3893,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									</div>
 								</div>
 							</div>
-							{previewPackage.copy_binding ? (
-								<div
-									className={`rounded-xl border px-3 py-2 text-[11px] ${
-										previewPackage.copy_binding.copy_binding_status === "BOUND"
-											? "border-emerald-500/30 bg-emerald-500/5 text-emerald-200"
-											: "border-amber-500/30 bg-amber-500/5 text-amber-200"
-									}`}
-								>
-									<span className="font-semibold">Copy binding: </span>
-									{previewPackage.copy_binding.copy_binding_status === "BOUND"
-										? `Approved Copy Set bound (${previewPackage.copy_binding.copy_set_angle ?? "selected"})`
-										: "No Copy Set bound — fallback copy in use"}
-								</div>
-							) : null}
 							{previewPackage.warnings?.length ? (
 								<div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
 									{previewPackage.warnings.join(" · ")}
@@ -4124,15 +4023,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						After loading the package above, press this button to compile and
 						save the final execution prompt to the workspace.
 					</div>
-					{/* Copy binding state: saved video prompts require production-valid copy. */}
-					{selectedCopySetId ? (
+					{/* V2 binding state: saved video prompts require production-valid copy. */}
+					{v2CopyReady ? (
 						<div className="mb-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200">
-							Approved Copy Set bound to final prompt generation.
+							Formula-native V2 blueprint is bound to final prompt generation.
 						</div>
 					) : (
 						<div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
-							No production-valid approved Copy Set selected. Revalidate or submit
-							semantic review in Copy Selection before generating the final prompt.
+							No production-valid V2 binding. Approve and activate the blueprint in
+							Copy Register V2 before generating the final prompt.
 						</div>
 					)}
 					<button
@@ -4142,9 +4041,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						disabled={
 							!previewPackage ||
 							isLoadingPackage ||
-							!selectedCopySetId ||
-							copyReadinessLoading ||
-							copyReadiness?.ready_for_generation !== true ||
+							!v2CopyReady ||
 							extendTotalRequired ||
 							backendRuntimeStale
 						}
@@ -4154,23 +4051,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					</button>
 					{workspacePackage ? (
 						<div className="mt-4 space-y-3">
-							{workspacePackage.copy_binding ? (
-								<div
-									className={`rounded-xl border px-3 py-2 text-[11px] ${
-										workspacePackage.copy_binding.copy_binding_status ===
-										"BOUND"
-											? "border-emerald-500/30 bg-emerald-500/5 text-emerald-200"
-											: "border-amber-500/30 bg-amber-500/5 text-amber-200"
-									}`}
-								>
-									<span className="font-semibold">Copy binding: </span>
-									{workspacePackage.copy_binding.copy_binding_status === "BOUND"
-										? `Approved Copy Set bound (${workspacePackage.copy_binding.copy_set_angle ?? "selected"})`
-										: workspacePackage.copy_binding.copy_fallback_confirmed
-											? "Fallback copy — operator-confirmed (COPY_SET_NOT_SELECTED)"
-											: "Fallback copy (COPY_SET_NOT_SELECTED)"}
-								</div>
-							) : null}
 							<div className="grid gap-3 md:grid-cols-3">
 								<div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-3">
 									<div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">

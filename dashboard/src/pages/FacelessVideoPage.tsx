@@ -91,6 +91,7 @@ export default function FacelessVideoPage() {
 
 	const [workspacePackage, setWorkspacePackage] =
 		useState<WorkspaceExecutionPackage | null>(null);
+	const [v2CopyReady, setV2CopyReady] = useState(false);
 	const [isPreparing, setIsPreparing] = useState(false);
 	const [isExecuting, setIsExecuting] = useState(false);
 	const [notice, setNotice] = useState<Notice | null>(null);
@@ -238,6 +239,9 @@ export default function FacelessVideoPage() {
 			result.unshift("No valid SINGLE model/duration tuple is available from the capability authority.");
 		}
 		if (extendBlockedReason) result.push(extendBlockedReason);
+		if (selectedProduct && !v2CopyReady) {
+			result.push("Copy Register V2 binding is not production-ready for Faceless.");
+		}
 		if (showAdvancedRef && binding.startFrameAssetId === "" && false) {
 			/* advanced optional */
 		}
@@ -259,6 +263,7 @@ export default function FacelessVideoPage() {
 		engine,
 		modelsAtDuration,
 		extendBlockedReason,
+		v2CopyReady,
 	]);
 
 	const hookLabel = optionLabel(settings.hook.options, hookId);
@@ -331,7 +336,8 @@ export default function FacelessVideoPage() {
 					showAdvancedRef && binding.endFrameAssetId
 						? binding.endFrameAssetId
 						: null,
-				copy_fallback_confirmed: true,
+				copy_fallback_confirmed: false,
+				copy_v2_context: { lane: "FACELESS" },
 			});
 			const pkg = (prepared.package || {}) as unknown as WorkspaceExecutionPackage;
 			if (!pkg.workspace_execution_package_id || !pkg.prompt_text) {
@@ -560,6 +566,7 @@ export default function FacelessVideoPage() {
 				lane="FACELESS"
 				productId={selectedProduct?.id}
 				execution={workspacePackage?.copy_architecture_v2}
+				onReadyChange={setV2CopyReady}
 			/>
 
 			<div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">

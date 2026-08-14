@@ -1,92 +1,68 @@
 import "@testing-library/jest-dom/vitest";
-import {
-	cleanup,
-	fireEvent,
-	render,
-	screen,
-	waitFor,
-	within,
-} from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-// The original page is now the ADVANCED / LEGACY panel. These tests validate
-// that relocated full-control surface directly (its behavior is unchanged).
-import { PosterBuilderLegacyPanel } from "./PosterBuilderPage";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPosterPromptDraft } from "../api/posterPromptDraft";
-import { fetchPosterReadiness } from "../api/posterReadiness";
-import { posterReadinessFixtures } from "../poster/posterReadinessTestFixtures";
+import { composePosterV2 } from "../api/posterV2";
+import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
+import PosterBuilderPage from "./PosterBuilderPage";
+
+const fixtures = vi.hoisted(() => ({
+	product: {
+		id: "p1",
+		raw_product_title: "Test Product",
+		product_display_name: "Test Product",
+		product_short_name: "Test",
+		source: "MANUAL" as const,
+	},
+	recipe: {
+		recipe_id: "product_hero",
+		archetype: "PRODUCT_HERO",
+		label: "Product Hero",
+		description: "Hero poster",
+		layout_template: "hero",
+		product_placement: "center",
+		background_scene: "studio",
+		visual_style: "commercial",
+		typography_mood: "bold",
+		icon_guidance: "",
+		composition_rules: [],
+		safe_zones: [],
+		chip_slots: [],
+		zones: [],
+		negative_prompt_additions: [],
+		allowed_text_density: ["low"],
+	},
+}));
 
 vi.mock("../components/workspace/SearchableProductSelect", () => ({
-	default: () => <div data-testid="product-picker">Product picker</div>,
+	default: ({ onSelect }: { onSelect: (value: typeof fixtures.product) => void }) => (
+		<button type="button" onClick={() => onSelect(fixtures.product)}>Select Test Product</button>
+	),
+}));
+
+vi.mock("../components/copywriting/CopyArchitectureV2LaneCard", () => ({
+	default: ({ onReadyChange }: { onReadyChange?: (ready: boolean) => void }) => (
+		<button type="button" onClick={() => onReadyChange?.(true)}>Prove V2 binding</button>
+	),
 }));
 
 vi.mock("../api/products", () => ({
-	fetchProductCatalog: vi.fn().mockResolvedValue({
-		items: [
-			{
-				id: "p1",
-				raw_product_title: "Test Product",
-				product_display_name: "Test Product",
-				product_short_name: "Test",
-				source: "MANUAL",
-				category: "Oil",
-				// Product has a usable reference image → poster can be product-anchored.
-				image_url: "http://x/product.jpg",
-				local_image_path: "/local/p.jpg",
-			},
-		],
-	}),
+	fetchProductCatalog: vi.fn().mockResolvedValue({ items: [fixtures.product] }),
+}));
+
+vi.mock("../api/posterRecipes", () => ({
+	usePosterRecipes: () => ({ recipes: [fixtures.recipe], error: "" }),
 }));
 
 vi.mock("../api/posterPromptDraft", () => ({
 	createPosterPromptDraft: vi.fn(),
-	draftToPromptRequest: vi.fn((id: string, draft: unknown) => ({
-		product_id: id,
-		...(draft as object),
-	})),
+	formatPosterPromptDraftError: (error: unknown) => String(error),
 }));
 
-vi.mock("../api/posterReadiness", () => ({
-	fetchPosterReadiness: vi.fn(),
-}));
-
-vi.mock("../api/posterCopySets", () => ({
-	recommendPosterObjectives: vi.fn().mockResolvedValue({ recommendations: [], warnings: [] }),
-	recommendPosterAngles: vi.fn(),
-	generatePosterDirections: vi.fn(),
-	regeneratePosterField: vi.fn(),
-	createPosterCopySet: vi.fn(),
-	approvePosterCopySet: vi.fn(),
-	listPosterCopySets: vi.fn(),
-	composePoster: vi.fn(),
-	savePosterToLibrary: vi.fn(),
-	posterDeliverableOutputUrl: (id: string) => `/api/poster/deliverables/${id}/output`,
-	fetchPosterDeliverableByAsset: vi.fn(),
-	newPosterCopySetVersion: vi.fn(),
-	forkPosterCopySetFromHistorical: vi.fn(),
-	patchPosterCopySet: vi.fn(),
-}));
-
-vi.mock("../api/posterCopyRecommendations", () => ({
-	fetchPosterCopyRecommendations: vi.fn(),
-}));
-
-vi.mock("../api/exactProductOutput", () => ({
-	fetchExactProductPolicy: vi.fn(async () => ({
-		product_id: "p1",
-		exact_product_composite_required: false,
-		canonical_valid: true,
-	})),
-	resolveExactGenerationGate: vi.fn(async () => ({
-		mode: "standard",
-		policy: {
-			product_id: "p1",
-			exact_product_composite_required: false,
-			canonical_valid: true,
-		},
-	})),
-	buildExactSceneOnlyPrompt: vi.fn(),
-	composeExactFromPlate: vi.fn(),
+vi.mock("../api/posterV2", () => ({
+	composePosterV2: vi.fn(),
+	posterV2OutputUrl: (id: string) => `/api/poster/deliverables/${id}/output`,
 }));
 
 vi.mock("../api/imgFactory", () => ({
@@ -94,1157 +70,137 @@ vi.mock("../api/imgFactory", () => ({
 	pollImgGenerationJob: vi.fn(),
 }));
 
-const { RECIPE_FIXTURES } = vi.hoisted(() => {
-	const zone = (over: Record<string, unknown>) => ({
-		zone_id: "z",
-		role: "HEADLINE",
-		source_field: "hook",
-		x: 0,
-		y: 0,
-		w: 100,
-		h: 10,
-		align: "left",
-		font_role: "display",
-		max_chars: 48,
-		placeholder: "[x]",
-		...over,
-	});
-	return {
-		RECIPE_FIXTURES: [
-			{
-				recipe_id: "product_hero_night_routine",
-				archetype: "PRODUCT_HERO",
-				label: "Product Hero — Night Routine",
-				description: "Hero in a warm bedside scene.",
-				layout_template: "hero_center_vertical",
-				product_placement: "Centered hero.",
-				background_scene: "Warm bedside.",
-				visual_style: "Premium.",
-				typography_mood: "Warm.",
-				icon_guidance: "",
-				composition_rules: [],
-				safe_zones: [],
-				chip_slots: ["usp_1", "usp_2", "usp_3"],
-				zones: [
-					zone({ zone_id: "headline", role: "HEADLINE", source_field: "hook", max_chars: 48 }),
-					zone({ zone_id: "cta", role: "CTA", source_field: "cta", max_chars: 24 }),
-				],
-				negative_prompt_additions: [],
-				allowed_text_density: ["low", "medium"],
-			},
-			{
-				recipe_id: "heritage_infographic",
-				archetype: "HERITAGE_INFOGRAPHIC",
-				label: "Heritage Infographic",
-				description: "Packshot + use-case rows.",
-				layout_template: "packshot_dominant_infographic",
-				product_placement: "Packshot dominant.",
-				background_scene: "Heritage frame.",
-				visual_style: "Ornamental.",
-				typography_mood: "Bold.",
-				icon_guidance: "",
-				composition_rules: [],
-				safe_zones: [],
-				chip_slots: ["usp_1", "usp_2", "usp_3"],
-				zones: [
-					zone({ zone_id: "headline", role: "HEADLINE", source_field: "hook", max_chars: 48 }),
-					zone({ zone_id: "cta", role: "CTA", source_field: "cta", max_chars: 24 }),
-					zone({ zone_id: "footer", role: "FOOTER", source_field: "", max_chars: 40, placeholder: "[Barisan warisan]" }),
-				],
-				negative_prompt_additions: [],
-				allowed_text_density: ["medium", "high"],
-			},
-			{
-				recipe_id: "product_scale_portability",
-				archetype: "PRODUCT_SCALE",
-				label: "Product Scale / Portability",
-				description: "Product dominance + scale cue.",
-				layout_template: "hero_scale_minimal",
-				product_placement: "Product dominant.",
-				background_scene: "Neutral studio.",
-				visual_style: "Clean.",
-				typography_mood: "Modern.",
-				icon_guidance: "",
-				composition_rules: [],
-				safe_zones: [],
-				chip_slots: ["usp_1", "usp_2"],
-				zones: [
-					zone({ zone_id: "headline", role: "HEADLINE", source_field: "hook", max_chars: 48 }),
-					zone({ zone_id: "cta", role: "CTA", source_field: "cta", max_chars: 24 }),
-				],
-				negative_prompt_additions: [],
-				allowed_text_density: ["low"],
-			},
-		],
-	};
-});
-
-vi.mock("../api/posterRecipes", () => ({
-	usePosterRecipes: () => ({ recipes: RECIPE_FIXTURES, error: "" }),
-	fetchPosterRecipes: vi.fn().mockResolvedValue(RECIPE_FIXTURES),
-}));
-
-vi.mock("../api/posterCopyQuality", () => ({
-	fetchPosterCopyQuality: vi.fn(),
-}));
-
-vi.mock("../api/imageGenSettings", () => ({
-	useImageGenSettings: () => ({
-		models: [
-			{ key: "NANO_BANANA_2", label: "Nano Banana 2", pending: false },
-			{ key: "NANO_BANANA_PRO", label: "Nano Banana Pro", pending: false },
-		],
-		default_model: "Nano Banana 2",
-		aspect_options: ["9:16", "1:1", "16:9", "4:3", "3:4"],
-		default_aspect: "9:16",
-		count_options: [1, 2, 3, 4],
-		default_count: 1,
+vi.mock("../api/exactProductOutput", () => ({
+	resolveExactGenerationGate: vi.fn().mockResolvedValue({
+		mode: "exact",
+		policy: { exact_product_composite_required: true },
 	}),
-	IMAGE_GEN_SETTINGS_FALLBACK: {},
+	buildExactSceneOnlyPrompt: vi.fn().mockResolvedValue({ prompt: "scene-only prompt" }),
 }));
 
-vi.mock("../api/posterBuilderSettings", () => {
-	const settings = {
-		poster_objectives: [
-			{ id: "Product awareness", label: "Product awareness", default: true },
-			{ id: "Sales conversion", label: "Sales conversion" },
-		],
-		poster_types: [
-			{ id: "Product-only hero poster", label: "Product-only hero poster", default: true },
-			{ id: "Lifestyle in-use", label: "Lifestyle in-use" },
-		],
-		languages: [
-			{ id: "ms", label: "Malay", default: true },
-			{ id: "en", label: "English" },
-		],
-		visual_routes: [
-			{ id: "Premium commercial", label: "Premium commercial", default: true },
-		],
-		human_presence_modes: [
-			{ id: "No human / product-forward", label: "No human / product-forward", default: true },
-		],
-		text_density_options: [{ id: "medium", label: "Medium", default: true }],
-		flow_mirror: {
-			aspect_ratios: ["9:16", "1:1", "16:9", "4:3", "3:4"],
-			counts: [1, 2, 3, 4],
-			image_models: [{ key: "NANO_BANANA_2", label: "Nano Banana 2", pending: false }],
-			defaults: { aspect_ratio: "9:16", count: 1, image_model: "Nano Banana 2" },
-			source: "models.json",
-		},
-		copy_components: {
-			routes: ["DIRECT", "STEALTH", "REVIEW_REQUIRED"],
-			copy_sets_scope: "product",
-			copy_sets_endpoint: "/api/copy-sets/product/{product_id}",
-			landbank_products: 0,
-			source: "copy_signals+landbank",
-		},
-		ai_provider: {
-			lane: "text_assist",
-			configured: true,
-			status: "configured",
-			provider_id: "deepseek",
-			model_id: "deepseek-chat",
-			execution_enabled: true,
-			source: "ai_provider",
-		},
-		sources: {
-			poster_dimensions: "config",
-			flow_mirror: "models.json",
-			copy_components: "copy_signals+landbank",
-			ai_provider: "ai_provider",
-		},
-	};
-	return {
-		usePosterBuilderSettings: () => settings,
-		fetchPosterBuilderSettings: vi.fn().mockResolvedValue(settings),
-		POSTER_BUILDER_SETTINGS_FALLBACK: settings,
-		defaultOptionId: (opts: { id: string; default?: boolean }[]) =>
-			(opts.find((o) => o.default) ?? opts[0])?.id ?? "",
-	};
-});
-
-import { fetchPosterCopyRecommendations } from "../api/posterCopyRecommendations";
-import { draftToPromptRequest } from "../api/posterPromptDraft";
-import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
-import { fetchProductCatalog } from "../api/products";
-import { fetchPosterCopyQuality } from "../api/posterCopyQuality";
-import {
-	approvePosterCopySet,
-	fetchPosterDeliverableByAsset,
-	forkPosterCopySetFromHistorical,
-	newPosterCopySetVersion,
-	patchPosterCopySet,
-} from "../api/posterCopySets";
-
-const mockedFetch = vi.mocked(fetchPosterReadiness);
-const mockedPromptDraft = vi.mocked(createPosterPromptDraft);
-const mockedRecs = vi.mocked(fetchPosterCopyRecommendations);
-const mockedDraftToPrompt = vi.mocked(draftToPromptRequest);
-const mockedStartGen = vi.mocked(startImgGeneration);
-const mockedPollGen = vi.mocked(pollImgGenerationJob);
-const mockedCatalog = vi.mocked(fetchProductCatalog);
-const mockedQuality = vi.mocked(fetchPosterCopyQuality);
-const mockedReopen = vi.mocked(fetchPosterDeliverableByAsset);
-const mockedNewVersion = vi.mocked(newPosterCopySetVersion);
-const mockedForkHistorical = vi.mocked(forkPosterCopySetFromHistorical);
-const mockedPatchCopySet = vi.mocked(patchPosterCopySet);
-const mockedApproveCopySet = vi.mocked(approvePosterCopySet);
-
-const sampleKit = {
-	kit_id: "k1",
-	status: "candidate" as const,
-	source: "FALLBACK_TEMPLATE" as const,
-	angle: "Trust",
-	hook: "Safe hook",
-	subhook: "Sub",
-	usp_1: "a",
-	usp_2: "b",
-	usp_3: "c",
-	cta: "Shop",
-	poster_type: "Product-only hero poster",
-	visual_route: "Premium commercial",
-	human_presence_mode: "No human / product-forward",
-	frame_ratio: "9:16",
-	language: "ms",
-	text_density: "medium",
-	safety_notes: [],
+const promptResponse = {
+	product_id: "p1",
+	poster_status: "POSTER_READY",
+	prompt_package_status: "DRAFT_READY" as const,
+	generation_allowed: true,
+	production_allowed: true,
+	restricted_mode: false,
+	poster_prompt: "prompt",
+	negative_prompt: "",
+	copy_layout: { hook: "Exact hook", subhook: "Exact body", usp: [], cta: "Buy" },
+	visual_instruction: "",
+	text_overlay_instruction: "",
+	product_truth_lock: "locked",
+	safety_guardrails: [],
 	blocked_reasons: [],
+	repair_actions: [],
+	readiness_meta: {},
+	operator_notes: "",
 };
 
-function renderPage(query = "?product_id=p1") {
+function renderPage() {
 	return render(
-		<MemoryRouter initialEntries={[`/creative/poster-builder${query}`]}>
+		<MemoryRouter initialEntries={["/creative/poster-builder"]}>
 			<Routes>
-				<Route path="/creative/poster-builder" element={<PosterBuilderLegacyPanel />} />
+				<Route path="/creative/poster-builder" element={<PosterBuilderPage />} />
 			</Routes>
 		</MemoryRouter>,
 	);
 }
 
-async function waitForReadinessUi() {
-	await waitFor(() => {
-		expect(mockedFetch).toHaveBeenCalled();
-	});
-}
-
-describe("PosterBuilderPage", () => {
-	afterEach(() => {
-		cleanup();
-	});
+describe("PosterBuilderPage V2-only cutover", () => {
+	afterEach(cleanup);
 
 	beforeEach(() => {
-		mockedFetch.mockReset();
-		mockedPromptDraft.mockReset();
-		mockedRecs.mockReset();
-		mockedStartGen.mockReset();
-		mockedPollGen.mockReset();
-		mockedQuality.mockReset();
-		mockedReopen.mockReset();
-		mockedNewVersion.mockReset();
-		mockedForkHistorical.mockReset();
-		mockedPatchCopySet.mockReset();
-		mockedApproveCopySet.mockReset();
-		// Default: a clean expert-quality report so tests that reach the generate
-		// gate can pass the mandatory check unless they override it.
-		mockedQuality.mockResolvedValue({
-			ok: true,
-			block_count: 0,
-			warn_count: 0,
-			findings: [],
-		});
-		mockedRecs.mockResolvedValue({
-			product_id: "p1",
-			poster_status: "POSTER_READY",
-			generation_allowed: true,
-			recommendation_source: "FALLBACK_TEMPLATE",
-			recommendations: [sampleKit],
-			blocked_reasons: [],
-			repair_actions: [],
-			ai_provider_status: {},
-			warnings: [],
-		});
-	});
-
-	it("renders poster builder heading", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		expect(await screen.findByText("Poster Builder")).toBeInTheDocument();
-	});
-
-	it("calls fetchPosterReadiness when product_id query is present", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage("?product_id=p1");
-		await waitFor(() => {
-			expect(mockedFetch).toHaveBeenCalledWith("p1");
-		});
-	});
-
-	it("POSTER_READY shows working mode selector and auto panel by default", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		expect(
-			await screen.findByTestId("poster-working-mode-selector"),
-		).toBeInTheDocument();
-		expect(await screen.findByTestId("poster-auto-mode-panel")).toBeInTheDocument();
-		expect(
-			screen.queryAllByRole("heading", { name: "Poster builder shell" }),
-		).toHaveLength(0);
-		expect(mockedRecs).toHaveBeenCalled();
-	});
-
-	it("POSTER_REPAIR_REQUIRED renders repair center and hides builder shell", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.repairRequired());
-		renderPage();
-		await waitForReadinessUi();
-		expect(
-			await screen.findByRole("heading", { name: "Repair action center" }),
-		).toBeInTheDocument();
-		expect(screen.getByText("Run Safe Claim Clearance")).toBeInTheDocument();
-		expect(
-			screen.queryAllByRole("heading", { name: "Poster builder shell" }),
-		).toHaveLength(0);
-	});
-
-	it("POSTER_BLOCKED renders human review panel and hides builder shell", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.blocked());
-		renderPage();
-		await waitForReadinessUi();
-		expect(
-			await screen.findByRole("heading", { name: "Human review required" }),
-		).toBeInTheDocument();
-		expect(
-			screen.queryAllByRole("heading", { name: "Poster builder shell" }),
-		).toHaveLength(0);
-	});
-
-	it("POSTER_READY_RESTRICTED renders restricted readiness badge", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.restricted());
-		renderPage();
-		await waitForReadinessUi();
-		expect(
-			await screen.findByText(/Restricted safe poster rules apply/i),
-		).toBeInTheDocument();
-		expect(screen.getByText("Restricted Ready")).toBeInTheDocument();
-		expect(await screen.findByTestId("poster-auto-mode-panel")).toBeInTheDocument();
-	});
-
-	it("POSTER_PREVIEW_ONLY renders preview badge and working modes", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.previewOnly());
-		renderPage();
-		await waitForReadinessUi();
-		expect(screen.getByText("Preview Only")).toBeInTheDocument();
-		expect(await screen.findByTestId("poster-auto-mode-panel")).toBeInTheDocument();
-		const handoff = await screen.findByTestId("poster-image-handoff");
-		expect(handoff).toBeInTheDocument();
-	});
-
-	it("fetchPosterReadiness is called once after stable product load", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		await waitFor(() => {
-			expect(mockedFetch).toHaveBeenCalledTimes(1);
-			expect(mockedFetch).toHaveBeenCalledWith("p1");
-		});
-	});
-
-	it("fetchPosterCopyRecommendations auto-loads once per product", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		await waitFor(() => {
-			expect(mockedRecs).toHaveBeenCalledTimes(1);
-		});
-		await new Promise((r) => setTimeout(r, 50));
-		expect(mockedRecs).toHaveBeenCalledTimes(1);
-	});
-
-	it("changing Flow Mirror aspect does not refetch readiness or recommendations", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		await waitFor(() => expect(mockedRecs).toHaveBeenCalledTimes(1));
-		const ratioBtn = await screen.findByTestId("flow-aspect-1-1");
-		ratioBtn.click();
-		await new Promise((r) => setTimeout(r, 50));
-		expect(mockedFetch).toHaveBeenCalledTimes(1);
-		expect(mockedRecs).toHaveBeenCalledTimes(1);
-	});
-
-	it("POSTER_READY shows Flow Mirror Settings section", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		expect(await screen.findByTestId("poster-flow-mirror-settings")).toBeInTheDocument();
-		expect(screen.getByText("Flow Mirror Settings")).toBeInTheDocument();
-		for (const ratio of ["9:16", "1:1", "16:9", "4:3", "3:4"]) {
-			expect(screen.getByText(ratio)).toBeInTheDocument();
-		}
-		for (const c of ["1x", "2x", "3x", "4x"]) {
-			expect(screen.getByText(c)).toBeInTheDocument();
-		}
-		expect(screen.getByTestId("flow-image-model")).toHaveValue("Nano Banana 2");
-	});
-
-	it("Auto mode Use for prompt draft sends selected kit fields atomically", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		mockedPromptDraft.mockResolvedValue({
-			product_id: "p1",
-			poster_status: "POSTER_READY",
-			prompt_package_status: "DRAFT_READY",
-			generation_allowed: true,
-			production_allowed: true,
-			restricted_mode: false,
-			poster_prompt: "x",
-			negative_prompt: "",
-			copy_layout: { hook: "Safe hook", subhook: "Sub", usp: ["a", "b", "c"], cta: "Shop" },
-			visual_instruction: "",
-			text_overlay_instruction: "",
-			product_truth_lock: "",
-			safety_guardrails: [],
-			blocked_reasons: [],
-			repair_actions: [],
-			readiness_meta: {},
-			operator_notes: "",
-		});
-		renderPage();
-		await waitForReadinessUi();
-		const useBtn = await screen.findByTestId("use-kit-prompt-k1");
-		useBtn.click();
-		await waitFor(() => {
-			expect(mockedDraftToPrompt).toHaveBeenCalledWith(
-				"p1",
-				expect.objectContaining({
-					hook: "Safe hook",
-					subhook: "Sub",
-					usp_1: "a",
-					usp_2: "b",
-					usp_3: "c",
-					cta: "Shop",
-					poster_type: "Product-only hero poster",
-					visual_route: "Premium commercial",
-					frame_ratio: "9:16",
-					language: "ms",
-				}),
-			);
-		});
-	});
-
-	it("changing Flow Mirror aspect ratio updates prompt draft payload", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		mockedPromptDraft.mockResolvedValue({
-			product_id: "p1",
-			poster_status: "POSTER_READY",
-			prompt_package_status: "DRAFT_READY",
-			generation_allowed: true,
-			production_allowed: true,
-			restricted_mode: false,
-			poster_prompt: "x",
-			negative_prompt: "",
-			copy_layout: { hook: "h", subhook: "", usp: [], cta: "c" },
-			visual_instruction: "",
-			text_overlay_instruction: "",
-			product_truth_lock: "",
-			safety_guardrails: [],
-			blocked_reasons: [],
-			repair_actions: [],
-			readiness_meta: {},
-			operator_notes: "",
-		});
-		renderPage();
-		await waitForReadinessUi();
-		const ratioBtn = await screen.findByTestId("flow-aspect-1-1");
-		ratioBtn.click();
-		const useBtn = await screen.findByTestId("use-kit-prompt-k1");
-		useBtn.click();
-		await waitFor(() => {
-			expect(mockedDraftToPrompt).toHaveBeenCalledWith(
-				"p1",
-				expect.objectContaining({ frame_ratio: "1:1", hook: "Safe hook" }),
-			);
-		});
-	});
-
-	it("image generation handoff button stays disabled", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		const btn = await screen.findByTestId("generate-poster-button");
-		expect(btn).toBeDisabled();
-	});
-
-	it("shows prompt package preview after successful prompt draft API", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		mockedPromptDraft.mockResolvedValue({
-			product_id: "p1",
-			poster_status: "POSTER_READY",
-			prompt_package_status: "DRAFT_READY",
-			generation_allowed: true,
-			production_allowed: true,
-			restricted_mode: false,
-			poster_prompt: "LOCKED PRODUCT TRUTH",
-			negative_prompt: "no blur",
-			copy_layout: { hook: "h", subhook: "", usp: [], cta: "c" },
-			visual_instruction: "",
-			text_overlay_instruction: "",
-			product_truth_lock: "",
-			safety_guardrails: [],
-			blocked_reasons: [],
-			repair_actions: [],
-			readiness_meta: {},
-			operator_notes: "",
-		});
-		renderPage();
-		await waitForReadinessUi();
-		const useBtn = await screen.findByTestId("use-kit-prompt-k1");
-		useBtn.click();
-		expect(
-			await screen.findByTestId("poster-prompt-package-preview"),
-		).toBeInTheDocument();
-		expect(mockedPromptDraft).toHaveBeenCalled();
-	});
-
-	it("manual expert mode shows manual panel", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		const manualBtn = await screen.findByTestId("working-mode-manual");
-		manualBtn.click();
-		expect(await screen.findByTestId("poster-manual-expert-panel")).toBeInTheDocument();
-		expect(await screen.findByTestId("generate-prompt-draft-button")).toBeInTheDocument();
-	});
-
-	it("Auto mode renders Objective / Poster Type / Language as dropdowns", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		const obj = await screen.findByTestId("poster-objective-select");
-		expect(obj.tagName).toBe("SELECT");
-		expect(screen.getByTestId("poster-type-select").tagName).toBe("SELECT");
-		expect(screen.getByTestId("poster-language-select").tagName).toBe("SELECT");
-		expect(within(obj).getByText("Product awareness")).toBeInTheDocument();
-	});
-
-	it("Auto mode shows always-visible copy draft fields", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		for (const key of ["hook", "subhook", "usp_1", "usp_2", "usp_3", "cta"]) {
-			expect(await screen.findByTestId(`copy-field-${key}`)).toBeInTheDocument();
-		}
-	});
-
-	it("keeps copy draft fields visible when recommendations fail", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		mockedRecs.mockRejectedValue(new Error("provider down"));
-		renderPage();
-		await waitForReadinessUi();
-		expect(await screen.findByTestId("copy-field-hook")).toBeInTheDocument();
-		expect(await screen.findByTestId("poster-ai-copy-assist")).toBeInTheDocument();
-		expect(await screen.findByText("provider down")).toBeInTheDocument();
-	});
-
-	it("renders the AI Copy Assist section", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		expect(await screen.findByTestId("poster-ai-copy-assist")).toBeInTheDocument();
-		expect(screen.getByTestId("ai-assist-provider-status")).toBeInTheDocument();
-	});
-
-	it("auto-load uses refresh_ai=false; AI Copy Assist uses refresh_ai=true", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		await waitFor(() => expect(mockedRecs).toHaveBeenCalledTimes(1));
-		// Guardrail: the automatic load must NOT spend AI tokens.
-		expect(mockedRecs.mock.calls[0][0]).toEqual(
-			expect.objectContaining({ refresh_ai: false }),
-		);
-		const genBtn = await screen.findByTestId("refresh-poster-recommendations");
-		genBtn.click();
-		await waitFor(() => expect(mockedRecs).toHaveBeenCalledTimes(2));
-		expect(mockedRecs.mock.calls[1][0]).toEqual(
-			expect.objectContaining({ refresh_ai: true }),
-		);
-	});
-
-	it("Apply suggestion fills the visible copy draft fields", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		const applyBtn = await screen.findByTestId("select-kit-k1");
-		applyBtn.click();
-		await waitFor(() => {
-			expect(screen.getByTestId("copy-field-hook")).toHaveValue("Safe hook");
-		});
-	});
-
-	it("Auto mode generate-prompt-draft uses the visible copy fields", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		mockedPromptDraft.mockResolvedValue({
-			product_id: "p1",
-			poster_status: "POSTER_READY",
-			prompt_package_status: "DRAFT_READY",
-			generation_allowed: true,
-			production_allowed: true,
-			restricted_mode: false,
-			poster_prompt: "x",
-			negative_prompt: "",
-			copy_layout: { hook: "", subhook: "", usp: [], cta: "" },
-			visual_instruction: "",
-			text_overlay_instruction: "",
-			product_truth_lock: "",
-			safety_guardrails: [],
-			blocked_reasons: [],
-			repair_actions: [],
-			readiness_meta: {},
-			operator_notes: "",
-		});
-		renderPage();
-		await waitForReadinessUi();
-		const genBtn = await screen.findByTestId("auto-generate-prompt-draft");
-		genBtn.click();
-		await waitFor(() => {
-			expect(mockedDraftToPrompt).toHaveBeenCalledWith(
-				"p1",
-				expect.objectContaining({ poster_objective: "Product awareness" }),
-			);
-		});
-	});
-
-	it("Generate poster image is gated behind a confirm and calls the one-door IMG lane", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		mockedPromptDraft.mockResolvedValue({
-			product_id: "p1",
-			poster_status: "POSTER_READY",
-			prompt_package_status: "DRAFT_READY",
-			generation_allowed: true,
-			production_allowed: true,
-			restricted_mode: false,
-			poster_prompt: "POSTER PROMPT TEXT",
-			negative_prompt: "",
-			copy_layout: { hook: "h", subhook: "", usp: [], cta: "c" },
-			visual_instruction: "",
-			text_overlay_instruction: "",
-			product_truth_lock: "",
-			safety_guardrails: [],
-			blocked_reasons: [],
-			repair_actions: [],
-			readiness_meta: {},
-			operator_notes: "",
-		});
-		mockedStartGen.mockResolvedValue({ job_id: "job1" });
-		mockedPollGen.mockResolvedValue({
-			status: "DONE",
-			media_id: "m1",
-			url: "http://x/poster.jpg",
-			size_mb: 0.5,
-		});
-		renderPage();
-		await waitForReadinessUi();
-		// Build a prompt package first — the generate button needs poster_prompt.
-		const useBtn = await screen.findByTestId("use-kit-prompt-k1");
-		useBtn.click();
-		const genBtn = await screen.findByTestId("generate-poster-button");
-		await waitFor(() => expect(genBtn).not.toBeDisabled());
-		// With a valid product image, the fail-closed blocker is NOT shown.
-		expect(screen.queryByTestId("poster-product-ref-required")).toBeNull();
-		// Clicking opens the confirm modal — generation must NOT fire yet.
-		genBtn.click();
-		expect(mockedStartGen).not.toHaveBeenCalled();
-		const confirmBtn = await screen.findByTestId("poster-gen-confirm");
-		expect(confirmBtn).toBeDisabled();
-		(await screen.findByTestId("poster-img-live-action-confirm-checkbox")).click();
-		expect(confirmBtn).not.toBeDisabled();
-		confirmBtn.click();
-		await waitFor(() =>
-			expect(mockedStartGen).toHaveBeenCalledWith(
-				expect.objectContaining({
-					prompt: "POSTER PROMPT TEXT",
-					aspect: "9:16",
-					// Product-anchor proof: the real product image is attached as a ref.
-					refs: expect.objectContaining({
-						subjectAsset: expect.objectContaining({
-							downloadUrl: "http://x/product.jpg",
-							assetSource: "PRODUCT_IMAGE_URL",
-						}),
-					}),
-				}),
-			),
-		);
-		expect(await screen.findByTestId("poster-gen-result")).toBeInTheDocument();
-	});
-
-	it("fail-closed: blocks poster generation when the product has no reference image", async () => {
-		// Override the catalog with a product that has NO usable image reference.
-		mockedCatalog.mockResolvedValueOnce({
-			items: [
-				{
-					id: "p1",
-					raw_product_title: "No Image Product",
-					product_display_name: "No Image Product",
-					source: "MANUAL",
-					category: "Oil",
-				},
-			],
-		} as never);
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		mockedPromptDraft.mockResolvedValue({
-			product_id: "p1",
-			poster_status: "POSTER_READY",
-			prompt_package_status: "DRAFT_READY",
-			generation_allowed: true,
-			production_allowed: true,
-			restricted_mode: false,
-			poster_prompt: "POSTER PROMPT TEXT",
-			negative_prompt: "",
-			copy_layout: { hook: "h", subhook: "", usp: [], cta: "c" },
-			visual_instruction: "",
-			text_overlay_instruction: "",
-			product_truth_lock: "",
-			safety_guardrails: [],
-			blocked_reasons: [],
-			repair_actions: [],
-			readiness_meta: {},
-			operator_notes: "",
-		});
-		renderPage();
-		await waitForReadinessUi();
-		// The blocker is shown and the generate button is disabled.
-		expect(
-			await screen.findByTestId("poster-product-ref-required"),
-		).toBeInTheDocument();
-		// Even after producing a prompt package, generation stays blocked.
-		const useBtn = await screen.findByTestId("use-kit-prompt-k1");
-		useBtn.click();
-		const genBtn = await screen.findByTestId("generate-poster-button");
-		await waitFor(() => expect(genBtn).toBeDisabled());
-		// No image generation was ever attempted without a product reference.
-		expect(mockedStartGen).not.toHaveBeenCalled();
-	});
-
-	// ── PR B2: recipe-first UI ────────────────────────────────────────────────
-
-	it("shows the recipe selector with recipe cards before any copy fields", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		expect(await screen.findByTestId("poster-recipe-selector")).toBeInTheDocument();
-		for (const id of [
-			"product_hero_night_routine",
-			"heritage_infographic",
-			"product_scale_portability",
-		]) {
-			expect(screen.getByTestId(`poster-recipe-card-${id}`)).toBeInTheDocument();
-		}
-		// Before a recipe is chosen, copy slots are NOT shown — recipe-first is enforced.
-		expect(screen.getByTestId("poster-recipe-required-hint")).toBeInTheDocument();
-		expect(screen.queryByTestId("poster-recipe-slot-editor")).toBeNull();
-	});
-
-	it("Manual Expert is behind an advanced/legacy disclosure, not the primary form", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		const advanced = await screen.findByTestId("poster-advanced-legacy");
-		expect(advanced.tagName).toBe("DETAILS");
-		expect(advanced).not.toHaveAttribute("open");
-	});
-
-	it("selecting a recipe reveals controlled dropdowns (not free text) and slot editor", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		(await screen.findByTestId("poster-recipe-card-product_hero_night_routine")).click();
-		// Controlled settings are SELECT elements, never text inputs.
-		for (const key of [
-			"poster_objective",
-			"poster_type",
-			"visual_route",
-			"human_presence_mode",
-			"frame_ratio",
-			"language",
-			"text_density",
-		]) {
-			const el = await screen.findByTestId(`ctrl-${key}`);
-			expect(el.tagName).toBe("SELECT");
-		}
-		// Recipe slot editor renders zone-driven slots with counters.
-		expect(await screen.findByTestId("poster-recipe-slot-editor")).toBeInTheDocument();
-		expect(screen.getByTestId("slot-field-hook")).toBeInTheDocument();
-		expect(screen.getByTestId("slot-field-cta")).toBeInTheDocument();
-		expect(screen.getByTestId("slot-count-headline")).toBeInTheDocument();
-	});
-
-	it("recipe prompt-draft forwards poster_recipe_id and renders poster_spec / overlay_spec", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		mockedPromptDraft.mockResolvedValue({
-			product_id: "p1",
-			poster_status: "POSTER_READY",
-			prompt_package_status: "DRAFT_READY",
-			generation_allowed: true,
-			production_allowed: true,
-			restricted_mode: false,
-			poster_prompt: "=== POSTER RECIPE ===",
-			negative_prompt: "",
-			copy_layout: { hook: "h", subhook: "", usp: [], cta: "c" },
-			visual_instruction: "",
-			text_overlay_instruction: "",
-			product_truth_lock: "",
-			safety_guardrails: [],
-			blocked_reasons: [],
-			repair_actions: [],
-			readiness_meta: {},
-			operator_notes: "",
-			poster_spec: {
-				recipe_id: "product_hero_night_routine",
-				archetype: "PRODUCT_HERO",
-				layout_template: "hero_center_vertical",
-				product_placement: "Centered hero.",
-				background_scene: "Warm bedside.",
-				visual_style: "Premium.",
-				typography_mood: "Warm.",
-				icon_guidance: "",
-				composition_rules: [],
-				safe_zones: [],
-				chip_slots: [],
+		vi.mocked(createPosterPromptDraft).mockReset().mockResolvedValue(promptResponse);
+		vi.mocked(composePosterV2).mockReset().mockResolvedValue({
+				deliverable: {
+					poster_deliverable_id: "pd1",
+					product_id: "p1",
+					copy_blueprint_id_v2: "bp1",
+					copy_blueprint_revision_v2: 1,
+					copy_execution_binding_id_v2: "binding:bp1:1:POSTER_BUILDER",
+					copy_approval_snapshot_id_v2: "approval:bp1:1",
+				recipe_id: "product_hero",
+				template_version: "1",
+				composition_strategy: "deterministic",
+				background_media_id: "media1",
+				output_path: "out.png",
+				output_sha256: "sha",
+				creative_asset_id: "",
+				status: "POSTER_COMPOSED",
 			},
-			overlay_spec: {
-				schema_version: "poster-overlay-v1",
-				frame_ratio: "9:16",
-				typography_mood: "Warm.",
-				safe_zones: [],
-				zones: [
-					{
-						zone_id: "headline",
-						role: "HEADLINE",
-						x: 8,
-						y: 8,
-						w: 84,
-						h: 18,
-						align: "left",
-						font_role: "display",
-						max_chars: 48,
-						text: "Malam tenang",
-					},
-				],
-				renderer: "NONE_PHASE_2",
-				disclaimer: "foundation only",
-			},
-		});
-		renderPage();
-		await waitForReadinessUi();
-		(await screen.findByTestId("poster-recipe-card-product_hero_night_routine")).click();
-		// Fill the required slots (hook + cta) so the generate button enables.
-		fireEvent.change(await screen.findByTestId("slot-field-hook"), {
-			target: { value: "Malam tenang" },
-		});
-		fireEvent.change(screen.getByTestId("slot-field-cta"), {
-			target: { value: "Dapatkan" },
-		});
-		// Mandatory expert-quality gate must pass before generation is allowed.
-		(await screen.findByTestId("poster-quality-check")).click();
-		await waitFor(() =>
-			expect(screen.getByTestId("poster-quality-clean")).toBeInTheDocument(),
-		);
-		const genBtn = await screen.findByTestId("recipe-generate-prompt-draft");
-		await waitFor(() => expect(genBtn).not.toBeDisabled());
-		genBtn.click();
-		await waitFor(() =>
-			expect(mockedDraftToPrompt).toHaveBeenCalledWith(
-				"p1",
-				expect.objectContaining({
-					poster_recipe_id: "product_hero_night_routine",
-					hook: "Malam tenang",
-					cta: "Dapatkan",
-				}),
-			),
-		);
-		// Structured spec + overlay preview renders, with the Phase-2 disclaimer.
-		expect(await screen.findByTestId("poster-spec-preview")).toBeInTheDocument();
-		expect(screen.getByTestId("poster-overlay-zones")).toBeInTheDocument();
-		expect(screen.getByTestId("poster-overlay-disclaimer")).toBeInTheDocument();
-	});
-
-	it("poster copy quality check surfaces findings and BLOCK gates generation", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		mockedQuality.mockResolvedValue({
-			ok: false,
-			block_count: 1,
-			warn_count: 1,
-			findings: [
-				{
-					code: "MEDICAL_RELIEF_CLAIM",
-					severity: "BLOCK",
-					field: "overall",
-					message: "bahasa perubatan/simptom.",
-				},
-				{
-					code: "VIDEO_SCRIPT_STYLE",
-					severity: "WARN",
-					field: "overall",
-					message: "gaya skrip video.",
-				},
-			],
-		});
-		renderPage();
-		await waitForReadinessUi();
-		(await screen.findByTestId("poster-recipe-card-product_hero_night_routine")).click();
-		// Fill required slots so the ONLY reason to disable generate is the quality BLOCK.
-		fireEvent.change(await screen.findByTestId("slot-field-hook"), {
-			target: { value: "Tajuk pendek" },
-		});
-		fireEvent.change(screen.getByTestId("slot-field-cta"), {
-			target: { value: "Dapatkan" },
-		});
-		// The expert quality panel is part of the recipe flow.
-		expect(await screen.findByTestId("poster-copy-quality-panel")).toBeInTheDocument();
-		(await screen.findByTestId("poster-quality-check")).click();
-		// Findings render (a BLOCK and a WARN).
-		await waitFor(() =>
-			expect(screen.getByTestId("poster-quality-block")).toBeInTheDocument(),
-		);
-		expect(screen.getByTestId("poster-quality-warn")).toBeInTheDocument();
-		// BLOCK gates the recipe generate button + shows the block note.
-		expect(screen.getByTestId("poster-quality-block-note")).toBeInTheDocument();
-		expect(screen.getByTestId("recipe-generate-prompt-draft")).toBeDisabled();
-	});
-
-	it("generation is blocked until the expert quality check runs (mandatory gate)", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		(await screen.findByTestId("poster-recipe-card-product_hero_night_routine")).click();
-		// Required copy is present AND within limits …
-		fireEvent.change(await screen.findByTestId("slot-field-hook"), {
-			target: { value: "Tajuk pendek" },
-		});
-		fireEvent.change(screen.getByTestId("slot-field-cta"), {
-			target: { value: "Dapatkan" },
-		});
-		// … but the quality guard has NOT run yet, so generation stays disabled
-		// and a recheck note explains why (no unchecked copy may generate).
-		expect(screen.getByTestId("recipe-generate-prompt-draft")).toBeDisabled();
-		expect(screen.getByTestId("poster-quality-needscheck-note")).toBeInTheDocument();
-	});
-
-	it("a clean expert quality check enables generation", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		// beforeEach default returns a clean (ok, no-findings) report.
-		renderPage();
-		await waitForReadinessUi();
-		(await screen.findByTestId("poster-recipe-card-product_hero_night_routine")).click();
-		fireEvent.change(await screen.findByTestId("slot-field-hook"), {
-			target: { value: "Tajuk pendek" },
-		});
-		fireEvent.change(screen.getByTestId("slot-field-cta"), {
-			target: { value: "Dapatkan" },
-		});
-		(await screen.findByTestId("poster-quality-check")).click();
-		await waitFor(() =>
-			expect(screen.getByTestId("poster-quality-clean")).toBeInTheDocument(),
-		);
-		// Required copy present + within limits + quality clean → generation enabled.
-		await waitFor(() =>
-			expect(
-				screen.getByTestId("recipe-generate-prompt-draft"),
-			).not.toBeDisabled(),
-		);
-	});
-
-	it("editing copy after a clean check resets the quality gate (needs recheck)", async () => {
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		renderPage();
-		await waitForReadinessUi();
-		(await screen.findByTestId("poster-recipe-card-product_hero_night_routine")).click();
-		fireEvent.change(await screen.findByTestId("slot-field-hook"), {
-			target: { value: "Tajuk pendek" },
-		});
-		fireEvent.change(screen.getByTestId("slot-field-cta"), {
-			target: { value: "Dapatkan" },
-		});
-		(await screen.findByTestId("poster-quality-check")).click();
-		await waitFor(() =>
-			expect(
-				screen.getByTestId("recipe-generate-prompt-draft"),
-			).not.toBeDisabled(),
-		);
-		// Any copy change invalidates the prior clean report → gate re-arms.
-		fireEvent.change(screen.getByTestId("slot-field-hook"), {
-			target: { value: "Tajuk pendek yang diubah" },
-		});
-		await waitFor(() =>
-			expect(
-				screen.getByTestId("recipe-generate-prompt-draft"),
-			).toBeDisabled(),
-		);
-		expect(screen.getByTestId("poster-quality-stale")).toBeInTheDocument();
-		expect(screen.getByTestId("poster-quality-needscheck-note")).toBeInTheDocument();
-	});
-
-	it("reopens approved copy into an explicit persisted new-version flow", async () => {
-		const approved = {
-			poster_copy_set_id: "pcs_parent",
-			product_id: "p1",
-			campaign_id: "",
-			objective: "Product introduction",
-			archetype: "PRODUCT_HERO",
-			angle: "Routine",
-			primary_message: "Tajuk asal",
-			support_message: "Sokongan asal",
-			proof_points: ["Bukti asal"],
-			offer: null,
-			cta: "Dapatkan",
-			disclaimer: "",
-			tone: "mesra",
-			language: "ms",
-			variants: [],
-			field_provenance: {},
-			ai_model: "",
-			prompt_version: "",
-			status: "POSTER_COPY_APPROVED",
-			version: 1,
-			parent_poster_copy_set_id: "",
-			approved_at: "2026-07-10T00:00:00Z",
-			approved_by: "operator",
-		};
-		const draftVersion = {
-			...approved,
-			poster_copy_set_id: "pcs_child",
-			status: "POSTER_COPY_DRAFT",
-			version: 2,
-			parent_poster_copy_set_id: "pcs_parent",
-		};
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		mockedReopen.mockResolvedValue({
-			deliverable: {
-				poster_deliverable_id: "pd_saved",
-				product_id: "p1",
-				poster_copy_set_id: "pcs_parent",
-				recipe_id: "product_hero_night_routine",
-				template_version: "v1",
-				composition_strategy: "REFERENCE_CONDITIONED",
-				background_media_id: "m1",
-				output_path: "/poster.png",
-				output_sha256: "abc",
-				creative_asset_id: "ca_saved",
-				status: "POSTER_SAVED",
-			},
-			render_manifest: {},
-			poster_copy_set: approved,
+			render_report: {},
 			qa_report: { ok: true, findings: [], block_count: 0, warn_count: 0 },
-			output_available: false,
 		});
-		mockedNewVersion.mockResolvedValue(draftVersion);
-		mockedPatchCopySet.mockResolvedValue(draftVersion);
-		mockedApproveCopySet.mockResolvedValue({
-			...draftVersion,
-			status: "POSTER_COPY_APPROVED",
+		vi.mocked(startImgGeneration).mockReset().mockResolvedValue({ job_id: "img-job-1" });
+		vi.mocked(pollImgGenerationJob).mockReset().mockResolvedValue({
+			status: "COMPLETED",
+			media_id: "generated-background-1",
+			url: "/api/flow/retrieved/generated-background-1",
 		});
+	});
 
-		renderPage("?reopen_asset=ca_saved");
-		await screen.findByTestId("poster-reopen-panel");
-		const createVersion = await screen.findByTestId(
-			"poster-copy-create-new-version",
+	it("contains no legacy controls and never opens live confirmation automatically", () => {
+		renderPage();
+		expect(screen.getByTestId("poster-builder-v2-only")).toBeInTheDocument();
+		expect(screen.queryByText(/classic view/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/legacy compatibility/i)).not.toBeInTheDocument();
+		expect(screen.queryByTestId("poster-gen-confirm")).not.toBeInTheDocument();
+		expect(startImgGeneration).not.toHaveBeenCalled();
+	});
+
+	it("preserves the explicit live-action confirmation gate", async () => {
+		renderPage();
+		fireEvent.click(screen.getByRole("button", { name: "Select Test Product" }));
+		fireEvent.click(screen.getByRole("button", { name: "Prove V2 binding" }));
+		fireEvent.click(screen.getByRole("button", { name: "Resolve approved V2 copy" }));
+		await screen.findByText("Exact hook");
+
+		fireEvent.click(screen.getByTestId("poster-live-background-button"));
+		const confirm = screen.getByTestId("poster-gen-confirm");
+		expect(confirm).toBeDisabled();
+		expect(startImgGeneration).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByTestId("poster-img-live-action-confirm-checkbox"));
+		expect(confirm).toBeEnabled();
+		fireEvent.click(confirm);
+
+		await waitFor(() => expect(startImgGeneration).toHaveBeenCalledTimes(1));
+		expect(startImgGeneration).toHaveBeenCalledWith(
+			expect.objectContaining({
+				product_id: "p1",
+				visual_lane_id: "POSTER_BUILDER",
+				maximum_provider_operations: 1,
+				max_retry_operations: 0,
+			}),
 		);
-		expect(screen.getByTestId("slot-field-hook")).toBeDisabled();
-		fireEvent.click(createVersion);
 		await waitFor(() =>
-			expect(mockedNewVersion).toHaveBeenCalledWith("pcs_parent", {}),
-		);
-		expect(await screen.findByTestId("poster-copy-version-draft")).toBeInTheDocument();
-		expect(screen.getByTestId("slot-field-hook")).not.toBeDisabled();
-		fireEvent.change(screen.getByTestId("slot-field-hook"), {
-			target: { value: "Tajuk operator baharu" },
-		});
-		fireEvent.click(screen.getByTestId("poster-copy-save-new-version"));
-		await waitFor(() =>
-			expect(mockedPatchCopySet).toHaveBeenCalledWith(
-				"pcs_child",
-				expect.objectContaining({ primary_message: "Tajuk operator baharu" }),
-			),
-		);
-		await waitFor(() =>
-			expect(mockedApproveCopySet).toHaveBeenCalledWith(
-				"pcs_child",
-				"APPROVE_POSTER_COPY_SET",
+			expect(screen.getByLabelText("Background media ID")).toHaveValue(
+				"generated-background-1",
 			),
 		);
 	});
 
-	it("reopens a SUPERSEDED historical copy read-only and forks a new draft", async () => {
-		const superseded = {
-			poster_copy_set_id: "pcs_hist",
-			product_id: "p1",
-			campaign_id: "",
-			objective: "Product introduction",
-			archetype: "PRODUCT_HERO",
-			angle: "Routine",
-			primary_message: "Tajuk sejarah",
-			support_message: "Sokongan sejarah",
-			proof_points: ["Bukti sejarah"],
-			offer: null,
-			cta: "Dapatkan",
-			disclaimer: "",
-			tone: "mesra",
-			language: "ms",
-			variants: [],
-			field_provenance: {},
-			ai_model: "",
-			prompt_version: "",
-			status: "POSTER_COPY_SUPERSEDED",
-			version: 1,
-			parent_poster_copy_set_id: "",
-			approved_at: "2026-07-10T00:00:00Z",
-			approved_by: "operator",
-		};
-		const forkedDraft = {
-			...superseded,
-			poster_copy_set_id: "pcs_fork",
-			status: "POSTER_COPY_DRAFT",
-			version: 3,
-			parent_poster_copy_set_id: "pcs_hist",
-		};
-		mockedFetch.mockResolvedValue(posterReadinessFixtures.ready());
-		mockedReopen.mockResolvedValue({
-			deliverable: {
-				poster_deliverable_id: "pd_hist",
-				product_id: "p1",
-				poster_copy_set_id: "pcs_hist",
-				recipe_id: "product_hero_night_routine",
-				template_version: "v1",
-				composition_strategy: "REFERENCE_CONDITIONED",
-				background_media_id: "m1",
-				output_path: "/poster.png",
-				output_sha256: "abc",
-				creative_asset_id: "ca_saved",
-				status: "POSTER_SAVED",
-			},
-			render_manifest: {},
-			poster_copy_set: superseded,
-			poster_copy_set_status: "POSTER_COPY_SUPERSEDED",
-			poster_copy_set_historical: true,
-			qa_report: { ok: true, findings: [], block_count: 0, warn_count: 0 },
-			output_available: true,
-			output_source: "CREATIVE_LIBRARY",
-			output_sha256_verified: true,
-		});
-		mockedForkHistorical.mockResolvedValue(forkedDraft);
+	it("uses exact V2 prompt and compose routes without a legacy copy id", async () => {
+		renderPage();
+		fireEvent.click(screen.getByRole("button", { name: "Select Test Product" }));
+		fireEvent.click(screen.getByRole("button", { name: "Prove V2 binding" }));
+		fireEvent.click(screen.getByRole("button", { name: "Resolve approved V2 copy" }));
 
-		renderPage("?reopen_asset=ca_saved");
-		await screen.findByTestId("poster-reopen-panel");
-		// Historical version is clearly labelled and read-only.
-		expect(screen.getByTestId("poster-reopen-historical")).toBeInTheDocument();
-		// Durable output source is surfaced to the operator.
-		expect(
-			screen.getByTestId("poster-reopen-output-source").textContent,
-		).toContain("Creative Library");
-		// Forking clones the historical copy WITHOUT mutating it.
-		fireEvent.click(screen.getByTestId("poster-reopen-fork-historical"));
-		await waitFor(() =>
-			expect(mockedForkHistorical).toHaveBeenCalledWith("pcs_hist", {}),
+		await waitFor(() => expect(createPosterPromptDraft).toHaveBeenCalledTimes(1));
+		expect(createPosterPromptDraft).toHaveBeenCalledWith(
+			expect.not.objectContaining({ copy_set_id: expect.anything(), poster_copy_set_id: expect.anything() }),
 		);
+		expect(await screen.findByText("Exact hook")).toBeInTheDocument();
+
+		fireEvent.change(screen.getByLabelText("Background media ID"), {
+			target: { value: "media1" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: /Compose with V2 copy/i }));
+		await waitFor(() => expect(composePosterV2).toHaveBeenCalledTimes(1));
+		expect(composePosterV2).toHaveBeenCalledWith(
+			expect.not.objectContaining({ poster_copy_set_id: expect.anything() }),
+		);
+		expect(await screen.findByText("Composed: pd1")).toBeInTheDocument();
 	});
 });
