@@ -4,6 +4,7 @@ Calls the route functions directly (no TestClient dependency). The 422 validatio
 BEFORE the extension-connectivity check, so these need no live extension.
 """
 import asyncio
+import json
 
 from fastapi import HTTPException
 
@@ -141,6 +142,66 @@ def test_generate_resolves_refs_payload_contract(monkeypatch):
 def test_negotiate_job_unknown_model_returns_422():
     _expect_422_nego(flow.NegotiateJobRequest(prompt="x", model="Nano Banana 2"),
                      "unknown video model")
+
+
+def test_generate_busy_response_preserves_error_and_exposes_active_job(monkeypatch):
+    class _C:
+        connected = True
+
+        async def get_credits(self):
+            return {"data": {"userPaygateTier": "PAYGATE_TIER_ONE"}}
+
+    async def fake_start_generate(*args, **kwargs):
+        return {
+            "status": "REJECTED",
+            "error": "VIDEO_JOB_IN_FLIGHT",
+            "active_job": "g_existing123",
+        }
+
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _C())
+    from agent.services import make_video as mv
+    monkeypatch.setattr(mv, "start_generate", fake_start_generate)
+
+    response = _run(flow.generate(flow.GenerateRequest(mode="T2V", prompt="safe prompt")))
+    assert response.status_code == 409
+    payload = json.loads(response.body)
+    assert payload == {
+        "detail": "VIDEO_JOB_IN_FLIGHT",
+        "error": "VIDEO_JOB_IN_FLIGHT",
+        "active_job": "g_existing123",
+    }
+
+
+def test_generate_blocks_stale_creator_byline_package_before_provider(monkeypatch):
+    calls = {"start_generate": 0}
+
+    async def fake_get_product(product_id):
+        assert product_id == "product-sambal"
+        return {
+            "id": product_id,
+            "product_display_name": "Sambal Nyet Berapi by Khairulaming",
+            "shop_name": "khairulamingbrand",
+        }
+
+    async def fake_start_generate(*args, **kwargs):
+        calls["start_generate"] += 1
+        return {"job_id": "must-not-run"}
+
+    monkeypatch.setattr(flow.crud, "get_product", fake_get_product)
+    from agent.services import make_video as mv
+    monkeypatch.setattr(mv, "start_generate", fake_start_generate)
+
+    try:
+        _run(flow.generate(flow.GenerateRequest(
+            mode="F2V",
+            prompt="Show Sambal Nyet Berapi by Khairulaming in a kitchen.",
+            product_id="product-sambal",
+        )))
+        assert False, "expected stale provider-safety package rejection"
+    except HTTPException as exc:
+        assert exc.status_code == 409
+        assert exc.detail == "ERR_PROVIDER_SAFETY_PACKAGE_STALE_RECOMPILE_REQUIRED"
+    assert calls["start_generate"] == 0
 
 
 if __name__ == "__main__":

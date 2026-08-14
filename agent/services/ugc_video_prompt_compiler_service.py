@@ -42,9 +42,80 @@ _SOURCE_MODE_BY_MODE = {"F2V": "HYBRID", "T2V": "T2V", "I2V": "INGREDIENTS", "IM
 # (incident 2026-07-09 corrective audit: unpinned FRAMES compiled as HYBRID).
 CANONICAL_SOURCE_MODES = {"T2V", "HYBRID", "FRAMES", "INGREDIENTS", "IMAGES"}
 
+_CREATOR_BYLINE_RE = re.compile(
+    r"^(?P<product>.+?)\s+by\s+(?P<creator>[^,|/]{3,})$",
+    flags=re.IGNORECASE,
+)
+
 
 def _clean(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _provider_safe_product(product: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Remove a corroborated creator/shop byline from provider-facing product prose.
+
+    Google Flow can reject an otherwise ordinary product prompt when a listing title
+    appends a real creator's name (captured live: ``<product> by <creator>`` triggered
+    the prominent-people safety filter).  Catalog/source truth stays untouched; this
+    shallow projection is used only by the prompt planner/renderer.  A byline is
+    removed only when its suffix is corroborated by the registered brand or shop name,
+    so an arbitrary product title containing the word "by" is never guessed at.
+    """
+    projected = dict(product)
+    original = _clean(
+        product.get("name")
+        or product.get("product_name")
+        or product.get("product_display_name")
+        or product.get("raw_product_title")
+        or product.get("product_short_name")
+    )
+    match = _CREATOR_BYLINE_RE.fullmatch(original)
+    if not match:
+        return projected, {"applied": False}
+
+    creator = _clean(match.group("creator"))
+    safe_name = _clean(match.group("product"))
+
+    def key(value: Any) -> str:
+        return re.sub(r"[^a-z0-9]+", "", _clean(value).casefold())
+
+    creator_key = key(creator)
+    authority_keys = [
+        key(product.get("brand")),
+        key(product.get("shop_name")),
+    ]
+    corroborated = bool(
+        safe_name
+        and len(creator_key) >= 4
+        and any(
+            authority
+            and (
+                authority == creator_key
+                or authority.startswith(creator_key)
+                or creator_key.startswith(authority)
+            )
+            for authority in authority_keys
+        )
+    )
+    if not corroborated:
+        return projected, {"applied": False}
+
+    # Set every prompt-name precedence field. raw_product_title remains the immutable
+    # source listing title for provenance, but no planner/renderer can fall through to it.
+    projected.update(
+        name=safe_name,
+        product_name=safe_name,
+        product_display_name=safe_name,
+        product_short_name=safe_name,
+    )
+    return projected, {
+        "applied": True,
+        "reason": "CREATOR_BYLINE_REMOVED",
+        "original_name": original,
+        "provider_safe_name": safe_name,
+        "removed_attribution": creator,
+    }
 
 
 def _fingerprint(*parts: str) -> str:
@@ -792,6 +863,7 @@ def compile_ugc_video_prompt(
     normalized_mode = str(mode or "").strip().upper()
     if normalized_mode not in SUPPORTED_MODES:
         raise ValueError(f"UNSUPPORTED_MODE:{normalized_mode}")
+    product, provider_prompt_safety = _provider_safe_product(product)
     resolved_generation_mode = normalize_generation_mode(generation_mode)
     resolved_camera_style = normalize_camera_style(camera_style)
     resolved_character_presence = normalize_character_presence(character_presence)
@@ -1235,9 +1307,18 @@ def compile_ugc_video_prompt(
     final_compiled_prompt_text = "\n\n".join(
         block["engine_prompt_text"] for block in compiled_blocks
     )
+    if provider_prompt_safety.get("applied") and (
+        str(provider_prompt_safety["original_name"]).casefold()
+        in final_compiled_prompt_text.casefold()
+    ):
+        # A selected/approved copy field may still carry the creator byline.  Never
+        # silently mutate approved wording and never send the known-blocked name.
+        raise ValueError("PROVIDER_SAFETY_PROMPT_REVIEW_REQUIRED")
     warnings: list[str] = []
     if resolved_character_presence == "FACELESS":
         warnings.append("FACELESS_MODE_REQUIRES_EXPLICIT_OPERATOR_CHOICE")
+    if provider_prompt_safety.get("applied"):
+        warnings.append("PROVIDER_SAFETY_CREATOR_BYLINE_REMOVED")
     package_fingerprint = canonical_package_fingerprint(
         planner_result=planner_result,
         rendered_prompt_blocks=compiled_blocks,
@@ -1272,6 +1353,7 @@ def compile_ugc_video_prompt(
         "prompt_fingerprint": package_fingerprint,
         "canonical_package_fingerprint": package_fingerprint,
         "rendered_prompt_fingerprint": _fingerprint(final_compiled_prompt_text),
+        "provider_prompt_safety": provider_prompt_safety,
         "planner_result": planner_result,
         "planner_version": planner_result["plan_version"] if planner_result else None,
         "planner_fingerprint": planner_result["planner_fingerprint"] if planner_result else None,
@@ -1280,6 +1362,7 @@ def compile_ugc_video_prompt(
         "source_of_truth_notes": [
             "Compiler v1 uses internal product intelligence + claim-safe package + central compiler config.",
             "Scene Strategy Library fills missing copy slots and adds product-use constraints to the selected scene.",
+            "Provider-facing product prose removes only a brand/shop-corroborated creator byline; catalog source truth is unchanged.",
             "Sovereign/Satellite pack ingestion is future work.",
         ],
         "continuation_lineage": continuation_lineage,

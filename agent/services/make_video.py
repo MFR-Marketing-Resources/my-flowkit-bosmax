@@ -654,6 +654,27 @@ def _is_retrieval_phase_error(msg) -> bool:
     return any(m in (msg or "") for m in _RETRIEVAL_PHASE_MARKERS)
 
 
+def _terminal_agent_failure_error(classification: str | None) -> str | None:
+    """Map a terminal Flow-agent reply to one stable operator-facing error."""
+    if classification == "REFERENCE_IMAGE_MISSING":
+        return (
+            "FAILED_REFERENCE_IMAGE_MISSING: the Flow agent cannot access the start "
+            "image — re-upload the product image and resubmit (do NOT just regenerate)"
+        )
+    if classification == agent_video.SAFETY_FILTERED:
+        return (
+            "FAILED_PROVIDER_SAFETY_FILTER: Google Flow rejected the prompt under its "
+            "prominent-people safety policy. Recompile with the creator attribution "
+            "removed; do not auto-retry the same prompt"
+        )
+    if classification == "RENDER_FAILED":
+        return (
+            "FAILED_RENDER_REPORTED_BY_AGENT: the Flow agent reports the generation "
+            "failed server-side — safe to resubmit only after the prompt/cause is fixed"
+        )
+    return None
+
+
 def _zero_completed_candidates(stats) -> bool:
     """True only when the poll window PROVABLY evaluated no completed candidate.
 
@@ -1809,6 +1830,11 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             target_model=model, target_duration_s=duration_s,
             desired_num=num_videos)
         job["approved"] = nres.get("approved")
+        # Approval may already have triggered provider work.  Every subsequent failure
+        # is therefore credit-uncertain, including a safety rejection inside the approve
+        # stream; never stamp it as NOT_SPENT merely because retrieval did not begin.
+        if job["approved"] is True:
+            generating = True
         # Expose the FULL post-approve verification status on the job (the API returns the job
         # dict verbatim), so an unverified generation is NEVER presented as fully verified.
         job["model_used"] = nres.get("model_used")
@@ -1862,15 +1888,17 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             if nres.get("error_class") == agent_video.RATE_LIMITED:
                 raise RuntimeError(str(nres.get("error")))  # honest 0-credit rate-limit label
             raise RuntimeError("agent did not approve a video: " + str(nres.get("error") or nres))
-        # The render can die inside the approve stream itself (agent knowledge:
-        # "trouble accessing the reference image" → stale/deleted start media).
-        if nres.get("failure_classification") == "REFERENCE_IMAGE_MISSING":
-            raise RuntimeError(
-                "FAILED_REFERENCE_IMAGE_MISSING: the Flow agent cannot access the start "
-                "image — re-upload the product image and resubmit (do NOT just regenerate)")
+        # The render can die inside the approve stream itself.  Treat every known
+        # terminal reply as terminal now so the shared video lock is released in the
+        # finally block instead of holding every lane until the retrieval timeout.
+        terminal_error = _terminal_agent_failure_error(
+            nres.get("failure_classification")
+        )
+        if terminal_error:
+            raise RuntimeError(terminal_error)
 
         job["status"], job["stage"] = "GENERATING", "rendering + retrieving"
-        generating = True  # past approval: any failure below is RETRIEVAL-phase, not generation
+        generating = True  # also true for legacy responses that omitted approved=True
         # DETERMINISTIC current-run binding (PR321 closure): the exact identities of
         # THIS submission — the acceptance authority for every retrieved artifact.
         correlation = {
@@ -2019,20 +2047,16 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             # server-side (agent posts "Failed / missing reference image" in chat,
             # invisible to harvest). Ask the agent directly — a zero-credit turn —
             # instead of blind-polling to a 12-minute timeout.
-            if i in (8, 20) and not collected:
+            if i in (0, 8, 20) and not collected:
                 probe = await agent_video.probe_render_failure(
                     client, project_id, sid, probe_turn)
                 probe_turn = probe.get("turn_number", probe_turn + 1)
                 job["render_probe"] = probe
-                if probe.get("classification") == "REFERENCE_IMAGE_MISSING":
-                    raise RuntimeError(
-                        "FAILED_REFERENCE_IMAGE_MISSING: the Flow agent cannot access the "
-                        "start image — re-upload the product image and resubmit "
-                        "(do NOT just regenerate)")
-                if probe.get("classification") == "RENDER_FAILED":
-                    raise RuntimeError(
-                        "FAILED_RENDER_REPORTED_BY_AGENT: the Flow agent reports the "
-                        "generation failed server-side — safe to resubmit")
+                terminal_error = _terminal_agent_failure_error(
+                    probe.get("classification")
+                )
+                if terminal_error:
+                    raise RuntimeError(terminal_error)
             await asyncio.sleep(18)
         # Timeout with SOME videos home but fewer than requested → honest partial DONE
         # (the user gets what exists; the shortfall is flagged, never hidden).

@@ -1373,11 +1373,18 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					executionInFlightRef.current = false;
 					return;
 				}
-				if (status === "FAILED") {
+				if (
+					[
+						"FAILED",
+						"REJECTED",
+						"RENDER_NOT_MATERIALIZED",
+						"STALE_OR_FOREIGN_CANDIDATES_ONLY",
+					].includes(status)
+				) {
 					setNotice({
 						tone: "error",
 						title: `${noticeModeLabel(mode, data.mode)} failed`,
-						detail: job.error || "Generation failed.",
+						detail: job.error || job.original_error || status,
 						requestId,
 					});
 					setIsExecuting(false);
@@ -1647,7 +1654,25 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 
 			if (!response.ok) {
 				const err = await response.json().catch(() => ({}));
-				throw new Error(err.detail || `HTTP ${response.status}`);
+				if (
+					response.status === 409 &&
+					err.detail === "VIDEO_JOB_IN_FLIGHT" &&
+					err.active_job
+				) {
+					setNotice({
+						tone: "info",
+						title: "Existing video job resumed",
+						detail: `The shared Flow lane is already running ${err.active_job}. This page is now following that job instead of submitting another paid generation.`,
+						requestId,
+					});
+					void pollJob(String(err.active_job));
+					return;
+				}
+				throw new Error(
+					typeof err.detail === "string"
+						? err.detail
+						: err.error || `HTTP ${response.status}`,
+				);
 			}
 
 			const result = await response.json();

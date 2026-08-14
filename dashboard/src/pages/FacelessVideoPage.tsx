@@ -384,11 +384,19 @@ export default function FacelessVideoPage() {
 				executionInFlightRef.current = false;
 				return;
 			}
-			if (status === "FAILED" || status === "GENERATED_BUT_UNRETRIEVED") {
+			if (
+				[
+					"FAILED",
+					"REJECTED",
+					"GENERATED_BUT_UNRETRIEVED",
+					"RENDER_NOT_MATERIALIZED",
+					"STALE_OR_FOREIGN_CANDIDATES_ONLY",
+				].includes(status)
+			) {
 				setNotice({
 					tone: "error",
 					title: "Faceless generation failed",
-					detail: job.error || status,
+					detail: job.error || job.original_error || status,
 					requestId,
 				});
 				setIsExecuting(false);
@@ -473,8 +481,26 @@ export default function FacelessVideoPage() {
 				body: JSON.stringify(generateBody),
 			});
 			if (!response.ok) {
-				const text = await response.text();
-				throw new Error(text || `HTTP ${response.status}`);
+				const err = await response.json().catch(() => ({}));
+				if (
+					response.status === 409 &&
+					err.detail === "VIDEO_JOB_IN_FLIGHT" &&
+					err.active_job
+				) {
+					setNotice({
+						tone: "info",
+						title: "Existing video job resumed",
+						detail: `The shared Flow lane is already running ${err.active_job}. Faceless is following that job instead of submitting another paid generation.`,
+						requestId,
+					});
+					void pollJob(String(err.active_job), requestId);
+					return;
+				}
+				throw new Error(
+					typeof err.detail === "string"
+						? err.detail
+						: err.error || `HTTP ${response.status}`,
+				);
 			}
 			const data = await response.json();
 			const jobId = data.job_id || data.id;
