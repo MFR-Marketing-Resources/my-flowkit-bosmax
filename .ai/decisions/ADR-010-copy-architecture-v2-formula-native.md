@@ -2,6 +2,11 @@
 
 # ADR-010: Copy Architecture V2 / Formula-Native Copy System
 
+> Active-runtime cutover note (2026-08-14): ADR-011 supersedes this ADR's
+> default-off and selectable-legacy rollout policy for active Copy Register and
+> production consumers. The formula, evidence, approval, immutability, lineage,
+> compiler, and fail-closed invariants below remain in force.
+
 - Status: ACCEPTED ARCHITECTURE — PHASE 0 DOCUMENTATION GATE
 - Date: 2026-08-13
 - Owner decision: controlled additive migration
