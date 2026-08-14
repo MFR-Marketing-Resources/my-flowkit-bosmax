@@ -73,7 +73,7 @@ class MontagePlanRequest(BaseModel):
 class MontageExecuteRequest(MontagePlanRequest):
     """Prepare packages for each scene (optional fire only if explicitly allowed)."""
     scene_context_override: Optional[str] = None
-    copy_fallback_confirmed: bool = True
+    copy_fallback_confirmed: bool = False
     # Hard lock: API never auto-fires credit unless this is True AND a live
     # runner is wired. Default False = packages only.
     allow_live_generate: bool = False

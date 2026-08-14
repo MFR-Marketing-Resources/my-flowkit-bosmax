@@ -345,6 +345,13 @@ async def test_treatment_hash_is_deterministic_and_lifecycle_is_audited(
         await service.treatment_crud.get_treatment(created["treatment_id"]),
     )
     assert current["treatment_sha256"] == created["treatment_sha256"]
+    stored_row = await service.treatment_crud.get_treatment(created["treatment_id"])
+    receipt = service.revalidate_stored_treatment_receipt(stored_row)
+    assert receipt["treatment_sha256"] == created["treatment_sha256"]
+    with pytest.raises(service.CreativeTreatmentError, match="TREATMENT_AUTHORITY_STALE"):
+        service.revalidate_stored_treatment_receipt(
+            {**stored_row, "dialogue_text": "tampered historical dialogue"}
+        )
 
     approved = await _approve(created)
     assert approved["status"] == "APPROVED"

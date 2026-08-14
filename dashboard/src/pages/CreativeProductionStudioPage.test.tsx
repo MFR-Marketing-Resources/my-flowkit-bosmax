@@ -28,6 +28,7 @@ const reconcileAttempt = vi.fn();
 const retryAttempt = vi.fn();
 const decideItemQa = vi.fn();
 const fetchVideoModels = vi.fn();
+const copyV2State = vi.hoisted(() => ({ ready: true }));
 
 vi.mock("../api/creativeProduction", () => ({
 	fetchCohortAuthority: (...args: unknown[]) => fetchCohortAuthority(...args),
@@ -58,6 +59,32 @@ vi.mock("../api/creativeProduction", () => ({
 vi.mock("../api/productionQueue", () => ({
 	fetchVideoModels: (...args: unknown[]) => fetchVideoModels(...args),
 }));
+
+vi.mock(
+	"../components/copywriting/CopyArchitectureV2LaneCard",
+	async () => {
+		const React = await import("react");
+		return {
+			default: ({
+				onReadyChange,
+			}: {
+				onReadyChange?: (ready: boolean) => void;
+			}) => {
+				React.useEffect(() => {
+					onReadyChange?.(copyV2State.ready);
+				}, [onReadyChange]);
+				return React.createElement(
+					"div",
+					{
+						"data-testid": "copy-v2-lane-card-mock",
+						"data-ready": String(copyV2State.ready),
+					},
+					"Copy Register V2",
+				);
+			},
+		};
+	},
+);
 
 vi.mock("../components/CreativeSupplyFactoryPanel", () => ({
 	default: () => <div data-testid="p7-supply-preserved">Creative supply</div>,
@@ -540,6 +567,7 @@ async function selectPlan(planId: string) {
 }
 
 beforeEach(() => {
+	copyV2State.ready = true;
 	vi.stubGlobal("crypto", {
 		randomUUID: () => "00000000-0000-4000-8000-000000000001",
 	});
@@ -596,7 +624,8 @@ describe("P6.3-R2 production plan state isolation", () => {
 		expect(screen.getByTestId("p6-create-plan")).toHaveTextContent(
 			"Create production plan",
 		);
-		expect(screen.getByTestId("ptf-panel-preserved")).toBeInTheDocument();
+		expect(screen.getByTestId("copy-v2-lane-card-mock")).toBeInTheDocument();
+		expect(screen.queryByTestId("ptf-panel-preserved")).not.toBeInTheDocument();
 	});
 
 	it("loads an existing plan only by explicit selection and renders exact 3+2 EXTEND truth", async () => {
@@ -611,7 +640,10 @@ describe("P6.3-R2 production plan state isolation", () => {
 		expect(snapshot).toHaveTextContent("2 segments");
 		expect(
 			screen.getByTestId("p6-selected-treatment-authority"),
-		).toHaveTextContent("5 immutable approvals");
+		).toHaveTextContent("5 immutable visual approvals");
+		expect(screen.getByTestId("p6-selected-treatment-authority")).toHaveTextContent(
+			"Copy authority: COPY_REGISTER_V2_ONLY",
+		);
 		expect(snapshot).toHaveTextContent("plan-b-treatment-5");
 		expect(screen.getByTestId("p6-content-matrix")).toHaveTextContent(
 			"plan-b-item-4",
@@ -759,7 +791,7 @@ describe("P6.3-R2 production plan state isolation", () => {
 		);
 	});
 
-	it("fails closed during capacity checks and ignores a stale shortage response", async () => {
+	it("fails closed during treatment capacity checks and ignores a stale shortage response", async () => {
 		let resolveFirst:
 			| ((value: ReturnType<typeof makeTreatmentAvailability>) => void)
 			| undefined;
@@ -797,22 +829,42 @@ describe("P6.3-R2 production plan state isolation", () => {
 		});
 		await waitFor(() =>
 			expect(screen.getByTestId("p6-treatment-availability")).toHaveTextContent(
-				"2/2 unique approved treatments allocated",
+				"2/2 unique approved visual treatments allocated",
 			),
 		);
-		await waitFor(() =>
-			expect(screen.getByTestId("p6-create-plan")).toBeEnabled(),
-		);
+		await waitFor(() => expect(screen.getByTestId("p6-create-plan")).toBeEnabled());
 
 		await act(async () => {
 			if (!firstRequest) throw new Error("first availability request missing");
 			resolveFirst?.(makeTreatmentAvailability(firstRequest, false));
 		});
 		expect(screen.getByTestId("p6-treatment-availability")).toHaveTextContent(
-			"2/2 unique approved treatments allocated",
+			"2/2 unique approved visual treatments allocated",
 		);
 		expect(screen.getByTestId("p6-create-plan")).toBeEnabled();
 		expect(screen.queryByText(/0\/1 eligible/i)).not.toBeInTheDocument();
+	});
+
+	it("fails closed on V2 readiness while retaining visual treatment proof", async () => {
+		copyV2State.ready = false;
+		render(<CreativeProductionStudioPage />);
+		await screen.findByText("Select existing plan");
+		fireEvent.click(screen.getByRole("button", { name: /Choose products/i }));
+		fireEvent.click(
+			await screen.findByRole("option", { name: /P6 Product A/i }),
+		);
+
+		expect(screen.getByTestId("copy-v2-lane-card-mock")).toHaveAttribute(
+			"data-ready",
+			"false",
+		);
+		expect(screen.getByTestId("p6-create-plan")).toBeDisabled();
+		await waitFor(() => expect(fetchTreatmentAvailability).toHaveBeenCalled());
+		await waitFor(() =>
+			expect(screen.getByTestId("p6-treatment-availability")).toHaveTextContent(
+				"1/1 unique approved visual treatments allocated",
+			),
+		);
 	});
 
 	it("duplicates an active plan into an explicit UNSAVED draft with no old matrix or live action", async () => {

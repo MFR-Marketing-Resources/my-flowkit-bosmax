@@ -1,8 +1,8 @@
-"""Read-only Phase 2 Copy Architecture V2 contract endpoints.
+"""Copy Architecture V2 contract endpoints.
 
 These endpoints validate and describe additive V2 artifacts.  They do not
 persist blueprints, approve copy, call a provider, invoke the compiler, or
-change any legacy CopySet path.  Consumer/page cutover remains Phase 3.
+change archived legacy copy storage.
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from agent.models.copy_blueprint_v2 import (
     EvidenceFact,
     EvidenceRegistry,
     ProductTruthLineage,
+    legacy_copy_maintenance_enabled,
 )
 from agent.services.copy_blueprint_v2_service import (
     CopyBlueprintV2Error,
@@ -70,10 +71,13 @@ async def get_copy_architecture_v2_consumer_status():
     """
 
     flags = CopyBlueprintV2FeatureFlagState.from_environment()
+    maintenance_mode = legacy_copy_maintenance_enabled()
     return {
         "version": "2",
         "feature_flags": flags.model_dump(mode="json"),
-        "legacy_path_unchanged": not flags.enabled,
+        "v2_only": not maintenance_mode,
+        "legacy_storage_enabled": maintenance_mode,
+        "legacy_path_unchanged": maintenance_mode and not flags.enabled,
         "binding_required_when_enabled": True,
         "provider_calls": 0,
         "credit_spend": False,

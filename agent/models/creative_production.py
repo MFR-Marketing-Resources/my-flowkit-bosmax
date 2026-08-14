@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
+
 
 # Re-pinned 2026-08-05 after the Copywriting Hub-Rev2 catalog import re-derived the
 # P6_READY set (old ~211 FastMoss rows archived out, 235 Rev2 products qualified in;
@@ -94,6 +96,14 @@ class CreativePoolSelection(BaseModel):
     scene_asset_ids: list[str] = Field(default_factory=list, max_length=400)
     style_asset_ids: list[str] = Field(default_factory=list, max_length=200)
     layout_ids: list[str] = Field(default_factory=list, max_length=200)
+
+    @model_validator(mode="after")
+    def _legacy_copy_pools_are_archived(self) -> "CreativePoolSelection":
+        if not legacy_copy_maintenance_enabled() and (
+            self.copy_set_ids or self.poster_copy_set_ids
+        ):
+            raise ValueError("LEGACY_COPY_STORAGE_DISABLED")
+        return self
 
 
 class CreativeProductionExecutionPolicy(BaseModel):

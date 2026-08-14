@@ -2046,20 +2046,23 @@ def render_block(
             "there is no product-only shot during the opening spoken line."
         )
     s5 = "\n".join(s5_lines)
-    dialogue = (
-        _clean(treatment.get("dialogue_text"))
-        if treatment
-        else
-        "" if mode == "IMAGES" else _clean(allocation_data.get("exact_dialogue_slice"))
-    ) if allocation_data else (
-        _clean(treatment.get("dialogue_text"))
-        if treatment
-        else "" if mode == "IMAGES" else build_block_dialogue(
-            copy=norm_copy, block_index=block_index, total_blocks=total_blocks,
-            budget=budget, target_language=target_language, family=family,
-            approved_dialogue=approved_dialogue,
+    if approved_dialogue is not None:
+        dialogue = _clean(approved_dialogue)
+    else:
+        dialogue = (
+            _clean(treatment.get("dialogue_text"))
+            if treatment
+            else
+            "" if mode == "IMAGES" else _clean(allocation_data.get("exact_dialogue_slice"))
+        ) if allocation_data else (
+            _clean(treatment.get("dialogue_text"))
+            if treatment
+            else "" if mode == "IMAGES" else build_block_dialogue(
+                copy=norm_copy, block_index=block_index, total_blocks=total_blocks,
+                budget=budget, target_language=target_language, family=family,
+                approved_dialogue=approved_dialogue,
+            )
         )
-    )
     s6 = dialogue if dialogue else "(No spoken dialogue in this block.)"
     family_voice = _family_voice_clause(family, target_language)
     s7 = (
@@ -2258,6 +2261,35 @@ def compile_prompt_set(
             "resolved_block_plan": plan,
             "block_allocations": allocations,
         }
+        if approved_dialogue is not None:
+            from agent.services.full_storyboard_extend_planner import (
+                plan_full_storyboard,
+            )
+
+            copy_planner_result = plan_full_storyboard(
+                route_id="CANONICAL_WORKBOOK_BLOCK_PLAN",
+                source_mode=mode,
+                product=product,
+                copy_intelligence=copy,
+                resolved_block_plan=plan,
+                target_language=target_language,
+                wps_mode=wps_mode,
+                scene_context=scene_context,
+                approved_dialogue=approved_dialogue,
+                shot_count_by_block=[
+                    min(4, max(2, round(seconds / 4)))
+                    for seconds in plan
+                ],
+            ).to_dict()
+            allocations = list(copy_planner_result["block_allocations"])
+            planner_result = {
+                **planner_result,
+                "copy_authority": "COPY_BLUEPRINT_V2_APPROVED",
+                "copy_planner_fingerprint": copy_planner_result[
+                    "planner_fingerprint"
+                ],
+                "block_allocations": allocations,
+            }
     elif treatment or mode == "IMAGES":
         allocations = [None]
     else:
@@ -2288,18 +2320,23 @@ def compile_prompt_set(
         block_dialogue = approved_dialogue
         if treatment_segment_plan:
             segment = treatment_segments[index - 1]
+            segment_dialogue = (
+                str((allocation or {}).get("exact_dialogue_slice") or "")
+                if approved_dialogue is not None
+                else str(segment["exact_dialogue_slice"])
+            )
             block_treatment = {
                 **treatment,
                 "action_sequence": segment["action_sequence"],
                 "shot_grammar": segment["shot_grammar"],
-                "dialogue_text": segment["exact_dialogue_slice"],
+                "dialogue_text": segment_dialogue,
                 "active_segment_index": segment["segment_index"],
                 "active_segment_sha256": segment["segment_sha256"],
                 "active_segment_duration_seconds": segment[
                     "duration_seconds"
                 ],
             }
-            block_dialogue = str(segment["exact_dialogue_slice"])
+            block_dialogue = segment_dialogue
         blocks.append(
             render_block(
                 source_mode=mode,

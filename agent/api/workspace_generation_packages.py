@@ -433,7 +433,9 @@ async def create_img_package(request: IMGGenerationPackageRequest):
 @router.post("/batch")
 async def start_batch(request: BatchGenerationRequest):
     """Start a batch generation run. Returns immediately with batch_run_id for polling."""
-    valid_modes = {"F2V", "I2V", "T2V", "IMG"}
+    # HYBRID UI is active; dormant T2V/F2V/I2V/IMG routes remain hidden while
+    # their programmatic lane identities stay supported here.
+    valid_modes = {"F2V", "HYBRID", "I2V", "T2V", "IMG"}
     bad = [m for m in request.modes if m not in valid_modes]
     if bad:
         raise HTTPException(status_code=400, detail=f"Invalid modes: {bad}. Must be one of {sorted(valid_modes)}")
@@ -463,7 +465,7 @@ async def start_batch(request: BatchGenerationRequest):
             "status": run.get("status"),
         }
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _http_exc_for(exc) from exc
 
 
 @router.get("/batch")
@@ -476,7 +478,7 @@ async def list_batch_runs(
         runs = await list_batch_generation_runs(product_id=product_id, limit=limit)
         return {"runs": runs, "count": len(runs)}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _http_exc_for(exc) from exc
 
 
 @router.get("/batch/{batch_run_id}")
@@ -582,7 +584,7 @@ async def start_batch_prompts(request: BatchPromptRequest):
             raise HTTPException(status_code=422, detail=message)
         raise _http_exc_for(exc)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise _http_exc_for(exc) from exc
     return {
         "ok": True,
         "batch_run_id": run.get("batch_run_id"),

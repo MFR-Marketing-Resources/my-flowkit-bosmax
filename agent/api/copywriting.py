@@ -54,6 +54,7 @@ from agent.services.copywriting_taxonomy_service import (
     list_copywriting_taxonomy_entries,
     resolve_product_taxonomy,
 )
+from agent.api.legacy_copy_guard import require_legacy_copy_maintenance
 
 router = APIRouter(prefix="/copywriting", tags=["copywriting"])
 
@@ -241,6 +242,7 @@ async def resolve_product_copywriting_taxonomy(product_id: str):
 async def copywriting_readiness(product_id: str):
     """Shared copywriting readiness for a product. Drives the generation-surface
     readiness card + 'Prepare Product for Copywriting' CTA + copy-bind gate."""
+    require_legacy_copy_maintenance()
     if is_fastmoss_reference_product_id(product_id):
         raise HTTPException(
             status_code=409,

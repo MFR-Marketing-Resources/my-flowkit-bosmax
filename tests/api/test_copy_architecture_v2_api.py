@@ -53,6 +53,8 @@ def test_consumer_status_is_read_only_and_provider_free():
     assert response.status_code == 200
     body = response.json()
     assert body["feature_flags"]["state"] == "OFF"
+    assert body["v2_only"] is False
+    assert body["legacy_storage_enabled"] is True
     assert body["legacy_path_unchanged"] is True
     assert body["provider_calls"] == 0
     assert body["credit_spend"] is False

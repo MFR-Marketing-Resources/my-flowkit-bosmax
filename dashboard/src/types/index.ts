@@ -351,6 +351,7 @@ export interface WorkspaceExecutePayload {
 	// is true only when the operator explicitly acknowledged non-approved copy.
 	copy_set_id?: string | null;
 	copy_fallback_confirmed?: boolean;
+	copy_v2_context?: Record<string, unknown> | null;
 	request_lineage_payload?: {
 		product_id?: string;
 		mode?: WorkspaceMode;

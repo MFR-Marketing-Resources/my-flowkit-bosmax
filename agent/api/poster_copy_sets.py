@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from agent.models.poster_copy_set import (
@@ -21,8 +21,13 @@ from agent.services.poster_copy_set_service import (
     PosterCopySetError,
     PosterCopySetService,
 )
+from agent.api.legacy_copy_guard import require_legacy_copy_maintenance
 
-router = APIRouter(prefix="/poster/copy-sets", tags=["poster-copy-sets"])
+router = APIRouter(
+    prefix="/poster/copy-sets",
+    tags=["poster-copy-sets"],
+    dependencies=[Depends(require_legacy_copy_maintenance)],
+)
 
 
 def _http(exc: PosterCopySetError | ai_svc.PosterCopyAIError) -> HTTPException:

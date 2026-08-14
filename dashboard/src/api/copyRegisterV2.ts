@@ -100,6 +100,24 @@ export interface CopyBlueprintV2Record {
 	v2_badge?: string | null;
 }
 
+export interface CopyExecutionBindingV2Record {
+	binding_id: string;
+	lane: string;
+	media_kind: "VIDEO" | "IMAGE";
+	copy_policy: "REQUIRED";
+	blueprint_id: string;
+	revision: number;
+	formula_id: string;
+	formula_version: string;
+	approval_snapshot_id: string;
+	product_truth_lineage: Record<string, unknown>;
+	evidence_lineage: Record<string, unknown>;
+	compiler_binding_version: string;
+	feature_flag_state: Record<string, unknown>;
+	binding_status: "BOUND";
+	bound_at: string;
+}
+
 export async function fetchCopyRegisterFormulas(): Promise<{ formulas: CopyFormulaV2[] }> {
 	return getAPI<{ formulas: CopyFormulaV2[] }>("/api/copy-register/v2/formulas");
 }
@@ -184,5 +202,31 @@ export async function approveFormulaBlueprint(input: {
 	return postAPI<{ blueprint: CopyBlueprintV2Record; production_valid: boolean; badge: string | null }>(
 		`/api/copy-register/v2/blueprints/${encodeURIComponent(blueprint_id)}/approve`,
 		body,
+	);
+}
+
+export async function activateFormulaBlueprint(blueprintId: string): Promise<{
+	blueprint_id: string;
+	activated: boolean;
+	bindings: CopyExecutionBindingV2Record[];
+	required_lane_count: number;
+}> {
+	return postAPI<{
+		blueprint_id: string;
+		activated: boolean;
+		bindings: CopyExecutionBindingV2Record[];
+		required_lane_count: number;
+	}>(
+		`/api/copy-register/v2/blueprints/${encodeURIComponent(blueprintId)}/activate`,
+		{},
+	);
+}
+
+export async function fetchCopyBindingResolution(
+	productId: string,
+	lane: string,
+): Promise<Record<string, unknown>> {
+	return getAPI<Record<string, unknown>>(
+		`/api/copy-register/v2/bindings/${encodeURIComponent(productId)}/${encodeURIComponent(lane)}/resolution`,
 	);
 }

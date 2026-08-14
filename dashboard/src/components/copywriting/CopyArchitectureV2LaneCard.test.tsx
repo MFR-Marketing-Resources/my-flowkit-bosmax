@@ -13,6 +13,7 @@ const lane = {
 	current_page_entry_point: "OperatorPage",
 	adapter: "VideoCopyProjection",
 	phase3_scope: "bind",
+	ui_surface_state: "ACTIVE",
 };
 
 function response(body: unknown) {
@@ -25,7 +26,7 @@ describe("CopyArchitectureV2LaneCard", () => {
 		vi.unstubAllGlobals();
 	});
 
-	it("shows explicit REQUIRED policy and legacy compatibility when flag is off", async () => {
+	it("shows explicit REQUIRED policy but never treats maintenance mode as ready", async () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn((url: string) =>
@@ -53,7 +54,7 @@ describe("CopyArchitectureV2LaneCard", () => {
 			expect(screen.getByTestId("copy-v2-policy")).toHaveTextContent("COPY_REQUIRED"),
 		);
 		expect(screen.getByTestId("copy-v2-readiness")).toHaveTextContent(
-			"V2 OFF — LEGACY COMPATIBLE",
+			"V2 MAINTENANCE MODE",
 		);
 		expect(screen.getByTestId("copy-v2-production-valid")).toHaveTextContent(
 			"NOT ASSERTED BY V2",

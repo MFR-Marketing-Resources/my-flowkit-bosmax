@@ -121,7 +121,7 @@ export async function prepareFacelessPackage(input: {
 		total_duration_seconds: input.total_duration_seconds ?? null,
 		start_frame_asset_id: input.start_frame_asset_id ?? null,
 		end_frame_asset_id: input.end_frame_asset_id ?? null,
-		copy_fallback_confirmed: input.copy_fallback_confirmed ?? true,
+		copy_fallback_confirmed: false,
 		copy_v2_context: input.copy_v2_context ?? null,
 	});
 }

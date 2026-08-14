@@ -57,8 +57,9 @@ export interface CohortAuthority {
 
 export interface CreativePoolSelection {
 	treatment_ids: string[];
-	copy_set_ids: string[];
-	poster_copy_set_ids: string[];
+	/** Archived recovery-only fields; V2 production callers must omit them. */
+	copy_set_ids?: string[];
+	poster_copy_set_ids?: string[];
 	avatar_codes: string[];
 	product_reference_asset_ids: string[];
 	finished_frame_asset_ids: string[];

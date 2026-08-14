@@ -19,6 +19,7 @@ from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
     resolve_persisted_copy_execution_binding,
 )
+from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
 
 router = APIRouter(prefix="/faceless", tags=["faceless"])
 
@@ -37,7 +38,7 @@ class FacelessPrepareRequest(BaseModel):
     total_duration_seconds: Optional[int] = None  # EXTEND authorized total
     aspect_ratio: str = "9:16"
     copy_set_id: Optional[str] = None
-    copy_fallback_confirmed: bool = True
+    copy_fallback_confirmed: bool = False
     product_cluster: Optional[str] = None
     has_approved_usp: bool = False
     scene_context_hint: Optional[str] = None
@@ -47,6 +48,14 @@ class FacelessPrepareRequest(BaseModel):
 @router.post("/prepare")
 async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
     """Validate + resolve Hook/BG + create workspace execution package."""
+    if body.copy_set_id and not legacy_copy_maintenance_enabled():
+        raise HTTPException(
+            status_code=410,
+            detail={
+                "error": "LEGACY_COPY_STORAGE_DISABLED",
+                "message": "Faceless production accepts Copy Register V2 bindings only.",
+            },
+        )
     gen_mode = str(body.generation_mode or "SINGLE").strip().upper()
     reference_override = bool(str(body.start_frame_asset_id or "").strip())
 

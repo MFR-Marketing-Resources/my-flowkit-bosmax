@@ -23,6 +23,10 @@ from typing import Any
 from agent.config import OUTPUT_DIR
 from agent.db import crud
 from agent.models.creative_asset import CreativeAssetCreateRequest
+from agent.models.copy_blueprint_v2 import (
+    CopyExecutionBinding,
+    legacy_copy_maintenance_enabled,
+)
 from agent.services.creative_direction_service import resolve_creative_direction
 from agent.models.poster_copy_set import (
     STATUS_POSTER_COPY_APPROVED,
@@ -255,6 +259,73 @@ class PosterDeliverableError(Exception):
 
 def _norm(v: Any) -> str:
     return str(v or "").strip()
+
+
+def _json_object(raw: Any) -> dict[str, Any]:
+    try:
+        value = json.loads(raw or "{}") if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return {}
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _v2_deliverable_binding(
+    row: dict[str, Any],
+) -> tuple[dict[str, Any], CopyExecutionBinding] | None:
+    """Return and validate the immutable V2 receipt embedded at compose time.
+
+    The historical ``poster_copy_set_id`` column remains part of the physical
+    deliverable schema, but a V2 row stores only a namespaced V2 identity in it.
+    This helper never reads ``poster_copy_set``.
+    """
+
+    settings = _json_object(row.get("settings_json"))
+    receipt = settings.get("copy_architecture_v2")
+    if not isinstance(receipt, dict):
+        return None
+    try:
+        binding = CopyExecutionBinding.model_validate(receipt.get("binding"))
+    except Exception as exc:  # noqa: BLE001
+        raise PosterDeliverableError(
+            "POSTER_V2_BINDING_RECEIPT_INVALID",
+            "Poster V2 deliverable has an invalid embedded binding receipt",
+            status_code=409,
+        ) from exc
+    if binding.lane != "POSTER_BUILDER" or binding.copy_policy != "REQUIRED":
+        raise PosterDeliverableError(
+            "POSTER_V2_BINDING_RECEIPT_INVALID",
+            "Poster deliverable binding is not the POSTER_BUILDER authority",
+            status_code=409,
+        )
+    if binding.product_truth_lineage.product_id != _norm(row.get("product_id")):
+        raise PosterDeliverableError(
+            "POSTER_V2_BINDING_PRODUCT_MISMATCH",
+            status_code=409,
+        )
+    if _norm(row.get("poster_copy_set_id")):
+        raise PosterDeliverableError(
+            "POSTER_V2_BINDING_IDENTITY_MISMATCH",
+            status_code=409,
+        )
+    expected_fields = {
+        "copy_blueprint_id_v2": binding.blueprint_id,
+        "copy_blueprint_revision_v2": binding.revision,
+        "copy_execution_binding_id_v2": binding.binding_id,
+        "copy_approval_snapshot_id_v2": binding.approval_snapshot_id,
+    }
+    for field, expected in expected_fields.items():
+        actual = row.get(field)
+        if field == "copy_blueprint_revision_v2":
+            actual = int(actual or 0)
+        else:
+            actual = _norm(actual)
+        if actual != expected:
+            raise PosterDeliverableError(
+                "POSTER_V2_BINDING_IDENTITY_MISMATCH",
+                f"Poster V2 deliverable field {field} does not match its binding receipt",
+                status_code=409,
+            )
+    return dict(receipt), binding
 
 
 def _sha256(path: Path) -> str:
@@ -496,16 +567,30 @@ class PosterDeliverableService:
         if not product:
             raise PosterDeliverableError("PRODUCT_NOT_FOUND", status_code=404)
 
+        v2_binding: CopyExecutionBinding | None = None
         if copy_v2_projection is not None:
             derived = dict(copy_v2_projection.get("derived_copy") or {})
             metadata = dict(copy_v2_projection.get("metadata") or {})
-            synthetic_id = str(
-                poster_copy_set_id
-                or "v2:"
-                + str(metadata.get("blueprint_id") or "blueprint")
-                + ":r"
-                + str(metadata.get("revision") or "1")
-            )
+            try:
+                binding = CopyExecutionBinding.model_validate(
+                    copy_v2_projection.get("binding") or metadata.get("binding")
+                )
+            except Exception as exc:  # noqa: BLE001
+                raise PosterDeliverableError(
+                    "POSTER_V2_BINDING_RECEIPT_INVALID",
+                    "Poster composition requires the exact V2 binding receipt",
+                    status_code=409,
+                ) from exc
+            if (
+                binding.lane != "POSTER_BUILDER"
+                or binding.product_truth_lineage.product_id != product_id
+            ):
+                raise PosterDeliverableError(
+                    "POSTER_V2_BINDING_PRODUCT_MISMATCH",
+                    status_code=409,
+                )
+            v2_binding = binding
+            synthetic_id = f"v2:{binding.blueprint_id}:r{binding.revision}"
             # Poster Builder is copy-aware, but it consumes poster zones rather
             # than video hook/body/CTA source fields. These values are derived
             # by the V2 adapter; no text is trimmed, rewritten, or approved here.
@@ -525,6 +610,12 @@ class PosterDeliverableService:
                 "copy_architecture_v2": metadata,
             }
         else:
+            if not legacy_copy_maintenance_enabled():
+                raise PosterDeliverableError(
+                    "LEGACY_COPY_STORAGE_DISABLED",
+                    "Poster composition requires a persisted Copy Register V2 binding",
+                    status_code=410,
+                )
             pcs_row = await crud.get_poster_copy_set(_norm(poster_copy_set_id))
             if not pcs_row:
                 raise PosterDeliverableError("POSTER_COPY_SET_NOT_FOUND", status_code=404)
@@ -761,7 +852,13 @@ class PosterDeliverableService:
         )
         row = await crud.create_poster_deliverable(
             product_id,
-            poster_copy_set_id=copy_set["poster_copy_set_id"],
+            poster_copy_set_id=("" if v2_binding is not None else copy_set["poster_copy_set_id"]),
+            copy_blueprint_id_v2=(v2_binding.blueprint_id if v2_binding else ""),
+            copy_blueprint_revision_v2=(v2_binding.revision if v2_binding else None),
+            copy_execution_binding_id_v2=(v2_binding.binding_id if v2_binding else ""),
+            copy_approval_snapshot_id_v2=(
+                v2_binding.approval_snapshot_id if v2_binding else ""
+            ),
             recipe_id=manifest.provenance.recipe_id,
             template_version=manifest.provenance.template_version,
             composition_strategy=manifest.product_layer.strategy,
@@ -873,6 +970,11 @@ class PosterDeliverableService:
         )
         copy_set = None
         if _norm(poster_copy_set_id):
+            if not legacy_copy_maintenance_enabled():
+                raise PosterDeliverableError(
+                    "LEGACY_COPY_STORAGE_DISABLED",
+                    status_code=410,
+                )
             pcs_row = await crud.get_poster_copy_set(_norm(poster_copy_set_id))
             if not pcs_row:
                 raise PosterDeliverableError(
@@ -917,13 +1019,21 @@ class PosterDeliverableService:
                 "; ".join(f.code for f in qa.findings if f.severity == "BLOCK"),
                 status_code=409,
             )
-        pcs_row = await crud.get_poster_copy_set(_norm(row.get("poster_copy_set_id")))
-        if not pcs_row or pcs_row.get("status") != STATUS_POSTER_COPY_APPROVED:
-            raise PosterDeliverableError(
-                "POSTER_COPY_SET_NOT_APPROVED",
-                "Saving to the Creative Library requires an APPROVED poster copy set",
-                status_code=409,
-            )
+        v2_receipt = _v2_deliverable_binding(dict(row))
+        if v2_receipt is None:
+            if not legacy_copy_maintenance_enabled():
+                raise PosterDeliverableError(
+                    "LEGACY_COPY_STORAGE_DISABLED",
+                    "Only Copy Register V2 poster deliverables can be saved",
+                    status_code=410,
+                )
+            pcs_row = await crud.get_poster_copy_set(_norm(row.get("poster_copy_set_id")))
+            if not pcs_row or pcs_row.get("status") != STATUS_POSTER_COPY_APPROVED:
+                raise PosterDeliverableError(
+                    "POSTER_COPY_SET_NOT_APPROVED",
+                    "Saving to the Creative Library requires an APPROVED poster copy set",
+                    status_code=409,
+                )
 
         # PREVIEW == SAVE identity: re-read the exact composed file and verify
         # the stored hash before registering. Never regenerate here.
@@ -1065,9 +1175,18 @@ class PosterDeliverableService:
         except ValueError:
             pass
         copy_set = None
-        pcs_row = await crud.get_poster_copy_set(_norm(row.get("poster_copy_set_id")))
-        if pcs_row:
-            copy_set = serialize_poster_copy_set(pcs_row)
+        pcs_row = None
+        v2_receipt = _v2_deliverable_binding(dict(row))
+        if v2_receipt is None:
+            if not legacy_copy_maintenance_enabled():
+                raise PosterDeliverableError(
+                    "LEGACY_COPY_STORAGE_DISABLED",
+                    "Legacy poster deliverables are archived and non-selectable",
+                    status_code=410,
+                )
+            pcs_row = await crud.get_poster_copy_set(_norm(row.get("poster_copy_set_id")))
+            if pcs_row:
+                copy_set = serialize_poster_copy_set(pcs_row)
         qa: dict[str, Any] = {}
         try:
             qa = json.loads(row.get("qa_report_json") or "{}")
@@ -1088,6 +1207,7 @@ class PosterDeliverableService:
             "output_available": durable["available"],
             "output_source": durable["source"],
             "output_sha256_verified": durable["sha256_verified"],
+            "copy_architecture_v2": v2_receipt[0] if v2_receipt else None,
         }
 
     @staticmethod

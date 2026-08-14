@@ -1109,6 +1109,79 @@ async def _revalidate(row: dict[str, Any]) -> dict[str, Any]:
     return current
 
 
+def revalidate_stored_treatment_receipt(row: dict[str, Any]) -> dict[str, Any]:
+    """Verify an approved treatment from its immutable stored projection only.
+
+    Copy Register V2 deliberately does not read the retired ``copy_set`` table.
+    Approved Creative Treatments still carry their historical copy identifiers
+    and copy digest as receipt lineage, but P6 may use only their visual, shot,
+    duration, and orchestration authority.  Rebuilding the original canonical
+    treatment payload here preserves tamper detection without resolving the
+    legacy copy dependency.
+    """
+
+    decoded = _decode_treatment(row)
+    content: dict[str, Any] = {
+        "treatment_id": row["treatment_id"],
+        "product_id": row["product_id"],
+        "format": row["format"],
+        "generation_mode": row["generation_mode"],
+        "duration_seconds": row["duration_seconds"],
+        "product_truth_snapshot_id": row["product_truth_snapshot_id"],
+        "copy_set_id": row["copy_set_id"],
+        "creative_selection_id": row["creative_selection_id"],
+        "scene_strategy_id": row["scene_strategy_id"],
+        "content_angle": str(row.get("content_angle") or ""),
+        "dialogue_text": str(row.get("dialogue_text") or ""),
+        "avatar_code": row.get("avatar_code"),
+        "wardrobe_text": row.get("wardrobe_text"),
+        "scene_template_id": row.get("scene_template_id"),
+        "camera_preset_code": row.get("camera_preset_code"),
+        "asset_bindings": decoded.get("asset_bindings") or [],
+        "action_sequence": decoded.get("action_sequence") or [],
+        "shot_grammar": decoded.get("shot_grammar") or [],
+        "compatibility_profile": decoded.get("compatibility_profile") or {},
+        "variation_group_id": row.get("variation_group_id"),
+        "variation_ordinal": row.get("variation_ordinal"),
+        "supersedes_treatment_id": row.get("supersedes_treatment_id"),
+        "visual_fingerprint_sha256": row["visual_fingerprint_sha256"],
+        "choreography_schema_version": decoded.get(
+            "choreography_schema_version"
+        ),
+        "choreography_id": decoded.get("choreography_id"),
+        "choreography_sha256": decoded.get("choreography_sha256"),
+        "product_truth_sha256": row["product_truth_sha256"],
+        "copy_set_sha256": row["copy_set_sha256"],
+        "creative_selection_sha256": row["creative_selection_sha256"],
+        "scene_strategy_sha256": row["scene_strategy_sha256"],
+        "avatar_sha256": row.get("avatar_sha256"),
+        "wardrobe_sha256": row.get("wardrobe_sha256"),
+        "scene_template_sha256": row.get("scene_template_sha256"),
+        "camera_preset_sha256": row.get("camera_preset_sha256"),
+        "dialogue_sha256": row["dialogue_sha256"],
+    }
+    segment_plan = decoded.get("segment_plan") or []
+    if segment_plan:
+        content["segment_plan"] = segment_plan
+
+    if canonical_sha256(content["dialogue_text"]) != content["dialogue_sha256"]:
+        raise CreativeTreatmentError(
+            "TREATMENT_AUTHORITY_STALE",
+            details={"authority": "stored_dialogue_receipt"},
+        )
+    current_sha256 = canonical_sha256(content)
+    if current_sha256 != str(row.get("treatment_sha256") or ""):
+        raise CreativeTreatmentError(
+            "TREATMENT_AUTHORITY_STALE",
+            details={
+                "authority": "stored_treatment_receipt",
+                "stored_sha256": row.get("treatment_sha256"),
+                "current_sha256": current_sha256,
+            },
+        )
+    return {**content, "treatment_sha256": current_sha256}
+
+
 async def _validate_variation_binding(
     *,
     body: CreateTreatmentRequest,

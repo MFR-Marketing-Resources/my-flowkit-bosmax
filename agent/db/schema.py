@@ -4048,6 +4048,10 @@ CREATE TABLE IF NOT EXISTS poster_deliverable (
     poster_deliverable_id   TEXT PRIMARY KEY,
     product_id              TEXT NOT NULL,
     poster_copy_set_id      TEXT NOT NULL DEFAULT '',
+    copy_blueprint_id_v2    TEXT NOT NULL DEFAULT '',
+    copy_blueprint_revision_v2 INTEGER CHECK(copy_blueprint_revision_v2 IS NULL OR copy_blueprint_revision_v2 >= 1),
+    copy_execution_binding_id_v2 TEXT NOT NULL DEFAULT '',
+    copy_approval_snapshot_id_v2 TEXT NOT NULL DEFAULT '',
     recipe_id               TEXT NOT NULL DEFAULT '',
     template_version        TEXT NOT NULL DEFAULT '',
     composition_strategy    TEXT NOT NULL DEFAULT 'REFERENCE_CONDITIONED'
@@ -4068,6 +4072,25 @@ CREATE TABLE IF NOT EXISTS poster_deliverable (
 CREATE INDEX IF NOT EXISTS idx_poster_deliverable_product
     ON poster_deliverable(product_id, status);
 """)
+        poster_deliverable_cols_cursor = await db.execute(
+            "PRAGMA table_info(poster_deliverable)"
+        )
+        poster_deliverable_cols = {
+            row[1] for row in await poster_deliverable_cols_cursor.fetchall()
+        }
+        for column_name, declaration in (
+            ("copy_blueprint_id_v2", "TEXT NOT NULL DEFAULT ''"),
+            (
+                "copy_blueprint_revision_v2",
+                "INTEGER CHECK(copy_blueprint_revision_v2 IS NULL OR copy_blueprint_revision_v2 >= 1)",
+            ),
+            ("copy_execution_binding_id_v2", "TEXT NOT NULL DEFAULT ''"),
+            ("copy_approval_snapshot_id_v2", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            if column_name not in poster_deliverable_cols:
+                await db.execute(
+                    f"ALTER TABLE poster_deliverable ADD COLUMN {column_name} {declaration}"
+                )
         await db.commit()
         _migrate_bulk_generation_ledger(str(DB_PATH))
 
@@ -4688,6 +4711,28 @@ CREATE TABLE IF NOT EXISTS copy_evidence_fact_v2 (
 CREATE INDEX IF NOT EXISTS idx_copy_evidence_fact_v2_product
     ON copy_evidence_fact_v2(product_id, snapshot_id, fact_kind);
 
+-- AI-generated angle options are immutable, Product-Truth-bound authoring
+-- receipts.  Persisting the candidate prevents the blueprint endpoint from
+-- trusting caller-supplied angle text or re-running the provider to recreate a
+-- transient option.
+CREATE TABLE IF NOT EXISTS copy_angle_candidate_v2 (
+    angle_id                       TEXT PRIMARY KEY,
+    product_id                    TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    product_truth_snapshot_id     TEXT NOT NULL
+                                  REFERENCES product_intelligence_snapshot(snapshot_id) ON DELETE RESTRICT,
+    product_truth_snapshot_version INTEGER NOT NULL CHECK(product_truth_snapshot_version >= 1),
+    product_truth_snapshot_digest TEXT NOT NULL CHECK(length(product_truth_snapshot_digest) = 64),
+    formula_id                    TEXT NOT NULL,
+    formula_version               TEXT NOT NULL,
+    objective                     TEXT NOT NULL,
+    definition                    TEXT NOT NULL,
+    evidence_fact_ids_json        TEXT NOT NULL DEFAULT '[]',
+    provider_receipt_json         TEXT NOT NULL DEFAULT '{}',
+    created_at                    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_copy_angle_candidate_v2_product
+    ON copy_angle_candidate_v2(product_id, product_truth_snapshot_id, formula_id, created_at);
+
 CREATE TABLE IF NOT EXISTS copy_execution_binding_v2 (
     binding_id                  TEXT PRIMARY KEY,
     blueprint_id                TEXT NOT NULL,
@@ -4714,6 +4759,106 @@ CREATE TABLE IF NOT EXISTS copy_execution_binding_v2 (
 CREATE INDEX IF NOT EXISTS idx_copy_execution_binding_v2_product
     ON copy_execution_binding_v2(product_id, lane, binding_status, bound_at);
 
+-- Bindings are immutable execution receipts.  The mutable selection of which
+-- receipt is authoritative for a product/lane lives in a separate pointer
+-- table so revision activation never rewrites approved execution history.
+CREATE TABLE IF NOT EXISTS copy_execution_authority_v2 (
+    product_id      TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    lane            TEXT NOT NULL,
+    binding_id      TEXT NOT NULL
+                    REFERENCES copy_execution_binding_v2(binding_id) ON DELETE RESTRICT,
+    activated_at    TEXT NOT NULL,
+    PRIMARY KEY (product_id, lane),
+    UNIQUE(binding_id)
+);
+CREATE INDEX IF NOT EXISTS idx_copy_execution_authority_v2_binding
+    ON copy_execution_authority_v2(binding_id);
+
+-- One-time compatibility seeding for databases created before the authority
+-- pointer existed.  At that point the partial unique index guaranteed at most
+-- one BOUND row per product/lane.
+INSERT OR IGNORE INTO copy_execution_authority_v2
+    (product_id, lane, binding_id, activated_at)
+SELECT product_id, lane, binding_id, bound_at
+FROM copy_execution_binding_v2
+WHERE binding_status = 'BOUND';
+
+-- Superseding a blueprint creates another immutable BOUND receipt; authority
+-- is selected by copy_execution_authority_v2, not by mutating binding_status.
+DROP INDEX IF EXISTS ux_copy_execution_binding_v2_active_product_lane;
+
+CREATE TRIGGER IF NOT EXISTS trg_copy_execution_authority_v2_insert
+BEFORE INSERT ON copy_execution_authority_v2
+BEGIN
+    SELECT RAISE(ABORT, 'COPY_V2_AUTHORITY_BINDING_INVALID')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM copy_execution_binding_v2 binding
+        WHERE binding.binding_id = NEW.binding_id
+          AND binding.product_id = NEW.product_id
+          AND binding.lane = NEW.lane
+          AND binding.binding_status = 'BOUND'
+    );
+END;
+CREATE TRIGGER IF NOT EXISTS trg_copy_execution_authority_v2_update
+BEFORE UPDATE OF product_id, lane, binding_id ON copy_execution_authority_v2
+BEGIN
+    SELECT RAISE(ABORT, 'COPY_V2_AUTHORITY_BINDING_INVALID')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM copy_execution_binding_v2 binding
+        WHERE binding.binding_id = NEW.binding_id
+          AND binding.product_id = NEW.product_id
+          AND binding.lane = NEW.lane
+          AND binding.binding_status = 'BOUND'
+    );
+END;
+
+DROP TRIGGER IF EXISTS trg_poster_deliverable_v2_binding_insert;
+CREATE TRIGGER IF NOT EXISTS trg_poster_deliverable_v2_binding_insert
+BEFORE INSERT ON poster_deliverable
+WHEN NEW.copy_execution_binding_id_v2 <> ''
+BEGIN
+    SELECT RAISE(ABORT, 'POSTER_V2_BINDING_REFERENCE_INVALID')
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM copy_execution_authority_v2 authority
+        JOIN copy_execution_binding_v2 binding
+          ON binding.binding_id = authority.binding_id
+        WHERE binding.binding_id = NEW.copy_execution_binding_id_v2
+          AND binding.blueprint_id = NEW.copy_blueprint_id_v2
+          AND binding.revision = NEW.copy_blueprint_revision_v2
+          AND binding.product_id = NEW.product_id
+          AND binding.lane = 'POSTER_BUILDER'
+          AND binding.binding_status = 'BOUND'
+          AND binding.approval_snapshot_id = NEW.copy_approval_snapshot_id_v2
+          AND authority.product_id = NEW.product_id
+          AND authority.lane = 'POSTER_BUILDER'
+    );
+END;
+DROP TRIGGER IF EXISTS trg_poster_deliverable_v2_binding_update;
+CREATE TRIGGER IF NOT EXISTS trg_poster_deliverable_v2_binding_update
+BEFORE UPDATE OF copy_blueprint_id_v2, copy_blueprint_revision_v2,
+                 copy_execution_binding_id_v2, copy_approval_snapshot_id_v2
+ON poster_deliverable
+WHEN NEW.copy_execution_binding_id_v2 <> ''
+BEGIN
+    SELECT RAISE(ABORT, 'POSTER_V2_BINDING_REFERENCE_INVALID')
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM copy_execution_authority_v2 authority
+        JOIN copy_execution_binding_v2 binding
+          ON binding.binding_id = authority.binding_id
+        WHERE binding.binding_id = NEW.copy_execution_binding_id_v2
+          AND binding.blueprint_id = NEW.copy_blueprint_id_v2
+          AND binding.revision = NEW.copy_blueprint_revision_v2
+          AND binding.product_id = NEW.product_id
+          AND binding.lane = 'POSTER_BUILDER'
+          AND binding.binding_status = 'BOUND'
+          AND binding.approval_snapshot_id = NEW.copy_approval_snapshot_id_v2
+          AND authority.product_id = NEW.product_id
+          AND authority.lane = 'POSTER_BUILDER'
+    );
+END;
+
 CREATE TRIGGER IF NOT EXISTS trg_copy_blueprint_v2_approved_immutable_update
 BEFORE UPDATE ON copy_blueprint_v2
 WHEN OLD.status IN ('APPROVED','PRODUCTION_VALID','SUPERSEDED')
@@ -4735,6 +4880,16 @@ CREATE TRIGGER IF NOT EXISTS trg_copy_evidence_fact_v2_immutable_delete
 BEFORE DELETE ON copy_evidence_fact_v2
 BEGIN
     SELECT RAISE(ABORT, 'COPY_V2_EVIDENCE_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_copy_angle_candidate_v2_immutable_update
+BEFORE UPDATE ON copy_angle_candidate_v2
+BEGIN
+    SELECT RAISE(ABORT, 'COPY_V2_ANGLE_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_copy_angle_candidate_v2_immutable_delete
+BEFORE DELETE ON copy_angle_candidate_v2
+BEGIN
+    SELECT RAISE(ABORT, 'COPY_V2_ANGLE_IMMUTABLE');
 END;
 CREATE TRIGGER IF NOT EXISTS trg_copy_execution_binding_v2_immutable_update
 BEFORE UPDATE ON copy_execution_binding_v2

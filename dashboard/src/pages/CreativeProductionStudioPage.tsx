@@ -51,9 +51,7 @@ import {
 	type TreatmentAvailability,
 } from "../api/creativeProduction";
 import { fetchVideoModels, type VideoModelInfo } from "../api/productionQueue";
-import CreativeSupplyFactoryPanel from "../components/CreativeSupplyFactoryPanel";
 import ProductAllocationPicker from "../components/production-studio/ProductAllocationPicker";
-import ProductTreatmentFactoryPanel from "../components/production-studio/ProductTreatmentFactoryPanel";
 import {
 	WorkflowStep,
 } from "../components/workflow";
@@ -228,6 +226,9 @@ export default function CreativeProductionStudioPage() {
 	const [historySearch, setHistorySearch] = useState("");
 	const [historyStatus, setHistoryStatus] = useState("ACTIVE");
 	const [advancedWorkspaceOpen, setAdvancedWorkspaceOpen] = useState(false);
+	const [v2CopyReadyByProduct, setV2CopyReadyByProduct] = useState<
+		Record<string, boolean>
+	>({});
 	const planRequestSequence = useRef(0);
 	const treatmentAvailabilitySequence = useRef(0);
 	const [activeView, setActiveView] = useState<"matrix" | "attempts" | "qa">(
@@ -245,8 +246,6 @@ export default function CreativeProductionStudioPage() {
 		creativeFormat: "AUTO" as CreativeTreatmentFormatPreference,
 		treatmentIds: "",
 		aspect: "9:16" as "9:16" | "16:9",
-		copySetIds: "",
-		posterCopySetIds: "",
 		avatarCodes: "",
 		productReferenceAssetIds: "",
 		finishedFrameAssetIds: "",
@@ -473,16 +472,12 @@ export default function CreativeProductionStudioPage() {
 			treatment_ids: splitValues(form.treatmentIds),
 		})
 			.then((availability) => {
-				if (requestSequence !== treatmentAvailabilitySequence.current) {
-					return;
-				}
+				if (requestSequence !== treatmentAvailabilitySequence.current) return;
 				setTreatmentAvailability(availability);
 				setTreatmentAvailabilityLoading(false);
 			})
 			.catch((reason) => {
-				if (requestSequence !== treatmentAvailabilitySequence.current) {
-					return;
-				}
+				if (requestSequence !== treatmentAvailabilitySequence.current) return;
 				setTreatmentAvailability(null);
 				setTreatmentAvailabilityLoading(false);
 				setTreatmentAvailabilityError(
@@ -543,6 +538,11 @@ export default function CreativeProductionStudioPage() {
 	const treatmentShortage = treatmentAvailability?.product_results.find(
 		(product) => !product.ready,
 	);
+	const v2CopyReady =
+		allocations.length > 0 &&
+		allocations.every(
+			(allocation) => v2CopyReadyByProduct[allocation.product_id] === true,
+		);
 	const treatmentDisabledReason = treatmentAvailabilityLoading
 		? "Checking approved Creative Treatment capacity..."
 		: treatmentAvailabilityError
@@ -561,8 +561,7 @@ export default function CreativeProductionStudioPage() {
 		durationSeconds: number,
 		format: CreativeTreatmentFormatPreference,
 	) => {
-		const configurations =
-			treatmentAvailability?.supported_configurations ?? [];
+		const configurations = treatmentAvailability?.supported_configurations ?? [];
 		if (!configurations.length) return true;
 		return configurations.some((configuration) => {
 			const modelKeys = Array.isArray(configuration.model_keys)
@@ -637,6 +636,11 @@ export default function CreativeProductionStudioPage() {
 	};
 
 	const create = async () => {
+		if (!v2CopyReady) {
+			throw new Error(
+				"Copy Register V2 binding must be READY before a P6 production plan can be created.",
+			);
+		}
 		const created = await createProductionPlan({
 			request_id: crypto.randomUUID(),
 			operator_id: operatorId,
@@ -656,8 +660,6 @@ export default function CreativeProductionStudioPage() {
 			creative_format: form.creativeFormat,
 			pools: {
 				treatment_ids: splitValues(form.treatmentIds),
-				copy_set_ids: splitValues(form.copySetIds),
-				poster_copy_set_ids: splitValues(form.posterCopySetIds),
 				avatar_codes: splitValues(form.avatarCodes),
 				// Product visuals are never a P6 pool dimension. Each item resolves
 				// the product's saved Product Registration Official Product Visual.
@@ -715,8 +717,6 @@ export default function CreativeProductionStudioPage() {
 				pool.creative_format ?? "AUTO",
 			) as CreativeTreatmentFormatPreference,
 			treatmentIds: poolValues("treatment_ids"),
-			copySetIds: poolValues("copy_set_ids"),
-			posterCopySetIds: poolValues("poster_copy_set_ids"),
 			avatarCodes: poolValues("avatar_codes"),
 			productReferenceAssetIds: poolValues("product_reference_asset_ids"),
 			finishedFrameAssetIds: poolValues("finished_frame_asset_ids"),
@@ -758,8 +758,7 @@ export default function CreativeProductionStudioPage() {
 			logicalMode: "T2V",
 			aspect: "9:16",
 			creativeFormat: "AUTO",
-			copySetIds: "",
-			posterCopySetIds: "",
+			treatmentIds: "",
 			avatarCodes: "",
 			productReferenceAssetIds: "",
 			finishedFrameAssetIds: "",
@@ -767,7 +766,6 @@ export default function CreativeProductionStudioPage() {
 			sceneAssetIds: "",
 			styleAssetIds: "",
 			layoutIds: "",
-			treatmentIds: "",
 			controlledReuseReason: "",
 			controlledReuseMaxPerDna: 1,
 		}));
@@ -1333,15 +1331,31 @@ export default function CreativeProductionStudioPage() {
 				</header>
 			) : null}
 
-			<CopyArchitectureV2LaneCard
-				lane="PRODUCTION_STUDIO_P6"
-				productId={allocations[0]?.product_id ?? null}
-				execution={
-					(detail?.snapshot?.pool_snapshot?.copy_architecture_v2 as
-						| Record<string, unknown>
-						| undefined) ?? null
-				}
-			/>
+			<div className="space-y-2" data-testid="p6-v2-copy-authority-list">
+				{allocations.length ? (
+					allocations.map((allocation) => (
+						<CopyArchitectureV2LaneCard
+							key={allocation.product_id}
+							lane="PRODUCTION_STUDIO_P6"
+							productId={allocation.product_id}
+							execution={
+								(detail?.snapshot?.pool_snapshot?.copy_architecture_v2 as
+									| Record<string, unknown>
+									| undefined) ?? null
+							}
+							onReadyChange={(ready) =>
+								setV2CopyReadyByProduct((current) =>
+									current[allocation.product_id] === ready
+										? current
+										: { ...current, [allocation.product_id]: ready },
+								)
+							}
+						/>
+					))
+				) : (
+					<CopyArchitectureV2LaneCard lane="PRODUCTION_STUDIO_P6" productId={null} />
+				)}
+			</div>
 
 			<div className={useV4 ? "grid gap-5 2xl:grid-cols-[minmax(0,1fr)_20rem]" : "contents"}>
 				<div className={useV4 ? "min-w-0" : "contents"}>
@@ -1399,33 +1413,6 @@ export default function CreativeProductionStudioPage() {
 					</details>
 				</div>
 			</header>
-
-			<details
-				data-testid="p7-compact-summary"
-				className="rounded-2xl border border-violet-500/30 bg-slate-950/80 p-4"
-			>
-				<summary className="cursor-pointer list-none">
-					<div className="flex items-center justify-between gap-3">
-						<div>
-							<div className="text-xs font-semibold uppercase tracking-[0.16em] text-violet-300">
-								Creative supply
-							</div>
-							<div className="mt-1 text-sm text-slate-300">
-								Approved creative supply remains available when more variants
-								are needed.
-							</div>
-						</div>
-						<span className="shrink-0 text-xs font-semibold text-violet-200">
-							View details
-						</span>
-					</div>
-				</summary>
-				<div className="mt-4">
-					<CreativeSupplyFactoryPanel />
-				</div>
-			</details>
-
-			<ProductTreatmentFactoryPanel />
 
 			{error && (
 				<div
@@ -1783,9 +1770,7 @@ export default function CreativeProductionStudioPage() {
 												value={format}
 												disabled={
 													format !== "AUTO" &&
-													Boolean(
-														treatmentAvailability?.supported_formats.length,
-													) &&
+													Boolean(treatmentAvailability?.supported_formats.length) &&
 													!treatmentAvailability?.supported_formats.includes(
 														format as "UGC" | "PGC" | "CINEMATIC",
 													)
@@ -1820,16 +1805,11 @@ export default function CreativeProductionStudioPage() {
 									</div>
 									<div className="mt-2">
 										{treatmentDisabledReason ||
-											`${treatmentAvailability?.selected_treatment_ids.length ?? 0}/${totalVideoCount} unique approved treatments allocated.`}
+											`${treatmentAvailability?.selected_treatment_ids.length ?? 0}/${totalVideoCount} unique approved visual treatments allocated. Copy text always comes from Copy Register V2.`}
 									</div>
 									{treatmentAvailability?.product_results.map((product) => (
-										<div
-											key={product.product_id}
-											className="mt-1 text-[10px] opacity-80"
-										>
-											{productNameById.get(product.product_id) ??
-												product.product_id}
-											: {product.selected_count}/{product.requested}
+										<div key={product.product_id} className="mt-1 text-[10px] opacity-80">
+											{productNameById.get(product.product_id) ?? product.product_id}: {product.selected_count}/{product.requested}
 										</div>
 									))}
 								</div>
@@ -1904,20 +1884,6 @@ export default function CreativeProductionStudioPage() {
 											</div>
 										) : null}
 										{[
-											{
-												key: "copySetIds",
-												label: "COPY_APPROVED Copy Sets",
-												options: poolAuthority?.copy_sets ?? [],
-												valueKey: "copy_set_id",
-												labelKeys: ["angle", "hook"],
-											},
-											{
-												key: "posterCopySetIds",
-												label: "POSTER_COPY_APPROVED Copy Sets",
-												options: poolAuthority?.poster_copy_sets ?? [],
-												valueKey: "poster_copy_set_id",
-												labelKeys: ["headline", "cta"],
-											},
 											{
 												key: "avatarCodes",
 												label: "Product-first approved avatars",
@@ -2061,22 +2027,18 @@ export default function CreativeProductionStudioPage() {
 										);
 									})}
 										<label className="text-xs text-slate-400">
-											Approved Creative Treatment IDs (optional override)
+											Approved Creative Treatment IDs (optional visual override)
 											<textarea
 												aria-label="Approved Creative Treatment IDs"
 												value={form.treatmentIds}
 												onChange={(event) =>
-													setForm({
-														...form,
-														treatmentIds: event.target.value,
-													})
+													setForm({ ...form, treatmentIds: event.target.value })
 												}
-												placeholder="Leave empty for deterministic automatic allocation; one ID per line"
+												placeholder="Leave empty for deterministic visual-treatment allocation; one ID per line"
 												className="mt-1 min-h-20 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 font-mono text-xs text-white"
 											/>
 											<span className="mt-1 block text-[10px] text-slate-500">
-												Overrides still require exact product, mode, model,
-												duration, format, and APPROVED state.
+												Only visual/shot authority is inherited. Dialogue and copy lineage are always resolved from the approved V2 binding.
 											</span>
 										</label>
 										{poolAuthority?.blockers.length ? (
@@ -2143,6 +2105,7 @@ export default function CreativeProductionStudioPage() {
 										Boolean(modelRegistryError) ||
 										!operatorId.trim() ||
 										Boolean(poolAuthority?.blockers.length) ||
+										!v2CopyReady ||
 										!form.name
 									}
 									onClick={() => void execute("create", create)}
@@ -2199,11 +2162,9 @@ export default function CreativeProductionStudioPage() {
 									hours
 								</div>
 								<div data-testid="p6-selected-treatment-authority">
-									Creative Treatments: {selectedTreatmentIds.length} immutable
-									approval{selectedTreatmentIds.length === 1 ? "" : "s"}
-									{selectedTreatmentIds.length
-										? ` · ${selectedTreatmentIds.join(", ")}`
-										: " · legacy snapshot has no governed treatment authority"}
+									Creative Treatments: {selectedTreatmentIds.length} immutable visual approval{selectedTreatmentIds.length === 1 ? "" : "s"}
+									{selectedTreatmentIds.length ? ` · ${selectedTreatmentIds.join(", ")}` : " · no governed treatment authority"}
+									{" · "}Copy authority: COPY_REGISTER_V2_ONLY
 								</div>
 							</div>
 							<button

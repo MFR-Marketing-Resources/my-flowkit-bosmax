@@ -357,6 +357,62 @@ def test_video_dimensions_are_one_row_per_treatment_not_cartesian() -> None:
     assert rows[0]["creative_treatment"]["shot_grammar"]
 
 
+def test_v2_video_dimensions_keep_visual_treatment_but_replace_legacy_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("COPY_LEGACY_MAINTENANCE_MODE", raising=False)
+    approved = {
+        "raw": {
+            "layout_ids": [],
+            "product_reference_asset_ids": [],
+            "finished_frame_asset_ids": [],
+            "character_asset_ids": [],
+            "scene_asset_ids": [],
+            "style_asset_ids": [],
+        },
+        "approved_layouts": {},
+        "avatar_profiles": {},
+        "assets": {},
+        "scene_strategies": {},
+        "creative_selections": {},
+        "treatments": [plans._v2_visual_treatment_projection(_projection())],
+        "copy_sets": {
+            "product-1": [
+                {
+                    "copy_set_id": "binding:bp-v2:1:PRODUCTION_STUDIO_P6",
+                    "angle": "V2 angle",
+                    "hook": "Exact V2 approved execution text.",
+                    "subhook": "",
+                    "usp_set_json": "[]",
+                    "cta": "V2 CTA",
+                    "formula_family": "PAS",
+                    "usage_count": 0,
+                }
+            ]
+        },
+    }
+
+    capacity, rows, blockers = plans._product_dimension_rows(
+        plan=_plan(treatment_ids=["treatment-1"]),
+        approved=approved,
+        product_id="product-1",
+        media_type="VIDEO",
+    )
+
+    assert capacity == 1
+    assert blockers == []
+    assert rows[0]["copy_set_id"] == "binding:bp-v2:1:PRODUCTION_STUDIO_P6"
+    assert rows[0]["hook"] == "Exact V2 approved execution text."
+    assert rows[0]["cta"] == "V2 CTA"
+    assert rows[0]["formula_family"] == "PAS"
+    assert "dialogue_text" not in rows[0]["creative_treatment"]
+    assert "copy_set_id" not in rows[0]["creative_treatment"]
+    assert rows[0]["creative_treatment"]["copy_authority"] == (
+        "COPY_REGISTER_V2_ONLY"
+    )
+    assert rows[0]["treatment_id"] == "treatment-1"
+
+
 def test_selected_scene_templates_rotate_strategy_variants_and_derive_camera():
     templates = creative_scene_prompt_service.library_templates()[:2]
     strategy = resolve_scene_strategy({"product_type": "spice seasoning"})

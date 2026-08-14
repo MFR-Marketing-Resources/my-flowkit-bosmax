@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable
@@ -53,6 +54,43 @@ from agent.services.copy_blueprint_v2_service import (
     create_blueprint_revision,
     validate_copy_blueprint_v2,
 )
+from agent.services import ai_copy_provider_adapter as ai_provider
+from agent.services.product_intelligence_claim_safety_service import (
+    evaluate_claim_safety,
+)
+
+
+ANGLE_PROMPT_VERSION = "copy-register-v2-angle-options-v1"
+FORMULA_PROMPT_VERSION = "copy-register-v2-formula-blueprint-v1"
+STAGE_REGEN_PROMPT_VERSION = "copy-register-v2-stage-regeneration-v1"
+
+_ANGLE_SYSTEM_PROMPT = f"""You are the formula-native Copy Register V2 angle author.
+Prompt contract: {ANGLE_PROMPT_VERSION}.
+Return strict JSON only: {{"angles":[{{"definition":str,"evidence_fact_ids":[str]}}]}}.
+Create 3-8 materially distinct selling angles in the requested language and objective.
+Every angle must be supported only by the supplied approved Product Truth facts. Use only
+the supplied fact_id values, cite at least one per angle, and never invent a fact, number,
+ingredient, outcome, offer, certification, price, guarantee, medical claim, or internal ID
+inside the visible definition. Do not choose or change the formula."""
+
+_FORMULA_SYSTEM_PROMPT = f"""You are the formula-native Copy Register V2 blueprint author.
+Prompt contract: {FORMULA_PROMPT_VERSION}.
+Return strict JSON only: {{"stages":[{{"formula_stage_key":str,"text":str,
+"evidence_fact_ids":[str]}}]}}. Return every supplied formula stage exactly once and in
+the supplied order. Write one coherent hook-to-CTA message around the selected angle; do
+not write independent fragments. Every claim-bearing stage must cite one or more supplied
+fact_id values. Use no fact outside the supplied list and never invent a fact, number,
+ingredient, outcome, offer, certification, price, guarantee, or medical claim. The CTA may
+carry an empty evidence list but must not introduce a claim. Do not output hook/body/CTA
+fields outside the ordered stages."""
+
+_STAGE_REGEN_SYSTEM_PROMPT = f"""You regenerate one stage of a Copy Register V2 blueprint.
+Prompt contract: {STAGE_REGEN_PROMPT_VERSION}.
+Return strict JSON only: {{"stage":{{"formula_stage_key":str,"text":str,
+"evidence_fact_ids":[str]}}}}. Rewrite only the requested stage while preserving the
+formula role, selected angle, surrounding-stage continuity, and supplied Product Truth.
+Use only supplied fact_id values. Never invent facts or claims. Do not rewrite or return
+the other stages."""
 
 
 class CopyRegisterV2Error(ValueError):
@@ -91,6 +129,147 @@ def _clean(value: Any) -> str:
 
 def _sha256(value: Any) -> str:
     return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
+
+
+def _provider_receipt(
+    prompt_version: str,
+    call_receipt: dict[str, Any],
+) -> dict[str, Any]:
+    """Return secret-free text-assist provenance for one explicit authoring call."""
+
+    if (
+        not isinstance(call_receipt.get("call_id"), int)
+        or call_receipt.get("response_status") != "SUCCEEDED"
+        or call_receipt.get("json_parse_status") != "VALID"
+        or not _clean(call_receipt.get("provider_id"))
+        or not _clean(call_receipt.get("model_id"))
+    ):
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_PROVENANCE_INVALID",
+            "The text-assist result did not include a complete receipt for its exact provider call.",
+            status_code=502,
+        )
+    return {
+        "prompt_version": prompt_version,
+        "lane": call_receipt.get("lane") or "text_assist",
+        "provider_id": call_receipt.get("provider_id"),
+        "model_id": call_receipt.get("model_id"),
+        "transport": call_receipt.get("transport"),
+        "call_id": call_receipt.get("call_id"),
+        "response_status": call_receipt.get("response_status"),
+        "json_parse_status": call_receipt.get("json_parse_status"),
+        "completed_at": call_receipt.get("completed_at"),
+    }
+
+
+def _call_text_assist(
+    *,
+    system_prompt: str,
+    payload: dict[str, Any],
+    prompt_version: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Execute only from an explicit authoring endpoint and fail closed."""
+
+    if not ai_provider.is_configured():
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_NOT_CONFIGURED",
+            "Configure and enable the existing text_assist provider lane before generating V2 copy.",
+            status_code=409,
+        )
+    try:
+        result, call_receipt = ai_provider.complete_json_with_receipt(
+            system_prompt,
+            _json(payload),
+        )
+    except ai_provider.AICopyProviderNotConfigured as exc:
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_NOT_CONFIGURED",
+            "The text_assist provider lane is not configured or enabled.",
+            status_code=409,
+        ) from exc
+    except ai_provider.AICopyProviderError as exc:
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_FAILED",
+            "The text_assist provider did not return a valid formula-native response.",
+            status_code=502,
+            details={"provider_error": exc.code, "diagnostic": exc.diagnostic_category},
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - provider boundary normalization
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_FAILED",
+            "The text_assist provider call failed closed.",
+            status_code=502,
+            details={"exception_type": type(exc).__name__},
+        ) from exc
+    if not isinstance(result, dict):
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_RESPONSE_INVALID",
+            "The text_assist provider response must be one JSON object.",
+            status_code=502,
+        )
+    return result, _provider_receipt(prompt_version, call_receipt)
+
+
+_NUMBER_TOKEN = re.compile(r"(?<![A-Za-z])\d+(?:[.,]\d+)?%?")
+
+
+def _assert_generated_text_grounded(
+    text: str,
+    *,
+    facts: Iterable[EvidenceFact],
+    product: dict[str, Any],
+    internal_ids: Iterable[str] = (),
+) -> str:
+    """Apply deterministic pre-review safety checks to provider-authored text."""
+
+    normalized = _clean(text)
+    if not normalized or len(normalized) > 1200:
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_RESPONSE_INVALID",
+            "Generated V2 text is empty or exceeds the bounded stage contract.",
+            status_code=502,
+        )
+    lowered = normalized.casefold()
+    if any(_clean(item).casefold() in lowered for item in internal_ids if _clean(item)):
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_METADATA_LEAK",
+            "Generated V2 text exposed an internal lineage identifier.",
+            status_code=502,
+        )
+    fact_rows = tuple(facts)
+    grounded_text = " ".join(
+        [
+            *(fact.text for fact in fact_rows),
+            _clean(product.get("product_display_name")),
+            _clean(product.get("raw_product_title")),
+            _clean(product.get("product_short_name")),
+        ]
+    )
+    grounded_numbers = set(_NUMBER_TOKEN.findall(grounded_text))
+    unsupported_numbers = [
+        token
+        for token in _NUMBER_TOKEN.findall(normalized)
+        if token not in grounded_numbers
+    ]
+    if unsupported_numbers:
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_UNGROUNDED_NUMBER",
+            "Generated V2 text introduced a number absent from its cited Product Truth facts.",
+            status_code=502,
+            details={"tokens": unsupported_numbers},
+        )
+    safety = evaluate_claim_safety({"generated_copy": normalized}, product=product)
+    if safety.get("claim_gate") != "CLAIM_SAFE":
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_UNSAFE",
+            "Generated V2 text failed the deterministic claim-safety gate.",
+            status_code=502,
+            details={
+                "claim_gate": safety.get("claim_gate"),
+                "claim_tokens": safety.get("claim_tokens_json") or [],
+            },
+        )
+    return normalized
 
 
 def _truth_digest(snapshot: dict[str, Any]) -> str:
@@ -353,8 +532,9 @@ async def get_product_truth_proof(product_id: str) -> dict[str, Any]:
     }
 
 
-def _angle_options(product: dict[str, Any], snapshot: dict[str, Any], facts: list[EvidenceFact]) -> list[dict[str, Any]]:
-    fact_by_text = {fact.text.casefold(): fact for fact in facts}
+def _angle_signals(snapshot: dict[str, Any], facts: list[EvidenceFact]) -> list[str]:
+    """Collect approved source signals for the text-assist angle request."""
+
     raw_values: list[str] = []
     raw_values.extend(_parse_list(snapshot.get("hook_angles_json")))
     raw_values.extend(_parse_list(snapshot.get("pain_points_json")))
@@ -366,28 +546,137 @@ def _angle_options(product: dict[str, Any], snapshot: dict[str, Any], facts: lis
     if not raw_values:
         raw_values.extend(fact.text for fact in facts[:3])
     seen: set[str] = set()
-    options: list[dict[str, Any]] = []
-    for index, text in enumerate(raw_values):
+    signals: list[str] = []
+    for text in raw_values:
         normalized = _clean(text)
         if not normalized or normalized.casefold() in seen:
             continue
         seen.add(normalized.casefold())
-        fact = fact_by_text.get(normalized.casefold())
+        signals.append(normalized)
+        if len(signals) >= 12:
+            break
+    return signals
+
+
+def _validate_ai_angle_options(
+    raw: dict[str, Any],
+    *,
+    product: dict[str, Any],
+    snapshot: dict[str, Any],
+    facts: list[EvidenceFact],
+) -> list[dict[str, Any]]:
+    items = raw.get("angles")
+    if not isinstance(items, list) or not (1 <= len(items) <= 8):
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_RESPONSE_INVALID",
+            "Angle generation must return between one and eight structured candidates.",
+            status_code=502,
+        )
+    fact_index = {fact.fact_id: fact for fact in facts}
+    options: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise CopyRegisterV2Error(
+                "COPY_V2_TEXT_AI_RESPONSE_INVALID",
+                "Every generated angle must be an object.",
+                status_code=502,
+            )
+        ids = item.get("evidence_fact_ids")
+        if (
+            not isinstance(ids, list)
+            or not ids
+            or len(ids) > 5
+            or len(set(str(value) for value in ids)) != len(ids)
+        ):
+            raise CopyRegisterV2Error(
+                "COPY_V2_TEXT_AI_EVIDENCE_INVALID",
+                "Every generated angle must cite one to five unique approved facts.",
+                status_code=502,
+            )
+        try:
+            cited = tuple(fact_index[str(fact_id)] for fact_id in ids)
+        except KeyError as exc:
+            raise CopyRegisterV2Error(
+                "COPY_V2_TEXT_AI_EVIDENCE_INVALID",
+                "Generated angle cited evidence outside the current Product Truth snapshot.",
+                status_code=502,
+                details={"fact_id": str(exc.args[0])},
+            ) from exc
+        definition = _assert_generated_text_grounded(
+            item.get("definition"),
+            facts=cited,
+            product=product,
+            internal_ids=(
+                str(product["id"]),
+                str(snapshot["snapshot_id"]),
+                *(fact.fact_id for fact in cited),
+            ),
+        )
+        if definition.casefold() in seen:
+            raise CopyRegisterV2Error(
+                "COPY_V2_TEXT_AI_RESPONSE_INVALID",
+                "Generated angle options must be materially distinct.",
+                status_code=502,
+            )
+        seen.add(definition.casefold())
         options.append(
             {
-                "angle_id": f"angle:{snapshot['snapshot_id']}:{index}",
-                "definition": normalized,
-                "evidence_fact_ids": [fact.fact_id] if fact else [item.fact_id for item in facts[:1]],
-                "source": "APPROVED_PRODUCT_TRUTH",
+                "angle_id": f"angv2_{uuid.uuid4().hex[:20]}",
+                "definition": definition,
+                "evidence_fact_ids": [fact.fact_id for fact in cited],
+                "source": "TEXT_ASSIST_PRODUCT_TRUTH_V2",
             }
         )
-        if len(options) >= 8:
-            break
     return options
 
 
+async def _persist_angle_options(
+    options: list[dict[str, Any]],
+    *,
+    product: dict[str, Any],
+    snapshot: dict[str, Any],
+    formula_id: str,
+    objective: str,
+    provider_receipt: dict[str, Any],
+) -> None:
+    lineage = _lineage(product, snapshot)
+    db = await get_db()
+    async with _db_lock:
+        try:
+            for item in options:
+                await db.execute(
+                    """
+                    INSERT INTO copy_angle_candidate_v2
+                    (angle_id, product_id, product_truth_snapshot_id,
+                     product_truth_snapshot_version, product_truth_snapshot_digest,
+                     formula_id, formula_version, objective, definition,
+                     evidence_fact_ids_json, provider_receipt_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item["angle_id"],
+                        product["id"],
+                        lineage.snapshot_id,
+                        lineage.snapshot_version,
+                        lineage.snapshot_digest,
+                        formula_id,
+                        formula_version(formula_id),
+                        objective,
+                        item["definition"],
+                        _json(item["evidence_fact_ids"]),
+                        _json(provider_receipt),
+                        _now(),
+                    ),
+                )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+
 async def generate_angle_options(product_id: str, formula_id: str, objective: str = "conversion") -> dict[str, Any]:
-    canonical_formula, _ = _require_formula(formula_id)
+    canonical_formula, formula_contract = _require_formula(formula_id)
     product, snapshot = await _product_truth_rows(product_id)
     blockers = _truth_gate(product, snapshot)
     if blockers:
@@ -395,14 +684,67 @@ async def generate_angle_options(product_id: str, formula_id: str, objective: st
     assert product is not None and snapshot is not None
     facts = _fact_candidates(product, snapshot)
     await _ensure_evidence_facts(facts)
+    raw, provider_receipt = _call_text_assist(
+        system_prompt=_ANGLE_SYSTEM_PROMPT,
+        prompt_version=ANGLE_PROMPT_VERSION,
+        payload={
+            "product": {
+                "display_name": _clean(
+                    product.get("product_display_name") or product.get("raw_product_title")
+                ),
+                "category": _clean(product.get("category")),
+                "subcategory": _clean(product.get("subcategory")),
+                "product_type": _clean(product.get("type") or product.get("product_type")),
+                "product_family": _clean(product.get("bosmax_product_family")),
+            },
+            "product_truth": {
+                "persona": _parse_dict(snapshot.get("buyer_persona_snapshot_json")),
+                "allowed_claims": _parse_list(snapshot.get("allowed_claims_json")),
+                "blocked_claims": _parse_list(snapshot.get("blocked_claims_json")),
+                "warnings": _parse_list(snapshot.get("warnings_text")),
+                "approved_angle_signals": _angle_signals(snapshot, facts),
+            },
+            "formula": {
+                "formula_id": canonical_formula,
+                "formula_version": formula_version(canonical_formula),
+                "required_stage_keys": list(required_formula_stage_keys(canonical_formula)),
+                "contract": formula_contract,
+            },
+            "objective": objective,
+            "facts": [
+                {
+                    "fact_id": fact.fact_id,
+                    "fact_kind": fact.fact_kind,
+                    "text": fact.text,
+                }
+                for fact in facts
+            ],
+        },
+    )
+    options = _validate_ai_angle_options(
+        raw,
+        product=product,
+        snapshot=snapshot,
+        facts=facts,
+    )
+    await _persist_angle_options(
+        options,
+        product=product,
+        snapshot=snapshot,
+        formula_id=canonical_formula,
+        objective=objective,
+        provider_receipt=provider_receipt,
+    )
     return {
         "product_id": product_id,
         "formula_id": canonical_formula,
         "formula_version": formula_version(canonical_formula),
         "objective": objective,
-        "angles": _angle_options(product, snapshot, facts),
+        "angles": options,
         "facts": [fact.model_dump(mode="json") for fact in facts],
-        "provider_calls": 0,
+        "provider_calls": 1,
+        "provider_receipt": provider_receipt,
+        "prompt_version": ANGLE_PROMPT_VERSION,
         "credit_spend": 0,
         "legacy_copy_rows_read": 0,
     }
@@ -426,42 +768,246 @@ async def _facts_for_refs(product: dict[str, Any], snapshot: dict[str, Any], fac
     return tuple(selected)
 
 
-def _render_stage_text(slot: str, *, product_name: str, angle: str, facts: tuple[EvidenceFact, ...], variant: int = 0) -> str:
-    fact = facts[(variant + len(slot)) % len(facts)].text
-    if slot in {"cta", "action", "response"}:
-        return f"Semak maklumat {product_name} dan pilih langkah seterusnya untuk angle ini."
-    if slot in {"problem", "pain", "hook", "attention"}:
-        return f"{angle}: mula dengan perkara sebenar yang penting kepada rutin anda — {fact}."
-    if slot in {"agitate", "amplify", "emotion", "story"}:
-        return f"Bila {angle.lower()}, kejelasan membantu anda menilai pilihan tanpa menambah janji — {fact}."
-    if slot in {"solution", "offer", "bridge"}:
-        return f"{product_name} diposisikan berdasarkan fakta yang boleh disemak: {fact}."
-    if slot in {"transformation", "desire", "interest", "after"}:
-        return f"Bina keputusan yang munasabah daripada {fact}, selari dengan angle {angle.lower()}."
-    if slot == "before":
-        return f"Sebelum memilih, kenal pasti konteks {angle.lower()} dan semak fakta ini: {fact}."
-    return f"Untuk {angle.lower()}, gunakan fakta Product Truth ini sebagai panduan: {fact}."
+async def _require_angle_candidate(
+    *,
+    product: dict[str, Any],
+    snapshot: dict[str, Any],
+    formula_id: str,
+    objective_id: str,
+    angle_id: str,
+    angle_definition: str,
+    selected_fact_ids: Iterable[str],
+) -> dict[str, Any]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM copy_angle_candidate_v2 WHERE angle_id=?",
+        (_clean(angle_id),),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        raise CopyRegisterV2Error(
+            "COPY_V2_ANGLE_NOT_GROUNDED",
+            "Select an angle generated by the current V2 Product Truth workflow.",
+            status_code=422,
+        )
+    candidate = dict(row)
+    lineage = _lineage(product, snapshot)
+    expected = {
+        "product_id": str(product["id"]),
+        "product_truth_snapshot_id": lineage.snapshot_id,
+        "product_truth_snapshot_version": lineage.snapshot_version,
+        "product_truth_snapshot_digest": lineage.snapshot_digest,
+        "formula_id": formula_id,
+        "formula_version": formula_version(formula_id),
+    }
+    mismatches = {
+        key: {"expected": value, "actual": candidate.get(key)}
+        for key, value in expected.items()
+        if candidate.get(key) != value
+    }
+    if mismatches:
+        raise CopyRegisterV2Error(
+            "COPY_V2_ANGLE_STALE",
+            "The selected angle does not match current Product Truth and formula authority.",
+            status_code=409,
+            details=mismatches,
+        )
+    if _clean(candidate.get("definition")) != _clean(angle_definition):
+        raise CopyRegisterV2Error(
+            "COPY_V2_ANGLE_TAMPERED",
+            "The selected angle wording differs from its immutable generation receipt.",
+            status_code=409,
+        )
+    if _clean(candidate.get("objective")).casefold() != _clean(objective_id).casefold():
+        raise CopyRegisterV2Error(
+            "COPY_V2_ANGLE_OBJECTIVE_MISMATCH",
+            "The selected angle belongs to a different objective.",
+            status_code=409,
+        )
+    angle_fact_ids = {
+        str(value) for value in _loads(candidate.get("evidence_fact_ids_json"), [])
+    }
+    if not angle_fact_ids or not angle_fact_ids.issubset(set(selected_fact_ids)):
+        raise CopyRegisterV2Error(
+            "COPY_V2_ANGLE_EVIDENCE_REQUIRED",
+            "Keep the angle's cited Product Truth facts in the blueprint evidence selection.",
+            status_code=422,
+            details={"required_fact_ids": sorted(angle_fact_ids)},
+        )
+    candidate["evidence_fact_ids"] = sorted(angle_fact_ids)
+    candidate["provider_receipt"] = _loads(candidate.get("provider_receipt_json"), {})
+    return candidate
 
 
-def _build_stages(formula_id: str, *, blueprint_id: str, product_name: str, angle: str,
-                  facts: tuple[EvidenceFact, ...], variant: int = 0) -> tuple[FormulaStage, ...]:
+def _validate_ai_formula_stages(
+    raw: dict[str, Any],
+    *,
+    product: dict[str, Any],
+    snapshot: dict[str, Any],
+    formula_id: str,
+    facts: tuple[EvidenceFact, ...],
+) -> list[dict[str, Any]]:
+    items = raw.get("stages")
+    expected_slots = list(required_formula_stage_keys(formula_id))
+    if not isinstance(items, list) or len(items) != len(expected_slots):
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_FORMULA_INCOMPLETE",
+            "The text-assist response did not return every required formula stage.",
+            status_code=502,
+            details={"expected_stage_keys": expected_slots},
+        )
+    fact_index = {fact.fact_id: fact for fact in facts}
+    validated: list[dict[str, Any]] = []
+    for index, (item, expected_slot) in enumerate(zip(items, expected_slots, strict=True)):
+        if not isinstance(item, dict) or _clean(item.get("formula_stage_key")) != expected_slot:
+            raise CopyRegisterV2Error(
+                "COPY_V2_TEXT_AI_FORMULA_ORDER_INVALID",
+                "The text-assist response changed the registered formula stage order.",
+                status_code=502,
+                details={"order": index, "expected_stage_key": expected_slot},
+            )
+        raw_ids = item.get("evidence_fact_ids")
+        if not isinstance(raw_ids, list):
+            raise CopyRegisterV2Error(
+                "COPY_V2_TEXT_AI_EVIDENCE_INVALID",
+                "Every generated stage must carry an evidence list.",
+                status_code=502,
+            )
+        ids = [str(value) for value in raw_ids]
+        if len(ids) > 5 or len(ids) != len(set(ids)):
+            raise CopyRegisterV2Error(
+                "COPY_V2_TEXT_AI_EVIDENCE_INVALID",
+                "Generated stage evidence must contain at most five unique facts.",
+                status_code=502,
+            )
+        claim_bearing = expected_slot not in {"cta", "action", "response"}
+        if claim_bearing and not ids:
+            raise CopyRegisterV2Error(
+                "COPY_V2_TEXT_AI_EVIDENCE_INVALID",
+                "Every claim-bearing formula stage must cite approved evidence.",
+                status_code=502,
+            )
+        try:
+            cited = tuple(fact_index[fact_id] for fact_id in ids)
+        except KeyError as exc:
+            raise CopyRegisterV2Error(
+                "COPY_V2_TEXT_AI_EVIDENCE_INVALID",
+                "Generated formula copy cited evidence outside the selected facts.",
+                status_code=502,
+                details={"fact_id": str(exc.args[0])},
+            ) from exc
+        text = _assert_generated_text_grounded(
+            item.get("text"),
+            facts=cited,
+            product=product,
+            internal_ids=(
+                str(product["id"]),
+                str(snapshot["snapshot_id"]),
+                *fact_index,
+            ),
+        )
+        validated.append(
+            {
+                "formula_stage_key": expected_slot,
+                "text": text,
+                "evidence_fact_ids": ids,
+            }
+        )
+    return validated
+
+
+def _generate_formula_stage_payloads(
+    *,
+    product: dict[str, Any],
+    snapshot: dict[str, Any],
+    formula_id: str,
+    objective: Objective,
+    angle: Angle,
+    facts: tuple[EvidenceFact, ...],
+    target_duration_seconds: float | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    raw, receipt = _call_text_assist(
+        system_prompt=_FORMULA_SYSTEM_PROMPT,
+        prompt_version=FORMULA_PROMPT_VERSION,
+        payload={
+            "product": {
+                "display_name": _clean(
+                    product.get("product_display_name") or product.get("raw_product_title")
+                ),
+                "category": _clean(product.get("category")),
+                "subcategory": _clean(product.get("subcategory")),
+                "product_type": _clean(product.get("type") or product.get("product_type")),
+            },
+            "product_truth": {
+                "persona": _parse_dict(snapshot.get("buyer_persona_snapshot_json")),
+                "allowed_claims": _parse_list(snapshot.get("allowed_claims_json")),
+                "blocked_claims": _parse_list(snapshot.get("blocked_claims_json")),
+                "warnings": _parse_list(snapshot.get("warnings_text")),
+            },
+            "formula": {
+                "formula_id": formula_id,
+                "formula_version": formula_version(formula_id),
+                "ordered_stage_keys": list(required_formula_stage_keys(formula_id)),
+                "contract": strict_formula_contract(formula_id),
+            },
+            "objective": objective.model_dump(mode="json"),
+            "selected_angle": angle.model_dump(mode="json"),
+            "target_duration_seconds": target_duration_seconds,
+            "facts": [
+                {
+                    "fact_id": fact.fact_id,
+                    "fact_kind": fact.fact_kind,
+                    "text": fact.text,
+                }
+                for fact in facts
+            ],
+        },
+    )
+    return (
+        _validate_ai_formula_stages(
+            raw,
+            product=product,
+            snapshot=snapshot,
+            formula_id=formula_id,
+            facts=facts,
+        ),
+        receipt,
+    )
+
+
+def _build_stages(
+    formula_id: str,
+    *,
+    blueprint_id: str,
+    revision: int,
+    facts: tuple[EvidenceFact, ...],
+    generated_stages: list[dict[str, Any]],
+) -> tuple[FormulaStage, ...]:
     slots = required_formula_stage_keys(formula_id)
+    if len(generated_stages) != len(slots):
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_FORMULA_INCOMPLETE",
+            "Generated formula stages do not match the registered formula.",
+            status_code=502,
+        )
+    fact_index = {fact.fact_id: fact for fact in facts}
     stages: list[FormulaStage] = []
     previous_exit = f"{formula_id}:OPEN"
-    for index, slot in enumerate(slots):
+    for index, (slot, generated) in enumerate(zip(slots, generated_stages, strict=True)):
         stage_key = f"stage-{index}-{slot}"
         exit_token = f"{formula_id}:STAGE:{index}"
         claim_bearing = slot not in {"cta", "action", "response"}
-        refs = tuple(fact.reference() for fact in facts) if claim_bearing else ()
+        refs = tuple(
+            fact_index[fact_id].reference()
+            for fact_id in generated["evidence_fact_ids"]
+        )
         stages.append(
             FormulaStage(
                 stage_key=stage_key,
                 order=index,
-                authored_text=_render_stage_text(
-                    slot, product_name=product_name, angle=angle, facts=facts, variant=variant + index,
-                ),
+                authored_text=generated["text"],
                 semantic_role=slot,
-                component_ref=f"v2-component:{blueprint_id}:{stage_key}",
+                component_ref=f"v2-component:{blueprint_id}:r{revision}:{stage_key}",
                 formula_stage_key=slot,
                 bridge=BridgeContract(
                     entry=previous_exit,
@@ -477,16 +1023,26 @@ def _build_stages(formula_id: str, *, blueprint_id: str, product_name: str, angl
     return tuple(stages)
 
 
-def _new_blueprint(*, product: dict[str, Any], snapshot: dict[str, Any], formula_id: str,
-                   objective: Objective, angle: Angle, facts: tuple[EvidenceFact, ...],
-                   target_duration_seconds: float | None = None) -> CopyBlueprintV2:
+def _new_blueprint(
+    *,
+    product: dict[str, Any],
+    snapshot: dict[str, Any],
+    formula_id: str,
+    objective: Objective,
+    angle: Angle,
+    facts: tuple[EvidenceFact, ...],
+    generated_stages: list[dict[str, Any]],
+    provider_receipt: dict[str, Any],
+    angle_provider_receipt: dict[str, Any],
+    target_duration_seconds: float | None = None,
+) -> CopyBlueprintV2:
     blueprint_id = f"bpv2_{uuid.uuid4().hex[:20]}"
     stages = _build_stages(
         formula_id,
         blueprint_id=blueprint_id,
-        product_name=_clean(product.get("product_display_name") or product.get("raw_product_title")) or "produk ini",
-        angle=angle.definition,
+        revision=1,
         facts=facts,
+        generated_stages=generated_stages,
     )
     lineage = _lineage(product, snapshot)
     return CopyBlueprintV2(
@@ -502,13 +1058,16 @@ def _new_blueprint(*, product: dict[str, Any], snapshot: dict[str, Any], formula
         component_refs=tuple(stage.component_ref for stage in stages if stage.component_ref),
         evidence_refs=tuple(fact.reference() for fact in facts),
         target_duration_seconds=target_duration_seconds,
-        wps_profile="COPY_REGISTER_V2_DETERMINISTIC",
+        wps_profile="COPY_REGISTER_V2_TEXT_ASSIST",
         estimated_word_count=sum(len(stage.authored_text.split()) for stage in stages),
         semantic_review=None,
         provenance=(
             ProvenanceEntry(key="source", value="COPY_REGISTER_V2"),
             ProvenanceEntry(key="formula_authority", value="copy-formula-registry-v1"),
-            ProvenanceEntry(key="generator", value="deterministic-v2-fake"),
+            ProvenanceEntry(key="generator", value="text-assist-formula-native-v2"),
+            ProvenanceEntry(key="formula_prompt_version", value=FORMULA_PROMPT_VERSION),
+            ProvenanceEntry(key="formula_provider_receipt", value=_json(provider_receipt)),
+            ProvenanceEntry(key="angle_provider_receipt", value=_json(angle_provider_receipt)),
             ProvenanceEntry(key="product_truth_snapshot", value=str(snapshot["snapshot_id"])),
         ),
         product_truth_lineage=lineage,
@@ -631,17 +1190,39 @@ async def generate_blueprint(*, product_id: str, formula_id: str, objective_id: 
         raise CopyRegisterV2Error(blockers[0], "An approved, production-ready Product Truth snapshot is required.", details={"blockers": blockers})
     assert product is not None and snapshot is not None
     facts = await _facts_for_refs(product, snapshot, evidence_fact_ids)
-    options = _angle_options(product, snapshot, _fact_candidates(product, snapshot))
-    selected = next((item for item in options if item["angle_id"] == angle_id and item["definition"] == _clean(angle_definition)), None)
-    if selected is None:
-        raise CopyRegisterV2Error("COPY_V2_ANGLE_NOT_GROUNDED", "Select an angle generated from the approved Product Truth.", status_code=422)
+    selected = await _require_angle_candidate(
+        product=product,
+        snapshot=snapshot,
+        formula_id=canonical_formula,
+        objective_id=objective_id,
+        angle_id=angle_id,
+        angle_definition=angle_definition,
+        selected_fact_ids=evidence_fact_ids,
+    )
+    objective = Objective(
+        objective_id=_clean(objective_id),
+        definition=_clean(objective_definition),
+    )
+    angle = Angle(angle_id=_clean(angle_id), definition=_clean(angle_definition))
+    generated_stages, provider_receipt = _generate_formula_stage_payloads(
+        product=product,
+        snapshot=snapshot,
+        formula_id=canonical_formula,
+        objective=objective,
+        angle=angle,
+        facts=facts,
+        target_duration_seconds=target_duration_seconds,
+    )
     blueprint = _new_blueprint(
         product=product,
         snapshot=snapshot,
         formula_id=canonical_formula,
-        objective=Objective(objective_id=_clean(objective_id), definition=_clean(objective_definition)),
-        angle=Angle(angle_id=_clean(angle_id), definition=_clean(angle_definition)),
+        objective=objective,
+        angle=angle,
         facts=facts,
+        generated_stages=generated_stages,
+        provider_receipt=provider_receipt,
+        angle_provider_receipt=selected["provider_receipt"],
         target_duration_seconds=target_duration_seconds,
     )
     result = validate_copy_blueprint_v2(
@@ -687,21 +1268,144 @@ async def regenerate_stage(blueprint_id: str, stage_key: str) -> CopyBlueprintV2
     matching = [stage for stage in previous.stages if stage.stage_key == stage_key]
     if not matching:
         raise CopyRegisterV2Error("COPY_V2_STAGE_NOT_FOUND", "Requested formula stage was not found.", status_code=404)
-    new_text = _render_stage_text(
-        matching[0].formula_stage_key,
-        product_name=_clean(product.get("product_display_name") or product.get("raw_product_title")) or "produk ini",
-        angle=previous.angle.definition,
-        facts=facts,
-        variant=previous.revision + 1,
+    target = matching[0]
+    raw, provider_receipt = _call_text_assist(
+        system_prompt=_STAGE_REGEN_SYSTEM_PROMPT,
+        prompt_version=STAGE_REGEN_PROMPT_VERSION,
+        payload={
+            "product": {
+                "display_name": _clean(
+                    product.get("product_display_name") or product.get("raw_product_title")
+                ),
+                "category": _clean(product.get("category")),
+                "subcategory": _clean(product.get("subcategory")),
+                "product_type": _clean(product.get("type") or product.get("product_type")),
+            },
+            "product_truth": {
+                "allowed_claims": _parse_list(snapshot.get("allowed_claims_json")),
+                "blocked_claims": _parse_list(snapshot.get("blocked_claims_json")),
+                "warnings": _parse_list(snapshot.get("warnings_text")),
+            },
+            "formula_id": previous.formula_id,
+            "formula_version": previous.formula_version,
+            "ordered_stage_keys": [stage.formula_stage_key for stage in previous.stages],
+            "selected_angle": previous.angle.model_dump(mode="json"),
+            "objective": previous.objective.model_dump(mode="json"),
+            "target_stage": {
+                "stage_key": target.stage_key,
+                "formula_stage_key": target.formula_stage_key,
+                "current_text": target.authored_text,
+                "claim_bearing": target.claim_bearing,
+            },
+            "surrounding_stages": [
+                {
+                    "formula_stage_key": stage.formula_stage_key,
+                    "text": stage.authored_text,
+                }
+                for stage in previous.stages
+                if stage.stage_key != target.stage_key
+            ],
+            "facts": [
+                {
+                    "fact_id": fact.fact_id,
+                    "fact_kind": fact.fact_kind,
+                    "text": fact.text,
+                }
+                for fact in facts
+            ],
+        },
     )
-    stages = tuple(stage.model_copy(update={"authored_text": new_text, "validation": StageValidation(valid=True)}) if stage.stage_key == stage_key else stage for stage in previous.stages)
+    generated = raw.get("stage")
+    if (
+        not isinstance(generated, dict)
+        or _clean(generated.get("formula_stage_key")) != target.formula_stage_key
+        or not isinstance(generated.get("evidence_fact_ids"), list)
+    ):
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_STAGE_REGEN_INVALID",
+            "Stage regeneration changed the stage role or returned an invalid contract.",
+            status_code=502,
+        )
+    fact_index = {fact.fact_id: fact for fact in facts}
+    fact_ids = [str(value) for value in generated["evidence_fact_ids"]]
+    if len(fact_ids) > 5 or len(fact_ids) != len(set(fact_ids)):
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_EVIDENCE_INVALID",
+            "Regenerated stage evidence must contain at most five unique facts.",
+            status_code=502,
+        )
+    if target.claim_bearing and not fact_ids:
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_EVIDENCE_INVALID",
+            "A claim-bearing regenerated stage must cite approved evidence.",
+            status_code=502,
+        )
+    try:
+        cited = tuple(fact_index[fact_id] for fact_id in fact_ids)
+    except KeyError as exc:
+        raise CopyRegisterV2Error(
+            "COPY_V2_TEXT_AI_EVIDENCE_INVALID",
+            "Regenerated stage cited evidence outside the blueprint selection.",
+            status_code=502,
+            details={"fact_id": str(exc.args[0])},
+        ) from exc
+    new_text = _assert_generated_text_grounded(
+        generated.get("text"),
+        facts=cited,
+        product=product,
+        internal_ids=(str(product["id"]), str(snapshot["snapshot_id"]), *fact_index),
+    )
+    next_revision = previous.revision + 1
+    stages = tuple(
+        stage.model_copy(
+            update={
+                "authored_text": new_text,
+                "component_ref": (
+                    f"v2-component:{previous.blueprint_id}:r{next_revision}:{stage.stage_key}"
+                ),
+                "fact_refs": tuple(fact.reference() for fact in cited),
+                "validation": StageValidation(valid=True),
+            }
+        )
+        if stage.stage_key == stage_key
+        else stage
+        for stage in previous.stages
+    )
     revision = create_blueprint_revision(
         previous,
         stages=stages,
         evidence_refs=previous.evidence_refs,
         product_truth_lineage=_lineage(product, snapshot),
         created_at=_now(),
-    ).model_copy(update={"semantic_review": None})
+    ).model_copy(
+        update={
+            "component_refs": tuple(
+                stage.component_ref for stage in stages if stage.component_ref
+            ),
+            "estimated_word_count": sum(
+                len(stage.authored_text.split()) for stage in stages
+            ),
+            "provenance": (
+                *previous.provenance,
+                ProvenanceEntry(
+                    key=f"stage_regeneration_r{next_revision}",
+                    value=_json(provider_receipt),
+                ),
+            ),
+            "semantic_review": None,
+        }
+    )
+    validation = validate_copy_blueprint_v2(
+        revision,
+        current_product_truth=_lineage(product, snapshot),
+        evidence_registry=EvidenceRegistry(facts=facts),
+    )
+    if not validation.valid:
+        raise CopyRegisterV2Error(
+            "COPY_V2_BLUEPRINT_INVALID",
+            "Regenerated formula revision failed the V2 validation gate.",
+            details=validation.model_dump(mode="json"),
+        )
     return await _insert_blueprint(revision)
 
 
@@ -759,8 +1463,12 @@ async def approve_blueprint(blueprint_id: str, *, approved_by: str, semantic_rev
     return await _get_blueprint(approved.blueprint_id, approved.revision)
 
 
-async def bind_blueprint(*, blueprint_id: str, lane: str,
-                         feature_flags: CopyBlueprintV2FeatureFlagState) -> CopyExecutionBinding:
+async def _prepare_binding(
+    *,
+    blueprint_id: str,
+    lane: str,
+    feature_flags: CopyBlueprintV2FeatureFlagState,
+) -> tuple[CopyBlueprintV2, CopyExecutionBinding]:
     try:
         descriptor = get_lane_descriptor(lane)
     except ValueError as exc:
@@ -788,29 +1496,32 @@ async def bind_blueprint(*, blueprint_id: str, lane: str,
         )
     except CopyBlueprintV2Error as exc:
         raise CopyRegisterV2Error(exc.code, str(exc), details=exc.details) from exc
-    db = await get_db()
-    async with _db_lock:
-        existing_cursor = await db.execute(
-            "SELECT * FROM copy_execution_binding_v2 WHERE blueprint_id=? AND revision=? AND lane=?",
-            (binding.blueprint_id, binding.revision, binding.lane),
+    return blueprint, binding
+
+
+async def _insert_or_get_binding(db: Any, blueprint: CopyBlueprintV2,
+                                 binding: CopyExecutionBinding) -> CopyExecutionBinding:
+    existing_cursor = await db.execute(
+        "SELECT * FROM copy_execution_binding_v2 WHERE blueprint_id=? AND revision=? AND lane=?",
+        (binding.blueprint_id, binding.revision, binding.lane),
+    )
+    existing = await existing_cursor.fetchone()
+    if existing:
+        persisted = _row_to_binding(existing)
+        expected = binding.model_copy(
+            update={
+                "binding_id": persisted.binding_id,
+                "bound_at": persisted.bound_at,
+            }
         )
-        existing = await existing_cursor.fetchone()
-        if existing:
-            persisted = _row_to_binding(existing)
-            expected = binding.model_copy(
-                update={
-                    "binding_id": persisted.binding_id,
-                    "bound_at": persisted.bound_at,
-                }
+        if persisted != expected:
+            raise CopyRegisterV2Error(
+                "COPY_V2_BINDING_CONFLICT",
+                "This blueprint revision and lane already have a different immutable binding.",
+                status_code=409,
             )
-            if persisted != expected:
-                raise CopyRegisterV2Error(
-                    "COPY_V2_BINDING_CONFLICT",
-                    "This blueprint revision and lane already have a different immutable binding.",
-                    status_code=409,
-                )
-            return persisted
-        await db.execute(
+        return persisted
+    await db.execute(
             """
             INSERT INTO copy_execution_binding_v2
             (binding_id, blueprint_id, revision, product_id, lane, media_kind, copy_policy,
@@ -819,20 +1530,94 @@ async def bind_blueprint(*, blueprint_id: str, lane: str,
              feature_flag_state_json, binding_status, bound_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (
-                binding.binding_id, binding.blueprint_id, binding.revision, blueprint.product_id,
-                binding.lane, binding.media_kind, binding.copy_policy, binding.formula_id,
-                binding.formula_version, binding.approval_snapshot_id,
-                _json(binding.product_truth_lineage.model_dump(mode="json")),
-                _json(binding.evidence_lineage.model_dump(mode="json")),
-                binding.evidence_lineage.evidence_digest,
-                binding.compiler_binding_version,
-                _json(binding.feature_flag_state.model_dump(mode="json")),
-                binding.binding_status, binding.bound_at,
-            ),
-        )
-        await db.commit()
+        (
+            binding.binding_id, binding.blueprint_id, binding.revision, blueprint.product_id,
+            binding.lane, binding.media_kind, binding.copy_policy, binding.formula_id,
+            binding.formula_version, binding.approval_snapshot_id,
+            _json(binding.product_truth_lineage.model_dump(mode="json")),
+            _json(binding.evidence_lineage.model_dump(mode="json")),
+            binding.evidence_lineage.evidence_digest,
+            binding.compiler_binding_version,
+            _json(binding.feature_flag_state.model_dump(mode="json")),
+            binding.binding_status, binding.bound_at,
+        ),
+    )
     return binding
+
+
+async def _set_binding_authority(
+    db: Any,
+    blueprint: CopyBlueprintV2,
+    binding: CopyExecutionBinding,
+) -> None:
+    """Select an immutable binding receipt without rewriting the receipt."""
+
+    await db.execute(
+        """
+        INSERT INTO copy_execution_authority_v2
+            (product_id, lane, binding_id, activated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(product_id, lane) DO UPDATE SET
+            binding_id=excluded.binding_id,
+            activated_at=excluded.activated_at
+        """,
+        (blueprint.product_id, binding.lane, binding.binding_id, _now()),
+    )
+
+
+async def bind_blueprint(*, blueprint_id: str, lane: str,
+                         feature_flags: CopyBlueprintV2FeatureFlagState) -> CopyExecutionBinding:
+    blueprint, binding = await _prepare_binding(
+        blueprint_id=blueprint_id,
+        lane=lane,
+        feature_flags=feature_flags,
+    )
+    db = await get_db()
+    async with _db_lock:
+        try:
+            persisted = await _insert_or_get_binding(db, blueprint, binding)
+            await _set_binding_authority(db, blueprint, persisted)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return persisted
+
+
+async def activate_blueprint_for_required_lanes(blueprint_id: str) -> tuple[CopyExecutionBinding, ...]:
+    """Atomically make one approved blueprint authoritative for all copy lanes."""
+
+    feature_flags = CopyBlueprintV2FeatureFlagState.from_environment()
+    if not feature_flags.enabled or feature_flags.state != "ON":
+        raise CopyRegisterV2Error(
+            "COPY_V2_ONLY_REQUIRED",
+            "All-lane activation requires the canonical V2-only runtime state.",
+        )
+    prepared: list[tuple[CopyBlueprintV2, CopyExecutionBinding]] = []
+    for item in producer_consumer_matrix():
+        if item["copy_policy"] != "REQUIRED":
+            continue
+        prepared.append(
+            await _prepare_binding(
+                blueprint_id=blueprint_id,
+                lane=item["lane_id"],
+                feature_flags=feature_flags,
+            )
+        )
+
+    db = await get_db()
+    persisted: list[CopyExecutionBinding] = []
+    async with _db_lock:
+        try:
+            for blueprint, binding in prepared:
+                receipt = await _insert_or_get_binding(db, blueprint, binding)
+                await _set_binding_authority(db, blueprint, receipt)
+                persisted.append(receipt)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return tuple(persisted)
 
 
 def _row_to_binding(row: Any) -> CopyExecutionBinding:
@@ -870,9 +1655,15 @@ async def get_binding(product_id: str, lane: str) -> CopyExecutionBinding:
     db = await get_db()
     cursor = await db.execute(
         """
-        SELECT * FROM copy_execution_binding_v2
-        WHERE product_id=? AND lane=? AND binding_status='BOUND'
-        ORDER BY revision DESC, bound_at DESC, binding_id DESC LIMIT 1
+        SELECT binding.*
+        FROM copy_execution_authority_v2 authority
+        JOIN copy_execution_binding_v2 binding
+          ON binding.binding_id = authority.binding_id
+        WHERE authority.product_id=? AND authority.lane=?
+          AND binding.product_id=authority.product_id
+          AND binding.lane=authority.lane
+          AND binding.binding_status='BOUND'
+        LIMIT 1
         """,
         (product_id, descriptor.lane_id),
     )
@@ -888,6 +1679,7 @@ async def list_binding_matrix() -> list[dict[str, Any]]:
 
 __all__ = [
     "CopyRegisterV2Error",
+    "activate_blueprint_for_required_lanes",
     "approve_blueprint",
     "bind_blueprint",
     "generate_angle_options",
