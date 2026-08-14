@@ -73,7 +73,10 @@ $SmokeTests = @(
     'tests/unit/test_product_visual_canvas_service.py',
     'tests/unit/test_product_visual_onboarding_service.py',
     'tests/integration/test_product_visual_crud_workflow.py',
-    'tests/unit/test_canonical_runtime_lock.py'
+    'tests/unit/test_canonical_runtime_lock.py',
+    'tests/unit/test_scene_choreography_v2.py',
+    'tests/unit/test_product_treatment_template_service.py',
+    'tests/unit/test_creative_treatment_service.py'
 )
 
 $DashboardContractTests = @(

@@ -131,6 +131,9 @@ class TreatmentTemplateProjection(BaseModel):
     action_sequence: list[TreatmentActionStep] = Field(min_length=1)
     shot_grammar: list[TreatmentShot] = Field(min_length=1)
     compatibility_profile: TreatmentCompatibilityProfile
+    choreography_schema_version: str | None = None
+    choreography_id: str | None = None
+    choreography_sha256: str | None = None
 
 
 class FactoryTaskProjection(BaseModel):

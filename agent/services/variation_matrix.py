@@ -6,6 +6,7 @@ from agent.services.scene_strategy_library import (
     resolve_scene_strategy,
     select_scene_strategy_variant,
 )
+from agent.services.scene_choreography_catalog import select_variant_for_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,13 @@ async def generate_variation_plan(product_id: str, quantity: int = 3) -> list:
         or strategy["camera_routes"]
     )
 
+    if strategy["fallback_used"] or strategy["strategy_id"] == "GENERIC_FALLBACK":
+        logger.warning(
+            "GENERIC_FALLBACK blocked from production variation planning for %s",
+            product_id,
+        )
+        return []
+
     for i in range(quantity):
         selected = select_scene_strategy_variant(strategy, i)
         scene_context = (
@@ -73,6 +81,25 @@ async def generate_variation_plan(product_id: str, quantity: int = 3) -> list:
             "scene_strategy_id": selected["scene_strategy_id"],
             "allowed_scene_strategy": selected["allowed_scene_strategy"],
             "allowed_action": selected["allowed_action"],
+            "choreography_id": selected["choreography_id"],
+            "choreography_schema_version": selected["choreography_schema_version"],
+            "choreography_sha256": selected["choreography_sha256"],
+            "choreography_steps": [
+                {
+                    "step_number": step.step_number,
+                    "start_s": step.start_s,
+                    "end_s": step.end_s,
+                    "action_instruction": step.action_instruction,
+                    "support_hand": step.support_hand,
+                    "active_hand": step.active_hand,
+                    "camera_cut_boundary": step.camera_cut_boundary,
+                    "is_final_lock": step.is_final_lock,
+                }
+                for step in select_variant_for_strategy(
+                    selected["scene_strategy_id"],
+                    i,
+                ).steps
+            ],
             "forbidden_actions": strategy["forbidden_actions"],
             "avatar_hint": selected["avatar_hint"],
             "wardrobe_hint": selected["wardrobe_hint"],

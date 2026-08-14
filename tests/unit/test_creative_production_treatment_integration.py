@@ -19,6 +19,40 @@ from agent.services.scene_strategy_library import resolve_scene_strategy
 
 
 def _projection(treatment_id: str = "treatment-1") -> dict:
+    from agent.services.scene_choreography_catalog import (
+        choreography_sha256,
+        select_variant_for_strategy,
+    )
+
+    variant = select_variant_for_strategy("SPICE_SEASONING", 0)
+    steps = []
+    for step in variant.steps:
+        steps.append(
+            {
+                "sequence": step.step_number,
+                "action_text": step.action_instruction,
+                "actor_role": step.actor_role,
+                "initial_state": "; ".join(
+                    f"{s.entity_id}:{s.location}:{s.physical_state}" for s in step.initial_states
+                ),
+                "resulting_state": "; ".join(
+                    f"{s.entity_id}:{s.location}:{s.physical_state}" for s in step.resulting_states
+                ),
+                "continuity_requirements": list(step.continuity_rules),
+                "start_s": step.start_s,
+                "end_s": step.end_s,
+                "visibility": step.visibility,
+                "camera_cut_boundary": step.camera_cut_boundary,
+                "is_final_lock": step.is_final_lock,
+                "source_action_indexes": list(step.source_action_indexes),
+                "transition_signature": step.transition_signature,
+            }
+        )
+    lineage = {
+        "choreography_schema_version": variant.schema_version,
+        "choreography_id": variant.choreography_id,
+        "choreography_sha256": choreography_sha256(variant),
+    }
     return {
         "treatment_id": treatment_id,
         "treatment_sha256": "a" * 64,
@@ -37,20 +71,11 @@ def _projection(treatment_id: str = "treatment-1") -> dict:
         "asset_bindings": [
             {"role": "PRODUCT_REFERENCE", "asset_id": "asset-product"},
         ],
-        "action_sequence": [
-            {
-                "sequence": 1,
-                "action_text": "Tuang rempah",
-                "actor_role": "HANDS",
-                "initial_state": "tertutup",
-                "resulting_state": "dituang",
-                "continuity_requirements": [],
-            }
-        ],
+        "action_sequence": steps,
         "shot_grammar": [
             {
                 "sequence": 1,
-                "action_sequences": [1],
+                "action_sequences": [s["sequence"] for s in steps],
                 "purpose": "demo",
                 "framing": "close-up",
                 "camera_motion": "push",
@@ -65,6 +90,7 @@ def _projection(treatment_id: str = "treatment-1") -> dict:
             "source_mode": "T2V",
             "model_keys": ["Veo 3.1 - Lite"],
             "required_asset_roles": ["PRODUCT_REFERENCE"],
+            **lineage,
         },
         "compatible_model_keys": ["Veo 3.1 - Lite"],
         "selected_model_key": "Veo 3.1 - Lite",
@@ -74,6 +100,7 @@ def _projection(treatment_id: str = "treatment-1") -> dict:
         "variation_ordinal": None,
         "dependency_hashes": {"copy_set_sha256": "c" * 64},
         "segment_plan": [],
+        **lineage,
     }
 
 

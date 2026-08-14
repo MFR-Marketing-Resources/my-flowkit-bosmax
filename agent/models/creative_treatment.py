@@ -51,6 +51,14 @@ class TreatmentActionStep(BaseModel):
     initial_state: str = Field(min_length=1)
     resulting_state: str = Field(min_length=1)
     continuity_requirements: list[str] = Field(default_factory=list)
+    start_time_seconds: float | None = Field(default=None, ge=0)
+    end_time_seconds: float | None = Field(default=None, gt=0)
+    support_hand: str | None = None
+    active_hand: str | None = None
+    visibility: str | None = None
+    camera_cut_boundary: str | None = None
+    product_location: str | None = None
+    component_custody: str | None = None
 
 
 class TreatmentShot(BaseModel):
@@ -82,6 +90,9 @@ class TreatmentCompatibilityProfile(BaseModel):
             "COMPOSITE_FRAME_REFERENCE",
         ]
     ] = Field(default_factory=list)
+    choreography_schema_version: str | None = None
+    choreography_id: str | None = None
+    choreography_sha256: str | None = None
 
 
 class CreateTreatmentRequest(BaseModel):
@@ -107,6 +118,9 @@ class CreateTreatmentRequest(BaseModel):
     variation_group_id: str | None = None
     variation_ordinal: int | None = Field(default=None, ge=1, le=5)
     supersedes_treatment_id: str | None = None
+    choreography_schema_version: str | None = None
+    choreography_id: str | None = None
+    choreography_sha256: str | None = None
     created_by: str = Field(min_length=1)
 
     @model_validator(mode="after")

@@ -410,9 +410,10 @@ def test_production_compiler_uses_strategy_but_preserves_explicit_copy() -> None
         "prompt_blocks"
     ][0]["exact_dialogue_slice"]
     assert "operator-selected dressing room" in first["final_compiled_prompt_text"]
-    assert "Allowed product action: apply one clean pass to the lips." in first[
+    assert "Execute this ordered scene choreography exactly:" in first[
         "final_compiled_prompt_text"
     ]
+    assert "0.0-1.0s" in first["final_compiled_prompt_text"]
 
 
 def test_production_compiler_adds_sensitive_fail_closed_constraints() -> None:

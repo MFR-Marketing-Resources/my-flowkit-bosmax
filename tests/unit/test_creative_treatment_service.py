@@ -16,6 +16,54 @@ from agent.models.creative_treatment import (
 from agent.services import creative_treatment_service as service
 from agent.services import creative_scene_prompt_service
 from agent.services.scene_strategy_library import SCENE_STRATEGIES
+from agent.services.scene_choreography_catalog import select_variant_for_strategy
+
+
+def _spice_steps(action_index: int = 0, actor_role: str = "PRODUCT") -> list[dict[str, object]]:
+    variant = select_variant_for_strategy("SPICE_SEASONING", action_index)
+    return [
+        {
+            "sequence": step.step_number,
+            "allowed_action_index": action_index,
+            "action_text": step.action_instruction,
+            "actor_role": actor_role,
+            "initial_state": "; ".join(
+                f"{state.entity_id}@{state.location}" for state in step.initial_states
+            ),
+            "resulting_state": "; ".join(
+                f"{state.entity_id}@{state.location}" for state in step.resulting_states
+            ),
+            "continuity_requirements": list(step.continuity_rules),
+        }
+        for step in variant.steps
+    ]
+
+
+def _spice_shots(duration_seconds: int, step_count: int) -> list[dict[str, object]]:
+    segment_count = max(1, int(duration_seconds) // 8)
+    per = max(1, step_count // segment_count)
+    shots = []
+    cursor = 1
+    for index in range(1, segment_count + 1):
+        if index < segment_count:
+            assigned = list(range(cursor, min(cursor + per, step_count + 1)))
+            cursor = assigned[-1] + 1 if assigned else cursor
+        else:
+            assigned = list(range(cursor, step_count + 1)) or [step_count]
+        shots.append(
+            {
+                "sequence": index,
+                "action_sequences": assigned,
+                "purpose": f"governed segment {index}",
+                "framing": "product close-up",
+                "camera_motion": "controlled push-in",
+                "subject": "rempah and plated dish",
+                "duration_seconds": 8 if segment_count > 1 else duration_seconds,
+                "continuity_in": ["sealed product pack"],
+                "continuity_out": ["same pack beside dish"],
+            }
+        )
+    return shots
 
 
 PRODUCT_ID = "product-p75b-service"
@@ -174,9 +222,7 @@ def _request(
     ordinal: int | None = None,
     supersedes_treatment_id: str | None = None,
 ) -> CreateTreatmentRequest:
-    action_text = SCENE_STRATEGIES["SPICE_SEASONING"]["allowed_actions"][
-        action_index
-    ]
+    steps = _spice_steps(action_index, actor_role)
     return CreateTreatmentRequest(
         product_id=PRODUCT_ID,
         product_truth_snapshot_id=SNAPSHOT_ID,
@@ -186,30 +232,8 @@ def _request(
         format=format,
         generation_mode="SINGLE",
         duration_seconds=8,
-        action_sequence=[
-            {
-                "sequence": 1,
-                "allowed_action_index": action_index,
-                "action_text": action_text,
-                "actor_role": actor_role,
-                "initial_state": "Product pack sealed",
-                "resulting_state": "Product demonstrated",
-                "continuity_requirements": ["pack identity remains stable"],
-            },
-        ],
-        shot_grammar=[
-            {
-                "sequence": 1,
-                "action_sequences": [1],
-                "purpose": "Demonstrate the product action",
-                "framing": "product close-up",
-                "camera_motion": "controlled push-in",
-                "subject": "rempah and plated dish",
-                "duration_seconds": 8,
-                "continuity_in": ["sealed product pack"],
-                "continuity_out": ["same pack beside dish"],
-            },
-        ],
+        action_sequence=steps,
+        shot_grammar=_spice_shots(8, len(steps)),
         compatibility_profile={
             "logical_mode": "F2V",
             "source_mode": "FRAMES",
@@ -281,43 +305,14 @@ async def test_t2v_treatment_allows_zero_asset_bindings_when_no_roles_are_requir
 
 
 def _extend_request(duration_seconds: int) -> CreateTreatmentRequest:
-    segment_count = duration_seconds // 8
-    allowed_actions = SCENE_STRATEGIES["SPICE_SEASONING"]["allowed_actions"]
     payload = _request().model_dump(mode="json")
+    steps = _spice_steps(0)
     payload.update(
         {
             "generation_mode": "EXTEND",
             "duration_seconds": duration_seconds,
-            "action_sequence": [
-                {
-                    "sequence": index,
-                    "allowed_action_index": (index - 1) % len(allowed_actions),
-                    "action_text": allowed_actions[
-                        (index - 1) % len(allowed_actions)
-                    ],
-                    "actor_role": "PRODUCT",
-                    "initial_state": f"state-{index - 1}",
-                    "resulting_state": f"state-{index}",
-                    "continuity_requirements": [
-                        "pack identity remains stable",
-                    ],
-                }
-                for index in range(1, segment_count + 1)
-            ],
-            "shot_grammar": [
-                {
-                    "sequence": index,
-                    "action_sequences": [index],
-                    "purpose": f"governed segment {index}",
-                    "framing": "product close-up",
-                    "camera_motion": "controlled push-in",
-                    "subject": "rempah and plated dish",
-                    "duration_seconds": 8,
-                    "continuity_in": [f"state-{index - 1}"],
-                    "continuity_out": [f"state-{index}"],
-                }
-                for index in range(1, segment_count + 1)
-            ],
+            "action_sequence": steps,
+            "shot_grammar": _spice_shots(duration_seconds, len(steps)),
         }
     )
     payload["compatibility_profile"]["model_keys"] = ["veo_3_1_lite"]
@@ -695,3 +690,36 @@ async def test_variation_group_enforces_same_dialogue_distinct_visuals_and_revie
     )
     assert approved["status"] == "APPROVED"
     assert approved["member_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_created_treatment_lineage_survives_db_and_p6_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent.db import creative_treatment_crud as treatment_crud
+    from agent.services import creative_production_plan_service as p6
+    from agent.services.canonical_prompt_compiler import compile_prompt_set
+
+    await _seed_authority(monkeypatch)
+    created = await service.create_treatment(_request())
+    assert created["choreography_id"]
+    assert created["choreography_sha256"]
+    assert created["choreography_schema_version"]
+    stored = await treatment_crud.get_treatment(created["treatment_id"])
+    assert stored is not None
+    decoded = service._decode_treatment(stored)
+    assert decoded["choreography_id"] == created["choreography_id"]
+    assert decoded["choreography_sha256"] == created["choreography_sha256"]
+    approved = await _approve(created)
+    authority = await p6.resolve_treatment_authority(approved["treatment_id"])
+    assert authority["treatment_id"] == approved["treatment_id"]
+    prompt = compile_prompt_set(
+        source_mode="FRAMES",
+        duration_seconds=8,
+        product={"id": PRODUCT_ID, "name": "Rempah", "category": "Food & Beverage"},
+        copy={"hook": "Harum rempah terus naik.", "usps": ["Mudah digunakan"], "cta": "Cuba hari ini."},
+        creative_treatment=authority,
+    )
+    text = " ".join(block["engine_prompt_text"] for block in prompt["blocks"])
+    assert "Establish the seasoning pack" in text or "0.0" in text
+    assert "final-state lock" in text.casefold() or "Hold the finished context" in text
