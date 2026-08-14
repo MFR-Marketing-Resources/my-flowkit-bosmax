@@ -778,6 +778,10 @@ def compile_ugc_video_prompt(
     route: str | None = None,
     allow_manual_block_plan: bool = False,
     creative_treatment: dict[str, Any] | None = None,
+    # Additive V2 execution input.  The canonical compiler remains the sole
+    # renderer; when present it must prove that its allocated dialogue is an
+    # exact wording-preserving rendering of the immutable approved text.
+    approved_dialogue: str | None = None,
     # ADDITIVE, opt-in recipe descriptors (Step F). Absent for every existing caller —
     # the compiled prompt and its fingerprint stay byte-identical. When present (a
     # coherent recipe: avatar × scene, camera follows scene), they SHARPEN the scene +
@@ -1081,6 +1085,7 @@ def compile_ugc_video_prompt(
             wps_mode=wps_mode,
             scene_context=_clean(approved_package.get("scene_context")),
             dialogue_enabled=dialogue_enabled,
+            approved_dialogue=approved_dialogue,
             shot_count_by_block=[
                 get_shot_policy(int(block["duration_seconds"]))["recommended"]
                 for block in normalized_blocks
@@ -1142,7 +1147,9 @@ def compile_ugc_video_prompt(
             shot_count_hint=_shot_policy["recommended"],
             allocation=allocation,
             approved_dialogue=(
-                str(block_treatment.get("dialogue_text") or "") or None
+                str(block_treatment.get("dialogue_text") or "")
+                or approved_dialogue
+                or None
             ),
             creative_treatment=block_treatment or None,
         )
@@ -1197,6 +1204,31 @@ def compile_ugc_video_prompt(
         source_mode=resolved_source_mode,
         target_language=resolved_target_language,
     )
+
+    # V2 is execution-bound to immutable approved stage text.  Planner budget
+    # fitting, CTA packing, or any renderer-side omission is a hard failure;
+    # it must never be hidden by a legacy fallback or an automatic rewrite.
+    if approved_dialogue is not None:
+        expected_dialogue = _clean(approved_dialogue)
+        planned_dialogue = _clean(
+            ((planner_result or {}).get("full_dialogue_plan") or {}).get(
+                "full_dialogue_text"
+            )
+        )
+        rendered_dialogue = _clean(
+            " ".join(
+                _clean(block.get("exact_dialogue_slice"))
+                for block in compiled_blocks
+            )
+        )
+        # Creative-treatment routes own their exact per-block slices and do not
+        # always emit a ``full_dialogue_plan`` object.  In that case the
+        # immutable proof is the ordered rendered slices.  When the planner does
+        # emit a full plan, it must agree as well; an absent planner projection
+        # is not permission to rewrite or fall back.
+        planner_mismatch = bool(planned_dialogue) and planned_dialogue != expected_dialogue
+        if planner_mismatch or rendered_dialogue != expected_dialogue:
+            raise ValueError("COPY_V2_COMPILER_MUTATION")
 
     # `compiled_prompt_text` (with internal directives) is preserved per-block for debugging.
     # `engine_prompt_text` is the independent-block representation for production automation.

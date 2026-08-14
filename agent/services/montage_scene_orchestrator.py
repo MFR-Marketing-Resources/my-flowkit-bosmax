@@ -16,6 +16,11 @@ from agent.services.montage_scene_execution_routing import (
     plan_to_dict,
 )
 from agent.services.montage_scene_reference_policy import SceneReferencePolicy
+from agent.services.copy_execution_resolver import (
+    CopyExecutionResolutionError,
+    copy_v2_handoff_context,
+    resolve_copy_execution_binding,
+)
 
 
 ERR_MONTAGE_AVATAR_SELECTION_REQUIRED = "ERR_MONTAGE_AVATAR_SELECTION_REQUIRED"
@@ -48,6 +53,7 @@ class SceneJobState:
     start_asset_snapshot: Optional[dict[str, Any]] = None
     error_code: Optional[str] = None
     detail: str = ""
+    copy_architecture_v2: Optional[dict[str, Any]] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +75,7 @@ class SceneJobState:
             "start_asset_snapshot": self.start_asset_snapshot,
             "error_code": self.error_code,
             "detail": self.detail,
+            "copy_architecture_v2": self.copy_architecture_v2,
         }
 
 
@@ -159,8 +166,41 @@ async def execute_scene_plan(
     copy_fallback_confirmed: bool = True,
     model: str | None = None,
     duration_seconds: int | None = None,
+    copy_v2_context: dict[str, Any] | None = None,
 ) -> SceneJobState:
     """Run one planned scene through existing package (+ optional generate) path."""
+    resolved_copy_v2_context = copy_v2_context
+    v2_resolution = None
+    if copy_v2_context is not None:
+        try:
+            v2_resolution = resolve_copy_execution_binding(
+                product_id,
+                "MONTAGE",
+                copy_v2_context,
+            )
+        except CopyExecutionResolutionError as exc:
+            return SceneJobState(
+                scene_id=plan.scene_id,
+                beat_id=plan.beat_id,
+                block_index=plan.block_index,
+                route=plan.route.value,
+                transport_mode=plan.transport_mode,
+                source_mode=plan.source_mode,
+                reference_policy=plan.reference_policy.value,
+                product_media_id=plan.product_media_id,
+                status="PACKAGE_FAILED",
+                error_code=exc.code,
+                detail=str(exc)[:400],
+            )
+        if v2_resolution.v2_enabled:
+            resolved_copy_v2_context = copy_v2_handoff_context(
+                copy_v2_context,
+                v2_resolution,
+            )
+        else:
+            # An explicitly supplied flag-off context must not alter the
+            # legacy package call shape or accidentally select a V2 lane.
+            resolved_copy_v2_context = None
     state = SceneJobState(
         scene_id=plan.scene_id,
         beat_id=plan.beat_id,
@@ -170,6 +210,13 @@ async def execute_scene_plan(
         source_mode=plan.source_mode,
         reference_policy=plan.reference_policy.value,
         product_media_id=plan.product_media_id,
+        copy_architecture_v2=(
+            v2_resolution.to_metadata(
+                consumer_context=resolved_copy_v2_context,
+            )
+            if v2_resolution is not None and v2_resolution.v2_enabled
+            else None
+        ),
     )
 
     if plan.route == SceneExecutionRoute.INHERIT_PREVIOUS:
@@ -262,6 +309,7 @@ async def execute_scene_plan(
         "source_mode": source_mode,
         "copy_fallback_confirmed": copy_fallback_confirmed,
         "scene_context_override": scene_context_override,
+        "copy_v2_context": resolved_copy_v2_context,
     }
     # FRAMES/I2V need explicit start; HYBRID product-anchor does not take start_frame_asset_id
     if start_frame and mode in ("F2V", "I2V", "FRAMES") and str(source_mode or "").upper() != "HYBRID":
@@ -288,6 +336,8 @@ async def execute_scene_plan(
         state.error_code = "ERR_MONTAGE_PACKAGE_INVALID"
         state.detail = "workspace package factory returned a non-object result"
         return state
+    if isinstance(pkg.get("copy_architecture_v2"), dict):
+        state.copy_architecture_v2 = pkg["copy_architecture_v2"]
     state.workspace_execution_package_id = str(
         pkg.get("workspace_execution_package_id") or ""
     ) or None
@@ -365,6 +415,7 @@ async def orchestrate_montage_scenes(
     copy_fallback_confirmed: bool = True,
     model: str | None = None,
     duration_seconds: int | None = None,
+    copy_v2_context: dict[str, Any] | None = None,
 ) -> MontageOrchestrationReport:
     """Beat → route → package (/ optional generate) for the full scene set."""
     if not str(product_id or "").strip():
@@ -379,6 +430,25 @@ async def orchestrate_montage_scenes(
         per_beat_policy=per_beat_policy,
         product_media_id=product_media_id,
     )
+    resolved_copy_v2_context = copy_v2_context
+    if copy_v2_context is not None:
+        try:
+            v2 = resolve_copy_execution_binding(
+                product_id,
+                "MONTAGE",
+                copy_v2_context,
+            )
+            if v2.v2_enabled:
+                resolved_copy_v2_context = dict(copy_v2_context)
+                resolved_copy_v2_context["lane"] = "MONTAGE"
+                if v2.binding is not None:
+                    # Every scene receives the same binding timestamp/identity;
+                    # scene fan-out never reinterprets or rotates copy.
+                    resolved_copy_v2_context["bound_at"] = v2.binding.bound_at
+        except CopyExecutionResolutionError:
+            # Let each package boundary surface the same fail-closed blocker in
+            # its scene ledger; no scene is silently downgraded to legacy copy.
+            resolved_copy_v2_context = copy_v2_context
     report = MontageOrchestrationReport(
         product_id=product_id,
         credit_spend=generate_fn is not None,
@@ -400,6 +470,7 @@ async def orchestrate_montage_scenes(
             copy_fallback_confirmed=copy_fallback_confirmed,
             model=model,
             duration_seconds=duration_seconds,
+            copy_v2_context=resolved_copy_v2_context,
         )
         report.scenes.append(state)
         if state.video_media_id:

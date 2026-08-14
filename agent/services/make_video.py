@@ -321,7 +321,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          num_videos: int = 1, image_model: str = None,
                          max_image_attempts: int = 8,
                          collect_image_variants: bool = False,
-                         product_id: str = None, source_mode: str = None) -> dict:
+                         product_id: str = None, source_mode: str = None,
+                         copy_execution_binding: dict | None = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all.
@@ -361,6 +362,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                      "collect_image_variants": bool(collect_image_variants),
                      "product_id": product_id, "source_mode": source_mode,
                      "error": None, "created": time.time()}
+    if copy_execution_binding is not None:
+        _JOBS[job_id]["copy_execution_binding"] = copy_execution_binding
     if mode in _VIDEO_MODES:
         _VIDEO_LANE_JOB = job_id  # claim the lane synchronously to avoid a race
     lane = None
@@ -385,7 +388,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     _JOBS[job_id]["_task"] = asyncio.create_task(
         _run_generate(job_id, mode, prompt, project_id, image_media_ids, image_prompt,
                       aspect, tier, model, duration_s, num_videos, image_model,
-                      max_image_attempts, collect_image_variants, product_id))
+                      max_image_attempts, collect_image_variants, product_id,
+                      copy_execution_binding))
     return {"job_id": job_id, "status": "SUBMITTED", "mode": mode, "lane": lane}
 
 
@@ -1594,7 +1598,8 @@ async def start_direct_media_recovery(
 async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                         image_prompt, aspect, tier, model=None, duration_s=None,
                         num_videos=1, image_model=None, max_image_attempts=8,
-                        collect_image_variants=False, product_id=None):
+                        collect_image_variants=False, product_id=None,
+                        copy_execution_binding=None):
     from agent.api.flow import (_generate_image_with_recovery, _extract_images,
                                  _extract_project_id, _IMG_ASPECT_MAP)
     import aiohttp

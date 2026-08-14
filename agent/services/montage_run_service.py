@@ -87,6 +87,7 @@ async def create_montage_discrete_run(
     background_id: str = "AUTO",
     model: str | None = None,
     duration_seconds: int | None = None,
+    copy_v2_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Orchestrate packages and persist a durable run + per-scene jobs."""
     pid = str(product_id or "").strip()
@@ -131,6 +132,7 @@ async def create_montage_discrete_run(
         copy_fallback_confirmed=copy_fallback_confirmed,
         model=model_label,
         duration_seconds=dur,
+        copy_v2_context=copy_v2_context,
     )
 
     run_id = str(uuid.uuid4())
@@ -162,6 +164,14 @@ async def create_montage_discrete_run(
         "duration_seconds": dur,
         "scene_context_override": scene_context_override,
         "orchestration_ok": report.ok,
+        "copy_architecture_v2": next(
+            (
+                scene.copy_architecture_v2
+                for scene in report.scenes
+                if scene.copy_architecture_v2
+            ),
+            None,
+        ),
     }
     await crud.create_bulk_generation_run(
         run_id,
@@ -210,6 +220,7 @@ async def create_montage_discrete_run(
         "execution_supported": True,
         "credit_spend": False,
         "assembly_path": "DISCRETE_MONTAGE",
+        "copy_architecture_v2": config.get("copy_architecture_v2"),
         "lifecycle": [
             "PLANNED",
             "PACKAGE_READY",
@@ -865,6 +876,7 @@ def _item_to_public(item: dict[str, Any]) -> dict[str, Any]:
         "error_code": item.get("error") or payload.get("error_code"),
         "detail": payload.get("detail") or "",
         "product_media_id": payload.get("product_media_id"),
+        "copy_architecture_v2": payload.get("copy_architecture_v2"),
     }
 
 

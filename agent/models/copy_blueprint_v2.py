@@ -472,6 +472,10 @@ class AdapterContext(BaseModel):
     readiness_validated: bool = False
     provenance_validated: bool = False
     safety_validated: bool = False
+    # Additive Phase 3 gate. The default remains compatible with direct Phase 2
+    # projection callers; the consumer resolver requires this field to be
+    # explicitly supplied for COPY_REQUIRED production lanes.
+    semantic_review_validated: bool = True
 
 
 class VideoCopyProjection(BaseModel):

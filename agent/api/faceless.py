@@ -15,6 +15,10 @@ from agent.services import faceless_lane_service as fl
 from agent.services.workspace_execution_package_service import (
     create_workspace_execution_package,
 )
+from agent.services.copy_execution_resolver import (
+    CopyExecutionResolutionError,
+    resolve_copy_execution_binding,
+)
 
 router = APIRouter(prefix="/faceless", tags=["faceless"])
 
@@ -37,6 +41,7 @@ class FacelessPrepareRequest(BaseModel):
     product_cluster: Optional[str] = None
     has_approved_usp: bool = False
     scene_context_hint: Optional[str] = None
+    copy_v2_context: dict[str, Any] | None = None
 
 
 @router.post("/prepare")
@@ -126,6 +131,7 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
             scene_context_override=scene_context,
             copy_set_id=body.copy_set_id,
             copy_fallback_confirmed=body.copy_fallback_confirmed,
+            copy_v2_context=body.copy_v2_context,
             requested_total_duration_seconds=(
                 int(body.total_duration_seconds)
                 if gen_mode == "EXTEND"
@@ -135,7 +141,14 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — surface package errors as 422/400
         msg = str(exc)
         status = 422 if "required" in msg.lower() or "ERR_" in msg else 400
-        raise HTTPException(status_code=status, detail=msg) from exc
+        detail: Any = msg
+        if getattr(exc, "code", None):
+            detail = {
+                "error_code": exc.code,
+                "message": msg,
+                "details": getattr(exc, "detail", None) or getattr(exc, "details", None),
+            }
+        raise HTTPException(status_code=status, detail=detail) from exc
 
     if not isinstance(pkg, dict) or not bool(pkg.get("execution_allowed")):
         raise HTTPException(
@@ -197,6 +210,10 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
     return {
         "ok": True,
         "lane": fl.FACELESS_SURFACE_MODE,
+        "copy_policy": "REQUIRED",
+        "copy_architecture_v2": (
+            pkg.get("copy_architecture_v2") if isinstance(pkg, dict) else None
+        ),
         # Operator-facing (no transport chrome)
         "generation_mode": gen_mode,
         "model": str(body.model).strip(),
@@ -237,6 +254,20 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
     """Credit-free fail-closed validation + resolve preview (no package write)."""
     gen_mode = str(body.generation_mode or "SINGLE").strip().upper()
     reference_override = bool(str(body.start_frame_asset_id or "").strip())
+    try:
+        v2_resolution = resolve_copy_execution_binding(
+            body.product_id,
+            "FACELESS",
+            body.copy_v2_context,
+        )
+    except CopyExecutionResolutionError as exc:
+        return {
+            "ok": False,
+            "error_code": exc.code,
+            "detail": exc.details or str(exc),
+            "copy_policy": "REQUIRED",
+            "copy_architecture_v2": None,
+        }
     ok, code, detail = fl.validate_faceless_inputs(
         product_id=body.product_id,
         start_frame_asset_id=body.start_frame_asset_id,
@@ -251,7 +282,15 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
         reference_override=reference_override,
     )
     if not ok:
-        return {"ok": False, "error_code": code, "detail": detail}
+        return {
+            "ok": False,
+            "error_code": code,
+            "detail": detail,
+            "copy_policy": "REQUIRED",
+            "copy_architecture_v2": v2_resolution.to_metadata()
+            if v2_resolution.v2_enabled
+            else None,
+        }
     ok_video, code_video, detail_video, orchestration = (
         fl.resolve_faceless_video_configuration(
             model=body.model,
@@ -261,7 +300,15 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
         )
     )
     if not ok_video or not orchestration:
-        return {"ok": False, "error_code": code_video, "detail": detail_video}
+        return {
+            "ok": False,
+            "error_code": code_video,
+            "detail": detail_video,
+            "copy_policy": "REQUIRED",
+            "copy_architecture_v2": v2_resolution.to_metadata()
+            if v2_resolution.v2_enabled
+            else None,
+        }
     resolution = fl.build_faceless_resolution(
         hook_id=body.hook_id,
         background_id=body.background_id,
@@ -272,6 +319,10 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
     )
     return {
         "ok": True,
+        "copy_policy": "REQUIRED",
+        "copy_architecture_v2": v2_resolution.to_metadata(
+            consumer_context=body.copy_v2_context
+        ) if v2_resolution.v2_enabled else None,
         "generation_mode": gen_mode,
         "model": body.model,
         "duration_seconds": orchestration["engine_block_duration_seconds"],

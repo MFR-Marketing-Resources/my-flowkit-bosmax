@@ -231,6 +231,7 @@ class ProductionPlanCreateRequest(BaseModel):
     execution_policy: CreativeProductionExecutionPolicy = Field(
         default_factory=CreativeProductionExecutionPolicy
     )
+    copy_v2_context: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_targets(self) -> "ProductionPlanCreateRequest":

@@ -30,6 +30,7 @@ class F2VGenerationPackageRequest(BaseModel):
     end_frame_preview_url: str | None = None
     end_frame_download_url: str | None = None
     operator_notes: str | None = None
+    copy_v2_context: dict[str, Any] | None = None
 
 
 class I2VGenerationPackageRequest(BaseModel):
@@ -52,6 +53,7 @@ class I2VGenerationPackageRequest(BaseModel):
     scene_context_reference_asset_id: str | None = None
     style_reference_asset_id: str | None = None
     operator_notes: str | None = None
+    copy_v2_context: dict[str, Any] | None = None
 
 
 class WorkspaceGenerationPackagePatchRequest(BaseModel):

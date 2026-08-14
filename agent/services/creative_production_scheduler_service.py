@@ -46,6 +46,13 @@ LEASE_SECONDS = 300
 SCHEDULER_POLL_SECONDS = 5
 logger = logging.getLogger(__name__)
 
+
+def _plan_copy_v2_context(plan: dict[str, Any]) -> dict[str, Any] | None:
+    pool = _loads(plan.get("pool_snapshot_json"), {})
+    context = pool.get("copy_v2_context") if isinstance(pool, dict) else None
+    return context if isinstance(context, dict) else None
+
+
 ATTEMPT_TRANSITIONS: dict[str, set[str]] = {
     AttemptState.NOT_SUBMITTED.value: {
         AttemptState.SUBMISSION_STARTED.value,
@@ -252,6 +259,60 @@ async def _build_item_payload(
     dimensions = _loads(item.get("creative_dimensions_json"), {})
     model_key = str(dimensions.get("model_key") or "")
     duration_seconds = int(dimensions.get("duration_seconds") or 8)
+    v2_handoff = package.get("copy_architecture_v2")
+    if not isinstance(v2_handoff, dict):
+        v2_handoff = _loads(package.get("resolver_output_json"), {})
+    if not isinstance(v2_handoff, dict):
+        v2_handoff = {}
+    plan_v2_context = _plan_copy_v2_context(plan)
+    v2_blockers = []
+    if v2_handoff.get("v2_enabled") and v2_handoff.get("status") != "READY":
+        v2_blockers.append(
+            "COPY_V2_BINDING_NOT_READY:" + str(v2_handoff.get("status") or "UNKNOWN")
+        )
+    if plan_v2_context is not None:
+        # Queue/start is a second consumer boundary. Revalidate the same
+        # context before a P6 item can be emitted, and require the compiled
+        # item to carry its durable receipt so V2 cannot silently disappear.
+        from agent.services.copy_execution_resolver import (
+            CopyExecutionResolutionError,
+            resolve_copy_execution_binding,
+        )
+
+        validation_context = dict(plan_v2_context)
+        persisted_binding = v2_handoff.get("binding")
+        if isinstance(persisted_binding, dict) and persisted_binding.get("bound_at"):
+            validation_context["bound_at"] = persisted_binding["bound_at"]
+        validation_lane = (
+            "POSTER_BUILDER"
+            if media_type == "POSTER"
+            else "IMAGE_GEN"
+            if media_type == "IMAGE"
+            else "PRODUCTION_STUDIO_P6"
+        )
+        try:
+            validation = resolve_copy_execution_binding(
+                str(item.get("product_id") or plan.get("product_id") or ""),
+                validation_lane,
+                validation_context,
+            )
+        except CopyExecutionResolutionError as exc:
+            v2_blockers.append(exc.code)
+        else:
+            if validation.v2_enabled:
+                if not v2_handoff:
+                    v2_blockers.append("COPY_V2_BINDING_REQUIRED")
+                elif validation.binding is not None and validation.binding.model_dump(
+                    mode="json"
+                ) != persisted_binding:
+                    v2_blockers.append("COPY_V2_BINDING_MISMATCH")
+
+    def _with_v2(payload: dict[str, Any]) -> dict[str, Any]:
+        if v2_handoff.get("v2_enabled"):
+            payload["copy_architecture_v2"] = v2_handoff
+            if v2_handoff.get("binding"):
+                payload["copy_execution_binding"] = v2_handoff["binding"]
+        return payload
     treatment: dict[str, Any] | None = None
     if media_type == "VIDEO":
         try:
@@ -332,7 +393,7 @@ async def _build_item_payload(
                 else:
                     poster_blockers.append("OFFICIAL_PRODUCT_VISUAL_REQUIRED")
         return (
-            {
+            _with_v2({
                 "mode": "IMG",
                 "prompt": str(prompt),
                 "aspect": aspect,
@@ -343,8 +404,8 @@ async def _build_item_payload(
                 "num_videos": 1,
                 "logical_mode": "POSTER",
                 "execution_lane": "IMAGE_API_FIRST",
-            },
-            poster_blockers,
+            }),
+            [*v2_blockers, *poster_blockers],
         )
     wgp_id = item.get("workspace_generation_package_id")
     if not wgp_id:
@@ -411,7 +472,7 @@ async def _build_item_payload(
         if not video_job_id or not video_job_fingerprint:
             blockers.append("EXTEND_VIDEO_JOB_PLAN_REQUIRED")
         return (
-            {
+            _with_v2({
                 "mode": str(resolved.get("logical_mode") or item["logical_mode"]),
                 "logical_mode": str(
                     resolved.get("logical_mode") or item["logical_mode"]
@@ -432,8 +493,8 @@ async def _build_item_payload(
                 "segment_count": total_seconds // block_seconds,
                 "num_videos": 1,
                 "creative_treatment_lineage": expected_lineage,
-            },
-            blockers,
+            }),
+            [*v2_blockers, *blockers],
         )
     if media_type == "IMAGE":
         prompt = str(wgp.get("final_prompt_text") or "")
@@ -474,7 +535,7 @@ async def _build_item_payload(
                 else:
                     blockers.append(f"SLOT_NOT_UPLOADED_TO_FLOW:{slot_key}")
         return (
-            {
+            _with_v2({
                 "mode": "IMG",
                 "prompt": prompt,
                 "image_media_ids": image_media_ids or None,
@@ -485,8 +546,8 @@ async def _build_item_payload(
                 "num_videos": 1,
                 "logical_mode": "IMG",
                 "execution_lane": "IMAGE_API_FIRST",
-            },
-            blockers,
+            }),
+            [*v2_blockers, *blockers],
         )
     payload, blockers = await production_queue_service.build_execution_payload(
         wgp,
@@ -501,7 +562,7 @@ async def _build_item_payload(
     if treatment is not None:
         payload["creative_treatment_lineage"] = expected_lineage
         payload["compiled_shot_grammar"] = treatment["shot_grammar"]
-    return payload, blockers
+    return _with_v2(payload), [*v2_blockers, *blockers]
 
 
 async def _resolve_flow_media_id(

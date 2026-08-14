@@ -27,6 +27,14 @@ from agent.services.fastmoss_product_reference_service import (
     is_fastmoss_reference_product_id,
 )
 from agent.services.ugc_video_prompt_compiler_service import compile_ugc_video_prompt
+from agent.services.copy_binding_service import CopyBindingError
+from agent.services.copy_execution_resolver import (
+    CopyExecutionResolution,
+    CopyExecutionResolutionError,
+    copy_v2_handoff_context,
+    lane_for_request,
+    resolve_copy_execution_binding,
+)
 from agent.services import creative_recipe_service as _recipe
 from agent.services.i2v_semantic_slot_resolver_service import resolve_i2v_semantic_slots
 from agent.models.i2v_semantic_slot_resolver import I2VSemanticSlotResolverRequest
@@ -98,6 +106,45 @@ def _compiler_product_context(
         "silo": row.get("silo", ""),
         "bosmax_product_family": row.get("bosmax_product_family", ""),
     }
+
+
+def _resolve_v2_package_context(
+    product_id: str,
+    *,
+    mode: str,
+    source_mode: str | None = None,
+    lane: str | None = None,
+    context: dict[str, Any] | None = None,
+) -> CopyExecutionResolution:
+    """Resolve V2 once at each durable generation-package boundary."""
+
+    try:
+        return resolve_copy_execution_binding(
+            product_id,
+            lane or str((context or {}).get("lane") or lane_for_request(mode, source_mode=source_mode)),
+            context,
+        )
+    except CopyExecutionResolutionError as exc:
+        raise CopyBindingError(
+            exc.code,
+            status_code=exc.status_code,
+            detail=exc.details or str(exc),
+        ) from exc
+
+
+def _attach_v2_package_metadata(
+    row: dict[str, Any],
+    resolution: CopyExecutionResolution,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    result = _enrich_row(row)
+    if resolution.v2_enabled:
+        result["copy_architecture_v2"] = resolution.to_metadata(
+            consumer_context=copy_v2_handoff_context(context, resolution)
+        )
+        if resolution.binding is not None:
+            result["copy_execution_binding"] = resolution.binding.model_dump(mode="json")
+    return result
 
 
 def _fingerprint(*parts: str) -> str:
@@ -269,13 +316,23 @@ async def create_f2v_generation_package(
     copy_set_id: str | None = None,
     scene_context_override: str | None = None,
     creative_treatment: dict | None = None,
+    copy_v2_context: dict[str, Any] | None = None,
 ) -> dict:
     """Create a durable F2V workspace generation package."""
     mode = "F2V"
-    copy_intelligence = await _resolve_bound_copy_intelligence(
-        product_id, copy_set_id, copy_intelligence
-    )
     resolved_source_lane = _normalize_f2v_source_lane(source_mode)
+    v2_resolution = _resolve_v2_package_context(
+        product_id,
+        mode=mode,
+        source_mode=resolved_source_lane,
+        context=copy_v2_context,
+    )
+    copy_intelligence = await _resolve_bound_copy_intelligence(
+        product_id,
+        None if v2_resolution.v2_enabled else copy_set_id,
+        (v2_resolution.compiler_copy_intelligence if v2_resolution.v2_enabled else copy_intelligence)
+        or copy_intelligence,
+    )
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
     approved = await get_approved_product_package(product_id, normalize_mode(mode))
@@ -308,6 +365,7 @@ async def create_f2v_generation_package(
         requested_total_duration_seconds=requested_total_duration_seconds,
         avatar_id=avatar_id,
         copy_intelligence=copy_intelligence,
+        approved_dialogue=(v2_resolution.approved_dialogue if v2_resolution.v2_enabled else None),
         creative_treatment=creative_treatment,
     )
 
@@ -467,7 +525,13 @@ async def create_f2v_generation_package(
         prompt_blocks_json=_json(prompt_blocks),
         selected_assets_json=_json(selected_assets),
         resolved_engine_slots_json=_json(resolved_engine_slots),
-        resolver_output_json=_json({}),
+        resolver_output_json=_json(
+            v2_resolution.to_metadata(
+                consumer_context=copy_v2_handoff_context(copy_v2_context, v2_resolution)
+            )
+            if v2_resolution.v2_enabled
+            else {}
+        ),
         image_assets_json=_json(image_assets),
         manual_handoff_json=_json(manual_handoff),
         dom_handoff_payload_json=_json(dom_scaffold),
@@ -477,7 +541,7 @@ async def create_f2v_generation_package(
         batch_run_id=batch_run_id,
     )
 
-    return _enrich_row(row)
+    return _attach_v2_package_metadata(row, v2_resolution, copy_v2_context)
 
 
 # ─── I2V Package ─────────────────────────────────────────────
@@ -508,11 +572,20 @@ async def create_i2v_generation_package(
     copy_set_id: str | None = None,
     scene_context_override: str | None = None,
     creative_treatment: dict | None = None,
+    copy_v2_context: dict[str, Any] | None = None,
 ) -> dict:
     """Create a durable I2V workspace generation package."""
     mode = "I2V"
+    v2_resolution = _resolve_v2_package_context(
+        product_id,
+        mode=mode,
+        context=copy_v2_context,
+    )
     copy_intelligence = await _resolve_bound_copy_intelligence(
-        product_id, copy_set_id, copy_intelligence
+        product_id,
+        None if v2_resolution.v2_enabled else copy_set_id,
+        (v2_resolution.compiler_copy_intelligence if v2_resolution.v2_enabled else copy_intelligence)
+        or copy_intelligence,
     )
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
@@ -572,6 +645,7 @@ async def create_i2v_generation_package(
         engine_duration_target=engine_duration_target,
         requested_total_duration_seconds=requested_total_duration_seconds,
         copy_intelligence=copy_intelligence,
+        approved_dialogue=(v2_resolution.approved_dialogue if v2_resolution.v2_enabled else None),
         creative_treatment=creative_treatment,
     )
 
@@ -713,7 +787,18 @@ async def create_i2v_generation_package(
         prompt_blocks_json=_json(prompt_blocks),
         selected_assets_json=_json(slot_map),
         resolved_engine_slots_json=_json({s: a.get("asset_id") if a else None for s, a in slot_map.items()}),
-        resolver_output_json=_json(resolver_output),
+        resolver_output_json=_json({
+            **resolver_output,
+            **(
+                v2_resolution.to_metadata(
+                    consumer_context=copy_v2_handoff_context(
+                        copy_v2_context, v2_resolution
+                    )
+                )
+                if v2_resolution.v2_enabled
+                else {}
+            ),
+        }),
         image_assets_json=_json(image_assets),
         manual_handoff_json=_json(manual_handoff),
         dom_handoff_payload_json=_json(dom_scaffold),
@@ -723,7 +808,7 @@ async def create_i2v_generation_package(
         batch_run_id=batch_run_id,
     )
 
-    return _enrich_row(row)
+    return _attach_v2_package_metadata(row, v2_resolution, copy_v2_context)
 
 
 # ─── Read ────────────────────────────────────────────────────
@@ -845,11 +930,20 @@ async def create_t2v_generation_package(
     # Selected recipe descriptors (Step F). Optional/opt-in: absent -> compiler unchanged.
     scene_template_id: str | None = None,
     camera_preset_code: str | None = None,
+    copy_v2_context: dict[str, Any] | None = None,
 ) -> dict:
     """Create a durable T2V workspace generation package (text-only, no frame uploads)."""
     mode = "T2V"
+    v2_resolution = _resolve_v2_package_context(
+        product_id,
+        mode=mode,
+        context=copy_v2_context,
+    )
     copy_intelligence = await _resolve_bound_copy_intelligence(
-        product_id, copy_set_id, copy_intelligence
+        product_id,
+        None if v2_resolution.v2_enabled else copy_set_id,
+        (v2_resolution.compiler_copy_intelligence if v2_resolution.v2_enabled else copy_intelligence)
+        or copy_intelligence,
     )
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
@@ -881,6 +975,7 @@ async def create_t2v_generation_package(
         requested_total_duration_seconds=requested_total_duration_seconds,
         avatar_id=avatar_id,
         copy_intelligence=copy_intelligence,
+        approved_dialogue=(v2_resolution.approved_dialogue if v2_resolution.v2_enabled else None),
         creative_treatment=creative_treatment,
         scene_template=_recipe.resolve_scene_template(scene_template_id),
         camera_preset=_recipe.resolve_camera_preset(camera_preset_code),
@@ -962,7 +1057,13 @@ async def create_t2v_generation_package(
         prompt_blocks_json=_json(prompt_blocks),
         selected_assets_json=_json({}),
         resolved_engine_slots_json=_json({}),
-        resolver_output_json=_json({}),
+        resolver_output_json=_json(
+            v2_resolution.to_metadata(
+                consumer_context=copy_v2_handoff_context(copy_v2_context, v2_resolution)
+            )
+            if v2_resolution.v2_enabled
+            else {}
+        ),
         image_assets_json=_json(image_assets),
         manual_handoff_json=_json(manual_handoff),
         dom_handoff_payload_json=_json(dom_scaffold),
@@ -972,7 +1073,7 @@ async def create_t2v_generation_package(
         batch_run_id=batch_run_id,
     )
 
-    return _enrich_row(row)
+    return _attach_v2_package_metadata(row, v2_resolution, copy_v2_context)
 
 
 # ─── IMG ─────────────────────────────────────────────────────
@@ -1003,9 +1104,20 @@ async def create_img_generation_package(
     operator_notes: str | None = None,
     batch_run_id: str | None = None,
     prompt_override: str | None = None,
+    copy_v2_context: dict[str, Any] | None = None,
+    copy_v2_lane: str | None = None,
 ) -> dict:
     """Create a durable IMG workspace generation package (image generation mode)."""
     mode = "IMG"
+    requested_lane = str(
+        (copy_v2_context or {}).get("lane") or copy_v2_lane or "IMAGE_GEN"
+    )
+    v2_resolution = _resolve_v2_package_context(
+        product_id,
+        mode=mode,
+        lane=requested_lane,
+        context=copy_v2_context,
+    )
     # IMG is an IMAGE mode, NOT a video duration mode: Extend total-duration block
     # planning is not applicable. Fail closed rather than silently degrade into a
     # nonsensical multi-block image plan.
@@ -1179,7 +1291,13 @@ async def create_img_generation_package(
             "scene": scene_slot.get("asset_id") if scene_slot else None,
             "style": style_slot.get("asset_id") if style_slot else None,
         }),
-        resolver_output_json=_json({}),
+        resolver_output_json=_json(
+            v2_resolution.to_metadata(
+                consumer_context=copy_v2_handoff_context(copy_v2_context, v2_resolution)
+            )
+            if v2_resolution.v2_enabled
+            else {}
+        ),
         image_assets_json=_json(image_assets),
         manual_handoff_json=_json(manual_handoff),
         dom_handoff_payload_json=_json(dom_scaffold),
@@ -1189,7 +1307,7 @@ async def create_img_generation_package(
         batch_run_id=batch_run_id,
     )
 
-    return _enrich_row(row)
+    return _attach_v2_package_metadata(row, v2_resolution, copy_v2_context)
 
 
 # ─── Batch Generation Runner ─────────────────────────────────

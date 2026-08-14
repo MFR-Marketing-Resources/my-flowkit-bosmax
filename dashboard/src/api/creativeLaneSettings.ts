@@ -109,6 +109,7 @@ export async function prepareFacelessPackage(input: {
 	start_frame_asset_id?: string | null;
 	end_frame_asset_id?: string | null;
 	copy_fallback_confirmed?: boolean;
+	copy_v2_context?: Record<string, unknown> | null;
 }): Promise<FacelessPrepareResponse> {
 	return postAPI("/api/faceless/prepare", {
 		product_id: input.product_id,
@@ -121,6 +122,7 @@ export async function prepareFacelessPackage(input: {
 		start_frame_asset_id: input.start_frame_asset_id ?? null,
 		end_frame_asset_id: input.end_frame_asset_id ?? null,
 		copy_fallback_confirmed: input.copy_fallback_confirmed ?? true,
+		copy_v2_context: input.copy_v2_context ?? null,
 	});
 }
 

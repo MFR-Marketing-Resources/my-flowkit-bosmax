@@ -107,6 +107,7 @@ export async function composePoster(payload: {
 	creative_mode?: string;
 	image_model?: string;
 	settings?: Record<string, unknown>;
+	copy_v2_context?: Record<string, unknown> | null;
 }): Promise<PosterComposeResponse> {
 	return postAPI("/api/poster/compose", payload);
 }

@@ -808,6 +808,7 @@ class GenerateRequest(BaseModel):
     confirm_live_credit_burn: bool = False
     maximum_provider_operations: Optional[int] = None
     max_retry_operations: int = 0
+    copy_v2_context: Optional[dict] = None
 
 
 @router.get("/video-models")
@@ -1335,6 +1336,30 @@ async def generate(body: GenerateRequest):
         raise HTTPException(422, f"unknown mode '{body.mode}' (use IMG/T2V/I2V/F2V)")
     if not body.prompt.strip():
         raise HTTPException(422, "prompt is required")
+    v2_resolution = None
+    try:
+        from agent.services.copy_execution_resolver import (
+            CopyExecutionResolutionError,
+            lane_for_request,
+            resolve_copy_execution_binding,
+        )
+
+        requested_v2_lane = str((body.copy_v2_context or {}).get("lane") or "")
+        v2_resolution = resolve_copy_execution_binding(
+            body.product_id or "request-product",
+            requested_v2_lane
+            or lane_for_request(
+                mode,
+                source_mode=body.source_mode,
+                visual_lane_id=body.visual_lane_id,
+            ),
+            body.copy_v2_context,
+        )
+    except CopyExecutionResolutionError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "detail": exc.details or str(exc)},
+        ) from exc
     if _is_multi_block_prompt(body.prompt):
         raise HTTPException(
             422, "MULTI_BLOCK_PROMPT_REJECTED: one generation carries ONE block's "
@@ -1492,10 +1517,22 @@ async def generate(body: GenerateRequest):
         max_image_attempts=1 if creative_campaign else 8,
         collect_image_variants=creative_campaign,
         product_id=body.product_id,
-        source_mode=body.source_mode)
+        source_mode=body.source_mode,
+        copy_execution_binding=(
+            v2_resolution.to_metadata(
+                consumer_context=body.copy_v2_context
+            ) if v2_resolution and v2_resolution.v2_enabled else None
+        ),
+    )
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)
         raise HTTPException(409, result.get("error") or "rejected")
+    if v2_resolution is not None and v2_resolution.v2_enabled:
+        result["copy_architecture_v2"] = v2_resolution.to_metadata(
+            consumer_context=body.copy_v2_context
+        )
+        if v2_resolution.binding is not None:
+            result["copy_execution_binding"] = v2_resolution.binding.model_dump(mode="json")
     return result
 
 
@@ -3221,6 +3258,32 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     from agent.services import make_video as _mv
     client = get_flow_client()
     request_id = body["request_id"]
+    v2_resolution = None
+    try:
+        from agent.services.copy_execution_resolver import (
+            CopyExecutionResolutionError,
+            lane_for_request,
+            resolve_copy_execution_binding,
+        )
+
+        requested_lane = str((body.get("copy_v2_context") or {}).get("lane") or "")
+        v2_resolution = resolve_copy_execution_binding(
+            str(body.get("product_id") or "request-product"),
+            requested_lane
+            or lane_for_request(
+                mode,
+                source_mode=body.get("source_mode"),
+                visual_lane_id=body.get("visual_lane_id") or body.get("lane"),
+            ),
+            body.get("copy_v2_context"),
+        )
+    except CopyExecutionResolutionError as exc:
+        await _fail_manual_request(
+            request_id,
+            "API_LANE_REJECTED",
+            str(exc),
+            exc.code,
+        )
     prompt = str(body.get("prompt") or "").strip()
     creative_campaign = (
         mode == "IMG"
@@ -3578,7 +3641,15 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         collect_image_variants=creative_campaign,
         image_model=body.get("image_model") if creative_campaign else None,
         product_id=body.get("product_id"),
-        source_mode=_authority_source_mode)
+        source_mode=_authority_source_mode,
+        copy_execution_binding=(
+            v2_resolution.to_metadata(
+                consumer_context=body.get("copy_v2_context")
+            )
+            if v2_resolution is not None and v2_resolution.v2_enabled
+            else None
+        ),
+    )
     if not isinstance(res, dict) or not res.get("job_id"):
         code = str((res or {}).get("error") or "VIDEO_JOB_IN_FLIGHT")
         await _fail_manual_request(
@@ -3616,6 +3687,13 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             body.get("workspace_execution_package_id")
             or body.get("workspace_generation_package_id")),
         "project_id": created_project_id,
+        "copy_architecture_v2": (
+            v2_resolution.to_metadata(
+                consumer_context=body.get("copy_v2_context")
+            )
+            if v2_resolution is not None and v2_resolution.v2_enabled
+            else None
+        ),
         "instrumentation": _instr,
     }
     asyncio.create_task(

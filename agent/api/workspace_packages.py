@@ -81,6 +81,7 @@ class WorkspaceExecutionPackageRequest(BaseModel):
     # Recipe descriptors (Step F): selected recipe's scene template + camera preset ids.
     scene_template_id: str | None = None
     camera_preset_code: str | None = None
+    copy_v2_context: dict | None = None
 
 class WorkspacePromptCompileRequest(BaseModel):
     product_id: str
@@ -104,6 +105,7 @@ class WorkspacePromptCompileRequest(BaseModel):
     # Recipe descriptors (Step F): selected recipe's scene template + camera preset ids.
     scene_template_id: str | None = None
     camera_preset_code: str | None = None
+    copy_v2_context: dict | None = None
 
 class WorkspacePackageReadinessRequest(BaseModel):
     mode: str
@@ -162,6 +164,7 @@ async def post_workspace_execution_package(request: WorkspaceExecutionPackageReq
             scene_context_code=request.scene_context_code,
             scene_template=_rd["scene_template"],
             camera_preset=_rd["camera_preset"],
+            copy_v2_context=request.copy_v2_context,
         )
     except CopyBindingError as exc:
         raise HTTPException(
@@ -235,6 +238,7 @@ async def post_workspace_prompt_compile(request: WorkspacePromptCompileRequest):
             scene_context_override=request.scene_context_override,
             scene_template=_rd["scene_template"],
             camera_preset=_rd["camera_preset"],
+            copy_v2_context=request.copy_v2_context,
         )
     except CopyBindingError as exc:
         raise HTTPException(

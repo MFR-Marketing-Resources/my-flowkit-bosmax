@@ -17,6 +17,13 @@ from agent.services.copy_binding_service import (
     CopyBindingError,
     resolve_compiler_copy_intelligence,
 )
+from agent.services.copy_execution_resolver import (
+    CopyExecutionResolution,
+    CopyExecutionResolutionError,
+    copy_v2_handoff_context,
+    lane_for_request,
+    resolve_copy_execution_binding,
+)
 from agent.services.claim_safe_rewrite_service import get_stored_claim_safe_package
 from agent.services.product_intelligence import enrich_product
 from agent.services.production_prompt_approval_service import scan_prompt_text
@@ -297,13 +304,21 @@ async def create_workspace_execution_package(
     # any creative-service import. Absent -> compiler unchanged.
     scene_template: dict[str, Any] | None = None,
     camera_preset: dict[str, Any] | None = None,
+    copy_v2_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
-    # Production-valid approved copy is mandatory for saved video execution
-    # packages. The legacy fallback-confirmation field remains accepted for
-    # compatibility with older callers, but it can never authorize a final
-    # video prompt. IMG remains the clean-frame copy-free lane.
-    if normalized_mode != "IMG" and not copy_set_id:
+    try:
+        v2_resolution = resolve_copy_execution_binding(
+            product_id,
+            str((copy_v2_context or {}).get("lane") or lane_for_request(normalized_mode, source_mode=source_mode)),
+            copy_v2_context,
+        )
+    except CopyExecutionResolutionError as exc:
+        raise CopyBindingError(exc.code, status_code=exc.status_code, detail=exc.details or str(exc)) from exc
+    v2_enabled = v2_resolution.v2_enabled
+    # Preserve the existing flag-off production-copy gate exactly. V2-enabled
+    # video requests never reach this branch: they carry a validated V2 binding.
+    if normalized_mode != "IMG" and not copy_set_id and not v2_enabled:
         raise CopyBindingError(
             ERR_PRODUCTION_VALID_COPY_REQUIRED,
             status_code=409,
@@ -339,6 +354,8 @@ async def create_workspace_execution_package(
         avatar_id=avatar_id,
         scene_context_override=scene_context_override,
         copy_set_id=copy_set_id,
+        copy_v2_resolution=v2_resolution if v2_enabled else None,
+        approved_dialogue=(v2_resolution.approved_dialogue if v2_enabled else None),
         creative_treatment=creative_treatment,
         scene_template=scene_template,
         camera_preset=camera_preset,
@@ -463,6 +480,13 @@ async def create_workspace_execution_package(
     # never in the engine-facing prompt text).
     if copy_binding_lineage is not None:
         request_lineage_payload["copy_binding"] = copy_binding_lineage
+    if v2_enabled:
+        v2_metadata = v2_resolution.to_metadata(
+            consumer_context=copy_v2_handoff_context(copy_v2_context, v2_resolution)
+        )
+        request_lineage_payload["copy_architecture_v2"] = v2_metadata
+        if v2_resolution.binding is not None:
+            request_lineage_payload["copy_execution_binding"] = v2_resolution.binding.model_dump(mode="json")
     if semantic_slot_resolver:
         request_lineage_payload.update(
             {
@@ -520,7 +544,7 @@ async def create_workspace_execution_package(
         ),
     )
 
-    return {
+    result = {
         "workspace_execution_package_id": execution_package_id,
         "product_id": product_id,
         "product_name": package["product_name"],
@@ -575,6 +599,13 @@ async def create_workspace_execution_package(
         "export_spec": compiler_result.get("export_spec"),
         "image_route": compiler_result.get("image_route"),
     }
+    if v2_enabled:
+        result["copy_architecture_v2"] = v2_resolution.to_metadata(
+            consumer_context=copy_v2_handoff_context(copy_v2_context, v2_resolution)
+        )
+        if v2_resolution.binding is not None:
+            result["copy_execution_binding"] = v2_resolution.binding.model_dump(mode="json")
+    return result
 
 
 def _resolve_preview_source_mode(
@@ -659,8 +690,26 @@ async def compile_workspace_prompt_preview(
     # unchanged.
     scene_template: dict[str, Any] | None = None,
     camera_preset: dict[str, Any] | None = None,
+    copy_v2_resolution: CopyExecutionResolution | None = None,
+    approved_dialogue: str | None = None,
+    copy_v2_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
+    if copy_v2_resolution is None:
+        try:
+            copy_v2_resolution = resolve_copy_execution_binding(
+                product_id,
+                str((copy_v2_context or {}).get("lane") or lane_for_request(normalized_mode, source_mode=source_mode)),
+                copy_v2_context,
+            )
+        except CopyExecutionResolutionError as exc:
+            raise CopyBindingError(
+                exc.code,
+                status_code=exc.status_code,
+                detail=exc.details or str(exc),
+            ) from exc
+    if copy_v2_resolution.v2_enabled:
+        approved_dialogue = copy_v2_resolution.approved_dialogue
     # Source-lineage law (2026-07-09 corrective audit): a caller that names a
     # canonical source mode ("FRAMES"/"INGREDIENTS"/"T2V") keeps that lineage —
     # it must never silently compile as HYBRID. Only the ambiguous surface
@@ -676,7 +725,18 @@ async def compile_workspace_prompt_preview(
     # (fail-closed if an explicit copy_set_id is invalid) into clean compiler copy.
     # Only to_compiler_copy fields cross into the compiler; the lineage below is
     # audit-only and never enters the engine-facing prompt text.
-    copy_binding = await resolve_compiler_copy_intelligence(product_id, copy_set_id)
+    if copy_v2_resolution.v2_enabled:
+        copy_binding = {
+            "copy_intelligence": copy_v2_resolution.compiler_copy_intelligence or {},
+            "lineage": copy_v2_resolution.to_metadata(
+                consumer_context=copy_v2_handoff_context(
+                    copy_v2_context, copy_v2_resolution
+                )
+            ),
+            "warning": None,
+        }
+    else:
+        copy_binding = await resolve_compiler_copy_intelligence(product_id, copy_set_id)
     if normalized_mode == "IMG":
         compiler_result = _compile_img_workspace_prompt_preview(
             product_id=product_id,
@@ -714,6 +774,7 @@ async def compile_workspace_prompt_preview(
             avatar_id=avatar_id,
             scene_context_override=scene_context_override,
             copy_intelligence=copy_binding["copy_intelligence"],
+            approved_dialogue=approved_dialogue,
             creative_treatment=creative_treatment,
             scene_template=scene_template,
             camera_preset=camera_preset,

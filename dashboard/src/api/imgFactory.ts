@@ -131,6 +131,8 @@ export interface ImgFastlanePromptPreview {
 		};
 		creative_context?: CreativeCampaignContext;
 	};
+	copy_policy?: "REQUIRED" | "NOT_REQUIRED";
+	copy_architecture_v2?: Record<string, unknown> | null;
 }
 
 export interface ImgProviderStatus {

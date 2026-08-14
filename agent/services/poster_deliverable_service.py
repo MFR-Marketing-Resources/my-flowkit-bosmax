@@ -489,26 +489,56 @@ class PosterDeliverableService:
         image_model: str = "",
         creative_mode: str | None = None,
         settings: dict[str, Any] | None = None,
+        copy_v2_projection: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         product_id = _norm(product_id)
         product = await crud.get_product(product_id)
         if not product:
             raise PosterDeliverableError("PRODUCT_NOT_FOUND", status_code=404)
 
-        pcs_row = await crud.get_poster_copy_set(_norm(poster_copy_set_id))
-        if not pcs_row:
-            raise PosterDeliverableError("POSTER_COPY_SET_NOT_FOUND", status_code=404)
-        if _norm(pcs_row.get("product_id")) != product_id:
-            raise PosterDeliverableError(
-                "POSTER_COPY_SET_PRODUCT_MISMATCH", status_code=409
+        if copy_v2_projection is not None:
+            derived = dict(copy_v2_projection.get("derived_copy") or {})
+            metadata = dict(copy_v2_projection.get("metadata") or {})
+            synthetic_id = str(
+                poster_copy_set_id
+                or "v2:"
+                + str(metadata.get("blueprint_id") or "blueprint")
+                + ":r"
+                + str(metadata.get("revision") or "1")
             )
-        if pcs_row.get("status") in ("POSTER_COPY_REJECTED", "POSTER_COPY_SUPERSEDED"):
-            raise PosterDeliverableError(
-                "POSTER_COPY_SET_NOT_USABLE",
-                f"copy set status {pcs_row.get('status')} cannot be composed",
-                status_code=409,
-            )
-        copy_set = serialize_poster_copy_set(pcs_row)
+            # Poster Builder is copy-aware, but it consumes poster zones rather
+            # than video hook/body/CTA source fields. These values are derived
+            # by the V2 adapter; no text is trimmed, rewritten, or approved here.
+            copy_set = {
+                "poster_copy_set_id": synthetic_id,
+                "product_id": product_id,
+                "status": "POSTER_COPY_APPROVED",
+                "objective": "V2 approved poster objective",
+                "angle": "V2 approved poster angle",
+                "primary_message": str(derived.get("hook") or ""),
+                "support_message": str(derived.get("body") or ""),
+                "cta": str(derived.get("cta") or ""),
+                "campaign_id": synthetic_id,
+            }
+            settings = {
+                **dict(settings or {}),
+                "copy_architecture_v2": metadata,
+            }
+        else:
+            pcs_row = await crud.get_poster_copy_set(_norm(poster_copy_set_id))
+            if not pcs_row:
+                raise PosterDeliverableError("POSTER_COPY_SET_NOT_FOUND", status_code=404)
+            if _norm(pcs_row.get("product_id")) != product_id:
+                raise PosterDeliverableError(
+                    "POSTER_COPY_SET_PRODUCT_MISMATCH", status_code=409
+                )
+            if pcs_row.get("status") in ("POSTER_COPY_REJECTED", "POSTER_COPY_SUPERSEDED"):
+                raise PosterDeliverableError(
+                    "POSTER_COPY_SET_NOT_USABLE",
+                    f"copy set status {pcs_row.get('status')} cannot be composed",
+                    status_code=409,
+                )
+            copy_set = serialize_poster_copy_set(pcs_row)
         campaign_mode = _norm(creative_mode).upper() == "CREATIVE_CAMPAIGN"
         settings = dict(settings or {})
         if campaign_mode:

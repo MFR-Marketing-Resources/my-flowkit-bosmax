@@ -60,6 +60,26 @@ async def get_copy_architecture_v2_lanes():
     return {"version": "2", "items": producer_consumer_matrix()}
 
 
+@router.get("/consumer-status")
+async def get_copy_architecture_v2_consumer_status():
+    """Expose the read-only consumer feature state for lane UIs.
+
+    This is observability only: it neither resolves a blueprint nor asserts
+    production readiness.  Consumers still need to submit a complete V2
+    context to the central binding resolver when the flag is enabled.
+    """
+
+    flags = CopyBlueprintV2FeatureFlagState.from_environment()
+    return {
+        "version": "2",
+        "feature_flags": flags.model_dump(mode="json"),
+        "legacy_path_unchanged": not flags.enabled,
+        "binding_required_when_enabled": True,
+        "provider_calls": 0,
+        "credit_spend": False,
+    }
+
+
 @router.post("/validate")
 async def validate_copy_architecture_v2(request: CopyBlueprintV2ValidateRequest):
     registry = EvidenceRegistry(facts=request.evidence_facts)

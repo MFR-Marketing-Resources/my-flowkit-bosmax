@@ -41,6 +41,7 @@ import {
 } from "../components/workflow";
 import type { WorkflowStepStatus } from "../components/workflow";
 import ResultsSidebar, { type SessionResult } from "../components/workspace/ResultsSidebar";
+import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import { useCopywritingReadiness } from "../api/copywritingReadiness";
 import type { CreativeAsset, Product } from "../types";
 import {
@@ -662,6 +663,12 @@ export default function ImgCockpitPage() {
 						</div>
 						<a href={`${location.pathname}?classic=1`} className="text-[11px] text-slate-500 underline decoration-dotted hover:text-slate-300">Switch to classic view</a>
 					</div>
+
+					<CopyArchitectureV2LaneCard
+						lane="IMG_COCKPIT"
+						productId={selectedProduct?.id}
+						execution={null}
+					/>
 
 					{error ? <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-200">{error}</div> : null}
 

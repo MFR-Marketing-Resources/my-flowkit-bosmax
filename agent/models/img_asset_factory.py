@@ -154,6 +154,7 @@ class ImgFastlanePromptPreviewRequest(BaseModel):
     # Optional governed mode. Omission preserves the legacy fastlane preview.
     creative_mode: str | None = None
     requested_outputs: int = Field(default=1, ge=1, le=3)
+    copy_v2_context: dict[str, Any] | None = None
 
 
 class ImgFastlanePromptPreviewResponse(BaseModel):
@@ -174,3 +175,5 @@ class ImgFastlanePromptPreviewResponse(BaseModel):
     negative_rules: list[str] = Field(default_factory=list)
     reference_map: list[str] = Field(default_factory=list)
     creative_direction: dict[str, Any] = Field(default_factory=dict)
+    copy_policy: str = "NOT_REQUIRED"
+    copy_architecture_v2: dict[str, Any] | None = None

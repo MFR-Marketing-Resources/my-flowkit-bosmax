@@ -56,6 +56,10 @@ from agent.services.product_reference_pack_service import (
     get_reference_pack,
 )
 from agent.db import crud
+from agent.services.copy_execution_resolver import (
+    CopyExecutionResolutionError,
+    resolve_copy_execution_binding,
+)
 
 
 router = APIRouter(prefix="/img-factory", tags=["img-factory"])
@@ -232,7 +236,25 @@ async def post_img_fastlane_preview(
     request: ImgFastlanePromptPreviewRequest,
 ) -> ImgFastlanePromptPreviewResponse:
     try:
-        return await compile_img_fastlane_prompt_preview(request)
+        resolution = resolve_copy_execution_binding(
+            request.product_id or "request-product",
+            "IMG_FASTLANE",
+            request.copy_v2_context,
+        )
+        result = await compile_img_fastlane_prompt_preview(request)
+        if resolution.v2_enabled:
+            payload = result.model_dump(mode="json")
+            payload["copy_policy"] = resolution.copy_policy
+            payload["copy_architecture_v2"] = resolution.to_metadata(
+                consumer_context=request.copy_v2_context
+            )
+            return ImgFastlanePromptPreviewResponse.model_validate(payload)
+        return result
+    except CopyExecutionResolutionError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "detail": exc.details or str(exc)},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

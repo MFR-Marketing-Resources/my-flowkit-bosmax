@@ -58,6 +58,7 @@ import {
 	WorkflowStep,
 } from "../components/workflow";
 import ResultsSidebar from "../components/workspace/ResultsSidebar";
+import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 
 const splitValues = (value: string) =>
 	value
@@ -1255,6 +1256,16 @@ export default function CreativeProductionStudioPage() {
 					</nav>
 				</header>
 			) : null}
+
+			<CopyArchitectureV2LaneCard
+				lane="PRODUCTION_STUDIO_P6"
+				productId={allocations[0]?.product_id ?? null}
+				execution={
+					(detail?.snapshot?.pool_snapshot?.copy_architecture_v2 as
+						| Record<string, unknown>
+						| undefined) ?? null
+				}
+			/>
 
 			<div className={useV4 ? "grid gap-5 2xl:grid-cols-[minmax(0,1fr)_20rem]" : "contents"}>
 				<div className={useV4 ? "min-w-0" : "contents"}>

@@ -558,6 +558,25 @@ export interface CopyBindingLineage {
 	copy_fallback_policy?: string;
 }
 
+/** Additive consumer receipt returned only when Copy Architecture V2 is enabled. */
+export interface CopyArchitectureV2Metadata {
+	version?: "2";
+	lane?: string;
+	media_kind?: "VIDEO" | "IMAGE";
+	copy_policy?: "REQUIRED" | "NOT_REQUIRED";
+	v2_enabled?: boolean;
+	status?: string;
+	blueprint_id?: string;
+	revision?: number;
+	formula_id?: string;
+	formula_version?: string;
+	approval_snapshot_id?: string | null;
+	consumer_context?: Record<string, unknown>;
+	binding?: Record<string, unknown>;
+	projection?: Record<string, unknown>;
+	[key: string]: unknown;
+}
+
 export interface WorkspaceExecutionPackage {
 	workspace_execution_package_id: string;
 	product_id: string;
@@ -580,6 +599,8 @@ export interface WorkspaceExecutionPackage {
 	manual_fallback: ApprovedProductPackage["manual_fallback"];
 	blockers: string[];
 	copy_binding?: CopyBindingLineage | null;
+	copy_architecture_v2?: CopyArchitectureV2Metadata | null;
+	copy_execution_binding?: Record<string, unknown> | null;
 	request_lineage_payload: {
 		product_id: string;
 		mode: WorkspaceMode;
@@ -813,6 +834,8 @@ export interface WorkspacePromptPreviewResult {
 	blockers: string[];
 	source_of_truth_notes: string[];
 	copy_binding?: CopyBindingLineage | null;
+	copy_architecture_v2?: CopyArchitectureV2Metadata | null;
+	copy_execution_binding?: Record<string, unknown> | null;
 	// WPS chaining enforcement metadata (present when engine_duration_target is
 	// supplied; optional so legacy responses remain valid).
 	wps_chaining_enforced?: boolean;
@@ -2958,6 +2981,8 @@ export interface WorkspaceGenerationPackage {
 	selected_assets_json: Record<string, unknown>;
 	resolved_engine_slots_json: Record<string, string | null>;
 	resolver_output_json: Record<string, unknown>;
+	copy_architecture_v2?: CopyArchitectureV2Metadata | null;
+	copy_execution_binding?: Record<string, unknown> | null;
 	image_assets_json: Record<string, WorkspaceGenerationPackageAsset | null>;
 	manual_handoff_json: WorkspaceGenerationPackageManualHandoff;
 	dom_handoff_payload_json: WorkspaceGenerationPackageDomScaffold;
@@ -3012,6 +3037,7 @@ export interface F2VGenerationPackageRequest {
 	end_frame_preview_url?: string | null;
 	end_frame_download_url?: string | null;
 	operator_notes?: string | null;
+	copy_v2_context?: Record<string, unknown> | null;
 }
 
 export interface I2VGenerationPackageRequest {
@@ -3032,6 +3058,7 @@ export interface I2VGenerationPackageRequest {
 	engine_duration_target?: "GOOGLE_FLOW" | "GROK";
 	requested_total_duration_seconds?: number;
 	operator_notes?: string | null;
+	copy_v2_context?: Record<string, unknown> | null;
 }
 
 export type BulkPromotionStatus =

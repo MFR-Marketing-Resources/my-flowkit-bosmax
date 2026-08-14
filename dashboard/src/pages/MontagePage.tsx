@@ -33,6 +33,7 @@ import {
 	type WorkflowStepStatus,
 } from "../components/workflow";
 import ResultsSidebar from "../components/workspace/ResultsSidebar";
+import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
 import {
@@ -395,6 +396,16 @@ export default function MontagePage() {
 					only after you confirm the operation count.
 				</p>
 			</header>
+
+			<CopyArchitectureV2LaneCard
+				lane="MONTAGE"
+				productId={selectedProduct?.id}
+				execution={
+					run?.config?.copy_architecture_v2 as
+					| Record<string, unknown>
+					| undefined
+				}
+			/>
 
 			<div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
 				<div className="min-h-0 space-y-3 overflow-y-auto pr-1">
