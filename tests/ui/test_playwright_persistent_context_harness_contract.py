@@ -131,12 +131,12 @@ def test_one_way_runtime_telemetry_avoids_callback_response_lane():
     dom_source = _read("extension/content-flow-dom.js")
     background_source = _read("extension/background.js")
 
-    for token in [
-        "function sendRuntimeMessageNoThrow(payload) {",
-        "chrome.runtime.sendMessage(payload);",
-    ]:
-        assert token in dom_source
-        assert token in background_source
+    for source in [dom_source, background_source]:
+        assert "function sendRuntimeMessageNoThrow(payload) {" in source
+        assert "const pending = chrome.runtime.sendMessage(payload);" in source
+        assert "pending.catch((error) => {" in source
+        assert "chrome.runtime.sendMessage(payload, () => {" not in source
+        assert "message port|message channel" in source
 
 
 def test_background_status_contract_exposes_compatibility_build_fields():

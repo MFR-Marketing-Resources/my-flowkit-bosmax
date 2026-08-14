@@ -188,7 +188,7 @@ function installDomPolyfills(window) {
       sendMessage(payload, callback) {
         window.chrome.runtime.lastError = null;
         if (typeof runtimeSendMessageHandler === 'function') {
-          runtimeSendMessageHandler(payload, callback, {
+          return runtimeSendMessageHandler(payload, callback, {
             emit(message) {
               for (const listener of Array.from(runtimeMessageListeners)) {
                 listener(message, {}, () => {});
@@ -841,17 +841,30 @@ async function runVerifyFlowModeRejectsMissingStartSlotOnF2VTest() {
 async function runSendRuntimeMessageNoThrowIsOneWayTest() {
   const harness = createHarness();
   const { hooks, setRuntimeSendMessageHandler } = harness;
+  let unhandledReason = null;
+  const onUnhandledRejection = (reason) => {
+    unhandledReason = reason;
+  };
+  process.on('unhandledRejection', onUnhandledRejection);
 
   try {
     let observedCallbackType = 'missing';
     setRuntimeSendMessageHandler((_payload, callback) => {
       observedCallbackType = typeof callback;
+      return Promise.reject(new Error(
+        'A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received',
+      ));
     });
     hooks.sendRuntimeMessageNoThrow({ type: 'FLOW_STAGE_EVENT', stage: 'TEST', status: 'PASS' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(observedCallbackType === 'undefined', 'Expected fire-and-forget runtime telemetry to omit callback response lane', {
       observedCallbackType,
     });
+    expect(unhandledReason === null, 'Expected one-way runtime telemetry to consume MV3 Promise rejections', {
+      unhandledReason: String(unhandledReason?.message || unhandledReason || ''),
+    });
   } finally {
+    process.off('unhandledRejection', onUnhandledRejection);
     harness.close();
   }
 }

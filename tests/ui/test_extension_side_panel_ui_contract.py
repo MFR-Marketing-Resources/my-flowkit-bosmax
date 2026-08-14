@@ -244,11 +244,16 @@ def test_flow_dom_and_background_publish_runtime_build_handshake_markers():
 	assert "checkpoint: message.checkpoint || message.stage" in telemetry_section
 	assert "build_match:" in telemetry_section
 	# Telemetry beacons are STRICTLY one-way (frozen harness gate: "One-way runtime
-	# telemetry omits callback lane") — no callback, no response port.
+	# telemetry omits callback lane") — no callback or response port, while the
+	# MV3 Promise rejection is consumed when no receiver exists during reload.
 	assert "chrome.runtime.sendMessage(payload, () => {" not in dom_source
 	assert "chrome.runtime.sendMessage(payload, () => {" not in background_source
-	assert "chrome.runtime.sendMessage(payload);" in dom_source
-	assert "chrome.runtime.sendMessage(payload);" in background_source
+	assert "const pending = chrome.runtime.sendMessage(payload);" in dom_source
+	assert "const pending = chrome.runtime.sendMessage(payload);" in background_source
+	assert "pending.catch((error) => {" in dom_source
+	assert "pending.catch((error) => {" in background_source
+	assert "message port|message channel" in dom_source
+	assert "message port|message channel" in background_source
 
 
 def test_background_flow_blocker_classifier_fail_closes_on_runtime_or_build_mismatch():

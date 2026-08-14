@@ -111,7 +111,14 @@
     // Contract (frozen harness: "One-way runtime telemetry omits callback lane"):
     // telemetry beacons are strictly fire-and-forget — no callback, no response port.
     try {
-      chrome.runtime.sendMessage(payload);
+      const pending = chrome.runtime.sendMessage(payload);
+      if (pending && typeof pending.catch === 'function') {
+        pending.catch((error) => {
+          if (!shouldSilenceRuntimeMessageError(error)) {
+            console.warn('[FlowAgent] one-way runtime message rejected:', error?.message || error);
+          }
+        });
+      }
     } catch (error) {
       console.warn('[FlowAgent] runtime message exception:', error);
     }
@@ -131,7 +138,7 @@
     if (/Could not establish connection/i.test(message)) {
       return { error: 'ERR_BACKGROUND_RECEIVER_MISSING', detail: message };
     }
-    if (/message port closed before a response was received/i.test(message)) {
+    if (/(?:message port|message channel) closed before a response was received/i.test(message)) {
       return { error: 'ERR_RUNTIME_MESSAGE_PORT_CLOSED', detail: message };
     }
     return {
