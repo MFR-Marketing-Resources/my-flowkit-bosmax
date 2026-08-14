@@ -602,11 +602,15 @@ domains:
       - agent/services/flow_client.py
       - agent/services/agent_video.py
       - agent/services/make_video.py
+      - agent/models.json
+      - agent/sdk/services/operations.py
       - tests/unit/test_agent_video.py
       - tests/unit/test_manual_lane_reroute.py
       - tests/unit/test_flow_media_retrieval_transport.py
       - tests/unit/test_make_video_binding.py
       - tests/unit/test_retrieval_freshness_exclusion.py
+      - tests/unit/test_direct_video_lane.py
+      - .ai/status/CURRENT_STATE.md
       - agent/services/batch_planner.py
       - agent/models/product_knowledge.py
       - agent/models/product_registration.py

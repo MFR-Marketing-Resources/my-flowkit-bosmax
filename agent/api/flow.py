@@ -1491,7 +1491,8 @@ async def generate(body: GenerateRequest):
         num_videos=body.count, image_model=body.image_model,
         max_image_attempts=1 if creative_campaign else 8,
         collect_image_variants=creative_campaign,
-        product_id=body.product_id)
+        product_id=body.product_id,
+        source_mode=body.source_mode)
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)
         raise HTTPException(409, result.get("error") or "rejected")
@@ -3480,7 +3481,8 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
 
     # ── Owner Phase-2B: composer-driven initial lane (mutually exclusive) ───
     from agent.services import google_flow_ui_driver as _ui_drv
-    if _ui_drv.ui_driver_enabled() and mode in ("T2V", "I2V", "F2V"):
+    if (_ui_drv.ui_driver_enabled() and mode in ("T2V", "I2V", "F2V")
+            and body.get("_direct_capture") is not True):
         try:
             ui_initial = await _ui_drv.run_initial_block1_via_composer(
                 client,
@@ -3511,6 +3513,33 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                 request_id, "API_LANE_REJECTED",
                 f"{exc.code}: {exc.detail}", exc.code)
 
+    # ── LIVE-CAPTURE GATE (owner-fired, DIRECT_VIDEO_CAPTURE_ENABLED): fire ONE
+    # direct batchAsync submit with the resolved refs/project/settings and return
+    # the RAW submit response so the real contract (operation handles, accepted
+    # videoModelKey/aspect shape) is captured; poll+retrieve+persist continue in
+    # the background so the spent credit still yields an artifact.  An explicit
+    # capture request is terminal: it must never fall through to normal
+    # start_generate when disabled, unconfirmed, or otherwise ineligible.
+    if body.get("_direct_capture") is True:
+        capture_project_id = created_project_id or (
+            diag.get("projectId") if isinstance(diag, dict) else None)
+        cap = await _mv.start_direct_capture(
+            mode, prompt, capture_project_id, refs, aspect=aspect, tier=tier,
+            source_mode=_authority_source_mode, model=model_key,
+            duration_s=duration_s,
+            confirm_live_credit_burn=bool(body.get("confirm_live_credit_burn")))
+        await crud.add_stage_event(
+            request_id,
+            "API_DIRECT_CAPTURE_FIRED" if cap.get("ok")
+            else "API_DIRECT_CAPTURE_REJECTED",
+            "WAITING_FLOW" if cap.get("ok") else "FAILED",
+            f"ok={cap.get('ok')} error={cap.get('error')} job={cap.get('job_id')} "
+            f"fired={json.dumps(cap.get('fired') or {})[:400]} "
+            f"operations={cap.get('operations')}", "backend")
+        return {"ok": bool(cap.get("ok")), "lane": "DIRECT_CAPTURE",
+                "request_id": request_id, "mode": mode,
+                "source_mode": _authority_source_mode, **cap}
+
     res = await _mv.start_generate(
         mode, prompt, project_id=created_project_id,
         image_media_ids=refs or None,
@@ -3519,7 +3548,8 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         max_image_attempts=1 if creative_campaign else 8,
         collect_image_variants=creative_campaign,
         image_model=body.get("image_model") if creative_campaign else None,
-        product_id=body.get("product_id"))
+        product_id=body.get("product_id"),
+        source_mode=_authority_source_mode)
     if not isinstance(res, dict) or not res.get("job_id"):
         code = str((res or {}).get("error") or "VIDEO_JOB_IN_FLIGHT")
         await _fail_manual_request(

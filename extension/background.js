@@ -459,6 +459,31 @@ async function handleHarvestVideoUrls(targetTabId) {
 			},
 		});
 		const out = res?.[0]?.result || {};
+		// DOM-INDEPENDENT RESCUE: the retrieval loop (make_video.py) detects a
+		// finished video ONLY from the DOM scan above. When the labs.google React
+		// tree crashes into its error boundary the media tiles unmount, the scan
+		// returns zero ids, and the loop polls "checking for finished video"
+		// forever (media never comes home even though the clip rendered + credits
+		// were spent). The passive fetch-capture store flowMediaGenerationIds
+		// (keyed by mediaId) is captured independently of the DOM and survives a
+		// hydration crash, so surface any captured mediaId the DOM did not find as
+		// a candidate. The backend's exclusion set (db-known + pre-existing) plus
+		// the prompt/model/seed correlation guard ensure only THIS run's clip is
+		// accepted, so the extra candidates are safe.
+		{
+			const domFound = new Set([
+				...(out.videoIds || []),
+				...(out.imageIds || []),
+				...(out.mediaIds || []),
+			]);
+			const captured = Object.keys(flowMediaGenerationIds || {}).filter(
+				(id) => !domFound.has(id),
+			);
+			if (captured.length) {
+				out.videoIds = [...(out.videoIds || []), ...captured];
+				out.mediaIds = [...(out.mediaIds || []), ...captured];
+			}
+		}
 		const mediaGenerationIds = {};
 		for (const mediaId of new Set([
 			...(out.videoIds || []),
