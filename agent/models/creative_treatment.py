@@ -100,7 +100,10 @@ class CreateTreatmentRequest(BaseModel):
 
     product_id: str = Field(min_length=1)
     product_truth_snapshot_id: str = Field(min_length=1)
-    copy_set_id: str = Field(min_length=1)
+    # Copy authority: normal runtime uses Copy Register V2 binding identity.
+    # legacy copy_set_id remains only for explicit maintenance / historical rows.
+    copy_set_id: str | None = Field(default=None, min_length=1)
+    copy_execution_binding_id_v2: str | None = Field(default=None, min_length=1)
     creative_selection_id: str = Field(min_length=1)
     scene_strategy_id: str = Field(min_length=1)
     format: CreativeTreatmentFormat
@@ -134,6 +137,10 @@ class CreateTreatmentRequest(BaseModel):
         has_ordinal = self.variation_ordinal is not None
         if has_group != has_ordinal:
             raise ValueError("VARIATION_GROUP_AND_ORDINAL_REQUIRED_TOGETHER")
+        has_binding = bool((self.copy_execution_binding_id_v2 or "").strip())
+        has_copy_set = bool((self.copy_set_id or "").strip())
+        if has_binding == has_copy_set:
+            raise ValueError("EXACTLY_ONE_COPY_AUTHORITY_REQUIRED")
         return self
 
 

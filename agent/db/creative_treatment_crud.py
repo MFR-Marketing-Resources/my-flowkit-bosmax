@@ -130,7 +130,7 @@ async def create_treatment(row: dict[str, Any]) -> dict[str, Any]:
                 treatment_id, product_id, version, status, format,
                 generation_mode, duration_seconds,
                 product_truth_snapshot_id, product_truth_sha256,
-                copy_set_id, copy_set_sha256,
+                copy_set_id, copy_set_sha256, copy_execution_binding_id_v2,
                 creative_selection_id, creative_selection_sha256,
                 scene_strategy_id, scene_strategy_sha256,
                 content_angle, dialogue_text, dialogue_sha256,
@@ -142,7 +142,7 @@ async def create_treatment(row: dict[str, Any]) -> dict[str, Any]:
                 variation_group_id, variation_ordinal, treatment_sha256,
                 supersedes_treatment_id, created_by
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             """,
@@ -156,8 +156,9 @@ async def create_treatment(row: dict[str, Any]) -> dict[str, Any]:
                 row["duration_seconds"],
                 row["product_truth_snapshot_id"],
                 row["product_truth_sha256"],
-                row["copy_set_id"],
-                row["copy_set_sha256"],
+                row.get("copy_set_id") or "",
+                row.get("copy_set_sha256") or "",
+                row.get("copy_execution_binding_id_v2") or "",
                 row["creative_selection_id"],
                 row["creative_selection_sha256"],
                 row["scene_strategy_id"],

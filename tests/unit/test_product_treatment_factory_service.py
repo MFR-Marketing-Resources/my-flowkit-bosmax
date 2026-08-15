@@ -579,11 +579,12 @@ async def test_existing_candidate_signature_is_reused_without_duplicate(monkeypa
     assert result["created"] is False
     assert result["treatment_id"] == "existing-treatment"
     assert result["lineage"] == {
-        "template_id": template.template_id,
-        "template_sha256": template.template_sha256,
-        "treatment_id": "existing-treatment",
-        "treatment_sha256": "9" * 64,
-    }
+            "template_id": template.template_id,
+            "template_sha256": template.template_sha256,
+            "copy_set_id": "copy-approved",
+            "treatment_id": "existing-treatment",
+            "treatment_sha256": "9" * 64,
+        }
     assert created_calls == 0
 
 

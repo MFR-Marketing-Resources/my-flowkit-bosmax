@@ -36,14 +36,24 @@ def _active_projection(row: dict) -> dict:
     if legacy_copy_maintenance_enabled():
         return row
     result = dict(row)
+    binding_id = str(result.get("copy_execution_binding_id_v2") or "").strip()
+    # V2-native treatments keep binding + dialogue; legacy receipt fields stay
+    # historical-only and are excluded from the active projection.
     for field in (
         "copy_set_id",
         "copy_set_sha256",
-        "content_angle",
-        "dialogue_text",
-        "dialogue_sha256",
     ):
         result.pop(field, None)
+    if not binding_id:
+        for field in (
+            "content_angle",
+            "dialogue_text",
+            "dialogue_sha256",
+        ):
+            result.pop(field, None)
+        result["historical_copy_excluded"] = True
+    else:
+        result["historical_copy_excluded"] = False
     if isinstance(result.get("members"), list):
         result["members"] = [
             _active_projection(member)
@@ -51,12 +61,18 @@ def _active_projection(row: dict) -> dict:
             if isinstance(member, dict)
         ]
     result["copy_authority"] = "COPY_REGISTER_V2_ONLY"
-    result["historical_copy_excluded"] = True
     return result
 
 
 @router.post("", status_code=201)
 async def create_treatment(body: CreateTreatmentRequest):
+    # V2-native create is the normal production path. Legacy copy_set_id create
+    # remains available only under explicit offline maintenance.
+    if (body.copy_execution_binding_id_v2 or "").strip():
+        try:
+            return _active_projection(await treatments.create_treatment(body))
+        except treatments.CreativeTreatmentError as exc:
+            raise _http(exc) from exc
     require_legacy_copy_maintenance()
     try:
         return await treatments.create_treatment(body)
@@ -159,11 +175,12 @@ async def submit_treatment_review(
     treatment_id: str,
     body: SubmitTreatmentReviewRequest,
 ):
-    require_legacy_copy_maintenance()
     try:
-        return await treatments.submit_treatment_review(
-            treatment_id,
-            actor_id=body.actor_id,
+        return _active_projection(
+            await treatments.submit_treatment_review(
+                treatment_id,
+                actor_id=body.actor_id,
+            )
         )
     except treatments.CreativeTreatmentError as exc:
         raise _http(exc) from exc
@@ -174,8 +191,7 @@ async def review_treatment(
     treatment_id: str,
     body: ReviewTreatmentRequest,
 ):
-    require_legacy_copy_maintenance()
     try:
-        return await treatments.review_treatment(treatment_id, body)
+        return _active_projection(await treatments.review_treatment(treatment_id, body))
     except treatments.CreativeTreatmentError as exc:
         raise _http(exc) from exc

@@ -37,6 +37,12 @@ from agent.services.product_strategy_taxonomy_service import (
     require_verified_product_strategy_taxonomy,
 )
 from agent.services.scene_strategy_library import SCENE_STRATEGIES
+from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
+from agent.services.copy_execution_resolver import (
+    CopyExecutionResolutionError,
+    resolve_persisted_copy_execution_binding,
+)
+from agent.services import copy_register_v2_service
 
 
 class CreativeTreatmentError(ValueError):
@@ -64,6 +70,8 @@ class ResolvedAuthority:
     avatar_profile: dict[str, Any] | None
     assets: list[dict[str, Any]]
     dialogue_text: str
+    copy_execution_binding_id_v2: str = ""
+    copy_authority_mode: str = "LEGACY_COPY_SET"
 
 
 def _normalize_scalar(value: Any) -> Any:
@@ -784,15 +792,98 @@ async def _resolve_authority(
     ):
         raise CreativeTreatmentError("PRODUCT_TRUTH_SNAPSHOT_STALE")
 
-    copy_set = await crud.get_copy_set(body.copy_set_id)
-    if not copy_set:
-        raise CreativeTreatmentError("COPY_SET_NOT_FOUND", status_code=404)
-    if copy_set.get("product_id") != body.product_id:
-        raise CreativeTreatmentError("COPY_SET_PRODUCT_MISMATCH", status_code=422)
-    if copy_set.get("status") != "COPY_APPROVED" or bool(
-        copy_set.get("archived"),
-    ):
-        raise CreativeTreatmentError("COPY_SET_NOT_APPROVED")
+    binding_id = str(body.copy_execution_binding_id_v2 or "").strip()
+    copy_set_id = str(body.copy_set_id or "").strip()
+    copy_set: dict[str, Any]
+    authority_mode = "LEGACY_COPY_SET"
+    if binding_id:
+        authority_mode = "COPY_REGISTER_V2"
+        try:
+            binding = await copy_register_v2_service.get_binding_by_id(binding_id)
+        except copy_register_v2_service.CopyRegisterV2Error as exc:
+            raise CreativeTreatmentError(
+                getattr(exc, "code", "COPY_V2_BINDING_NOT_FOUND"),
+                status_code=getattr(exc, "status_code", 404),
+                details={"binding_id": binding_id, "message": str(exc)},
+            ) from exc
+        if str(getattr(binding, "product_id", "") or "") and str(
+            getattr(binding, "product_id", "")
+        ) != body.product_id:
+            # get_binding_by_id loads binding row; product checked via authority join.
+            pass
+        try:
+            resolution = await resolve_persisted_copy_execution_binding(
+                body.product_id,
+                binding.lane,
+            )
+        except CopyExecutionResolutionError as exc:
+            raise CreativeTreatmentError(
+                exc.code,
+                status_code=422,
+                details={"lane": binding.lane, "message": str(exc)},
+            ) from exc
+        if resolution.binding.binding_id != binding_id:
+            raise CreativeTreatmentError(
+                "COPY_V2_BINDING_NOT_ACTIVE",
+                status_code=422,
+                details={
+                    "requested_binding_id": binding_id,
+                    "active_binding_id": resolution.binding.binding_id,
+                    "lane": binding.lane,
+                },
+            )
+        dialogue_text = str(resolution.approved_dialogue or "").strip()
+        if not dialogue_text:
+            raise CreativeTreatmentError(
+                "COPY_V2_DIALOGUE_EMPTY",
+                status_code=422,
+            )
+        angle = ""
+        derived = getattr(resolution.projection, "derived_copy", None)
+        if derived is not None:
+            angle = str(getattr(derived, "hook", "") or "").strip()
+        copy_set = {
+            "copy_set_id": "",
+            "product_id": body.product_id,
+            "status": "COPY_APPROVED",
+            "archived": 0,
+            "angle": angle,
+            "hook": angle,
+            "full_text": dialogue_text,
+            "usp_set_json": "[]",
+            "copy_execution_binding_id_v2": binding_id,
+            "blueprint_id": resolution.binding.blueprint_id,
+            "revision": resolution.binding.revision,
+            "lane": resolution.lane,
+            "formula_id": resolution.binding.formula_id,
+            "approval_snapshot_id": resolution.binding.approval_snapshot_id,
+        }
+    elif copy_set_id:
+        if not legacy_copy_maintenance_enabled():
+            raise CreativeTreatmentError(
+                "LEGACY_COPY_STORAGE_DISABLED",
+                status_code=410,
+                details={
+                    "detail": (
+                        "Legacy copy_set_id is archived. Provide "
+                        "copy_execution_binding_id_v2 from /api/copy-register/v2."
+                    ),
+                },
+            )
+        copy_set = await crud.get_copy_set(copy_set_id)
+        if not copy_set:
+            raise CreativeTreatmentError("COPY_SET_NOT_FOUND", status_code=404)
+        if copy_set.get("product_id") != body.product_id:
+            raise CreativeTreatmentError("COPY_SET_PRODUCT_MISMATCH", status_code=422)
+        if copy_set.get("status") != "COPY_APPROVED" or bool(
+            copy_set.get("archived"),
+        ):
+            raise CreativeTreatmentError("COPY_SET_NOT_APPROVED")
+    else:
+        raise CreativeTreatmentError(
+            "COPY_AUTHORITY_REQUIRED",
+            status_code=422,
+        )
 
     selection = await crud.get_creative_product_selection(body.product_id)
     if not selection:
@@ -883,7 +974,8 @@ async def _resolve_authority(
     _validate_format(body, avatar_profile, actor_roles)
     _validate_sequence(body, strategy)
     assets = await _resolve_assets(body)
-    dialogue_text = _dialogue_from_copy(copy_set)
+    if authority_mode != "COPY_REGISTER_V2":
+        dialogue_text = _dialogue_from_copy(copy_set)
     return ResolvedAuthority(
         product_truth=snapshot,
         copy_set=copy_set,
@@ -894,6 +986,8 @@ async def _resolve_authority(
         avatar_profile=avatar_profile,
         assets=assets,
         dialogue_text=dialogue_text,
+        copy_execution_binding_id_v2=binding_id,
+        copy_authority_mode=authority_mode,
     )
 
 
@@ -1011,6 +1105,7 @@ def _build_treatment_snapshot(
     if segment_plan:
         visual_projection["segment_plan"] = segment_plan
     visual_fingerprint = canonical_sha256(visual_projection)
+    binding_id = str(authority.copy_execution_binding_id_v2 or "").strip()
     content = {
         "treatment_id": treatment_id,
         "product_id": body.product_id,
@@ -1018,7 +1113,7 @@ def _build_treatment_snapshot(
         "generation_mode": body.generation_mode,
         "duration_seconds": body.duration_seconds,
         "product_truth_snapshot_id": body.product_truth_snapshot_id,
-        "copy_set_id": body.copy_set_id,
+        "copy_set_id": ("" if binding_id else str(body.copy_set_id or "")),
         "creative_selection_id": body.creative_selection_id,
         "scene_strategy_id": body.scene_strategy_id,
         "content_angle": str(authority.copy_set.get("angle") or ""),
@@ -1042,17 +1137,25 @@ def _build_treatment_snapshot(
     }
     if segment_plan:
         content["segment_plan"] = segment_plan
-    return {
+    if binding_id:
+        content["copy_execution_binding_id_v2"] = binding_id
+    snapshot = {
         **content,
         "treatment_sha256": canonical_sha256(content),
     }
+    # Column is always present on the row; empty for legacy authority.
+    snapshot["copy_execution_binding_id_v2"] = binding_id
+    return snapshot
 
 
 def _stored_request(row: dict[str, Any]) -> CreateTreatmentRequest:
+    binding_id = str(row.get("copy_execution_binding_id_v2") or "").strip()
+    copy_set_id = str(row.get("copy_set_id") or "").strip() or None
     return CreateTreatmentRequest(
         product_id=row["product_id"],
         product_truth_snapshot_id=row["product_truth_snapshot_id"],
-        copy_set_id=row["copy_set_id"],
+        copy_set_id=None if binding_id else copy_set_id,
+        copy_execution_binding_id_v2=binding_id or None,
         creative_selection_id=row["creative_selection_id"],
         scene_strategy_id=row["scene_strategy_id"],
         format=row["format"],
@@ -1121,6 +1224,7 @@ def revalidate_stored_treatment_receipt(row: dict[str, Any]) -> dict[str, Any]:
     """
 
     decoded = _decode_treatment(row)
+    binding_id = str(row.get("copy_execution_binding_id_v2") or "").strip()
     content: dict[str, Any] = {
         "treatment_id": row["treatment_id"],
         "product_id": row["product_id"],
@@ -1128,7 +1232,7 @@ def revalidate_stored_treatment_receipt(row: dict[str, Any]) -> dict[str, Any]:
         "generation_mode": row["generation_mode"],
         "duration_seconds": row["duration_seconds"],
         "product_truth_snapshot_id": row["product_truth_snapshot_id"],
-        "copy_set_id": row["copy_set_id"],
+        "copy_set_id": ("" if binding_id else row["copy_set_id"]),
         "creative_selection_id": row["creative_selection_id"],
         "scene_strategy_id": row["scene_strategy_id"],
         "content_angle": str(row.get("content_angle") or ""),
@@ -1163,6 +1267,8 @@ def revalidate_stored_treatment_receipt(row: dict[str, Any]) -> dict[str, Any]:
     segment_plan = decoded.get("segment_plan") or []
     if segment_plan:
         content["segment_plan"] = segment_plan
+    if binding_id:
+        content["copy_execution_binding_id_v2"] = binding_id
 
     if canonical_sha256(content["dialogue_text"]) != content["dialogue_sha256"]:
         raise CreativeTreatmentError(

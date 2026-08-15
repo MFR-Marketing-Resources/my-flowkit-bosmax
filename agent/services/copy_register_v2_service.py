@@ -1641,6 +1641,41 @@ def _row_to_binding(row: Any) -> CopyExecutionBinding:
     )
 
 
+
+async def get_binding_by_id(binding_id: str) -> CopyExecutionBinding:
+    """Load a persisted V2 binding by immutable binding_id."""
+    bid = str(binding_id or "").strip()
+    if not bid:
+        raise CopyRegisterV2Error(
+            "COPY_V2_BINDING_ID_REQUIRED",
+            "copy_execution_binding_id_v2 is required.",
+            status_code=422,
+        )
+    db = await get_db()
+    cursor = await db.execute(
+        """
+        SELECT binding.*
+        FROM copy_execution_binding_v2 binding
+        JOIN copy_execution_authority_v2 authority
+          ON authority.binding_id = binding.binding_id
+         AND authority.product_id = binding.product_id
+         AND authority.lane = binding.lane
+        WHERE binding.binding_id=?
+          AND binding.binding_status='BOUND'
+        LIMIT 1
+        """,
+        (bid,),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise CopyRegisterV2Error(
+            "COPY_V2_BINDING_NOT_FOUND",
+            "No active V2 binding exists for this binding_id.",
+            status_code=404,
+        )
+    return _row_to_binding(row)
+
+
 async def get_binding(product_id: str, lane: str) -> CopyExecutionBinding:
     try:
         descriptor = get_lane_descriptor(lane)
@@ -1686,6 +1721,7 @@ __all__ = [
     "generate_blueprint",
     "get_blueprint",
     "get_binding",
+    "get_binding_by_id",
     "get_product_truth_proof",
     "list_binding_matrix",
     "list_blueprints",
