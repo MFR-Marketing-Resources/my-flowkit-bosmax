@@ -4,6 +4,7 @@ import {
 	fetchProductStrategyTypeRegistry,
 } from "../../api/products";
 import type { Product, ProductCatalogResponse } from "../../types";
+import { resolveProductPreviewUrl } from "../../utils/productVisualPresentation";
 
 const SOURCE_BADGE: Record<string, string> = {
 	FASTMOSS: "bg-indigo-500/20 text-indigo-300",
@@ -53,44 +54,16 @@ const PAGE_SIZE = 50;
 const getErrorMessage = (error: unknown, fallback: string) =>
 	error instanceof Error && error.message ? error.message : fallback;
 
-// image_url → rendered_img_src → image_analysis.image_url (same fail-open order the
-// rest of the app uses). local_image_path is a server FS path, not browser-loadable.
+// Raw source image preview for table source column
 const resolveThumb = (product: Product): string | null =>
 	product.image_url ||
 	product.rendered_img_src ||
 	product.image_analysis?.image_url ||
 	null;
 
-const resolveOriginalVisualThumb = (product: Product): string | null =>
-	product.visual_readiness?.original_preview_url ||
-	product.visual_readiness?.original_display_url ||
-	resolveThumb(product);
-
-// The Visual column must follow the backend's current-system authority. A
-// pending candidate is not official yet, so it deliberately falls back to the
-// original source until the operator completes approval and saves it.
-const resolveVisualThumb = (product: Product): string | null => {
-	const readiness = product.visual_readiness;
-	const current = readiness?.current_system_visual;
-	const activePreview = readiness?.active_cutout_preview_url;
-	const manualPreview = readiness?.manual_cutout_preview_url;
-	const autoPreview = readiness?.auto_cutout_preview_url;
-	const official =
-		current?.status === "OFFICIAL" ||
-		readiness?.active_visual_source?.startsWith("APPROVED_");
-	if (official) {
-		if (activePreview) {
-			return activePreview;
-		}
-		if (current?.card === "MANUAL_CUTOUT" && manualPreview) {
-			return manualPreview;
-		}
-		if (current?.card === "AUTO_CUTOUT" && autoPreview) {
-			return autoPreview;
-		}
-	}
-	return resolveOriginalVisualThumb(product);
-};
+// The Visual column follows the canonical resolveProductPreviewUrl resolver
+const resolveVisualThumb = (product: Product): string | null =>
+	resolveProductPreviewUrl(product);
 
 const fmtMoney = (value: number | null | undefined): string =>
 	value == null || Number.isNaN(Number(value))

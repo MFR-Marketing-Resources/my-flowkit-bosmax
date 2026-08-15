@@ -49,11 +49,12 @@ import {
 import type { Product } from "../../../types";
 import type { PosterDeliverableReconstruction } from "../../../types/posterCopySet";
 import type { PosterRecipe } from "../../../types/posterRecipe";
+import { resolveProductPreviewUrl } from "../../../utils/productVisualPresentation";
 import SearchableProductSelect from "../../workspace/SearchableProductSelect";
 import VisualAssetPicker from "../../workspace/VisualAssetPicker";
 
 function productThumb(p: Product | null): string | null {
-	return p?.image_analysis?.image_url ?? null;
+	return resolveProductPreviewUrl(p);
 }
 
 // ── Stepper ─────────────────────────────────────────────────────────────────

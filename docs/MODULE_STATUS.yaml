@@ -53,6 +53,8 @@ domains:
       - agent/services/canva_cutout_workflow_service.py
       - tests/unit/test_product_truth_lock_service.py
       - agent/services/product_visual_onboarding_service.py
+      - dashboard/src/utils/productVisualPresentation.ts
+      - dashboard/src/utils/productVisualPresentation.test.ts
       - tests/unit/test_product_visual_onboarding_service.py
       - tests/api/test_product_visual_onboarding_api.py
       - tests/integration/test_product_visual_crud_workflow.py

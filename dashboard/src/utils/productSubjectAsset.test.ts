@@ -63,6 +63,34 @@ describe("productSubjectAsset", () => {
 		expect(productSubjectAsset(undefined)).toBeNull();
 	});
 
+	it("prefers official cutout visual when visual_readiness reports OFFICIAL status", () => {
+		const asset = productSubjectAsset(
+			product({
+				image_url: "https://cdn/raw-source.jpg",
+				visual_readiness: {
+					product_id: "prod-1",
+					current_system_visual: {
+						status: "OFFICIAL",
+						card: "MANUAL_CUTOUT",
+						label: "Manual / Canva Cutout",
+					},
+					active_visual_source: "APPROVED_MANUAL_CANONICAL_CUTOUT",
+					active_cutout_preview_url: "/api/product-visual-onboarding/prod-1/cutout/preview/active",
+					original_preview_url: "/api/product-visual-onboarding/prod-1/cutout/preview/original",
+				} as unknown as Product["visual_readiness"],
+			}),
+		);
+		expect(asset).not.toBeNull();
+		expect(asset?.downloadUrl).toBe(
+			"/api/product-visual-onboarding/prod-1/cutout/preview/active",
+		);
+		expect(asset?.previewUrl).toBe(
+			"/api/product-visual-onboarding/prod-1/cutout/preview/active",
+		);
+		expect(asset?.assetSource).toBe("PRODUCT_OFFICIAL_CUTOUT");
+		expect(asset?.label).toBe("Product official visual");
+	});
+
 	it("exports the fail-closed blocker code", () => {
 		expect(PRODUCT_REFERENCE_IMAGE_REQUIRED).toBe("PRODUCT_REFERENCE_IMAGE_REQUIRED");
 	});
