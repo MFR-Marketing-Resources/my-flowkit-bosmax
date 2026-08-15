@@ -1,6 +1,7 @@
 """Faceless lane HTTP API — product-first prepare + canonical settings.
 
-Operator chooses product, hook, background, SINGLE|EXTEND, model, duration.
+Operator chooses product, opening strategy, background, SINGLE|EXTEND, model,
+duration. ``hook_id`` remains the backward-compatible wire field.
 Internal transport: F2V + HYBRID product-anchor (or FRAMES only when Advanced
 override supplies a start frame). No new generation engine.
 """
@@ -93,6 +94,14 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
         )
 
     try:
+        scene_authority = await fl.resolve_faceless_scene_authority(
+            product_id=body.product_id,
+            hook_id=body.hook_id,
+            background_id=body.background_id,
+            product_cluster=body.product_cluster,
+            has_approved_usp=body.has_approved_usp,
+            scene_context_hint=body.scene_context_hint,
+        )
         resolution = fl.build_faceless_resolution(
             hook_id=body.hook_id,
             background_id=body.background_id,
@@ -100,11 +109,13 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
             has_approved_usp=body.has_approved_usp,
             scene_context_hint=body.scene_context_hint,
             start_frame_asset_id=body.start_frame_asset_id,
+            scene_authority=scene_authority,
         )
     except ValueError as exc:
+        error_code = getattr(exc, "code", None) or str(exc).split(":", 1)[0]
         raise HTTPException(
             status_code=422,
-            detail={"error_code": "ERR_FACELESS_RESOLVE", "message": str(exc)},
+            detail={"error_code": error_code, "message": str(exc)},
         ) from exc
 
     scene_context = fl.build_faceless_scene_context(resolution)
@@ -141,6 +152,7 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
             copy_set_id=body.copy_set_id,
             copy_fallback_confirmed=body.copy_fallback_confirmed,
             copy_v2_context=body.copy_v2_context,
+            faceless_resolution=resolution.get("faceless_resolution"),
             requested_total_duration_seconds=(
                 int(body.total_duration_seconds)
                 if gen_mode == "EXTEND"
@@ -238,9 +250,14 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
             "reference_override": reference_override,
         },
         "resolution": {
+            "opening_strategy": resolution["opening_strategy"],
+            # Backward-compatible response alias; never actual Copy V2 text.
             "hook": resolution["hook"],
             "background": resolution["background"],
+            "scene_strategy": resolution.get("scene_strategy"),
+            "choreography": resolution.get("choreography"),
         },
+        "faceless_resolution": resolution.get("faceless_resolution"),
         "scene_context_override": scene_context,
         "package": pkg if isinstance(pkg, dict) else pkg,
         "durable_lifecycle": (
@@ -318,14 +335,35 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
             if v2_resolution.v2_enabled
             else None,
         }
-    resolution = fl.build_faceless_resolution(
-        hook_id=body.hook_id,
-        background_id=body.background_id,
-        product_cluster=body.product_cluster,
-        has_approved_usp=body.has_approved_usp,
-        scene_context_hint=body.scene_context_hint,
-        start_frame_asset_id=body.start_frame_asset_id,
-    )
+    try:
+        scene_authority = await fl.resolve_faceless_scene_authority(
+            product_id=body.product_id,
+            hook_id=body.hook_id,
+            background_id=body.background_id,
+            product_cluster=body.product_cluster,
+            has_approved_usp=body.has_approved_usp,
+            scene_context_hint=body.scene_context_hint,
+        )
+        resolution = fl.build_faceless_resolution(
+            hook_id=body.hook_id,
+            background_id=body.background_id,
+            product_cluster=body.product_cluster,
+            has_approved_usp=body.has_approved_usp,
+            scene_context_hint=body.scene_context_hint,
+            start_frame_asset_id=body.start_frame_asset_id,
+            scene_authority=scene_authority,
+        )
+    except ValueError as exc:
+        error_code = getattr(exc, "code", None) or str(exc).split(":", 1)[0]
+        return {
+            "ok": False,
+            "error_code": error_code,
+            "detail": str(exc),
+            "copy_policy": "REQUIRED",
+            "copy_architecture_v2": v2_resolution.to_metadata(
+                consumer_context=body.copy_v2_context
+            ) if v2_resolution.v2_enabled else None,
+        }
     return {
         "ok": True,
         "copy_policy": "REQUIRED",
@@ -337,9 +375,13 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
         "duration_seconds": orchestration["engine_block_duration_seconds"],
         "total_duration_seconds": body.total_duration_seconds,
         "resolution": {
+            "opening_strategy": resolution["opening_strategy"],
             "hook": resolution["hook"],
             "background": resolution["background"],
+            "scene_strategy": resolution.get("scene_strategy"),
+            "choreography": resolution.get("choreography"),
         },
+        "faceless_resolution": resolution.get("faceless_resolution"),
         "scene_context_override": fl.build_faceless_scene_context(resolution),
         "visual_law": fl.FACELESS_VISUAL_LAW,
     }

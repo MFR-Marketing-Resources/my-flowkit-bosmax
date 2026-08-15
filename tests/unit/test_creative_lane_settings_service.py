@@ -1,5 +1,8 @@
 """SSOT Hook/Background settings — controlled vocab + deterministic AUTO."""
+import pytest
+
 from agent.services import creative_lane_settings_service as cls
+from agent.services.scene_choreography_catalog import all_choreography_variants
 
 
 def test_hook_options_match_owner_vocabulary():
@@ -63,6 +66,45 @@ def test_auto_background_hint_mapping():
 
     neutral = cls.resolve_background("AUTO", scene_context_hint=None)
     assert neutral["setting_id"] == "AESTHETIC_TABLE"
+
+
+def test_background_resolution_is_constrained_by_existing_scene_contexts():
+    contexts = [
+        "warm heritage tabletop with the bottle label visible",
+        "bedside shelf during a quiet nightly routine",
+    ]
+    eligible = cls.compatible_background_ids(contexts)
+    assert eligible
+    assert "AESTHETIC_TABLE" in eligible
+    assert "KITCHEN" not in eligible
+
+    auto = cls.resolve_background("AUTO", compatible_contexts=contexts)
+    assert auto["operator_selection"] == "AUTO"
+    assert auto["setting_id"] != "AUTO"
+    assert auto["setting_id"] in eligible
+
+    explicit = cls.resolve_background(
+        "AESTHETIC_TABLE",
+        compatible_contexts=contexts,
+    )
+    assert explicit["setting_id"] == "AESTHETIC_TABLE"
+    with pytest.raises(ValueError, match=cls.ERR_FACELESS_BACKGROUND_INCOMPATIBLE):
+        cls.resolve_background("KITCHEN", compatible_contexts=contexts)
+
+
+def test_public_payload_exposes_opening_strategy_without_removing_wire_alias():
+    payload = cls.public_settings_payload()
+    assert payload["opening_strategy"]["default"] == "AUTO"
+    assert payload["opening_strategy"]["options"] == payload["hook"]["options"]
+
+
+def test_every_production_choreography_has_a_controlled_background_match():
+    for strategy_id, variants in all_choreography_variants().items():
+        for variant in variants:
+            assert cls.compatible_background_ids(variant.compatible_contexts), (
+                strategy_id,
+                variant.choreography_id,
+            )
 
 
 def test_pharmacy_is_environment_only():

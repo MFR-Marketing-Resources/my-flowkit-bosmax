@@ -59,6 +59,15 @@ def validate_choreography_variant(variant: ChoreographyVariant) -> None:
         raise _err("GENERIC_FALLBACK_BLOCKED", variant)
     if not variant.production_eligible:
         raise _err("CHOREOGRAPHY_NOT_PRODUCTION_ELIGIBLE", variant)
+    allowed_presence = list(getattr(variant, "allowed_character_presence", ()) or ())
+    if not allowed_presence:
+        raise _err("CHARACTER_PRESENCE_COMPATIBILITY_REQUIRED", variant)
+    if len(set(allowed_presence)) != len(allowed_presence):
+        raise _err(
+            "CHARACTER_PRESENCE_COMPATIBILITY_DUPLICATE",
+            variant,
+            allowed_character_presence=allowed_presence,
+        )
     if not variant.steps:
         raise _err("CHOREOGRAPHY_STEPS_REQUIRED", variant)
 
@@ -276,6 +285,30 @@ def validate_choreography_variant(variant: ChoreographyVariant) -> None:
         pass
     elif "hold" not in lock_blob and "lock" not in lock_blob:
         raise _err("FINAL_STATE_LOCK_LANGUAGE_REQUIRED", variant, step=final.step_number)
+
+
+def assert_character_presence_compatible(
+    variant: ChoreographyVariant,
+    character_presence: str,
+) -> None:
+    """Fail closed when a selected choreography is not valid for the surface."""
+
+    candidate = str(character_presence or "").strip().upper()
+    allowed = list(getattr(variant, "allowed_character_presence", ()) or ())
+    if not allowed:
+        raise _err("CHARACTER_PRESENCE_COMPATIBILITY_REQUIRED", variant)
+    if candidate not in allowed:
+        code = (
+            "ERR_FACELESS_CHOREOGRAPHY_INCOMPATIBLE"
+            if candidate == "FACELESS"
+            else "CHOREOGRAPHY_CHARACTER_PRESENCE_INCOMPATIBLE"
+        )
+        raise _err(
+            code,
+            variant,
+            character_presence=candidate or "<empty>",
+            allowed_character_presence=allowed,
+        )
 
 
 def validate_production_strategy_id(strategy_id: str) -> None:

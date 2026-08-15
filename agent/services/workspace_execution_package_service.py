@@ -53,6 +53,15 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=True)
 
 
+def _stable_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 def _workspace_execution_package_id(
     product_id: str,
     mode: str,
@@ -66,6 +75,7 @@ def _workspace_execution_package_id(
     camera_style: str,
     character_presence: str,
     asset_fingerprints: list[str],
+    faceless_resolution: dict[str, Any] | None = None,
 ) -> str:
     # asset_fingerprints are part of the package identity: two packages with
     # different operator-selected reference bindings must never share one id
@@ -84,6 +94,10 @@ def _workspace_execution_package_id(
         camera_style,
         character_presence,
         "|".join(asset_fingerprints),
+        # Optional and Faceless-only. Existing non-Faceless identities remain
+        # byte-compatible while semantically different Faceless receipts cannot
+        # reuse one WEP id.
+        _stable_json(faceless_resolution) if faceless_resolution is not None else "",
     )
     return f"wep_{digest[:16]}"
 
@@ -306,6 +320,7 @@ async def create_workspace_execution_package(
     scene_template: dict[str, Any] | None = None,
     camera_preset: dict[str, Any] | None = None,
     copy_v2_context: dict[str, Any] | None = None,
+    faceless_resolution: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
     try:
@@ -431,6 +446,7 @@ async def create_workspace_execution_package(
         compiler_result["camera_style"],
         compiler_result["character_presence"],
         asset_fingerprints,
+        faceless_resolution,
     )
     request_lineage_payload = {
         "product_id": product_id,
@@ -460,8 +476,14 @@ async def create_workspace_execution_package(
             "planner_version": compiler_result.get("planner_version"),
             "planner_fingerprint": compiler_result.get("planner_fingerprint"),
             "canonical_package_fingerprint": compiler_result.get("canonical_package_fingerprint"),
+            "scene_strategy": compiler_result.get("scene_strategy"),
+            "scene_choreography": compiler_result.get("scene_choreography"),
         },
     }
+    if faceless_resolution is not None:
+        request_lineage_payload["faceless_resolution"] = copy.deepcopy(
+            faceless_resolution
+        )
     if creative_treatment:
         segment_plan = creative_treatment.get("segment_plan") or {}
         request_lineage_payload["creative_treatment_lineage"] = {
@@ -605,6 +627,9 @@ async def create_workspace_execution_package(
         "overlay_spec": compiler_result.get("overlay_spec"),
         "export_spec": compiler_result.get("export_spec"),
         "image_route": compiler_result.get("image_route"),
+        "faceless_resolution": copy.deepcopy(faceless_resolution)
+        if faceless_resolution is not None
+        else None,
     }
     if v2_enabled:
         result["copy_architecture_v2"] = v2_resolution.to_metadata(

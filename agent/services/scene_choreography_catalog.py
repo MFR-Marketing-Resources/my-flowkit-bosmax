@@ -27,6 +27,7 @@ from agent.services.scene_choreography_scenarios import (
     roll_on_steps_composed,
 )
 from agent.services.scene_choreography_validator import (
+    assert_character_presence_compatible,
     validate_choreography_variant,
     validate_production_strategy_id,
 )
@@ -56,6 +57,38 @@ class StrategySpec:
     component: str
     target: str
     receiver: str
+
+
+# These variants require the viewer's face/eyes/lips as the physical target.
+# The list is deliberately explicit and local to the existing choreography
+# catalog; every other catalog variant still receives an explicit full policy
+# below, and a new model variant cannot omit the field without failing model
+# validation/catalog validation.
+_FACE_REQUIRED_VARIANT_IDS = frozenset(
+    {
+        "lip_color.v0",
+        "lip_color.v2",
+        "facial_cleanser.v1",
+        "facial_serum.v1",
+        "mascara.v1",
+        "eyeliner.v1",
+        "face_mask.v1",
+        "eye_treatment.v1",
+        "makeup_setting_spray.v1",
+        "eyebrow_makeup.v1",
+        "eyeshadow.v1",
+        "false_eyelashes.v1",
+        "face_primer.v1",
+        "face_powder.v1",
+        "lip_treatment.v1",
+    }
+)
+
+
+def _allowed_character_presence(choreography_id: str) -> list[str]:
+    if choreography_id in _FACE_REQUIRED_VARIANT_IDS:
+        return ["VISIBLE_CREATOR", "AVATAR_AI"]
+    return ["FACELESS", "VISIBLE_CREATOR", "AVATAR_AI", "PRODUCT_ONLY"]
 
 
 def _st(
@@ -135,8 +168,9 @@ def _variant(
         "Hold the final state. No new prop, duplicate hand, unexplained motion, "
         "or unplanned action."
     )
+    choreography_id = f"{strategy_id.lower()}.v{index}{suffix}"
     return ChoreographyVariant(
-        choreography_id=f"{strategy_id.lower()}.v{index}{suffix}",
+        choreography_id=choreography_id,
         schema_version=CHOREOGRAPHY_SCHEMA_VERSION,
         strategy_id=strategy_id,
         classification=spec.classification,
@@ -148,6 +182,7 @@ def _variant(
         intent_label=intent,
         compatible_contexts=list(dict.fromkeys([context, *extra_contexts])),
         compatible_camera_routes=list(dict.fromkeys([camera, *extra_cameras])),
+        allowed_character_presence=_allowed_character_presence(choreography_id),
         steps=steps,
         final_state_lock=lock,
         production_eligible=True,
@@ -807,10 +842,18 @@ def list_production_variants(strategy_id: str) -> tuple[ChoreographyVariant, ...
     return variants
 
 
-def select_variant_for_strategy(strategy_id: str, variation_index: int) -> ChoreographyVariant:
+def select_variant_for_strategy(
+    strategy_id: str,
+    variation_index: int,
+    *,
+    character_presence: str | None = None,
+) -> ChoreographyVariant:
     variants = list_production_variants(strategy_id)
     offset = max(int(variation_index), 0)
-    return variants[offset % len(variants)]
+    variant = variants[offset % len(variants)]
+    if character_presence is not None:
+        assert_character_presence_compatible(variant, character_presence)
+    return variant
 
 
 def choreography_sha256(variant: ChoreographyVariant) -> str:

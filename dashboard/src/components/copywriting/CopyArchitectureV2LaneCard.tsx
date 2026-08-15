@@ -66,6 +66,8 @@ export default function CopyArchitectureV2LaneCard({
 	}, [execution, lane, productId]);
 
 	const effectiveExecution = execution ?? persistedExecution;
+	const projection = record(effectiveExecution?.projection);
+	const derivedCopy = record(projection.derived_copy);
 	const flags = status?.feature_flags;
 	const binding = record(effectiveExecution?.binding);
 	const enabled = Boolean(flags?.enabled);
@@ -105,6 +107,10 @@ export default function CopyArchitectureV2LaneCard({
 	const formula = copyFree
 		? "N/A — copy-free lane"
 		: `${text(effectiveExecution?.formula_id ?? binding.formula_id)} · ${text(effectiveExecution?.formula_version ?? binding.formula_version)}`;
+	const approvedHook = text(
+		derivedCopy.hook,
+		ready ? "Approved Hook not present in V2 projection" : "Awaiting V2 binding",
+	);
 	const blocker = effectiveExecution?.blocker ?? effectiveExecution?.error ?? effectiveExecution?.blockers;
 	const blockers = Array.isArray(blocker)
 		? blocker.map(String)
@@ -162,6 +168,21 @@ export default function CopyArchitectureV2LaneCard({
 				<div data-testid="copy-v2-formula">
 					<div className="text-[9px] uppercase tracking-widest text-slate-500">Formula</div>
 					<div className="font-semibold text-slate-100">{formula}</div>
+				</div>
+			</div>
+
+			<div
+				className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2"
+				data-testid="copy-v2-approved-hook"
+			>
+				<div className="text-[9px] font-bold uppercase tracking-widest text-emerald-300">
+					Approved Copy V2 Hook
+				</div>
+				<div className="mt-1 text-[12px] text-slate-100">
+					{approvedHook}
+				</div>
+				<div className="mt-1 text-[10px] text-slate-500">
+					Read-only projection from the production V2 binding; Faceless Opening Strategy does not edit it.
 				</div>
 			</div>
 

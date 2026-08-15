@@ -1,10 +1,11 @@
 {
   "_meta": {
-    "purpose": "Controlled vocabulary for Faceless Video and Montage operator lanes (Hook + Background). Single source of truth for UI dropdowns, backend validation, and tests. Display label 'Auto (AI decided)' is NOT a paid-LLM mandate — AUTO resolves deterministically from product/recipe knowledge when available.",
+    "purpose": "Controlled vocabulary for Faceless Video and Montage operator lanes (Opening Strategy + Background). The historical hook key remains a wire-compatible alias. Single source of truth for UI dropdowns, backend validation, and tests. Display label 'Auto (AI decided)' is NOT a paid-LLM mandate — AUTO resolves deterministically from product/recipe knowledge when available.",
     "version": "CREATIVE_LANE_SETTINGS_v1",
     "lanes": ["FACELESS", "MONTAGE"],
     "semantics": {
-      "hook": "Creative strategy/category only. Does not authorize unsupported product claims, medical guarantees, fabricated discounts, or fake scarcity. Copy remains subordinate to product truth and compliance.",
+      "hook": "Backward-compatible wire alias for the Faceless Opening Strategy; creative strategy/category only. It is not the approved sales-copy Hook and does not authorize unsupported product claims, medical guarantees, fabricated discounts, or fake scarcity.",
+      "opening_strategy": "Visual/narrative opening treatment only. Actual Hook, Body/USP, CTA, and approved execution text remain exclusively in Copy Register V2.",
       "background": "Scene/environment visual intent only. Does not override product truth, packaging, product scale, avatar/reference policies, scene continuity, or compliance. Example: Pharmacy is environment direction, not pharmacist endorsement."
     }
   },
