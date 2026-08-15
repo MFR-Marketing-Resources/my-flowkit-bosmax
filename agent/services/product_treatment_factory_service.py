@@ -420,6 +420,24 @@ def _approved_copy_set_ids(scan: ProductScan) -> list[str]:
     return sorted(_string_list(resolved.copy.approved_copy_set_ids) if resolved else [])
 
 
+def _eligible_binding_ids(scan: ProductScan) -> list[str]:
+    """PRODUCTION_VALID Copy Register V2 bindings eligible for factory authority."""
+    return sorted(_string_list(scan.copy_preview.get("eligible_approved_binding_ids")))
+
+
+def _copy_authority_ready(scan: ProductScan, required_dialogues: int) -> bool:
+    """Copy authority is ready via V2 binding or enough legacy approved copy sets.
+
+    One PRODUCTION_VALID V2 binding authorizes the full dialogue/recipe grid for the
+    product. Legacy path still requires one approved copy_set per required dialogue.
+    """
+    if required_dialogues <= 0:
+        return True
+    if _eligible_binding_ids(scan):
+        return True
+    return len(_approved_copy_set_ids(scan)) >= required_dialogues
+
+
 def _canonical_required_asset_roles(scan: ProductScan) -> tuple[str, ...]:
     if scan.resolved is None:
         return ()
@@ -620,11 +638,22 @@ def _candidate_ready(scan: ProductScan) -> bool:
     if readiness is None or resolved is None or template is None:
         return False
     layers = _layer_map(readiness)
+    binding_ids = _eligible_binding_ids(scan)
+    # V2 binding is the production copy authority after Copy Register cutover.
+    # Do not require the legacy copy_set readiness layer when a binding is present.
     required = (
-        "product_truth",
-        "copy_set",
-        "creative_selection",
-        "treatment_template",
+        (
+            "product_truth",
+            "creative_selection",
+            "treatment_template",
+        )
+        if binding_ids
+        else (
+            "product_truth",
+            "copy_set",
+            "creative_selection",
+            "treatment_template",
+        )
     )
     logical_mode = str(scan.context.logical_mode or "").strip().upper()
     canonical_required_roles = _canonical_required_asset_roles(scan)
@@ -635,12 +664,7 @@ def _candidate_ready(scan: ProductScan) -> bool:
         and str(getattr(visual_layer, "state", "")) == "NOT_APPLICABLE"
     )
     required_dialogues = required_dialogue_count(scan.context.target_video_count)
-    binding_ids = _string_list(scan.copy_preview.get("eligible_approved_binding_ids"))
-    if binding_ids:
-        # One PRODUCTION_VALID V2 binding authorizes the full visual recipe grid.
-        copy_ready = True
-    else:
-        copy_ready = len(_approved_copy_set_ids(scan)) >= required_dialogues
+    copy_ready = _copy_authority_ready(scan, required_dialogues)
     return (
         all(str(getattr(layers.get(name), "state", "")) == "READY" for name in required)
         and visual_ready
@@ -679,8 +703,7 @@ def _task_decision(
     readiness = scan.readiness
     resolved = scan.resolved
     required_dialogues = required_dialogue_count(scan.context.target_video_count)
-    approved_copy_count = len(_approved_copy_set_ids(scan))
-    copy_ready = approved_copy_count >= required_dialogues
+    copy_ready = _copy_authority_ready(scan, required_dialogues)
     approved_treatment_count = len(resolved.treatment.approved_treatment_ids)
     treatment_ready = approved_treatment_count >= required_dialogues
     if task_type == "PRODUCT_TRUTH_REVIEW":
@@ -785,6 +808,10 @@ def _capacity_summary(
         scan.context.product_id: _approved_copy_set_ids(scan)
         for scan in scans
     }
+    approved_binding_by_product = {
+        scan.context.product_id: _eligible_binding_ids(scan)
+        for scan in scans
+    }
     approved_treatment_by_product = {
         scan.context.product_id: sorted(
             scan.resolved.treatment.approved_treatment_ids
@@ -798,6 +825,13 @@ def _capacity_summary(
             copy_set_id
             for copy_set_ids in approved_copy_by_product.values()
             for copy_set_id in copy_set_ids
+        }
+    )
+    approved_binding_ids = sorted(
+        {
+            binding_id
+            for binding_ids in approved_binding_by_product.values()
+            for binding_id in binding_ids
         }
     )
     approved_master_treatments = sorted(
@@ -817,8 +851,12 @@ def _capacity_summary(
     copy_shortfall = sum(
         max(
             0,
-            required_by_product[product_id]
-            - len(approved_copy_by_product[product_id]),
+            0
+            if approved_binding_by_product.get(product_id)
+            else (
+                required_by_product[product_id]
+                - len(approved_copy_by_product[product_id])
+            ),
         )
         for product_id in required_by_product
     )
@@ -840,6 +878,8 @@ def _capacity_summary(
         "required_dialogues_by_product": required_by_product,
         "approved_copy_set_count": len(approved_copy_ids),
         "approved_copy_set_ids": approved_copy_ids,
+        "approved_binding_count": len(approved_binding_ids),
+        "approved_binding_ids": approved_binding_ids,
         "required_copy_set_count": required_dialogues,
         "copy_shortfall": copy_shortfall,
         "p6_ready_product_count": len(p6_ready_products),
