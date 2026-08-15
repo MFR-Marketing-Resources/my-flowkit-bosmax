@@ -4,6 +4,7 @@ import type {
 	CohortProduct,
 	ProductVideoAllocation,
 } from "../../api/creativeProduction";
+import { resolveProductVisualPresentation } from "../../utils/productVisualPresentation";
 
 interface ProductAllocationPickerProps {
 	products: CohortProduct[];
@@ -16,24 +17,18 @@ interface ProductAllocationPickerProps {
 
 const MAX_VISIBLE_RESULTS = 40;
 
-function previewUrl(product: CohortProduct): string | null {
-	if (product.image_readiness_status === "IMAGE_CACHE_READY") {
-		return `/api/products/${encodeURIComponent(product.product_id)}/image`;
-	}
-	const remote = product.image_url.trim();
-	return /^https?:\/\//i.test(remote) ? remote : null;
-}
-
 function ProductThumbnail({ product }: { product: CohortProduct }) {
-	const source = previewUrl(product);
+	const visual = resolveProductVisualPresentation(product);
+	const source = visual.previewUrl;
+	const displayName = visual.displayName || product.product_name;
 	const [failedSource, setFailedSource] = useState<string | null>(null);
 	const imageFailed = Boolean(source && failedSource === source);
 	const fallbackLabel = imageFailed ? "Load failed" : "No image";
 	const accessibleLabel = imageFailed
-		? `Product image unavailable for ${product.product_name}`
+		? `Product image unavailable for ${displayName}`
 		: source
-			? `Product image for ${product.product_name}`
-			: `No approved product image for ${product.product_name}`;
+			? `Product image for ${displayName}`
+			: `No approved product image for ${displayName}`;
 	return (
 		<div
 			role="img"

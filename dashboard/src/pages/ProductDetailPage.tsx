@@ -27,6 +27,10 @@ import RecommendedScenePromptsCard from "../components/product-intelligence/Reco
 import RecommendedCameraPresetsCard from "../components/product-intelligence/RecommendedCameraPresetsCard";
 import CreativeHandoffPreview from "../components/product-intelligence/CreativeHandoffPreview";
 import ProductVisualReadinessPanel from "../components/product-registration/ProductVisualReadinessPanel";
+import {
+	resolveProductDisplayName,
+	resolveProductPreviewUrl,
+} from "../utils/productVisualPresentation";
 
 // One clean full-screen editor for ONE product. Opened from All Products →
 // "Open". Reuses the proven panels (PI review, creative setup multi-tick,
@@ -38,9 +42,17 @@ type DetailTab = "EDIT" | "INTELLIGENCE" | "CREATIVE" | "VISUAL";
 const EDIT_FIELDS: { key: string; label: string }[] = [
 	{ key: "product_short_name", label: "Short Name" },
 	{ key: "brand", label: "Brand" },
+	{ key: "raw_product_title", label: "Raw Title" },
 	{ key: "price", label: "Price (RM)" },
 	{ key: "commission_rate", label: "Commission Rate" },
-	{ key: "commission_amount", label: "Commission Amount (RM)" },
+	{ key: "tiktok_product_url", label: "TikTok Shop URL" },
+	{ key: "source_url", label: "FastMoss / Source URL" },
+	{ key: "target_user", label: "Target User" },
+	{ key: "target_scene", label: "Target Scene" },
+	{ key: "key_benefit", label: "Key Benefit" },
+	{ key: "trigger_id", label: "Trigger ID" },
+	{ key: "formula", label: "Formula" },
+	{ key: "claim_risk_level", label: "Claim Risk Level" },
 ];
 
 // System / taxonomy plumbing — set by the pipeline, rarely edited by hand.
@@ -66,8 +78,7 @@ const SOURCE_BADGE: Record<string, string> = {
 	IMPORTED: "bg-amber-500/20 text-amber-300",
 };
 
-const resolveThumb = (p: Product): string | null =>
-	p.image_url || p.rendered_img_src || p.image_analysis?.image_url || null;
+const resolveThumb = (p: Product): string | null => resolveProductPreviewUrl(p);
 
 const taxonomyKey = (category: string, subcategory: string, type: string) =>
 	category + "::" + subcategory + "::" + type;
@@ -400,7 +411,7 @@ export default function ProductDetailPage() {
 							)}
 							<div className="min-w-0 flex-1">
 								<h2 className="text-lg font-bold leading-snug text-white md:text-xl">
-									{product.product_display_name || product.raw_product_title}
+									{resolveProductDisplayName(product)}
 								</h2>
 								<div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
 									<span

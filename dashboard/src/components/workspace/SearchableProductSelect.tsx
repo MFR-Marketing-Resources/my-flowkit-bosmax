@@ -2,6 +2,10 @@ import { Check, ChevronDown, Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { searchProducts } from "../../api/products";
 import type { Product, WorkspacePackageReadinessItem } from "../../types";
+import {
+	resolveProductDisplayName,
+	resolveProductPreviewUrl,
+} from "../../utils/productVisualPresentation";
 import { VisualAssetPreview } from "./VisualAssetPicker";
 
 interface SearchableProductSelectProps {
@@ -34,24 +38,6 @@ function readinessToneClass(status: string): string {
 	if (status.startsWith("CHECKING"))
 		return "border-slate-600/40 bg-slate-800/60 text-slate-400";
 	return "border-rose-500/30 bg-rose-500/10 text-rose-200";
-}
-
-function browserSafeRemoteImageUrl(product: Product): string | null {
-	for (const candidate of [
-		product.image_url,
-		product.image_analysis?.image_url,
-	]) {
-		const value = String(candidate ?? "").trim();
-		if (/^https?:\/\//i.test(value)) return value;
-	}
-	return null;
-}
-
-function productPreviewUrl(product: Product): string | null {
-	if (product.image_readiness_status === "IMAGE_CACHE_READY") {
-		return `/api/products/${encodeURIComponent(product.id)}/image`;
-	}
-	return browserSafeRemoteImageUrl(product);
 }
 
 export default function SearchableProductSelect({
@@ -143,9 +129,9 @@ export default function SearchableProductSelect({
 				{selectedProduct ? (
 					<div className="w-16 shrink-0">
 						<VisualAssetPreview
-							previewUrl={productPreviewUrl(selectedProduct)}
+							previewUrl={resolveProductPreviewUrl(selectedProduct)}
 							subtitle={selectedProduct.id}
-							title={selectedProduct.raw_product_title}
+							title={resolveProductDisplayName(selectedProduct)}
 						/>
 					</div>
 				) : null}
@@ -158,7 +144,7 @@ export default function SearchableProductSelect({
 						{selectedProduct ? (
 							<>
 								<span className="bosmax-wrap-safe block text-sm font-bold text-slate-200">
-									{selectedProduct.raw_product_title}
+									{resolveProductDisplayName(selectedProduct)}
 								</span>
 								<div className="mt-2 flex flex-wrap items-center gap-2">
 									<span className="inline-flex rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.18em] text-blue-200">
@@ -242,6 +228,8 @@ export default function SearchableProductSelect({
 								);
 								const toneClass = readinessToneClass(status);
 								const referenceOnly = isReferenceOnly(product);
+								const displayName = resolveProductDisplayName(product);
+								const previewUrl = resolveProductPreviewUrl(product);
 								return (
 									<div
 										key={product.id}
@@ -253,9 +241,9 @@ export default function SearchableProductSelect({
 									>
 										<div className="w-16 shrink-0">
 											<VisualAssetPreview
-												previewUrl={productPreviewUrl(product)}
+												previewUrl={previewUrl}
 												subtitle={product.id}
-												title={product.raw_product_title}
+												title={displayName}
 											/>
 										</div>
 										<button
@@ -284,7 +272,7 @@ export default function SearchableProductSelect({
 										>
 											<span className="min-w-0 flex-1">
 												<span className="bosmax-wrap-safe block">
-													{product.raw_product_title}
+													{displayName}
 												</span>
 												<span className="mt-1 flex flex-wrap items-center gap-1.5">
 													<span className="inline-flex rounded-full border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.14em] text-blue-200">

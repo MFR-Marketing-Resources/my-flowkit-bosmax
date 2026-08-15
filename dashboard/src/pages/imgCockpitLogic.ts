@@ -6,6 +6,7 @@
 // helpers are the frontend mirror.
 
 import { productSubjectAsset } from "../utils/productSubjectAsset";
+import { resolveProductDisplayName } from "../utils/productVisualPresentation";
 import type { ImgAssetLane, StartImgGenerationInput } from "../api/imgFactory";
 import type { CreativeAsset, Product, UploadedAsset } from "../types";
 
@@ -83,7 +84,7 @@ export function resolveProductReferenceAsset(
 	if (product.local_image_path || product.media_id) {
 		return {
 			mediaId: product.media_id ?? null,
-			fileName: product.product_display_name || product.raw_product_title,
+			fileName: resolveProductDisplayName(product),
 			label: "Product cached image",
 			localFilePath: product.local_image_path ?? undefined,
 			assetSource: "PRODUCT_IMAGE_URL",

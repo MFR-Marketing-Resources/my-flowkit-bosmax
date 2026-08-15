@@ -15,8 +15,11 @@ const mockedSearch = vi.mocked(searchProducts);
 const baseProduct = (over: Partial<Product> = {}): Product =>
 	({
 		id: "p-local-1",
-		raw_product_title: "Local Catalog Product",
-		product_display_name: "Local Catalog Product",
+		raw_product_title: over.raw_product_title ?? "Local Catalog Product",
+		product_display_name:
+			over.product_display_name ??
+			over.raw_product_title ??
+			"Local Catalog Product",
 		source: "MANUAL",
 		reference_only: false,
 		image_url: "https://example.test/product.jpg",
@@ -180,12 +183,22 @@ describe("SearchableProductSelect — server product search", () => {
 		).toHaveAttribute("src", "https://example.test/analysis-product.jpg");
 	});
 
-	it("keeps the fallback when no browser-safe or cached image exists", () => {
+	it("displays OFFICIAL cutout preview when visual_readiness has approved official visual", () => {
 		const product = baseProduct({
-			image_url: "UNKNOWN",
-			image_analysis: undefined,
-			image_readiness_status: "IMAGE_NOT_AVAILABLE",
-			local_image_path: null,
+			id: "prod-official-99",
+			product_display_name: "Official Minyak Warisan",
+			image_url: "https://example.test/source-never-show.jpg",
+			visual_readiness: {
+				product_id: "prod-official-99",
+				current_system_visual: {
+					status: "OFFICIAL",
+					card: "MANUAL_CUTOUT",
+					label: "Manual / Canva Cutout",
+				},
+				active_visual_source: "APPROVED_MANUAL_CANONICAL_CUTOUT",
+				active_cutout_preview_url: "/api/product-visual-onboarding/prod-official-99/cutout/preview/active",
+				original_preview_url: "/api/product-visual-onboarding/prod-official-99/cutout/preview/original",
+			} as unknown as Product["visual_readiness"],
 		});
 		render(
 			<SearchableProductSelect
@@ -195,8 +208,46 @@ describe("SearchableProductSelect — server product search", () => {
 			/>,
 		);
 
-		expect(screen.getByTestId("visual-asset-fallback")).toHaveTextContent(
-			"Preview unavailable",
+		expect(
+			screen.getByRole("img", { name: "Preview of Official Minyak Warisan" }),
+		).toHaveAttribute(
+			"src",
+			"/api/product-visual-onboarding/prod-official-99/cutout/preview/active",
+		);
+		expect(screen.getByText("Official Minyak Warisan")).toBeInTheDocument();
+	});
+
+	it("falls back to original preview when candidate is pending and not official", () => {
+		const product = baseProduct({
+			id: "prod-pending-88",
+			product_display_name: "Pending Minyak Warisan",
+			image_url: "https://example.test/source-fallback.jpg",
+			visual_readiness: {
+				product_id: "prod-pending-88",
+				cutout_status: "PENDING_REVIEW",
+				current_system_visual: {
+					status: "ORIGINAL_FALLBACK",
+					card: "ORIGINAL_SOURCE",
+					label: "Original Source",
+				},
+				active_visual_source: "SAME_PRODUCT_TRUSTED_SOURCE",
+				manual_cutout_preview_url: "/api/product-visual-onboarding/prod-pending-88/cutout/preview/manual",
+				original_preview_url: "/api/product-visual-onboarding/prod-pending-88/cutout/preview/original",
+			} as unknown as Product["visual_readiness"],
+		});
+		render(
+			<SearchableProductSelect
+				products={[product]}
+				selectedProduct={product}
+				onSelect={vi.fn()}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("img", { name: "Preview of Pending Minyak Warisan" }),
+		).toHaveAttribute(
+			"src",
+			"/api/product-visual-onboarding/prod-pending-88/cutout/preview/original",
 		);
 	});
 });
