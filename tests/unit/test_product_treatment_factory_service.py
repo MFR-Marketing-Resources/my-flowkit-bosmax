@@ -57,6 +57,7 @@ def _scan(
     product_id: str,
     *,
     approved_copy: bool = False,
+    approved_binding: bool = False,
     approved_treatment: bool = False,
     error_code: str | None = None,
     logical_mode: str = "HYBRID",
@@ -178,12 +179,19 @@ def _scan(
         profile=profile,
         requirements=[],
     )
+    preview: dict = {"produced": 0 if (approved_copy or approved_binding) else 1}
+    if approved_binding:
+        preview["eligible_approved_binding_ids"] = [
+            "binding:bpv2_test:1:PRODUCTION_STUDIO_P6:approval:test"
+        ]
+        preview["eligible_approved_copy_set_ids"] = []
+        preview["copy_authority"] = "COPY_REGISTER_V2"
     return service.ProductScan(
         context=context,
         resolved=resolved,
         readiness=readiness,
         template=template,
-        copy_preview={"produced": 0 if approved_copy else 1},
+        copy_preview=preview,
         treatments=[],
         error_code=None,
     )
@@ -831,3 +839,84 @@ def test_t2v_factory_request_allows_zero_bindings_when_no_roles_are_required() -
     assert request.compatibility_profile.logical_mode == "T2V"
     assert request.compatibility_profile.required_asset_roles == []
     assert request.asset_bindings == []
+
+
+@pytest.mark.asyncio
+async def test_v2_binding_makes_treatment_candidate_ready_without_legacy_copy_set(monkeypatch):
+    """Factory must materialize DRAFT from V2 binding even when copy_set layer is BLOCKED."""
+
+    async def scan_product(context):
+        scan = _scan(context.product_id, approved_binding=True, approved_copy=False)
+        assert scan.readiness is not None
+        layers = []
+        for layer in scan.readiness.readiness_layers:
+            if layer.layer == "copy_set":
+                layers.append(layer.model_copy(update={"state": "BLOCKED"}))
+            else:
+                layers.append(layer)
+        readiness = scan.readiness.model_copy(update={"readiness_layers": layers})
+        context_updated = scan.context.model_copy(update={"target_video_count": 1})
+        return replace(scan, readiness=readiness, context=context_updated)
+
+    created_requests = []
+
+    async def list_treatments(**_kwargs):
+        return []
+
+    async def create_treatment(request):
+        created_requests.append(request)
+        body = request.model_dump(mode="json")
+        return {
+            **body,
+            "treatment_id": "draft-from-v2-binding",
+            "treatment_sha256": "9" * 64,
+            "status": "DRAFT",
+            "copy_set_id": None,
+            "copy_execution_binding_id_v2": body.get("copy_execution_binding_id_v2"),
+            "choreography_id": "traditional_herbal_oil.v0",
+        }
+
+    monkeypatch.setattr(service, "_scan_product", scan_product)
+    monkeypatch.setattr(service.creative_treatment_service, "list_treatments", list_treatments)
+    monkeypatch.setattr(service.creative_treatment_service, "create_treatment", create_treatment)
+
+    plan = await service.create_plan(
+        CreateFactoryPlanRequest(
+            products=[_context("product-v2")],
+            created_by="factory-v2-test",
+            provider_calls_enabled=False,
+            media_generation_enabled=False,
+        )
+    )
+    copy_review = next(task for task in plan.tasks if task.task_type == "COPY_REVIEW")
+    composition = next(task for task in plan.tasks if task.task_type == "COPY_COMPOSITION")
+    candidate = next(task for task in plan.tasks if task.task_type == "TREATMENT_CANDIDATE")
+
+    assert copy_review.status == "SATISFIED"
+    assert composition.status == "SATISFIED"
+    assert candidate.status == "READY"
+    assert candidate.blocker_code is None
+    assert plan.capacity_summary["copy_shortfall"] == 0
+    assert plan.capacity_summary["approved_binding_count"] == 1
+    assert plan.capacity_summary["approved_copy_set_count"] == 0
+
+    prepared = await service.prepare_plan(
+        plan.plan_id,
+        PrepareFactoryPlanRequest(
+            actor_id="factory-v2-test",
+            materialize_copy_composition=False,
+            materialize_treatment_candidates=True,
+            provider_calls_enabled=False,
+            media_generation_enabled=False,
+        ),
+    )
+    candidate = next(task for task in prepared.tasks if task.task_type == "TREATMENT_CANDIDATE")
+    assert candidate.status == "REVIEW_REQUIRED"
+    assert candidate.treatment_id == "draft-from-v2-binding"
+    assert candidate.result["status"] == "DRAFT"
+    assert candidate.result.get("copy_set_id") in (None, "")
+    assert created_requests[0].copy_set_id in (None, "")
+    assert created_requests[0].copy_execution_binding_id_v2 == (
+        "binding:bpv2_test:1:PRODUCTION_STUDIO_P6:approval:test"
+    )
+
