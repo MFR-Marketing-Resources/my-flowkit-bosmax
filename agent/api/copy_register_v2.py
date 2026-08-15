@@ -93,6 +93,13 @@ async def get_lanes():
     return {"version": "2", "items": await service.list_binding_matrix()}
 
 
+@router.get("/provider-status")
+async def get_provider_status():
+    """Secret-free status for the existing text_assist lane."""
+
+    return service.get_text_assist_provider_status()
+
+
 @router.get("/product/{product_id}/truth")
 async def get_truth(product_id: str):
     try:
@@ -129,7 +136,12 @@ async def generate_blueprint(request: GenerateBlueprintRequest):
 async def list_product_blueprints(product_id: str):
     try:
         items = await service.list_blueprints(product_id)
-        return {"product_id": product_id, "items": [_blueprint_payload(item) for item in items], "legacy_copy_rows_read": 0}
+        return {
+            "product_id": product_id,
+            "items": [_blueprint_payload(item) for item in items],
+            "activation": await service.get_activation_status(product_id),
+            "legacy_copy_rows_read": 0,
+        }
     except service.CopyRegisterV2Error as error:
         _raise(error)
 
