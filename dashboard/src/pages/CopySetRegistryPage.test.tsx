@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import CopySetRegistryPage from "./CopySetRegistryPage";
 
@@ -11,6 +11,7 @@ vi.mock("../components/workspace/SearchableProductSelect", () => ({
 vi.mock("../api/products", () => ({ fetchProductCatalog: vi.fn() }));
 vi.mock("../api/copyRegisterV2", () => ({
 	fetchCopyRegisterFormulas: vi.fn(),
+	fetchCopyRegisterProviderStatus: vi.fn(),
 	fetchCopyRegisterTruth: vi.fn(),
 	generateCopyRegisterAngles: vi.fn(),
 	generateFormulaCopyBlueprint: vi.fn(),
@@ -25,6 +26,7 @@ import {
 	approveFormulaBlueprint,
 	activateFormulaBlueprint,
 	fetchCopyRegisterFormulas,
+	fetchCopyRegisterProviderStatus,
 	fetchCopyRegisterTruth,
 	generateCopyRegisterAngles,
 	generateFormulaCopyBlueprint,
@@ -33,6 +35,7 @@ import {
 
 const mockedCatalog = vi.mocked(fetchProductCatalog);
 const mockedFormulas = vi.mocked(fetchCopyRegisterFormulas);
+const mockedProviderStatus = vi.mocked(fetchCopyRegisterProviderStatus);
 const mockedTruth = vi.mocked(fetchCopyRegisterTruth);
 const mockedAngles = vi.mocked(generateCopyRegisterAngles);
 const mockedGenerate = vi.mocked(generateFormulaCopyBlueprint);
@@ -130,7 +133,10 @@ function renderPage() {
 }
 
 describe("CopySetRegistryPage V2 cutover", () => {
+	afterEach(cleanup);
+
 	beforeEach(() => {
+		vi.clearAllMocks();
 		mockedCatalog.mockResolvedValue({ items: [product] } as never);
 		mockedFormulas.mockResolvedValue({
 			formulas: [{
@@ -144,8 +150,27 @@ describe("CopySetRegistryPage V2 cutover", () => {
 				unsuitable_for: [],
 			}],
 		});
+		mockedProviderStatus.mockResolvedValue({
+			lane: "text_assist",
+			status: "READY",
+			configured: true,
+			provider_id: "synthetic-test-provider",
+			model_id: "synthetic-test-model",
+			execution_enabled: true,
+			provider_calls: 0,
+		});
 		mockedTruth.mockResolvedValue(truth);
-		mockedList.mockResolvedValue({ product_id: "p1", items: [] });
+		mockedList.mockResolvedValue({
+			product_id: "p1",
+			items: [],
+			activation: {
+				active_blueprint_id: null,
+				active_revision: null,
+				active_lane_count: 0,
+				required_lane_count: 8,
+				activated_at: null,
+			},
+		});
 		mockedAngles.mockResolvedValue({
 			angles: [{ angle_id: "angle:test:0", definition: "formula ringan", evidence_fact_ids: [fact.fact_id], source: "APPROVED_PRODUCT_TRUTH" }],
 			facts: [fact],
@@ -191,5 +216,64 @@ describe("CopySetRegistryPage V2 cutover", () => {
 		fireEvent.click(await screen.findByTestId("activate-v2-blueprint"));
 		await waitFor(() => expect(mockedActivate).toHaveBeenCalledWith("bpv2_test"));
 		expect(await screen.findByText("ACTIVE · 8 REQUIRED LANES")).toBeInTheDocument();
+	});
+
+	it("shows exact fail-closed reasons and never enables authoring without text_assist", async () => {
+		mockedProviderStatus.mockResolvedValue({
+			lane: "text_assist",
+			status: "NOT_CONFIGURED",
+			configured: false,
+			provider_id: null,
+			model_id: null,
+			execution_enabled: false,
+			provider_calls: 0,
+		});
+		renderPage();
+		await screen.findByTestId("product-truth-proof");
+
+		expect(screen.getByTestId("generate-angle-disabled-reasons")).toHaveTextContent("formula required");
+		expect(screen.getByTestId("generate-angle-disabled-reasons")).toHaveTextContent("Text Assist provider not configured");
+		expect(screen.getByTestId("generate-blueprint-disabled-reasons")).toHaveTextContent("angle required");
+		expect(screen.getByTestId("generate-blueprint-disabled-reasons")).toHaveTextContent("select 1–5 evidence facts");
+		expect(screen.getByText("Requires a selected angle and at least one approved evidence fact.")).toBeInTheDocument();
+		expect(screen.getByText("This step makes one additional text-assist call; it does not spend video/image credits.")).toBeInTheDocument();
+
+		fireEvent.change(screen.getByTestId("v2-formula-picker"), { target: { value: "PAS" } });
+		expect(screen.getByTestId("generate-angle-options")).toBeDisabled();
+		expect(screen.getByTestId("generate-new-formula-copy")).toBeDisabled();
+	});
+
+	it("names Product Truth as the blocking authority when it is not ready", async () => {
+		mockedTruth.mockResolvedValue({
+			...truth,
+			ready_for_copy: false,
+			blockers: ["PRODUCT_TRUTH_NOT_APPROVED"],
+		});
+		renderPage();
+		await screen.findByTestId("product-truth-proof");
+
+		expect(screen.getByTestId("generate-angle-disabled-reasons")).toHaveTextContent("Product Truth not ready");
+		expect(screen.getByTestId("generate-blueprint-disabled-reasons")).toHaveTextContent("Product Truth not ready");
+		expect(screen.getByTestId("generate-angle-options")).toBeDisabled();
+		expect(screen.getByTestId("generate-new-formula-copy")).toBeDisabled();
+	});
+
+	it("hydrates the persisted all-lane activation state after reload", async () => {
+		mockedList.mockResolvedValue({
+			product_id: "p1",
+			items: [blueprint("PRODUCTION_VALID")],
+			activation: {
+				active_blueprint_id: "bpv2_test",
+				active_revision: 1,
+				active_lane_count: 8,
+				required_lane_count: 8,
+				activated_at: "2026-08-15T00:00:00Z",
+			},
+		});
+		renderPage();
+
+		expect(await screen.findByText("ACTIVE · 8 REQUIRED LANES")).toBeInTheDocument();
+		expect(screen.getByTestId("activate-v2-blueprint")).toBeDisabled();
+		expect(mockedActivate).not.toHaveBeenCalled();
 	});
 });

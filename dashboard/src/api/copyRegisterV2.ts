@@ -118,8 +118,30 @@ export interface CopyExecutionBindingV2Record {
 	bound_at: string;
 }
 
+export interface TextAssistLaneStatusV2 {
+	lane: "text_assist";
+	status: string;
+	configured: boolean;
+	provider_id?: string | null;
+	model_id?: string | null;
+	execution_enabled: boolean;
+	provider_calls: 0;
+}
+
+export interface CopyRegisterActivationStatusV2 {
+	active_blueprint_id: string | null;
+	active_revision: number | null;
+	active_lane_count: number;
+	required_lane_count: number;
+	activated_at: string | null;
+}
+
 export async function fetchCopyRegisterFormulas(): Promise<{ formulas: CopyFormulaV2[] }> {
 	return getAPI<{ formulas: CopyFormulaV2[] }>("/api/copy-register/v2/formulas");
+}
+
+export async function fetchCopyRegisterProviderStatus(): Promise<TextAssistLaneStatusV2> {
+	return getAPI<TextAssistLaneStatusV2>("/api/copy-register/v2/provider-status");
 }
 
 export async function fetchCopyRegisterTruth(productId: string): Promise<CopyTruthProofV2> {
@@ -149,8 +171,13 @@ export async function generateCopyRegisterAngles(input: {
 export async function listCopyRegisterBlueprints(productId: string): Promise<{
 	product_id: string;
 	items: CopyBlueprintV2Record[];
+	activation: CopyRegisterActivationStatusV2;
 }> {
-	return getAPI<{ product_id: string; items: CopyBlueprintV2Record[] }>(
+	return getAPI<{
+		product_id: string;
+		items: CopyBlueprintV2Record[];
+		activation: CopyRegisterActivationStatusV2;
+	}>(
 		`/api/copy-register/v2/product/${encodeURIComponent(productId)}/blueprints`,
 	);
 }

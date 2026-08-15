@@ -7,6 +7,8 @@
     "test:f2v-asset-picker-modal": "node scripts/test-f2v-asset-picker-modal.js",
     "test:f2v-cdp-file-chooser-poc": "node scripts/test-f2v-cdp-file-chooser-poc.js",
     "test:f2v-playwright-persistent-context": "node scripts/test-f2v-playwright-persistent-context.js",
+    "test:copy-register-v2-browser": "node scripts/validate-copy-register-v2-browser.mjs",
+    "test:copy-register-v2-lanes-browser": "node scripts/validate-copy-register-v2-lanes-browser.mjs",
     "test:selector-registry": "node scripts/test-flow-selector-registry.js",
     "stamp:extension": "node scripts/stamp-extension-build.mjs"
   },

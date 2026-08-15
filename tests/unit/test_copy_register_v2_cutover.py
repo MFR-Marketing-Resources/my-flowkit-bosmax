@@ -336,6 +336,12 @@ async def test_activation_atomically_replaces_all_eight_required_lane_authoritie
     assert len(second_bindings) == 8
     assert all(binding.revision == 2 for binding in second_bindings)
 
+    activation = await service.get_activation_status(product["id"])
+    assert activation["active_blueprint_id"] == second.blueprint_id
+    assert activation["active_revision"] == 2
+    assert activation["active_lane_count"] == 8
+    assert activation["required_lane_count"] == 8
+
     db = await get_db()
     cursor = await db.execute(
         """

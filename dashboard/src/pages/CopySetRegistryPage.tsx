@@ -5,6 +5,7 @@ import {
 	approveFormulaBlueprint,
 	activateFormulaBlueprint,
 	fetchCopyRegisterFormulas,
+	fetchCopyRegisterProviderStatus,
 	fetchCopyRegisterTruth,
 	generateCopyRegisterAngles,
 	generateFormulaCopyBlueprint,
@@ -14,6 +15,7 @@ import {
 	type CopyBlueprintV2Record,
 	type CopyFormulaV2,
 	type CopyTruthProofV2,
+	type TextAssistLaneStatusV2,
 } from "../api/copyRegisterV2";
 import { fetchProductCatalog } from "../api/products";
 import { Badge, type BadgeTone, FormField, HelperText, Section } from "../components/ui";
@@ -32,7 +34,32 @@ const EMPTY_APPROVAL_CHECKS = {
 };
 
 function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : "Copy Register V2 request failed.";
+	const message = error instanceof Error ? error.message : "Copy Register V2 request failed.";
+	const jsonStart = message.indexOf("{");
+	if (jsonStart < 0) return message;
+	try {
+		const payload = JSON.parse(message.slice(jsonStart));
+		const detail = payload?.detail;
+		if (detail?.error && detail?.detail) return `${detail.error}: ${detail.detail}`;
+	} catch {
+		// Preserve the original transport error when the body is not JSON.
+	}
+	return message;
+}
+
+function DisabledReasons({
+	reasons,
+	testId,
+}: {
+	reasons: string[];
+	testId: string;
+}) {
+	if (!reasons.length) return null;
+	return (
+		<div data-testid={testId}>
+			<HelperText tone="warn">Disabled: {reasons.join(" · ")}</HelperText>
+		</div>
+	);
 }
 
 function truthTone(truth: CopyTruthProofV2 | null): BadgeTone {
@@ -148,6 +175,7 @@ export default function CopySetRegistryPage() {
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [truth, setTruth] = useState<CopyTruthProofV2 | null>(null);
 	const [formulas, setFormulas] = useState<CopyFormulaV2[]>([]);
+	const [textAssistStatus, setTextAssistStatus] = useState<TextAssistLaneStatusV2 | null>(null);
 	const [formulaId, setFormulaId] = useState("");
 	const [angles, setAngles] = useState<CopyAngleOptionV2[]>([]);
 	const [selectedAngleId, setSelectedAngleId] = useState("");
@@ -168,6 +196,21 @@ export default function CopySetRegistryPage() {
 	const latestBlueprint = blueprints[0] ?? null;
 	const reviewableBlueprint = blueprints.find((item) => item.status !== "PRODUCTION_VALID") ?? null;
 	const approvalReady = Object.values(approvalChecks).every(Boolean);
+	const textAssistReady = textAssistStatus?.configured === true && textAssistStatus.status === "READY";
+	const angleDisabledReasons = [
+		...(!truth?.ready_for_copy ? ["Product Truth not ready"] : []),
+		...(!formulaId ? ["formula required"] : []),
+		...(!textAssistReady ? ["Text Assist provider not configured"] : []),
+	];
+	const blueprintDisabledReasons = [
+		...(!truth?.ready_for_copy ? ["Product Truth not ready"] : []),
+		...(!formulaId ? ["formula required"] : []),
+		...(!selectedAngle ? ["angle required"] : []),
+		...(selectedFactIds.length < 1 || selectedFactIds.length > 5
+			? ["select 1–5 evidence facts"]
+			: []),
+		...(!textAssistReady ? ["Text Assist provider not configured"] : []),
+	];
 
 	useEffect(() => {
 		void fetchProductCatalog(500)
@@ -176,6 +219,12 @@ export default function CopySetRegistryPage() {
 		void fetchCopyRegisterFormulas()
 			.then((response) => setFormulas(response.formulas ?? []))
 			.catch((reason) => setError(errorMessage(reason)));
+		void fetchCopyRegisterProviderStatus()
+			.then(setTextAssistStatus)
+			.catch((reason) => {
+				setTextAssistStatus(null);
+				setError(errorMessage(reason));
+			});
 	}, []);
 
 	useEffect(() => {
@@ -204,6 +253,7 @@ export default function CopySetRegistryPage() {
 				setTruth(truthResponse);
 				setFacts(truthResponse.facts);
 				setBlueprints(blueprintResponse.items ?? []);
+				setActivatedBlueprintId(blueprintResponse.activation?.active_blueprint_id ?? "");
 			})
 			.catch((reason) => setError(errorMessage(reason)));
 	}, [selectedProduct]);
@@ -399,8 +449,10 @@ export default function CopySetRegistryPage() {
 						</div>
 					</Section>
 
-					<Section title="4. Generate grounded angle options" helper="This is an explicit authoring action; options are derived from Product Truth facts.">
-						<button type="button" data-testid="generate-angle-options" disabled={busy || !formulaId || !truth?.ready_for_copy} onClick={() => void handleGenerateAngles()} className="rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{busy ? "Generating…" : "Generate Angle Options"}</button>
+					<Section title="4. Generate grounded angle options" helper="This is an explicit authoring action; options are derived from Product Truth facts." action={<Badge tone={textAssistReady ? "success" : "warn"}>Text Assist · {textAssistStatus?.status ?? "UNAVAILABLE"}</Badge>}>
+						<button type="button" data-testid="generate-angle-options" disabled={busy || angleDisabledReasons.length > 0} onClick={() => void handleGenerateAngles()} className="rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{busy ? "Generating…" : "Generate Angle Options"}</button>
+						<DisabledReasons reasons={angleDisabledReasons} testId="generate-angle-disabled-reasons" />
+						{textAssistReady ? <HelperText>Provider: {textAssistStatus?.provider_id ?? "configured"} · model: {textAssistStatus?.model_id ?? "configured"}. No API key is displayed.</HelperText> : null}
 						{angles.length ? <div className="mt-4 grid gap-2 md:grid-cols-2" data-testid="angle-options">{angles.map((angle) => <label key={angle.angle_id} className={`cursor-pointer rounded-lg border p-3 text-sm ${selectedAngleId === angle.angle_id ? "border-blue-400 bg-blue-500/10 text-blue-100" : "border-slate-800 text-slate-300"}`}><input type="radio" name="v2-angle" value={angle.angle_id} checked={selectedAngleId === angle.angle_id} onChange={() => setSelectedAngleId(angle.angle_id)} className="mr-2" />{angle.definition}<span className="mt-1 block text-[10px] text-slate-500">{angle.evidence_fact_ids.join(", ")}</span></label>)}</div> : <p className="mt-3 text-xs text-slate-500">Press the button after selecting a formula.</p>}
 					</Section>
 
@@ -412,9 +464,10 @@ export default function CopySetRegistryPage() {
 						<p className="mt-3 text-xs text-slate-500">Selected {selectedFactIds.length}/5</p>
 					</Section>
 
-					<Section title="6. Generate the complete formula blueprint" helper="One coherent ordered blueprint; this creates a new V2 ID and only a DRAFT.">
-						<button type="button" data-testid="generate-new-formula-copy" disabled={busy || !truth?.ready_for_copy || !formulaId || !selectedAngle || selectedFactIds.length === 0} onClick={() => void handleGenerateBlueprint()} className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40">{busy ? "Generating…" : "GENERATE NEW FORMULA COPY"}</button>
-						<HelperText className="text-blue-300/80">One configured text-assist call runs only when you press this button. No historical CopySet is read or reused, and no video/image credit is spent.</HelperText>
+					<Section title="6. Generate the complete formula blueprint" helper="Requires a selected angle and at least one approved evidence fact.">
+						<button type="button" data-testid="generate-new-formula-copy" disabled={busy || blueprintDisabledReasons.length > 0} onClick={() => void handleGenerateBlueprint()} className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40">{busy ? "Generating…" : "GENERATE NEW FORMULA COPY"}</button>
+						<DisabledReasons reasons={blueprintDisabledReasons} testId="generate-blueprint-disabled-reasons" />
+						<HelperText className="text-blue-300/80">This step makes one additional text-assist call; it does not spend video/image credits.</HelperText>
 					</Section>
 
 					{latestBlueprint ? <Section title="7. Review, approve, and activate" helper="Approved text is immutable. Activation atomically makes this blueprint authoritative for all required lanes."><BlueprintCard blueprint={latestBlueprint} onRegenerate={(stageKey) => void handleRegenerate(stageKey)} busy={busy} />{reviewableBlueprint ? <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4" data-testid="v2-approval-panel"><div className="flex items-center gap-2 text-sm font-semibold text-amber-100"><ShieldCheck size={16} />Explicit human approval</div><FormField label="Reviewer" className="mt-3 max-w-sm"><input className={INPUT_CLASS} value={reviewer} onChange={(event) => setReviewer(event.target.value)} /></FormField><div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">{[

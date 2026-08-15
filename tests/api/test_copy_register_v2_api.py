@@ -39,6 +39,60 @@ def test_formula_catalog_has_no_default_or_hso_fallback():
     assert all(item["formula_version"] for item in body["formulas"])
 
 
+def test_text_assist_status_is_secret_free_and_zero_call(monkeypatch):
+    monkeypatch.setattr(
+        service.ai_provider,
+        "provider_status",
+        lambda: {
+            "lane": "text_assist",
+            "configured": True,
+            "provider_id": "synthetic-test-provider",
+            "model_id": "synthetic-test-model",
+            "execution_enabled": True,
+        },
+    )
+    response = _client().get("/api/copy-register/v2/provider-status")
+    assert response.status_code == 200
+    assert response.json() == {
+        "lane": "text_assist",
+        "status": "READY",
+        "configured": True,
+        "provider_id": "synthetic-test-provider",
+        "model_id": "synthetic-test-model",
+        "execution_enabled": True,
+        "provider_calls": 0,
+    }
+    assert not {"api_key", "masked_key", "key_present"} & response.json().keys()
+
+
+def test_blueprint_list_includes_persisted_activation_state(monkeypatch):
+    async def fake_list(_product_id):
+        return [_blueprint()]
+
+    async def fake_activation(_product_id):
+        return {
+            "active_blueprint_id": "bp-001",
+            "active_revision": 1,
+            "active_lane_count": 8,
+            "required_lane_count": 8,
+            "activated_at": "2026-08-15T00:00:00Z",
+        }
+
+    monkeypatch.setattr(service, "list_blueprints", fake_list)
+    monkeypatch.setattr(service, "get_activation_status", fake_activation)
+    response = _client().get("/api/copy-register/v2/product/product-1/blueprints")
+    assert response.status_code == 200
+    expected = {
+        "active_blueprint_id": "bp-001",
+        "active_revision": 1,
+        "active_lane_count": 8,
+        "required_lane_count": 8,
+        "activated_at": "2026-08-15T00:00:00Z",
+    }
+    assert response.json()["activation"] == expected
+    assert response.json()["legacy_copy_rows_read"] == 0
+
+
 def test_generate_unknown_formula_fails_closed_before_product_lookup():
     response = _client().post(
         "/api/copy-register/v2/blueprints/generate",

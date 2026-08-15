@@ -1095,6 +1095,10 @@ domains:
       # COPYWRITING_SET_REGISTRY: product-scoped AI copy-set registry + CRUD
       - dashboard/src/pages/CopySetRegistryPage.tsx
       - dashboard/src/pages/CopySetRegistryPage.test.tsx
+      # COPY_REGISTER_V2_FORENSIC: real HTTP/SQLite and browser workflow proof.
+      - tests/integration/test_copy_register_v2_workflow_http.py
+      - scripts/validate-copy-register-v2-browser.mjs
+      - scripts/validate-copy-register-v2-lanes-browser.mjs
       # Copy Components self-serve panel (author=tokens, compose=free, add-angle)
       - dashboard/src/api/copyComponents.ts
       - dashboard/src/components/CopyComponentsPanel.tsx

@@ -55,6 +55,7 @@ from agent.services.copy_blueprint_v2_service import (
     validate_copy_blueprint_v2,
 )
 from agent.services import ai_copy_provider_adapter as ai_provider
+from agent.services.ai_provider_settings_service import summarize_provider_settings
 from agent.services.product_intelligence_claim_safety_service import (
     evaluate_claim_safety,
 )
@@ -1253,6 +1254,85 @@ async def list_blueprints(product_id: str) -> list[CopyBlueprintV2]:
     return [_row_to_blueprint(row) for row in await cursor.fetchall()]
 
 
+def get_text_assist_provider_status() -> dict[str, Any]:
+    """Return the existing text-assist lane state without provider secrets."""
+
+    adapter_status = ai_provider.provider_status()
+    registry_status: dict[str, Any] = {}
+    try:
+        registry_status = next(
+            (
+                item
+                for item in summarize_provider_settings().get("lanes", [])
+                if item.get("lane") == "text_assist"
+            ),
+            {},
+        )
+    except Exception:  # noqa: BLE001 - status reads must fail closed
+        registry_status = {}
+
+    configured = bool(adapter_status.get("configured"))
+    return {
+        "lane": "text_assist",
+        "status": (
+            "READY"
+            if configured
+            else str(registry_status.get("status") or "NOT_CONFIGURED")
+        ),
+        "configured": configured,
+        "provider_id": (
+            adapter_status.get("provider_id") or registry_status.get("provider_id")
+        ),
+        "model_id": adapter_status.get("model_id") or registry_status.get("model_id"),
+        "execution_enabled": bool(adapter_status.get("execution_enabled")),
+        "provider_calls": 0,
+    }
+
+
+async def get_activation_status(product_id: str) -> dict[str, Any]:
+    """Hydrate the all-required-lane activation state after a page reload."""
+
+    required_lanes = tuple(
+        item["lane_id"]
+        for item in producer_consumer_matrix()
+        if item["copy_policy"] == "REQUIRED"
+    )
+    placeholders = ",".join("?" for _ in required_lanes)
+    db = await get_db()
+    cursor = await db.execute(
+        f"""
+        SELECT binding.blueprint_id, binding.revision,
+               COUNT(DISTINCT authority.lane) AS active_lane_count,
+               MAX(authority.activated_at) AS activated_at
+        FROM copy_execution_authority_v2 authority
+        JOIN copy_execution_binding_v2 binding
+          ON binding.binding_id = authority.binding_id
+         AND binding.product_id = authority.product_id
+         AND binding.lane = authority.lane
+        JOIN copy_blueprint_v2 blueprint
+          ON blueprint.blueprint_id = binding.blueprint_id
+         AND blueprint.revision = binding.revision
+        WHERE authority.product_id = ?
+          AND authority.lane IN ({placeholders})
+          AND binding.binding_status = 'BOUND'
+          AND blueprint.status = 'PRODUCTION_VALID'
+        GROUP BY binding.blueprint_id, binding.revision
+        HAVING COUNT(DISTINCT authority.lane) = ?
+        ORDER BY activated_at DESC
+        LIMIT 1
+        """,
+        (product_id, *required_lanes, len(required_lanes)),
+    )
+    row = await cursor.fetchone()
+    return {
+        "active_blueprint_id": row["blueprint_id"] if row else None,
+        "active_revision": int(row["revision"]) if row else None,
+        "active_lane_count": int(row["active_lane_count"]) if row else 0,
+        "required_lane_count": len(required_lanes),
+        "activated_at": row["activated_at"] if row else None,
+    }
+
+
 async def get_blueprint(blueprint_id: str, revision: int | None = None) -> CopyBlueprintV2:
     return await _get_blueprint(blueprint_id, revision)
 
@@ -1719,10 +1799,12 @@ __all__ = [
     "bind_blueprint",
     "generate_angle_options",
     "generate_blueprint",
+    "get_activation_status",
     "get_blueprint",
     "get_binding",
     "get_binding_by_id",
     "get_product_truth_proof",
+    "get_text_assist_provider_status",
     "list_binding_matrix",
     "list_blueprints",
     "list_formulas",
