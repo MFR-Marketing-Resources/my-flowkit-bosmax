@@ -954,7 +954,10 @@ async def resolve_treatment_authority(
         "format": format_name,
         "generation_mode": generation_mode,
         "duration_seconds": float(row["duration_seconds"]),
-        "copy_set_id": str(row["copy_set_id"]),
+        "copy_set_id": str(row.get("copy_set_id") or ""),
+        "copy_execution_binding_id_v2": str(
+            row.get("copy_execution_binding_id_v2") or ""
+        ),
         "content_angle": str(row.get("content_angle") or ""),
         "dialogue_text": str(row.get("dialogue_text") or ""),
         "avatar_code": str(row.get("avatar_code") or ""),

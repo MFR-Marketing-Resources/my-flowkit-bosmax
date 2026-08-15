@@ -39,12 +39,15 @@ from agent.models.product_treatment_factory import (
 from agent.services import (
     ai_copy_assist_service,
     copy_composer_service,
+    copy_register_v2_service,
     copy_rotation_service,
     creative_recipe_service,
     creative_scene_prompt_service,
     creative_treatment_service,
     product_readiness_applicability_service,
 )
+from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
+from agent.authority.copy_lane_matrix import get_lane_descriptor
 from agent.services.product_treatment_template_service import (
     ProductTreatmentTemplateError,
     resolve_treatment_template,
@@ -65,6 +68,42 @@ TASK_TYPES: tuple[FactoryTaskType, ...] = (
     "P6_CAPACITY",
 )
 TERMINAL_TASK_STATES = {"REVIEW_REQUIRED", "SATISFIED", "FAILED", "SUPERSEDED"}
+
+
+
+def _lane_for_logical_mode(logical_mode: str) -> str:
+    mode = str(logical_mode or "").strip().upper()
+    if mode in {"HYBRID", "F2V", "PGC", "UGC", "CINEMATIC"}:
+        return "PRODUCTION_STUDIO_P6"
+    if mode == "T2V":
+        return "T2V"
+    if mode == "I2V":
+        return "I2V"
+    return "PRODUCTION_STUDIO_P6"
+
+
+async def _list_eligible_v2_bindings(product_id: str, logical_mode: str) -> list[dict]:
+    """Return active V2 bindings usable as treatment copy authority."""
+    lane = _lane_for_logical_mode(logical_mode)
+    try:
+        descriptor = get_lane_descriptor(lane)
+        lane_id = descriptor.lane_id
+    except ValueError:
+        lane_id = lane
+    try:
+        binding = await copy_register_v2_service.get_binding(product_id, lane_id)
+    except copy_register_v2_service.CopyRegisterV2Error:
+        return []
+    return [
+        {
+            "binding_id": binding.binding_id,
+            "lane": binding.lane,
+            "blueprint_id": binding.blueprint_id,
+            "revision": binding.revision,
+            "formula_id": binding.formula_id,
+            "approval_snapshot_id": binding.approval_snapshot_id,
+        }
+    ]
 
 
 class ProductTreatmentFactoryError(RuntimeError):
@@ -449,16 +488,32 @@ async def _scan_product(context: FactoryProductContext) -> ProductScan:
             context.target_video_count,
             reuse_cap,
         )
-        approved_copy_sets = await _eligible_approved_copy_sets(context.product_id)
-        composition_shortfall = max(
-            0,
-            required_dialogues - len(approved_copy_sets),
-        )
-        raw_preview = await copy_composer_service.compose_and_persist(
+        approved_bindings = await _list_eligible_v2_bindings(
             context.product_id,
-            composition_shortfall,
-            dry_run=True,
+            context.logical_mode,
         )
+        approved_copy_sets: list[dict[str, object]] = []
+        if approved_bindings:
+            composition_shortfall = 0
+            raw_preview = {
+                "copy_authority": "COPY_REGISTER_V2",
+                "produced": 0,
+                "provider_calls_enabled": False,
+            }
+        else:
+            if legacy_copy_maintenance_enabled():
+                approved_copy_sets = await _eligible_approved_copy_sets(
+                    context.product_id
+                )
+            composition_shortfall = max(
+                0,
+                required_dialogues - len(approved_copy_sets),
+            )
+            raw_preview = await copy_composer_service.compose_and_persist(
+                context.product_id,
+                composition_shortfall,
+                dry_run=True,
+            )
         raw_treatments = await creative_treatment_service.list_treatments(
             product_id=context.product_id,
             status=None,
@@ -476,8 +531,18 @@ async def _scan_product(context: FactoryProductContext) -> ProductScan:
                     for row in approved_copy_sets
                     if row.get("copy_set_id")
                 ],
-                "eligible_approved_copy_count": len(approved_copy_sets),
+                "eligible_approved_binding_ids": [
+                    str(row["binding_id"])
+                    for row in approved_bindings
+                    if row.get("binding_id")
+                ],
+                "eligible_approved_copy_count": (
+                    len(approved_bindings) if approved_bindings else len(approved_copy_sets)
+                ),
                 "composition_shortfall": composition_shortfall,
+                "copy_authority": (
+                    "COPY_REGISTER_V2" if approved_bindings else "LEGACY_COPY_SET"
+                ),
                 "provider_calls": 0,
                 "media_generation_calls": 0,
                 "credit_spend": 0,
@@ -570,7 +635,12 @@ def _candidate_ready(scan: ProductScan) -> bool:
         and str(getattr(visual_layer, "state", "")) == "NOT_APPLICABLE"
     )
     required_dialogues = required_dialogue_count(scan.context.target_video_count)
-    copy_ready = len(_approved_copy_set_ids(scan)) >= required_dialogues
+    binding_ids = _string_list(scan.copy_preview.get("eligible_approved_binding_ids"))
+    if binding_ids:
+        # One PRODUCTION_VALID V2 binding authorizes the full visual recipe grid.
+        copy_ready = True
+    else:
+        copy_ready = len(_approved_copy_set_ids(scan)) >= required_dialogues
     return (
         all(str(getattr(layers.get(name), "state", "")) == "READY" for name in required)
         and visual_ready
@@ -972,6 +1042,7 @@ def _treatment_request_from_snapshot(
     *,
     created_by: str,
     copy_set_id: str | None = None,
+    copy_execution_binding_id_v2: str | None = None,
     recipe: creative_recipe_service.CreativeRecipe | None = None,
 ) -> CreateTreatmentRequest:
     snapshot = _mapping(task.get("snapshot"))
@@ -982,8 +1053,22 @@ def _treatment_request_from_snapshot(
     copy_authority = _mapping(resolved.get("copy"))
     selection = _mapping(resolved.get("selection"))
     assets = _mapping(resolved.get("assets"))
+    preview = _mapping(snapshot.get("copy_preview"))
     product_truth_snapshot_id = str(product_truth.get("snapshot_id") or "")
-    copy_set_id = copy_set_id or _first_string(copy_authority.get("approved_copy_set_ids"))
+    binding_id = (
+        str(copy_execution_binding_id_v2 or "").strip()
+        or _first_string(preview.get("eligible_approved_binding_ids"))
+        or _first_string(copy_authority.get("approved_binding_ids"))
+    )
+    legacy_copy_set_id = (
+        None
+        if binding_id
+        else (
+            str(copy_set_id or "").strip()
+            or _first_string(copy_authority.get("approved_copy_set_ids"))
+            or None
+        )
+    )
     creative_selection_id = str(selection.get("selection_id") or "")
     asset_bindings: list[AssetBindingRequest] = []
     eligible_by_role = _mapping(assets.get("eligible_asset_ids_by_role"))
@@ -997,7 +1082,7 @@ def _treatment_request_from_snapshot(
     )
     if (
         not product_truth_snapshot_id
-        or not copy_set_id
+        or not (binding_id or legacy_copy_set_id)
         or not creative_selection_id
         or (required_asset_roles and not asset_bindings)
     ):
@@ -1009,7 +1094,8 @@ def _treatment_request_from_snapshot(
     return CreateTreatmentRequest(
         product_id=str(task["product_id"]),
         product_truth_snapshot_id=product_truth_snapshot_id,
-        copy_set_id=copy_set_id,
+        copy_set_id=legacy_copy_set_id,
+        copy_execution_binding_id_v2=binding_id or None,
         creative_selection_id=creative_selection_id,
         scene_strategy_id=str(template["scene_strategy_id"]),
         format=cast(str, template["format"]),
@@ -1045,9 +1131,21 @@ async def _prepare_copy_task(
         or snapshot.get("required_dialogues")
         or 1
     )
+    binding_count = len(_string_list(preview.get("eligible_approved_binding_ids")))
     approved_copy_count = len(
         _string_list(preview.get("eligible_approved_copy_set_ids"))
     )
+    if binding_count > 0:
+        return "SATISFIED", {
+            "created": 0,
+            "created_count": 0,
+            "requested_count": 0,
+            "remaining_shortfall": 0,
+            "provider_calls": 0,
+            "media_generation_calls": 0,
+            "credit_spend": 0,
+            "copy_authority": "COPY_REGISTER_V2",
+        }
     shortfall = max(0, required_dialogues - approved_copy_count)
     provider_enabled = bool(
         snapshot.get("provider_calls_enabled")
@@ -1135,6 +1233,10 @@ async def _prepare_treatment_task(
     )
     resolved = _mapping(snapshot.get("resolved_authority"))
     copy_authority = _mapping(resolved.get("copy"))
+    binding_ids = sorted(
+        _string_list(preview.get("eligible_approved_binding_ids"))
+        or _string_list(copy_authority.get("approved_binding_ids"))
+    )
     copy_set_ids = sorted(
         _string_list(preview.get("eligible_approved_copy_set_ids"))
         or _string_list(copy_authority.get("approved_copy_set_ids"))
@@ -1150,16 +1252,25 @@ async def _prepare_treatment_task(
             "media_generation_calls": 0,
             "credit_spend": 0,
         }
-    if len(copy_set_ids) < required_dialogues:
-        raise ProductTreatmentFactoryError(
-            "APPROVED_COPY_CAPACITY_SHORTFALL",
-            details={
-                "task_id": str(task["task_id"]),
-                "required_dialogues": required_dialogues,
-                "approved_copy_set_count": len(copy_set_ids),
-            },
-        )
-    copy_set_ids = copy_set_ids[:required_dialogues]
+    if binding_ids:
+        # Repeat the active V2 binding across recipe slots.
+        primary = binding_ids[0]
+        authority_slots: list[tuple[str, str | None]] = [
+            ("v2", primary) for _ in range(required_dialogues)
+        ]
+    else:
+        if len(copy_set_ids) < required_dialogues:
+            raise ProductTreatmentFactoryError(
+                "APPROVED_COPY_CAPACITY_SHORTFALL",
+                details={
+                    "task_id": str(task["task_id"]),
+                    "required_dialogues": required_dialogues,
+                    "approved_copy_set_count": len(copy_set_ids),
+                },
+            )
+        authority_slots = [
+            ("legacy", item) for item in copy_set_ids[:required_dialogues]
+        ]
     selection = _mapping(resolved.get("selection"))
     recipes = _selection_recipe_grid(selection)
     product_id = str(task["product_id"])
@@ -1172,12 +1283,15 @@ async def _prepare_treatment_task(
     template_id = cast(str | None, task.get("template_id"))
     template_sha256 = cast(str | None, task.get("template_sha256"))
     candidates: list[dict[str, object]] = []
-    for index, copy_set_id in enumerate(copy_set_ids):
+    for index, (authority_mode, authority_id) in enumerate(authority_slots):
         recipe = recipes[index % len(recipes)] if recipes else None
         request = _treatment_request_from_snapshot(
             task,
             created_by=actor_id,
-            copy_set_id=copy_set_id,
+            copy_set_id=None if authority_mode == "v2" else authority_id,
+            copy_execution_binding_id_v2=(
+                authority_id if authority_mode == "v2" else None
+            ),
             recipe=recipe,
         )
         request_projection = request.model_dump(mode="json")
@@ -1202,7 +1316,10 @@ async def _prepare_treatment_task(
         candidates.append(
             {
                 "candidate_signature_sha256": signature,
-                "copy_set_id": copy_set_id,
+                "copy_set_id": None if authority_mode == "v2" else authority_id,
+                "copy_execution_binding_id_v2": (
+                    authority_id if authority_mode == "v2" else None
+                ),
                 "avatar_code": request.avatar_code,
                 "scene_template_id": request.scene_template_id,
                 "camera_preset_code": (
@@ -1215,7 +1332,10 @@ async def _prepare_treatment_task(
                 "lineage": {
                     "template_id": template_id,
                     "template_sha256": template_sha256,
-                    "copy_set_id": copy_set_id,
+                    "copy_set_id": None if authority_mode == "v2" else authority_id,
+                    "copy_execution_binding_id_v2": (
+                        authority_id if authority_mode == "v2" else None
+                    ),
                     "treatment_id": treatment_id,
                     "treatment_sha256": treatment_sha256,
                 },
@@ -1226,7 +1346,7 @@ async def _prepare_treatment_task(
     first_lineage = {
         key: value
         for key, value in _mapping(first["lineage"]).items()
-        if key != "copy_set_id"
+        if value not in (None, "")
     }
     return (
         "REVIEW_REQUIRED",

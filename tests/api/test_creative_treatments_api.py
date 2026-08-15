@@ -83,15 +83,28 @@ def test_contract_accepts_governed_extend_and_refuses_partial_variation_binding(
 @pytest.mark.asyncio
 async def test_create_and_review_endpoints_preserve_typed_contract(monkeypatch):
     create = AsyncMock(
-        return_value={"treatment_id": "treatment-api", "status": "DRAFT"},
+        return_value={
+            "treatment_id": "treatment-api",
+            "status": "DRAFT",
+            "copy_execution_binding_id_v2": "bind-api",
+        },
     )
     review = AsyncMock(
-        return_value={"treatment_id": "treatment-api", "status": "APPROVED"},
+        return_value={
+            "treatment_id": "treatment-api",
+            "status": "APPROVED",
+            "copy_execution_binding_id_v2": "bind-api",
+        },
     )
     monkeypatch.setattr(api.treatments, "create_treatment", create)
     monkeypatch.setattr(api.treatments, "review_treatment", review)
 
-    created = await api.create_treatment(_treatment_body())
+    # Normal runtime uses V2 binding identity, not legacy copy_set_id.
+    body = _treatment_body().model_dump(mode="json")
+    body.pop("copy_set_id", None)
+    body["copy_execution_binding_id_v2"] = "bind-api"
+    v2_body = CreateTreatmentRequest(**body)
+    created = await api.create_treatment(v2_body)
     review_body = ReviewTreatmentRequest(
         decision="APPROVED",
         actor_id="reviewer",
@@ -103,6 +116,18 @@ async def test_create_and_review_endpoints_preserve_typed_contract(monkeypatch):
     assert approved["status"] == "APPROVED"
     assert isinstance(create.await_args.args[0], CreateTreatmentRequest)
     review.assert_awaited_once_with("treatment-api", review_body)
+
+
+@pytest.mark.asyncio
+async def test_legacy_create_endpoint_requires_maintenance(monkeypatch):
+    monkeypatch.delenv("COPY_LEGACY_MAINTENANCE_MODE", raising=False)
+    create = AsyncMock(return_value={"treatment_id": "x", "status": "DRAFT"})
+    monkeypatch.setattr(api.treatments, "create_treatment", create)
+    with pytest.raises(HTTPException) as err:
+        await api.create_treatment(_treatment_body())
+    assert err.value.status_code == 410
+    assert err.value.detail["error"] == "LEGACY_COPY_STORAGE_DISABLED"
+    create.assert_not_awaited()
 
 
 @pytest.mark.asyncio
