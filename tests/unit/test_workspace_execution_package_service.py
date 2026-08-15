@@ -46,6 +46,29 @@ def test_package_id_binds_reference_selection_identity():
     assert id_a == id_a_again
 
 
+def test_faceless_package_id_binds_structured_authority_receipt():
+    common = (
+        "prod-001", "F2V", "prompt_fp", 8, "9:16", "Veo 3.1 - Lite",
+        False, "SINGLE", "BM_MS", "UGC_IPHONE_RAW", "FACELESS",
+    )
+    base = {
+        "opening_strategy_resolved": "GENERAL_USP_PRODUCT",
+        "background_resolved": "AESTHETIC_TABLE",
+        "scene_strategy_id": "TRADITIONAL_HERBAL_OIL",
+        "choreography_id": "traditional_herbal_oil.v0",
+        "choreography_schema_version": "scene_choreography_v2",
+        "choreography_sha256": "a" * 64,
+        "character_presence": "FACELESS",
+        "compatibility_status": "COMPATIBLE",
+    }
+    alternate = {**base, "background_resolved": "RUMAH_AESTHETIC"}
+    id_a = _workspace_execution_package_id(*common, ["asset_fp"], base)
+    id_b = _workspace_execution_package_id(*common, ["asset_fp"], alternate)
+    id_a_again = _workspace_execution_package_id(*common, ["asset_fp"], dict(base))
+    assert id_a != id_b
+    assert id_a == id_a_again
+
+
 def _fake_asset(**overrides):
     fields = {
         "asset_id": "ca_ref",
@@ -391,6 +414,18 @@ async def test_workspace_execution_package_frames_binds_selected_start_frame(mon
     monkeypatch.setattr("agent.services.workspace_execution_package_service.crud.create_or_replace_workspace_execution_package", fake_store)
     monkeypatch.setattr("agent.services.workspace_execution_package_service.validate_selectable_asset", fake_validate)
 
+    faceless_receipt = {
+        "opening_strategy_operator": "AUTO",
+        "opening_strategy_resolved": "GENERAL_USP_PRODUCT",
+        "background_operator": "AUTO",
+        "background_resolved": "AESTHETIC_TABLE",
+        "scene_strategy_id": "TRADITIONAL_HERBAL_OIL",
+        "choreography_id": "traditional_herbal_oil.v0",
+        "choreography_schema_version": "scene_choreography_v2",
+        "choreography_sha256": "a" * 64,
+        "character_presence": "FACELESS",
+        "compatibility_status": "COMPATIBLE",
+    }
     # A selected Copy Set is required for a saved video package; the compiler is
     # mocked here because this test exercises package mechanics.
     result = await create_workspace_execution_package(
@@ -403,6 +438,8 @@ async def test_workspace_execution_package_frames_binds_selected_start_frame(mon
         source_mode="FRAMES",
         start_frame_asset_id="ca_start",
         copy_set_id="cs-approved",
+        character_presence="FACELESS",
+        faceless_resolution=faceless_receipt,
     )
 
     assert result["readiness"] == "READY"
@@ -418,9 +455,11 @@ async def test_workspace_execution_package_frames_binds_selected_start_frame(mon
     assert captured["duration_seconds"] == 8
     assert result["planner_result"]["planner_fingerprint"] == "planner_fp_001"
     assert result["canonical_package_fingerprint"] == "canonical_fp_001"
+    assert result["faceless_resolution"] == faceless_receipt
     stored_lineage = json.loads(captured["request_lineage_payload"])
     assert stored_lineage["compiler"]["planner_result"] == result["planner_result"]
     assert stored_lineage["compiler"]["canonical_package_fingerprint"] == "canonical_fp_001"
+    assert stored_lineage["faceless_resolution"] == faceless_receipt
 
 
 @pytest.mark.asyncio

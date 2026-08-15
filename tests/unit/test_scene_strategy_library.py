@@ -30,6 +30,7 @@ def _compile(
     *,
     copy_intelligence: dict[str, object] | None = None,
     scene_context_override: str | None = None,
+    character_presence: str = "FACELESS",
 ) -> dict[str, object]:
     return compile_ugc_video_prompt(
         product=product,
@@ -38,7 +39,7 @@ def _compile(
         source_mode="HYBRID",
         generation_mode="SINGLE",
         duration_seconds=8,
-        character_presence="FACELESS",
+        character_presence=character_presence,
         target_language="BM_MS",
         copy_intelligence=copy_intelligence,
         scene_context_override=scene_context_override,
@@ -380,9 +381,9 @@ async def test_variation_planner_emits_product_actions_and_direct_buyer_scripts(
 
 def test_production_compiler_uses_strategy_but_preserves_explicit_copy() -> None:
     product = _product(
-        "Velvet Lip Tint",
-        category="Beauty & Personal Care",
-        type="Lip Makeup",
+        "Minyak Warisan Cap Burung 25ml",
+        product_type="TRADITIONAL_HERBAL_OIL",
+        product_physics="TRADITIONAL_HERBAL_OIL_BOTTLE",
     )
     first = _compile(
         product,
@@ -403,8 +404,8 @@ def test_production_compiler_uses_strategy_but_preserves_explicit_copy() -> None
         scene_context_override="operator-selected dressing room",
     )
 
-    assert first["scene_strategy"]["strategy_id"] == "LIP_COLOR"
-    assert second["scene_strategy"]["strategy_id"] == "LIP_COLOR"
+    assert first["scene_strategy"]["strategy_id"] == "TRADITIONAL_HERBAL_OIL"
+    assert second["scene_strategy"]["strategy_id"] == "TRADITIONAL_HERBAL_OIL"
     assert first["scene_strategy"] == second["scene_strategy"]
     assert first["prompt_blocks"][0]["exact_dialogue_slice"] != second[
         "prompt_blocks"

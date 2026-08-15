@@ -205,6 +205,7 @@ def test_every_production_variant_validates() -> None:
         for variant in variants:
             validate_choreography_variant(variant)
             assert variant.schema_version == CHOREOGRAPHY_SCHEMA_VERSION
+            assert variant.allowed_character_presence
             assert variant.steps[0].start_s == 0.0
             assert variant.steps[-1].is_final_lock
             assert "product" in {state.entity_id for state in variant.steps[0].initial_states}
@@ -236,6 +237,14 @@ def test_traditional_herbal_oil_8s_fixture_reaches_compiled_prompt() -> None:
     )
     prompt = str(compiled["final_compiled_prompt_text"])
     assert selected["choreography_id"] == "traditional_herbal_oil.v0"
+    assert selected["allowed_character_presence"]
+    assert "FACELESS" in selected["allowed_character_presence"]
+    assert compiled["scene_choreography"]["choreography_id"] == selected[
+        "choreography_id"
+    ]
+    assert compiled["scene_choreography"]["choreography_sha256"] == selected[
+        "choreography_sha256"
+    ]
     for needle in (
         "0.0-1.0s",
         "already present in the avatar's support hand",
@@ -251,6 +260,36 @@ def test_traditional_herbal_oil_8s_fixture_reaches_compiled_prompt() -> None:
         assert needle in context
         assert needle in prompt
     assert "Allowed product action:" not in prompt
+
+
+def test_face_required_choreography_fails_closed_for_faceless() -> None:
+    strategy = resolve_scene_strategy(
+        _product("Velvet Lip Tint", category="Beauty & Personal Care", type="Lip Makeup")
+    )
+    with pytest.raises(ChoreographyValidationError) as exc:
+        select_scene_strategy_variant(
+            strategy,
+            0,
+            character_presence="FACELESS",
+        )
+    assert exc.value.code == "ERR_FACELESS_CHOREOGRAPHY_INCOMPATIBLE"
+    assert exc.value.choreography_id == "lip_color.v0"
+
+    with pytest.raises(ValueError, match="ERR_FACELESS_CHOREOGRAPHY_INCOMPATIBLE"):
+        compile_ugc_video_prompt(
+            product=_product(
+                "Velvet Lip Tint",
+                category="Beauty & Personal Care",
+                type="Lip Makeup",
+            ),
+            approved_package={},
+            mode="F2V",
+            source_mode="HYBRID",
+            generation_mode="SINGLE",
+            duration_seconds=8,
+            character_presence="FACELESS",
+            target_language="BM_MS",
+        )
 
 
 def test_roll_on_choreography_is_product_appropriate() -> None:

@@ -35,6 +35,12 @@ Custody = Literal[
 ]
 CutBoundary = Literal["NONE", "OUTGOING", "REESTABLISH"]
 Classification = Literal["P0_REWRITE", "P1_REWRITE", "P2_STATIC", "BLOCK"]
+CharacterPresence = Literal[
+    "FACELESS",
+    "VISIBLE_CREATOR",
+    "AVATAR_AI",
+    "PRODUCT_ONLY",
+]
 ChoreographyFamily = Literal[
     "APPLY_CONTACT",
     "MATERIAL_TRANSFER",
@@ -99,6 +105,10 @@ class ChoreographyVariant(BaseModel):
     intent_label: str = Field(min_length=1)
     compatible_contexts: list[str] = Field(min_length=1)
     compatible_camera_routes: list[str] = Field(min_length=1)
+    # Explicit execution-surface compatibility.  An omitted or empty list is
+    # invalid: callers must never infer that an unclassified choreography is
+    # safe for the Faceless lane.
+    allowed_character_presence: list[CharacterPresence] = Field(min_length=1)
     steps: list[ChoreographyStep] = Field(min_length=1)
     final_state_lock: str = Field(min_length=1)
     production_eligible: bool = True

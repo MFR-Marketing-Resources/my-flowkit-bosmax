@@ -77,6 +77,7 @@ class SelectedSceneStrategyVariant(TypedDict):
     choreography_id: str
     choreography_schema_version: str
     choreography_sha256: str
+    allowed_character_presence: list[str]
 
 
 _COMMON_PHYSICS_FORBIDDEN = (
@@ -3170,6 +3171,8 @@ def resolve_scene_strategy(
 def select_scene_strategy_variant(
     strategy: ResolvedSceneStrategy,
     variation_index: int,
+    *,
+    character_presence: str | None = None,
 ) -> SelectedSceneStrategyVariant:
     """Select one cohesive choreography variant as a single production unit."""
 
@@ -3180,7 +3183,11 @@ def select_scene_strategy_variant(
 
     offset = max(int(variation_index), 0)
     scripts = strategy["direct_script_slots"]
-    variant = select_variant_for_strategy(strategy["strategy_id"], offset)
+    variant = select_variant_for_strategy(
+        strategy["strategy_id"],
+        offset,
+        character_presence=character_presence,
+    )
     return {
         "scene_strategy_id": strategy["strategy_id"],
         "allowed_scene_strategy": variant.scene_strategy_label,
@@ -3199,6 +3206,7 @@ def select_scene_strategy_variant(
         "choreography_id": variant.choreography_id,
         "choreography_schema_version": variant.schema_version,
         "choreography_sha256": choreography_sha256(variant),
+        "allowed_character_presence": list(variant.allowed_character_presence),
     }
 
 
@@ -3207,13 +3215,22 @@ def build_scene_strategy_context(
     *,
     variation_index: int = 0,
     base_scene_context: str | None = None,
+    character_presence: str | None = None,
 ) -> str:
     """Render the ordered v2 choreography for the canonical compiler."""
 
     from agent.services.scene_choreography_catalog import select_variant_for_strategy
 
-    selected = select_scene_strategy_variant(strategy, variation_index)
-    variant = select_variant_for_strategy(strategy["strategy_id"], variation_index)
+    selected = select_scene_strategy_variant(
+        strategy,
+        variation_index,
+        character_presence=character_presence,
+    )
+    variant = select_variant_for_strategy(
+        strategy["strategy_id"],
+        variation_index,
+        character_presence=character_presence,
+    )
     step_lines = []
     for step in variant.steps:
         initial = "; ".join(
@@ -3240,6 +3257,9 @@ def build_scene_strategy_context(
         *step_lines,
         f"Final-state lock: {variant.final_state_lock}",
         f"Camera route: {selected['camera_route']}.",
+        "Allowed character presence: "
+        + ", ".join(selected["allowed_character_presence"])
+        + ".",
         f"Avatar hint: {selected['avatar_hint']}.",
         f"Wardrobe hint: {selected['wardrobe_hint']}.",
         "Forbidden actions: " + "; ".join(strategy["forbidden_actions"]) + ".",

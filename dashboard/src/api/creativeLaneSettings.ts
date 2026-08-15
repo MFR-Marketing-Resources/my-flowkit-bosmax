@@ -1,4 +1,4 @@
-// Creative lane settings SSOT (Hook + Background) — Faceless + Montage.
+// Creative lane settings SSOT (Opening Strategy + Background) — Faceless + Montage.
 // ONE vocabulary source: backend GET /api/creative-lane-settings.
 // No mirrored full option registry in the frontend (F-02).
 import { useEffect, useState } from "react";
@@ -12,6 +12,8 @@ export interface CreativeLaneOption {
 export interface CreativeLaneSettings {
 	version: string;
 	auto: { id: string; label: string };
+	opening_strategy?: { default: string; options: CreativeLaneOption[] };
+	/** Backward-compatible wire alias used by older Montage clients. */
 	hook: { default: string; options: CreativeLaneOption[] };
 	background: { default: string; options: CreativeLaneOption[] };
 	semantics?: Record<string, string>;
@@ -33,13 +35,19 @@ export interface ResolvedLaneSetting {
 export const CREATIVE_LANE_SETTINGS_UNAVAILABLE: CreativeLaneSettings = {
 	version: "UNAVAILABLE",
 	auto: { id: "AUTO", label: "Auto (AI decided)" },
+	opening_strategy: { default: "AUTO", options: [] },
 	hook: { default: "AUTO", options: [] },
 	background: { default: "AUTO", options: [] },
 	source: "unavailable",
 };
 
-export async function fetchCreativeLaneSettings(): Promise<CreativeLaneSettings> {
-	return getAPI<CreativeLaneSettings>("/api/creative-lane-settings");
+export async function fetchCreativeLaneSettings(
+	productId?: string | null,
+): Promise<CreativeLaneSettings> {
+	const query = productId
+		? `?lane=FACELESS&product_id=${encodeURIComponent(productId)}`
+		: "";
+	return getAPI<CreativeLaneSettings>(`/api/creative-lane-settings${query}`);
 }
 
 export async function resolveCreativeLaneSettings(input: {
@@ -48,6 +56,7 @@ export async function resolveCreativeLaneSettings(input: {
 	product_cluster?: string | null;
 	has_approved_usp?: boolean;
 	scene_context_hint?: string | null;
+	product_id?: string | null;
 }): Promise<{ hook: ResolvedLaneSetting; background: ResolvedLaneSetting }> {
 	return postAPI("/api/creative-lane-settings/resolve", {
 		hook_id: input.hook_id ?? "AUTO",
@@ -55,6 +64,7 @@ export async function resolveCreativeLaneSettings(input: {
 		product_cluster: input.product_cluster ?? null,
 		has_approved_usp: Boolean(input.has_approved_usp),
 		scene_context_hint: input.scene_context_hint ?? null,
+		product_id: input.product_id ?? null,
 	});
 }
 
@@ -68,15 +78,20 @@ export interface FacelessPrepareResponse {
 	character_presence?: string;
 	avatar_id?: null;
 	visual_law?: string;
+	copy_architecture_v2?: Record<string, unknown> | null;
 	debug?: {
 		transport_mode?: string;
 		source_mode?: string;
 		reference_override?: boolean;
 	};
 	resolution?: {
+		opening_strategy?: ResolvedLaneSetting;
 		hook: ResolvedLaneSetting;
 		background: ResolvedLaneSetting;
+		scene_strategy?: Record<string, unknown> | null;
+		choreography?: Record<string, unknown> | null;
 	};
+	faceless_resolution?: Record<string, unknown> | null;
 	scene_context_override?: string;
 	package?: {
 		workspace_execution_package_id?: string;
@@ -126,7 +141,7 @@ export async function prepareFacelessPackage(input: {
 	});
 }
 
-export function useCreativeLaneSettings(): {
+export function useCreativeLaneSettings(productId?: string | null): {
 	settings: CreativeLaneSettings;
 	loading: boolean;
 	error: string | null;
@@ -143,10 +158,11 @@ export function useCreativeLaneSettings(): {
 	useEffect(() => {
 		let active = true;
 		setLoading(true);
-		void fetchCreativeLaneSettings()
+		void fetchCreativeLaneSettings(productId)
 			.then((s) => {
 				if (!active) return;
-				if (!s?.hook?.options?.length || !s?.background?.options?.length) {
+				const opening = s?.opening_strategy ?? s?.hook;
+				if (!opening?.options?.length || !s?.background?.options?.length) {
 					setError("Settings payload incomplete");
 					setSettings(CREATIVE_LANE_SETTINGS_UNAVAILABLE);
 					return;
@@ -165,14 +181,18 @@ export function useCreativeLaneSettings(): {
 		return () => {
 			active = false;
 		};
-	}, [tick]);
+	}, [productId, tick]);
+	const openingOptions =
+		settings.opening_strategy?.options?.length
+			? settings.opening_strategy.options
+			: settings.hook.options;
 
 	return {
 		settings,
 		loading,
 		error,
 		available: Boolean(
-			settings.hook.options.length && settings.background.options.length,
+			openingOptions.length && settings.background.options.length,
 		),
 		reload: () => setTick((n) => n + 1),
 	};

@@ -2,7 +2,8 @@
  * Faceless Video operator lane (V4 language).
  *
  * Hybrid product path WITHOUT avatar / visible face.
- * Operator: Product → Hook/BG → Single|Extend → Model → Duration → Prepare → Generate
+ * Operator: Product → Copy Authority → Opening Strategy → Background →
+ * Single|Extend → Model → Duration → Prepare → Generate
  * Internal: F2V + HYBRID product-anchor. Native-extend after base for EXTEND.
  * Never auto-fires credit-bearing generation.
  */
@@ -62,19 +63,19 @@ const selectClass =
 const labelClass = "text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500";
 
 export default function FacelessVideoPage() {
+	const [products, setProducts] = useState<Product[]>([]);
+	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const {
 		settings,
 		loading: settingsLoading,
 		error: settingsError,
 		available: settingsAvailable,
 		reload: reloadSettings,
-	} = useCreativeLaneSettings();
+	} = useCreativeLaneSettings(selectedProduct?.id);
 	const [resolvedHook, setResolvedHook] = useState<ResolvedLaneSetting | null>(null);
 	const [resolvedBackground, setResolvedBackground] = useState<ResolvedLaneSetting | null>(
 		null,
 	);
-	const [products, setProducts] = useState<Product[]>([]);
-	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [hookId, setHookId] = useState("AUTO");
 	const [backgroundId, setBackgroundId] = useState("AUTO");
 	const [showAdvancedRef, setShowAdvancedRef] = useState(false);
@@ -228,7 +229,7 @@ export default function FacelessVideoPage() {
 		});
 		const result = [...core];
 		if (!settingsAvailable) {
-			result.unshift("Hook/Background settings unavailable — retry when API is up");
+			result.unshift("Opening Strategy/Background settings unavailable — retry when API is up");
 		}
 		if (!capability || !engine) {
 			result.unshift(
@@ -266,8 +267,21 @@ export default function FacelessVideoPage() {
 		v2CopyReady,
 	]);
 
-	const hookLabel = optionLabel(settings.hook.options, hookId);
+	const openingStrategyOptions =
+		settings.opening_strategy?.options?.length
+			? settings.opening_strategy.options
+			: settings.hook.options;
+	const hookLabel = optionLabel(openingStrategyOptions, hookId);
 	const backgroundLabel = optionLabel(settings.background.options, backgroundId);
+
+	useEffect(() => {
+		if (!settings.background.options.length) return;
+		const validIds = new Set(settings.background.options.map((option) => option.id));
+		if (!validIds.has(backgroundId)) {
+			setBackgroundId("AUTO");
+			setWorkspacePackage(null);
+		}
+	}, [settings.background.options, backgroundId]);
 
 	const durationLabel =
 		sceneMode === "EXTEND"
@@ -351,7 +365,7 @@ export default function FacelessVideoPage() {
 			setNotice({
 				tone: "success",
 				title: "Faceless package ready",
-				detail: `${sceneMode} · ${videoModel} · ${durationLabel} · Hook ${h?.setting_id || hookId} · BG ${b?.setting_id || backgroundId}`,
+				detail: `${sceneMode} · ${videoModel} · ${durationLabel} · Opening Strategy ${h?.setting_id || hookId} · Background ${b?.setting_id || backgroundId}`,
 				requestId: pkg.workspace_execution_package_id,
 			});
 		} catch (err: unknown) {
@@ -562,13 +576,6 @@ export default function FacelessVideoPage() {
 				) : null}
 			</header>
 
-			<CopyArchitectureV2LaneCard
-				lane="FACELESS"
-				productId={selectedProduct?.id}
-				execution={workspacePackage?.copy_architecture_v2}
-				onReadyChange={setV2CopyReady}
-			/>
-
 			<div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
 				<div className="min-h-0 space-y-3 overflow-y-auto pr-1">
 					<WorkflowStep
@@ -598,75 +605,61 @@ export default function FacelessVideoPage() {
 						</p>
 					</WorkflowStep>
 
+					<CopyArchitectureV2LaneCard
+						lane="FACELESS"
+						productId={selectedProduct?.id}
+						execution={workspacePackage?.copy_architecture_v2}
+						onReadyChange={setV2CopyReady}
+					/>
+
 					<WorkflowStep
 						index={2}
-						title="Hook & background"
+						title="Opening Strategy"
 						status={sCreative}
 						open={v4IsOpen(2, sCreative)}
 						onToggleOpen={() => v4Toggle(2, v4IsOpen(2, sCreative))}
-						summary={`${hookLabel} · ${backgroundLabel}`}
-						helper="Controlled settings only. AUTO resolves on the server — never as raw label."
+						summary={hookLabel}
+						helper="Creative opening direction only. Approved Hook / Body / CTA remain in Copy Register V2."
 					>
-						<div className="grid gap-3 sm:grid-cols-2">
-							{!settingsAvailable ? (
-								<div
-									className="sm:col-span-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200"
-									data-testid="faceless-settings-unavailable"
+						{!settingsAvailable ? (
+							<div
+								className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200"
+								data-testid="faceless-settings-unavailable"
+							>
+								Settings unavailable{settingsError ? `: ${settingsError}` : ""}.{" "}
+								<button
+									type="button"
+									className="underline"
+									onClick={() => reloadSettings()}
+									data-testid="faceless-settings-retry"
 								>
-									Settings unavailable
-									{settingsError ? `: ${settingsError}` : ""}.{" "}
-									<button
-										type="button"
-										className="underline"
-										onClick={() => reloadSettings()}
-										data-testid="faceless-settings-retry"
-									>
-										Retry
-									</button>
-								</div>
-							) : null}
-							<label className="space-y-1">
-								<span className={labelClass}>Hook</span>
-								<select
-									className={selectClass}
-									value={hookId}
-									onChange={(e) => {
-										setHookId(e.target.value);
-										setWorkspacePackage(null);
-									}}
-									data-testid="faceless-hook"
-									disabled={!settingsAvailable}
-								>
-									{settings.hook.options.map((o) => (
-										<option key={o.id} value={o.id}>
-											{o.label}
-										</option>
-									))}
-								</select>
-							</label>
-							<label className="space-y-1">
-								<span className={labelClass}>Background</span>
-								<select
-									className={selectClass}
-									value={backgroundId}
-									onChange={(e) => {
-										setBackgroundId(e.target.value);
-										setWorkspacePackage(null);
-									}}
-									data-testid="faceless-background"
-									disabled={!settingsAvailable}
-								>
-									{settings.background.options.map((o) => (
-										<option key={o.id} value={o.id}>
-											{o.label}
-										</option>
-									))}
-								</select>
-							</label>
-						</div>
+									Retry
+								</button>
+							</div>
+						) : null}
+						<label className="space-y-1">
+							<span className={labelClass}>Opening Strategy</span>
+							<select
+								className={selectClass}
+								value={hookId}
+								onChange={(e) => {
+									setHookId(e.target.value);
+									setWorkspacePackage(null);
+								}}
+								data-testid="faceless-opening-strategy"
+								data-wire-field="hook_id"
+								disabled={!settingsAvailable}
+							>
+								{openingStrategyOptions.map((o) => (
+									<option key={o.id} value={o.id}>
+										{o.label}
+									</option>
+								))}
+							</select>
+						</label>
 						<div className="mt-3 flex flex-wrap gap-2">
 							<ResolvedChip
-								label="Hook"
+								label="Opening Strategy"
 								value={
 									resolvedHook
 										? `${resolvedHook.setting_id} · ${resolvedHook.display_label}`
@@ -674,6 +667,38 @@ export default function FacelessVideoPage() {
 								}
 								auto={hookId === "AUTO"}
 							/>
+						</div>
+					</WorkflowStep>
+
+					<WorkflowStep
+						index={3}
+						title="Background"
+						status={sCreative}
+						open={v4IsOpen(3, sCreative)}
+						onToggleOpen={() => v4Toggle(3, v4IsOpen(3, sCreative))}
+						summary={backgroundLabel}
+						helper="Only backgrounds compatible with the resolved Scene Choreography V2 context are offered."
+					>
+						<label className="space-y-1">
+							<span className={labelClass}>Background</span>
+							<select
+								className={selectClass}
+								value={backgroundId}
+								onChange={(e) => {
+									setBackgroundId(e.target.value);
+									setWorkspacePackage(null);
+								}}
+								data-testid="faceless-background"
+								disabled={!settingsAvailable}
+							>
+								{settings.background.options.map((o) => (
+									<option key={o.id} value={o.id}>
+										{o.label}
+									</option>
+								))}
+							</select>
+						</label>
+						<div className="mt-3 flex flex-wrap gap-2">
 							<ResolvedChip
 								label="Background"
 								value={
@@ -689,11 +714,11 @@ export default function FacelessVideoPage() {
 					</WorkflowStep>
 
 					<WorkflowStep
-						index={3}
+						index={4}
 						title="Video settings"
 						status={sSettings}
-						open={v4IsOpen(3, sSettings)}
-						onToggleOpen={() => v4Toggle(3, v4IsOpen(3, sSettings))}
+						open={v4IsOpen(4, sSettings)}
+						onToggleOpen={() => v4Toggle(4, v4IsOpen(4, sSettings))}
 						summary={`${sceneMode === "EXTEND" ? "Extend" : "Single"} · ${videoModel} · ${durationLabel}`}
 						helper="Same capability / model authority as Hybrid. No hardcoded 8s table."
 					>
@@ -839,11 +864,11 @@ export default function FacelessVideoPage() {
 					</details>
 
 					<WorkflowStep
-						index={4}
+						index={5}
 						title="Review & prepare"
 						status={sPrepare}
-						open={v4IsOpen(4, sPrepare)}
-						onToggleOpen={() => v4Toggle(4, v4IsOpen(4, sPrepare))}
+						open={v4IsOpen(5, sPrepare)}
+						onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sPrepare))}
 						summary={
 							workspacePackage
 								? "Package ready"
@@ -880,11 +905,11 @@ export default function FacelessVideoPage() {
 					</WorkflowStep>
 
 					<WorkflowStep
-						index={5}
+						index={6}
 						title="Generate video"
 						status={sGenerate}
-						open={v4IsOpen(5, sGenerate)}
-						onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sGenerate))}
+						open={v4IsOpen(6, sGenerate)}
+						onToggleOpen={() => v4Toggle(6, v4IsOpen(6, sGenerate))}
 						summary={
 							isExecuting ? "Generating…" : completedUrl ? "Done" : "Operator gate"
 						}

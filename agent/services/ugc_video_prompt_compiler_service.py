@@ -652,8 +652,7 @@ def _build_engine_prompt_text(
             f"SUBJECT (FACELESS): Product and hands only — {dialog_product_ref}. "
             "No face or avatar shown on screen. Believable hand-object interaction, "
             "clear label visibility, honest product scale. "
-            "Creator voice is heard as narration/voiceover but never seen. "
-            "Brief avatar cameo allowed at a single natural moment if it improves product credibility."
+            "Creator voice is heard as narration/voiceover but never seen."
         )
     else:
         # VISIBLE_CREATOR (default)
@@ -1054,6 +1053,7 @@ def compile_ugc_video_prompt(
     # demonstration.
     _scene_override = _clean(scene_context_override)
     _base_scene_context = _scene_override or _clean(approved_package.get("scene_context"))
+    scene_choreography_receipt: dict[str, Any] | None = None
     # ADDITIVE recipe scene-template enrichment: a picked recipe's concrete action +
     # setting sharpen the base scene context. Absent → _base_scene_context unchanged.
     if scene_template:
@@ -1087,11 +1087,18 @@ def compile_ugc_video_prompt(
         if _preset_bits:
             _camera_preset_note = f" Shot framing: {_preset_bits}."
     if resolved_source_mode != "IMAGES":
+        selected_scene_variant = _scene_strategies.select_scene_strategy_variant(
+            resolved_scene_strategy,
+            0,
+            character_presence=resolved_character_presence,
+        )
+        scene_choreography_receipt = selected_scene_variant
         approved_package = {
             **approved_package,
             "scene_context": _scene_strategies.build_scene_strategy_context(
                 resolved_scene_strategy,
                 base_scene_context=_base_scene_context,
+                character_presence=resolved_character_presence,
             ),
         }
     elif _scene_override:
@@ -1392,6 +1399,7 @@ def compile_ugc_video_prompt(
         "avatar_id": str(avatar_id or "").strip() or None,
         "scene_context_override_applied": bool(_clean(scene_context_override)),
         "scene_strategy": resolved_scene_strategy,
+        "scene_choreography": scene_choreography_receipt,
         "target_language": resolved_target_language,
         "shot_plan": [
             {

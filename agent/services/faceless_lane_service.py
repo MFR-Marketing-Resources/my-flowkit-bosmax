@@ -10,8 +10,14 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from agent.db import crud
 from agent.services import creative_lane_settings_service as cls
 from agent.services import flow_mode_reference_contract as refc
+from agent.services.scene_choreography_catalog import select_variant_for_strategy
+from agent.services.scene_strategy_library import (
+    resolve_scene_strategy,
+    select_scene_strategy_variant,
+)
 
 FACELESS_SURFACE_MODE = "FACELESS"
 # Internal one-door only — never operator chrome
@@ -32,6 +38,8 @@ ERR_FACELESS_MODE_INVALID = "ERR_FACELESS_MODE_INVALID"
 ERR_FACELESS_DURATION_INVALID = "ERR_FACELESS_DURATION_INVALID"
 ERR_FACELESS_MODEL_DURATION_UNSUPPORTED = "ERR_FACELESS_MODEL_DURATION_UNSUPPORTED"
 ERR_FACELESS_EXTEND_TOTAL_REQUIRED = "ERR_FACELESS_EXTEND_TOTAL_REQUIRED"
+ERR_FACELESS_PRODUCT_NOT_FOUND = "ERR_FACELESS_PRODUCT_NOT_FOUND"
+ERR_FACELESS_SCENE_STRATEGY_REQUIRED = "ERR_FACELESS_SCENE_STRATEGY_REQUIRED"
 
 
 def resolve_faceless_video_configuration(
@@ -169,7 +177,7 @@ def validate_faceless_inputs(
     if not ok_video:
         return False, code_video, detail_video
 
-    ok_h, code_h, detail_h = cls.validate_hook(hook_id)
+    ok_h, code_h, detail_h = cls.validate_opening_strategy(hook_id)
     if not ok_h:
         return False, code_h, detail_h
     ok_b, code_b, detail_b = cls.validate_background(background_id)
@@ -211,46 +219,191 @@ def build_faceless_resolution(
     has_approved_usp: bool = False,
     scene_context_hint: Optional[str] = None,
     start_frame_asset_id: Optional[str] = None,
+    scene_authority: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Resolve Hook/Background and stamp reproducibility metadata."""
-    hook = cls.resolve_hook(
+    """Resolve opening/background and stamp authority metadata.
+
+    ``hook`` remains a response/wire alias for existing callers. Production
+    Faceless requests pass ``scene_authority`` from the async product resolver;
+    the authority receipt is kept separate from Copy Register V2 text.
+    """
+    opening_strategy = cls.resolve_opening_strategy(
         hook_id,
         product_cluster=product_cluster,
         has_approved_usp=has_approved_usp,
     )
-    background = cls.resolve_background(
-        background_id,
-        scene_context_hint=scene_context_hint,
-    )
+    if scene_authority:
+        opening_strategy = scene_authority.get("opening_strategy") or opening_strategy
+        background = scene_authority.get("background") or cls.resolve_background(
+            background_id,
+            scene_context_hint=scene_context_hint,
+            compatible_contexts=scene_authority.get("compatible_contexts"),
+        )
+    else:
+        background = cls.resolve_background(
+            background_id,
+            scene_context_hint=scene_context_hint,
+        )
     override = bool(str(start_frame_asset_id or "").strip())
     source_mode = (
         FACELESS_OVERRIDE_SOURCE_MODE if override else FACELESS_SOURCE_MODE
     )
-    return {
+    scene_strategy = (scene_authority or {}).get("scene_strategy")
+    choreography = (scene_authority or {}).get("choreography")
+    receipt = _faceless_resolution_receipt(
+        opening_strategy=opening_strategy,
+        background=background,
+        scene_strategy=scene_strategy,
+        choreography=choreography,
+    )
+    resolution = {
         "lane": FACELESS_SURFACE_MODE,
         "transport_mode": FACELESS_TRANSPORT_MODE,
         "source_mode": source_mode,
         "character_presence": FACELESS_CHARACTER_PRESENCE,
         "avatar_id": None,
-        "hook": hook,
+        "opening_strategy": opening_strategy,
+        # Backward-compatible response/wire alias. This is never Copy V2 text.
+        "hook": opening_strategy,
         "background": background,
+        "scene_strategy": scene_strategy,
+        "choreography": choreography,
+        "compatible_background_options": (scene_authority or {}).get(
+            "background_options", []
+        ),
+        "compatible_contexts": (scene_authority or {}).get(
+            "compatible_contexts", []
+        ),
         "scene_context_override": background.get("environment_intent") or None,
         "reference_override": override,
         "visual_law": FACELESS_VISUAL_LAW,
+    }
+    if receipt is not None:
+        resolution["faceless_resolution"] = receipt
+    return resolution
+
+
+def _faceless_resolution_receipt(
+    *,
+    opening_strategy: dict[str, Any],
+    background: dict[str, Any],
+    scene_strategy: dict[str, Any] | None,
+    choreography: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not scene_strategy or not choreography:
+        return None
+    return {
+        "opening_strategy_operator": opening_strategy["operator_selection"],
+        "opening_strategy_resolved": opening_strategy["setting_id"],
+        "background_operator": background["operator_selection"],
+        "background_resolved": background["setting_id"],
+        "scene_strategy_id": scene_strategy["scene_strategy_id"],
+        "choreography_id": choreography["choreography_id"],
+        "choreography_schema_version": choreography[
+            "choreography_schema_version"
+        ],
+        "choreography_sha256": choreography["choreography_sha256"],
+        "character_presence": FACELESS_CHARACTER_PRESENCE,
+        "compatibility_status": "COMPATIBLE",
+    }
+
+
+async def resolve_faceless_scene_authority(
+    *,
+    product_id: str,
+    hook_id: Optional[str] = None,
+    background_id: Optional[str] = None,
+    product_cluster: Optional[str] = None,
+    has_approved_usp: bool = False,
+    scene_context_hint: Optional[str] = None,
+    variation_index: int = 0,
+) -> dict[str, Any]:
+    """Resolve Product → Scene Strategy → compatible Choreography → Background."""
+
+    product = await crud.get_product(str(product_id).strip())
+    if not product:
+        raise ValueError(
+            f"{ERR_FACELESS_PRODUCT_NOT_FOUND}: product_id={product_id}"
+        )
+    strategy = resolve_scene_strategy(product)
+    if (
+        strategy["fallback_used"]
+        or strategy["strategy_id"] == "GENERIC_FALLBACK"
+    ):
+        raise ValueError(
+            f"{ERR_FACELESS_SCENE_STRATEGY_REQUIRED}: "
+            "Product Truth did not resolve a production Scene Strategy"
+        )
+
+    # Select through the existing Scene Choreography V2 catalog. The explicit
+    # character gate is also enforced again by the canonical compiler.
+    variant = select_variant_for_strategy(
+        strategy["strategy_id"],
+        variation_index,
+        character_presence=FACELESS_CHARACTER_PRESENCE,
+    )
+    selected = select_scene_strategy_variant(
+        strategy,
+        variation_index,
+        character_presence=FACELESS_CHARACTER_PRESENCE,
+    )
+    scene_receipt = {
+        "scene_strategy_id": selected["scene_strategy_id"],
+        "resolution_source": strategy["resolution_source"],
+        "fallback_used": bool(strategy["fallback_used"]),
+    }
+    compatible_contexts = list(variant.compatible_contexts)
+    background = cls.resolve_background(
+        background_id,
+        scene_context_hint=scene_context_hint,
+        compatible_contexts=compatible_contexts,
+    )
+    return {
+        "product": product,
+        "opening_strategy": cls.resolve_opening_strategy(
+            hook_id,
+            product_cluster=product_cluster,
+            has_approved_usp=has_approved_usp,
+        ),
+        "background": background,
+        "background_options": cls.background_options_for_contexts(
+            compatible_contexts
+        ),
+        "compatible_contexts": compatible_contexts,
+        "scene_strategy": scene_receipt,
+        "choreography": selected,
     }
 
 
 def build_faceless_scene_context(resolution: dict[str, Any]) -> str:
     """Compiler-facing context: RESOLVED settings + faceless visual law. Never raw AUTO."""
-    hook = resolution["hook"]
+    opening_strategy = resolution.get("opening_strategy") or resolution["hook"]
     bg = resolution["background"]
     env = str(bg.get("environment_intent") or "").strip()
-    strategy = str(hook.get("strategy_intent") or hook.get("display_label") or "").strip()
+    strategy = str(
+        opening_strategy.get("strategy_intent")
+        or opening_strategy.get("display_label")
+        or ""
+    ).strip()
+    scene = resolution.get("scene_strategy") or {}
+    choreography = resolution.get("choreography") or {}
     parts = [
         FACELESS_VISUAL_LAW,
-        f"Strategy {hook['setting_id']}: {strategy}." if strategy else "",
+        (
+            f"Opening strategy {opening_strategy['setting_id']}: {strategy}."
+            if strategy
+            else ""
+        ),
         f"Environment {bg['setting_id']}: {env}." if env else (
             f"Environment={bg['setting_id']} ({bg['display_label']})."
+        ),
+        (
+            f"Scene Strategy {scene['scene_strategy_id']}; choreography "
+            f"{choreography['choreography_id']} ({choreography['choreography_schema_version']}) "
+            f"sha256={choreography['choreography_sha256']}; "
+            "character presence compatibility=COMPATIBLE."
+            if scene and choreography
+            else ""
         ),
         "Creative strategy and environment intent only — no invented claims, "
         "endorsements, or product-truth overrides.",
@@ -267,6 +420,11 @@ def build_faceless_package_fields(resolution: dict[str, Any]) -> dict[str, Any]:
         "avatar_id": None,
         "scene_context_override": resolution.get("scene_context_override"),
         "faceless_lane": {
+            "opening_strategy_operator": resolution["opening_strategy"][
+                "operator_selection"
+            ],
+            "opening_strategy_resolved": resolution["opening_strategy"]["setting_id"],
+            # Compatibility aliases for older package consumers.
             "hook_operator": resolution["hook"]["operator_selection"],
             "hook_resolved": resolution["hook"]["setting_id"],
             "hook_resolution": resolution["hook"]["resolution"],
@@ -276,4 +434,5 @@ def build_faceless_package_fields(resolution: dict[str, Any]) -> dict[str, Any]:
             "source_mode": resolution["source_mode"],
             "visual_law": FACELESS_VISUAL_LAW,
         },
+        "faceless_resolution": resolution.get("faceless_resolution"),
     }

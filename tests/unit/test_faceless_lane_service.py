@@ -1,4 +1,6 @@
 """Faceless lane — product-first Hybrid parity validation."""
+import pytest
+
 from agent.services import faceless_lane_service as fl
 
 
@@ -125,3 +127,82 @@ def test_package_fields_are_one_door_compatible():
     assert fields["character_presence"] == "FACELESS"
     assert fields["avatar_id"] is None
     assert fields["faceless_lane"]["hook_resolved"] == "GENERAL_USP_PRODUCT"
+
+
+def test_opening_strategy_never_mutates_actual_copy_authority():
+    approved_copy = {"hook": "Mak selalu cari yang senang guna setiap hari..."}
+    first = fl.build_faceless_resolution(
+        hook_id="AUTO",
+        background_id="AUTO",
+    )
+    second = fl.build_faceless_resolution(
+        hook_id="PENAT_KEJAR_PROMO",
+        background_id="AUTO",
+    )
+    assert first["opening_strategy"]["setting_id"] != second["opening_strategy"][
+        "setting_id"
+    ]
+    assert approved_copy == {"hook": "Mak selalu cari yang senang guna setiap hari..."}
+    assert "hook" not in (first.get("faceless_resolution") or {})
+    assert "hook" not in (second.get("faceless_resolution") or {})
+
+
+@pytest.mark.asyncio
+async def test_scene_authority_resolves_faceless_receipt_and_concrete_auto_background(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    product = {
+        "id": "prod-oil",
+        "name": "Minyak Warisan Cap Burung 25ml",
+        "raw_product_title": "Minyak Warisan Cap Burung 25ml",
+        "product_type": "TRADITIONAL_HERBAL_OIL",
+        "product_physics": "TRADITIONAL_HERBAL_OIL_BOTTLE",
+    }
+
+    async def _get_product(_: str):
+        return product
+
+    monkeypatch.setattr(fl.crud, "get_product", _get_product)
+    authority = await fl.resolve_faceless_scene_authority(
+        product_id="prod-oil",
+        hook_id="AUTO",
+        background_id="AUTO",
+    )
+    resolution = fl.build_faceless_resolution(
+        hook_id="AUTO",
+        background_id="AUTO",
+        scene_authority=authority,
+    )
+    receipt = resolution["faceless_resolution"]
+    assert receipt["opening_strategy_operator"] == "AUTO"
+    assert receipt["opening_strategy_resolved"] == "GENERAL_USP_PRODUCT"
+    assert receipt["background_resolved"] != "AUTO"
+    assert receipt["scene_strategy_id"] == "TRADITIONAL_HERBAL_OIL"
+    assert receipt["choreography_id"] == "traditional_herbal_oil.v0"
+    assert receipt["choreography_schema_version"] == "scene_choreography_v2"
+    assert len(receipt["choreography_sha256"]) == 64
+    assert receipt["character_presence"] == "FACELESS"
+    assert receipt["compatibility_status"] == "COMPATIBLE"
+
+
+@pytest.mark.asyncio
+async def test_incompatible_background_fails_before_any_provider_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    product = {
+        "id": "prod-oil",
+        "name": "Minyak Warisan Cap Burung 25ml",
+        "raw_product_title": "Minyak Warisan Cap Burung 25ml",
+        "product_type": "TRADITIONAL_HERBAL_OIL",
+        "product_physics": "TRADITIONAL_HERBAL_OIL_BOTTLE",
+    }
+
+    async def _get_product(_: str):
+        return product
+
+    monkeypatch.setattr(fl.crud, "get_product", _get_product)
+    with pytest.raises(ValueError, match=fl.cls.ERR_FACELESS_BACKGROUND_INCOMPATIBLE):
+        await fl.resolve_faceless_scene_authority(
+            product_id="prod-oil",
+            background_id="KITCHEN",
+        )
