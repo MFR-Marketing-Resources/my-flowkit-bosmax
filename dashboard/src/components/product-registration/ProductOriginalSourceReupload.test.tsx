@@ -82,6 +82,9 @@ describe("ProductOriginalSourceReupload", () => {
 				onChanged={onChanged}
 			/>,
 		);
+		expect(screen.getByTestId("update-reupload-product-image")).toHaveTextContent(
+			"Update / Reupload Product Image",
+		);
 
 		const file = new File(["new image bytes"], "new-source.jpg", { type: "image/jpeg" });
 		fireEvent.change(screen.getByTestId("original-source-upload-input"), {

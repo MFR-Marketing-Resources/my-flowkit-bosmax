@@ -140,8 +140,9 @@ export default function ProductOriginalSourceReupload({
 					className="rounded-xl border border-indigo-400/40 bg-indigo-500/15 px-3 py-2 text-xs font-semibold text-indigo-200 transition hover:bg-indigo-500/25 disabled:cursor-not-allowed disabled:opacity-50"
 					onClick={() => inputRef.current?.click()}
 					disabled={busy !== null}
+					data-testid="update-reupload-product-image"
 				>
-					{busy === "upload" ? "Uploading…" : "Upload newer product image"}
+					{busy === "upload" ? "Uploading…" : "Update / Reupload Product Image"}
 				</button>
 			</div>
 
