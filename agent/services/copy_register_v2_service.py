@@ -64,7 +64,7 @@ from agent.services.product_intelligence_claim_safety_service import (
 
 
 ANGLE_PROMPT_VERSION = "copy-register-v2-angle-options-v1"
-FORMULA_PROMPT_VERSION = "copy-register-v2-formula-blueprint-v1"
+FORMULA_PROMPT_VERSION = "copy-register-v2-formula-blueprint-v2"
 STAGE_REGEN_PROMPT_VERSION = "copy-register-v2-stage-regeneration-v1"
 _COPY_V2_WPS_MODE = "SWEET"
 
@@ -86,9 +86,13 @@ not write independent fragments. Every claim-bearing stage must cite one or more
 fact_id values. Use no fact outside the supplied list and never invent a fact, number,
 ingredient, outcome, offer, certification, price, guarantee, or medical claim. The CTA may
 carry an empty evidence list but must not introduce a claim. Do not output hook/body/CTA
-fields outside the ordered stages. When a target duration and canonical word budget are
-provided, keep the complete ordered stage text within that budget without omitting any
-required formula stage."""
+fields outside the ordered stages. The evidence_fact_ids list is mandatory and non-empty
+for every claim-bearing stage. Copy each cited value exactly from the supplied facts list;
+never return [] for a claim-bearing stage. The CTA may carry [] only when it makes no
+claim. When a target duration and canonical word budget are provided, keep the complete
+ordered stage text within that budget without omitting any required formula stage. Before
+returning JSON, check that every claim-bearing stage has at least one exact supplied
+fact_id and that every stage remains in the registered order."""
 
 _STAGE_REGEN_SYSTEM_PROMPT = f"""You regenerate one stage of a Copy Register V2 blueprint.
 Prompt contract: {STAGE_REGEN_PROMPT_VERSION}.
@@ -954,6 +958,12 @@ def _generate_formula_stage_payloads(
     target_duration_seconds: float | None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     duration_authority = _duration_authority(target_duration_seconds)
+    ordered_stage_keys = list(required_formula_stage_keys(formula_id))
+    claim_bearing_stage_keys = [
+        stage_key
+        for stage_key in ordered_stage_keys
+        if stage_key not in {"cta", "action", "response"}
+    ]
     raw, receipt = _call_text_assist(
         system_prompt=_FORMULA_SYSTEM_PROMPT,
         prompt_version=FORMULA_PROMPT_VERSION,
@@ -975,8 +985,17 @@ def _generate_formula_stage_payloads(
             "formula": {
                 "formula_id": formula_id,
                 "formula_version": formula_version(formula_id),
-                "ordered_stage_keys": list(required_formula_stage_keys(formula_id)),
+                "ordered_stage_keys": ordered_stage_keys,
                 "contract": strict_formula_contract(formula_id),
+            },
+            "evidence_contract": {
+                "claim_bearing_stage_keys": claim_bearing_stage_keys,
+                "non_claim_bearing_stage_keys": [
+                    stage_key
+                    for stage_key in ordered_stage_keys
+                    if stage_key not in claim_bearing_stage_keys
+                ],
+                "fact_id_rule": "Use one or more exact fact_id values from facts for every claim-bearing stage.",
             },
             "objective": objective.model_dump(mode="json"),
             "selected_angle": angle.model_dump(mode="json"),

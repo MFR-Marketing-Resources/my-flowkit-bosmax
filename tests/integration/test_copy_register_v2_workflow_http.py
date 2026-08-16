@@ -46,6 +46,12 @@ def _install_synthetic_provider(monkeypatch, *, configured: bool) -> dict:
             facts = payload["facts"]
             angle = payload["selected_angle"]["definition"]
             if payload.get("duration_authority"):
+                assert payload["evidence_contract"]["claim_bearing_stage_keys"] == [
+                    "problem",
+                    "agitate",
+                    "solution",
+                ]
+                assert payload["evidence_contract"]["fact_id_rule"]
                 short_text = {
                     "problem": "Masalah harian terasa mengganggu.",
                     "agitate": "Rutin pun jadi berat.",
