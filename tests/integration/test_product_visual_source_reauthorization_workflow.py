@@ -1,0 +1,222 @@
+"""Provider-free proof for the Smart Registration Original Source reupload lane."""
+
+from io import BytesIO
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+from PIL import Image, ImageDraw
+
+from agent.db import crud
+from agent.services import product_truth_lock_service
+from agent.services import product_visual_onboarding_service as service
+
+
+OLD_SHA = "1" * 64
+
+
+def _image_bytes(*, color: tuple[int, int, int], size: tuple[int, int] = (96, 128)) -> bytes:
+	stream = BytesIO()
+	Image.new("RGB", size, color).save(stream, format="JPEG")
+	return stream.getvalue()
+
+
+async def _seed_product_and_lock(tmp_path: Path, *, current_source: Path) -> tuple[dict, dict]:
+	product = await crud.create_product(
+		raw_product_title="Herbal Product Reupload",
+		source="MANUAL",
+		local_image_path=str(current_source),
+		image_asset_status="READY",
+		asset_status="DOWNLOADED",
+	)
+	product_id = str(product["id"])
+	lock = await crud.upsert_product_truth_lock(
+		product_id,
+		canonical_media_id="old-media",
+		canonical_sha256=OLD_SHA,
+		source_width=96,
+		source_height=128,
+		canonical_source_path="data/product-registration/legacy-missing.jpg",
+		canonical_cutout_media_id="old-cutout-media",
+		canonical_cutout_sha256="2" * 64,
+		canonical_cutout_path="data/product-registration/legacy-cutout-missing.png",
+		alpha_mask_json="{}",
+		anchor_point_json="{}",
+		min_scale=0.5,
+		max_scale=2.0,
+		allowed_bbox_json=json.dumps({"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8}),
+		allowed_rotation=0.0,
+		allowed_perspective=0.0,
+		review_status="REJECTED",
+		failure_state="FALLBACK_SELECTED",
+		provenance_json=json.dumps({
+			"source_kind": "USER_UPLOAD",
+			"active_selection": "SAME_PRODUCT_TRUSTED_SOURCE",
+		}),
+		schema_version="1.0",
+	)
+	assert lock is not None
+	return product, lock
+
+
+@pytest.mark.asyncio
+async def test_upload_and_explicit_reauthorization_promotes_new_source_without_losing_history(tmp_path, monkeypatch):
+	runtime_root = tmp_path / "runtime"
+	current_source = runtime_root / "data" / "products" / "current.jpg"
+	current_source.parent.mkdir(parents=True, exist_ok=True)
+	current_source.write_bytes(_image_bytes(color=(30, 80, 140)))
+	monkeypatch.setattr(service, "BASE_DIR", runtime_root)
+	monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", runtime_root)
+
+	product, _ = await _seed_product_and_lock(tmp_path, current_source=current_source)
+	product_id = str(product["id"])
+	await crud.create_product_truth_lock_history(
+		product_id,
+		history_id="preserved-original-source-history",
+		source_kind="USER_UPLOAD",
+		review_status="REJECTED",
+		canonical_media_id="old-media",
+		canonical_sha256=OLD_SHA,
+		source_width=96,
+		source_height=128,
+		canonical_source_path="history/legacy-missing.jpg",
+		canonical_cutout_media_id="old-cutout-media",
+		canonical_cutout_sha256="2" * 64,
+		canonical_cutout_path="history/legacy-cutout-missing.png",
+		provenance_json=json.dumps({"active_selection": "SAME_PRODUCT_TRUSTED_SOURCE"}),
+	)
+	before_history = await crud.list_product_truth_lock_history(product_id)
+
+	replacement_bytes = _image_bytes(color=(180, 40, 90), size=(120, 160))
+	receipt = await service.upload_original_source_candidate(
+		product_id,
+		filename="new-product-source.jpg",
+		content_type="image/jpeg",
+		raw_bytes=replacement_bytes,
+		uploaded_by="registration-operator",
+	)
+	assert receipt["created_without_credit"] is True
+	assert receipt["sha256"] == hashlib.sha256(replacement_bytes).hexdigest()
+
+	still_current = await crud.get_product(product_id)
+	assert still_current["media_id"] != receipt["media_id"]
+	assert still_current["local_image_path"] == str(current_source)
+
+	result = await service.save_product_visual_setup(
+		product_id,
+		selected_visual="ORIGINAL_SOURCE_REAUTHORIZE",
+		reviewed_by="registration-operator",
+		review_note="Owner confirmed the newer source matches identity, label, geometry, scale, and isolation.",
+		confirm_identity=True,
+		confirm_label_logo=True,
+		confirm_geometry_scale=True,
+		confirm_product_isolation=True,
+		expected_previous_canonical_sha256=OLD_SHA,
+		expected_replacement_sha256=receipt["sha256"],
+		replacement_media_id=receipt["media_id"],
+	)
+
+	lock = await crud.get_product_truth_lock(product_id)
+	updated_product = await crud.get_product(product_id)
+	after_history = await crud.list_product_truth_lock_history(product_id)
+	assert lock is not None
+	assert lock["canonical_media_id"] == receipt["media_id"]
+	assert lock["canonical_sha256"] == receipt["sha256"]
+	assert lock["canonical_source_path"].endswith(f"{receipt['media_id']}.jpg")
+	assert updated_product["media_id"] == receipt["media_id"]
+	assert updated_product["local_image_path"] == lock["canonical_source_path"]
+	assert len(after_history) == len(before_history) == 1
+	assert json.loads(lock["provenance_json"])["previous_canonical_sha256"] == OLD_SHA
+	assert result["canonical_source_media_id"] == receipt["media_id"]
+	assert result["canonical_source_sha256"] == receipt["sha256"]
+	assert result["original_source_reauthorization_required"] is False
+	assert result["current_system_visual"]["card"] == "ORIGINAL_SOURCE"
+	assert result["original_preview_url"]
+
+
+@pytest.mark.asyncio
+async def test_truth_lock_history_guard_still_blocks_manual_replacement_without_old_bytes(tmp_path, monkeypatch):
+	runtime_root = tmp_path / "runtime"
+	current_source = runtime_root / "data" / "products" / "current.jpg"
+	current_source.parent.mkdir(parents=True, exist_ok=True)
+	current_source.write_bytes(_image_bytes(color=(30, 80, 140)))
+	monkeypatch.setattr(service, "BASE_DIR", runtime_root)
+	monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", runtime_root)
+
+	product, _ = await _seed_product_and_lock(tmp_path, current_source=current_source)
+	manual_cutout = Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
+	ImageDraw.Draw(manual_cutout).rectangle((200, 200, 800, 800), fill=(30, 80, 140, 255))
+	stream = BytesIO()
+	manual_cutout.save(stream, format="PNG")
+
+	with pytest.raises(service.ProductVisualOnboardingError) as raised:
+		await service.upload_manual_product_cutout(
+			str(product["id"]),
+			filename="manual-replacement.png",
+			content_type="image/png",
+			raw_bytes=stream.getvalue(),
+			uploaded_by="registration-operator",
+		)
+
+	assert raised.value.code == "TRUTH_LOCK_HISTORY_REQUIRED"
+	assert raised.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_reauthorization_rejects_a_candidate_bound_to_another_product(tmp_path, monkeypatch):
+	runtime_root = tmp_path / "runtime"
+	current_source = runtime_root / "data" / "products" / "current.jpg"
+	current_source.parent.mkdir(parents=True, exist_ok=True)
+	current_source.write_bytes(_image_bytes(color=(30, 80, 140)))
+	monkeypatch.setattr(service, "BASE_DIR", runtime_root)
+	monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", runtime_root)
+
+	first_product, _ = await _seed_product_and_lock(tmp_path, current_source=current_source)
+	second_product, _ = await _seed_product_and_lock(tmp_path, current_source=current_source)
+	receipt = await service.upload_original_source_candidate(
+		str(first_product["id"]),
+		filename="first-product-source.jpg",
+		content_type="image/jpeg",
+		raw_bytes=_image_bytes(color=(180, 40, 90)),
+		uploaded_by="registration-operator",
+	)
+
+	with pytest.raises(service.ProductVisualOnboardingError) as raised:
+		await service.save_product_visual_setup(
+			str(second_product["id"]),
+			selected_visual="ORIGINAL_SOURCE_REAUTHORIZE",
+			reviewed_by="registration-operator",
+			review_note="Binding test",
+			confirm_identity=True,
+			confirm_label_logo=True,
+			confirm_geometry_scale=True,
+			confirm_product_isolation=True,
+			expected_previous_canonical_sha256=OLD_SHA,
+			expected_replacement_sha256=receipt["sha256"],
+			replacement_media_id=receipt["media_id"],
+		)
+
+	assert raised.value.code == "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_PRODUCT_MISMATCH"
+
+
+@pytest.mark.asyncio
+async def test_source_candidate_rejects_non_image_bytes(tmp_path, monkeypatch):
+	runtime_root = tmp_path / "runtime"
+	current_source = runtime_root / "data" / "products" / "current.jpg"
+	current_source.parent.mkdir(parents=True, exist_ok=True)
+	current_source.write_bytes(_image_bytes(color=(30, 80, 140)))
+	monkeypatch.setattr(service, "BASE_DIR", runtime_root)
+	monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", runtime_root)
+	product, _ = await _seed_product_and_lock(tmp_path, current_source=current_source)
+
+	with pytest.raises(service.ProductVisualOnboardingError) as raised:
+		await service.upload_original_source_candidate(
+			str(product["id"]),
+			filename="not-an-image.jpg",
+			content_type="image/jpeg",
+			raw_bytes=b"not an image",
+			uploaded_by="registration-operator",
+		)
+
+	assert raised.value.code == "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID"

@@ -133,6 +133,20 @@ export interface ProductVisualCutoutHistory {
 	count: number;
 }
 
+export interface ProductOriginalSourceCandidate {
+	product_id: string;
+	media_id: string;
+	sha256: string;
+	filename: string;
+	mime: string;
+	bytes: number;
+	width: number;
+	height: number;
+	status: string;
+	uploaded_by?: string;
+	created_without_credit: boolean;
+}
+
 export function fetchProductVisualReadiness(
 	productId: string,
 ): Promise<ProductVisualReadiness> {
@@ -245,6 +259,20 @@ export function uploadManualProductCutout(
 	);
 }
 
+export function uploadOriginalSourceCandidate(
+	productId: string,
+	file: File,
+	uploadedBy = "operator",
+): Promise<ProductOriginalSourceCandidate> {
+	const body = new FormData();
+	body.append("source", file, file.name);
+	body.append("uploaded_by", uploadedBy);
+	return postMultipartAPI<ProductOriginalSourceCandidate>(
+		`/api/product-visual-onboarding/${encodeURIComponent(productId)}/source/reauthorization`,
+		body,
+	);
+}
+
 export function rejectProductCutout(
 	productId: string,
 	operator: string,
@@ -268,13 +296,16 @@ export function useOriginalProductFallback(
 }
 
 export interface VisualSetupSaveInput {
-	selected_visual: "ORIGINAL" | "AUTO" | "MANUAL";
+	selected_visual: "ORIGINAL" | "ORIGINAL_SOURCE_REAUTHORIZE" | "AUTO" | "MANUAL";
 	reviewed_by?: string;
 	review_note?: string;
 	confirm_identity?: boolean;
 	confirm_label_logo?: boolean;
 	confirm_geometry_scale?: boolean;
 	confirm_product_isolation?: boolean;
+	expected_previous_canonical_sha256?: string;
+	expected_replacement_sha256?: string;
+	replacement_media_id?: string;
 }
 
 export function saveProductVisualSetup(

@@ -1601,6 +1601,9 @@ export interface ProductVisualReadiness {
 	auto_cutout_status?: ProductVisualCutoutStatus | string;
 	manual_cutout_status?: ProductVisualCutoutStatus | string;
 	active_visual_source?: string;
+	canonical_source_media_id?: string | null;
+	canonical_source_sha256?: string | null;
+	original_source_reauthorization_required?: boolean;
 	original_preview_url?: string | null;
 	original_display_url?: string | null;
 	original_display_source?: string | null;

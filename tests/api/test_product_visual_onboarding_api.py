@@ -1,5 +1,8 @@
+from io import BytesIO
+
 import pytest
 from fastapi import HTTPException
+from fastapi import UploadFile
 
 from agent.api import product_visual_onboarding as api
 
@@ -104,6 +107,7 @@ def test_visual_onboarding_routes_are_review_gated():
     assert "/product-visual-onboarding/{product_id}/cutout/prepare" in paths
     assert "/product-visual-onboarding/{product_id}/cutout/rebuild" in paths
     assert "/product-visual-onboarding/{product_id}/cutout/manual" in paths
+    assert "/product-visual-onboarding/{product_id}/source/reauthorization" in paths
     assert "/product-visual-onboarding/{product_id}/save-visual-setup" in paths
     assert "/product-visual-onboarding/{product_id}/cutout/reject" in paths
     assert "/product-visual-onboarding/{product_id}/cutout/fallback" in paths
@@ -132,6 +136,7 @@ async def test_save_visual_setup_forwards_explicit_original_source_reauthorizati
             confirm_product_isolation=True,
             expected_previous_canonical_sha256="1" * 64,
             expected_replacement_sha256="2" * 64,
+            replacement_media_id="replacement-media-1",
         ),
     )
 
@@ -139,6 +144,34 @@ async def test_save_visual_setup_forwards_explicit_original_source_reauthorizati
     assert captured["selected_visual"] == "ORIGINAL_SOURCE_REAUTHORIZE"
     assert captured["expected_previous_canonical_sha256"] == "1" * 64
     assert captured["expected_replacement_sha256"] == "2" * 64
+    assert captured["replacement_media_id"] == "replacement-media-1"
+
+
+@pytest.mark.asyncio
+async def test_source_reauthorization_upload_route_forwards_immutable_candidate(monkeypatch):
+    captured = {}
+
+    async def upload(product_id, **kwargs):
+        captured["product_id"] = product_id
+        captured.update(kwargs)
+        return {"media_id": "candidate-1", "created_without_credit": True}
+
+    monkeypatch.setattr(api, "upload_original_source_candidate", upload)
+    source = UploadFile(file=BytesIO(b"replacement-bytes"), filename="new-source.jpg")
+    result = await api.upload_visual_original_source_candidate(
+        "product-1",
+        source=source,
+        uploaded_by="operator-1",
+    )
+
+    assert result == {"media_id": "candidate-1", "created_without_credit": True}
+    assert captured == {
+        "product_id": "product-1",
+        "filename": "new-source.jpg",
+        "content_type": None,
+        "raw_bytes": b"replacement-bytes",
+        "uploaded_by": "operator-1",
+    }
 
 
 def test_preview_media_type_sniffs_jpeg_and_png(tmp_path):

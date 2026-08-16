@@ -26,6 +26,7 @@ import CreativeSetupPanel from "../components/product-intelligence/CreativeSetup
 import RecommendedScenePromptsCard from "../components/product-intelligence/RecommendedScenePromptsCard";
 import RecommendedCameraPresetsCard from "../components/product-intelligence/RecommendedCameraPresetsCard";
 import CreativeHandoffPreview from "../components/product-intelligence/CreativeHandoffPreview";
+import ProductOriginalSourceReupload from "../components/product-registration/ProductOriginalSourceReupload";
 import ProductVisualReadinessPanel from "../components/product-registration/ProductVisualReadinessPanel";
 import {
 	resolveProductDisplayName,
@@ -528,17 +529,28 @@ export default function ProductDetailPage() {
 					</div>
 
 					{tab === "VISUAL" && (
-						<ProductVisualReadinessPanel
-							productId={product.id}
-							productSourceUrl={product.tiktok_product_url || product.source_url}
-							readiness={product.visual_readiness}
-							showApprovalForm
-							onChanged={(visualReadiness) =>
-								setProduct((previous) =>
-									previous ? { ...previous, visual_readiness: visualReadiness } : previous,
-								)
-							}
-						/>
+						<>
+							<ProductOriginalSourceReupload
+								productId={product.id}
+								readiness={product.visual_readiness}
+								onChanged={(visualReadiness) =>
+									setProduct((previous) =>
+										previous ? { ...previous, visual_readiness: visualReadiness } : previous,
+									)
+								}
+							/>
+							<ProductVisualReadinessPanel
+								productId={product.id}
+								productSourceUrl={product.tiktok_product_url || product.source_url}
+								readiness={product.visual_readiness}
+								showApprovalForm
+								onChanged={(visualReadiness) =>
+									setProduct((previous) =>
+										previous ? { ...previous, visual_readiness: visualReadiness } : previous,
+									)
+								}
+							/>
+						</>
 					)}
 
 					{tab === "EDIT" && (
