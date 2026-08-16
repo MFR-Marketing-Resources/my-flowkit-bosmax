@@ -22,6 +22,17 @@ def _image_bytes(*, color: tuple[int, int, int], size: tuple[int, int] = (96, 12
 	return stream.getvalue()
 
 
+def _manual_cutout_bytes(*, color: tuple[int, int, int], inset: int) -> bytes:
+	cutout = Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
+	ImageDraw.Draw(cutout).rectangle(
+		(inset, inset, 1000 - inset, 1000 - inset),
+		fill=(*color, 255),
+	)
+	stream = BytesIO()
+	cutout.save(stream, format="PNG")
+	return stream.getvalue()
+
+
 async def _seed_product_and_lock(tmp_path: Path, *, current_source: Path) -> tuple[dict, dict]:
 	product = await crud.create_product(
 		raw_product_title="Herbal Product Reupload",
@@ -147,7 +158,7 @@ async def test_upload_and_explicit_reauthorization_promotes_new_source_without_l
 
 
 @pytest.mark.asyncio
-async def test_truth_lock_history_guard_still_blocks_manual_replacement_without_old_bytes(tmp_path, monkeypatch):
+async def test_truth_lock_history_guard_still_blocks_when_bound_media_does_not_match_lock(tmp_path, monkeypatch):
 	runtime_root = tmp_path / "runtime"
 	current_source = runtime_root / "data" / "products" / "current.jpg"
 	current_source.parent.mkdir(parents=True, exist_ok=True)
@@ -156,22 +167,112 @@ async def test_truth_lock_history_guard_still_blocks_manual_replacement_without_
 	monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", runtime_root)
 
 	product, _ = await _seed_product_and_lock(tmp_path, current_source=current_source)
-	manual_cutout = Image.new("RGBA", (1000, 1000), (0, 0, 0, 0))
-	ImageDraw.Draw(manual_cutout).rectangle((200, 200, 800, 800), fill=(30, 80, 140, 255))
-	stream = BytesIO()
-	manual_cutout.save(stream, format="PNG")
-
+	product_id = str(product["id"])
+	mismatched_cutout = runtime_root / "data" / "products" / "old-cutout.png"
+	mismatched_cutout.write_bytes(_manual_cutout_bytes(color=(30, 80, 140), inset=200))
+	await crud.create_product_source_media(
+		f"visual-source:{product_id}",
+		"image",
+		media_id="old-media",
+		product_id=product_id,
+		local_path=str(current_source),
+		filename=current_source.name,
+		mime="image/jpeg",
+		bytes=current_source.stat().st_size,
+		width=96,
+		height=128,
+		status="STORED",
+	)
+	await crud.create_product_source_media(
+		f"visual-source:{product_id}",
+		"image",
+		media_id="old-cutout-media",
+		product_id=product_id,
+		local_path=str(mismatched_cutout),
+		filename=mismatched_cutout.name,
+		mime="image/png",
+		bytes=mismatched_cutout.stat().st_size,
+		width=1000,
+		height=1000,
+		status="STORED",
+	)
 	with pytest.raises(service.ProductVisualOnboardingError) as raised:
 		await service.upload_manual_product_cutout(
-			str(product["id"]),
+			product_id,
 			filename="manual-replacement.png",
 			content_type="image/png",
-			raw_bytes=stream.getvalue(),
+			raw_bytes=_manual_cutout_bytes(color=(30, 80, 140), inset=200),
 			uploaded_by="registration-operator",
 		)
 
 	assert raised.value.code == "TRUTH_LOCK_HISTORY_REQUIRED"
 	assert raised.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_manual_replacement_recovers_missing_truth_lock_bytes_from_bound_media(tmp_path, monkeypatch):
+	runtime_root = tmp_path / "runtime"
+	current_source = runtime_root / "data" / "products" / "current.jpg"
+	current_source.parent.mkdir(parents=True, exist_ok=True)
+	current_source.write_bytes(_image_bytes(color=(30, 80, 140)))
+	monkeypatch.setattr(service, "BASE_DIR", runtime_root)
+	monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", runtime_root)
+
+	product = await crud.create_product(
+		raw_product_title="Recoverable Manual Cutout",
+		source="MANUAL",
+		local_image_path=str(current_source),
+		image_asset_status="READY",
+		asset_status="DOWNLOADED",
+	)
+	product_id = str(product["id"])
+	old_cutout_bytes = _manual_cutout_bytes(color=(30, 80, 140), inset=200)
+	await service.upload_manual_product_cutout(
+		product_id,
+		filename="old-manual.png",
+		content_type="image/png",
+		raw_bytes=old_cutout_bytes,
+		uploaded_by="registration-operator",
+	)
+	old_lock = await crud.get_product_truth_lock(product_id)
+	assert old_lock is not None
+	old_source_path = Path(str(old_lock["canonical_source_path"]))
+	old_cutout_path = Path(str(old_lock["canonical_cutout_path"]))
+	if not old_source_path.is_absolute():
+		old_source_path = runtime_root / old_source_path
+	if not old_cutout_path.is_absolute():
+		old_cutout_path = runtime_root / old_cutout_path
+	assert old_source_path.is_file()
+	assert old_cutout_path.is_file()
+	old_source_path.unlink()
+	old_cutout_path.unlink()
+
+	result = await service.upload_manual_product_cutout(
+		product_id,
+		filename="replacement-manual.png",
+		content_type="image/png",
+		raw_bytes=_manual_cutout_bytes(color=(180, 40, 90), inset=240),
+		uploaded_by="registration-operator",
+	)
+
+	history = await crud.list_product_truth_lock_history(product_id)
+	assert len(history) == 1
+	archived_source = Path(str(history[0]["canonical_source_path"]))
+	archived_cutout = Path(str(history[0]["canonical_cutout_path"]))
+	if not archived_source.is_absolute():
+		archived_source = runtime_root / archived_source
+	if not archived_cutout.is_absolute():
+		archived_cutout = runtime_root / archived_cutout
+	assert hashlib.sha256(archived_source.read_bytes()).hexdigest() == old_lock["canonical_sha256"]
+	assert hashlib.sha256(archived_cutout.read_bytes()).hexdigest() == old_lock["canonical_cutout_sha256"]
+	assert (
+		json.loads(history[0]["provenance_json"])["history_byte_recovery"]
+		== "DETERMINISTIC_BOUND_MEDIA_SHA256_VERIFIED"
+	)
+	new_lock = await crud.get_product_truth_lock(product_id)
+	assert new_lock is not None
+	assert new_lock["canonical_cutout_media_id"] != old_lock["canonical_cutout_media_id"]
+	assert result["manual_cutout_status"] == "PENDING_REVIEW"
 
 
 @pytest.mark.asyncio
