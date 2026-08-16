@@ -88,6 +88,32 @@ def dialogue_word_budget(
     return max(4, round(block_seconds * float(rate)))
 
 
+def total_dialogue_word_budget(
+    duration_seconds: int,
+    target_language: str | None,
+    *,
+    wps_mode: str = "SWEET",
+    engine: str = "GOOGLE_FLOW",
+    preferred_lane: str | None = None,
+) -> int:
+    """Return the canonical dialogue budget for a complete video duration.
+
+    The block plan and each block's WPS budget come from this module's retained
+    authority.  Copy Register V2 uses this helper for authoring/approval so it
+    cannot maintain a second duration or words-per-second table.
+    """
+
+    blocks = resolve_block_plan(
+        engine,
+        int(duration_seconds),
+        preferred_lane=preferred_lane,
+    )
+    return sum(
+        dialogue_word_budget(seconds, target_language, wps_mode=wps_mode)
+        for seconds in blocks
+    )
+
+
 def resolve_block_plan(
     engine: str, duration_seconds: int, *, preferred_lane: str | None = None,
 ) -> list[int]:

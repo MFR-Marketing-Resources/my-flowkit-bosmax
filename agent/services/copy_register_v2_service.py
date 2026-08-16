@@ -51,11 +51,13 @@ from agent.services.copy_blueprint_v2_service import (
     _blueprint_digest,
     approve_copy_blueprint_v2,
     bind_copy_blueprint_v2,
+    canonical_duration_word_budget,
     create_blueprint_revision,
     validate_copy_blueprint_v2,
 )
 from agent.services import ai_copy_provider_adapter as ai_provider
 from agent.services.ai_provider_settings_service import summarize_provider_settings
+from agent.services.prompt_compiler_runtime_config_service import DEFAULT_TARGET_LANGUAGE
 from agent.services.product_intelligence_claim_safety_service import (
     evaluate_claim_safety,
 )
@@ -64,6 +66,7 @@ from agent.services.product_intelligence_claim_safety_service import (
 ANGLE_PROMPT_VERSION = "copy-register-v2-angle-options-v1"
 FORMULA_PROMPT_VERSION = "copy-register-v2-formula-blueprint-v1"
 STAGE_REGEN_PROMPT_VERSION = "copy-register-v2-stage-regeneration-v1"
+_COPY_V2_WPS_MODE = "SWEET"
 
 _ANGLE_SYSTEM_PROMPT = f"""You are the formula-native Copy Register V2 angle author.
 Prompt contract: {ANGLE_PROMPT_VERSION}.
@@ -83,7 +86,9 @@ not write independent fragments. Every claim-bearing stage must cite one or more
 fact_id values. Use no fact outside the supplied list and never invent a fact, number,
 ingredient, outcome, offer, certification, price, guarantee, or medical claim. The CTA may
 carry an empty evidence list but must not introduce a claim. Do not output hook/body/CTA
-fields outside the ordered stages."""
+fields outside the ordered stages. When a target duration and canonical word budget are
+provided, keep the complete ordered stage text within that budget without omitting any
+required formula stage."""
 
 _STAGE_REGEN_SYSTEM_PROMPT = f"""You regenerate one stage of a Copy Register V2 blueprint.
 Prompt contract: {STAGE_REGEN_PROMPT_VERSION}.
@@ -126,6 +131,27 @@ def _loads(raw: Any, default: Any) -> Any:
 
 def _clean(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
+
+
+def _duration_authority(target_duration_seconds: float | None) -> dict[str, Any] | None:
+    if target_duration_seconds is None:
+        return None
+    try:
+        allowed_word_budget = canonical_duration_word_budget(target_duration_seconds)
+    except (TypeError, ValueError, KeyError) as exc:
+        raise CopyRegisterV2Error(
+            "COPY_V2_DURATION_AUTHORITY_UNRESOLVED",
+            "The canonical planner could not resolve the requested copy duration.",
+            status_code=422,
+            details={"target_duration_seconds": target_duration_seconds, "error": str(exc)},
+        ) from exc
+    return {
+        "engine": "GOOGLE_FLOW",
+        "target_language": DEFAULT_TARGET_LANGUAGE,
+        "wps_mode": _COPY_V2_WPS_MODE,
+        "target_duration_seconds": target_duration_seconds,
+        "allowed_word_budget": allowed_word_budget,
+    }
 
 
 def _sha256(value: Any) -> str:
@@ -927,6 +953,7 @@ def _generate_formula_stage_payloads(
     facts: tuple[EvidenceFact, ...],
     target_duration_seconds: float | None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    duration_authority = _duration_authority(target_duration_seconds)
     raw, receipt = _call_text_assist(
         system_prompt=_FORMULA_SYSTEM_PROMPT,
         prompt_version=FORMULA_PROMPT_VERSION,
@@ -954,6 +981,7 @@ def _generate_formula_stage_payloads(
             "objective": objective.model_dump(mode="json"),
             "selected_angle": angle.model_dump(mode="json"),
             "target_duration_seconds": target_duration_seconds,
+            "duration_authority": duration_authority,
             "facts": [
                 {
                     "fact_id": fact.fact_id,
@@ -964,16 +992,28 @@ def _generate_formula_stage_payloads(
             ],
         },
     )
-    return (
-        _validate_ai_formula_stages(
-            raw,
-            product=product,
-            snapshot=snapshot,
-            formula_id=formula_id,
-            facts=facts,
-        ),
-        receipt,
+    generated = _validate_ai_formula_stages(
+        raw,
+        product=product,
+        snapshot=snapshot,
+        formula_id=formula_id,
+        facts=facts,
     )
+    if duration_authority is not None:
+        actual_word_count = sum(len(item["text"].split()) for item in generated)
+        allowed_word_budget = int(duration_authority["allowed_word_budget"])
+        if actual_word_count > allowed_word_budget:
+            raise CopyRegisterV2Error(
+                "COPY_V2_DURATION_BUDGET_EXCEEDED",
+                "Text-assist output exceeds the canonical duration budget; no draft was persisted.",
+                status_code=422,
+                details={
+                    **duration_authority,
+                    "estimated_word_count": actual_word_count,
+                    "provider_call_id": receipt.get("call_id"),
+                },
+            )
+    return generated, receipt
 
 
 def _build_stages(
@@ -1046,6 +1086,12 @@ def _new_blueprint(
         generated_stages=generated_stages,
     )
     lineage = _lineage(product, snapshot)
+    duration_authority = _duration_authority(target_duration_seconds)
+    duration_provenance = (
+        (ProvenanceEntry(key="duration_authority", value=_json(duration_authority)),)
+        if duration_authority is not None
+        else ()
+    )
     return CopyBlueprintV2(
         blueprint_id=blueprint_id,
         product_id=str(product["id"]),
@@ -1070,6 +1116,7 @@ def _new_blueprint(
             ProvenanceEntry(key="formula_provider_receipt", value=_json(provider_receipt)),
             ProvenanceEntry(key="angle_provider_receipt", value=_json(angle_provider_receipt)),
             ProvenanceEntry(key="product_truth_snapshot", value=str(snapshot["snapshot_id"])),
+            *duration_provenance,
         ),
         product_truth_lineage=lineage,
         created_at=_now(),
@@ -1513,6 +1560,10 @@ async def approve_blueprint(blueprint_id: str, *, approved_by: str, semantic_rev
         current_product_truth=current_lineage,
         evidence_registry=EvidenceRegistry(facts=facts),
         require_semantic_review=True,
+        # Preserve the established duration-neutral V2 workflow for legacy
+        # blueprints while making every explicitly duration-targeted artifact
+        # prove its canonical budget objectively before approval.
+        require_duration_target=blueprint.target_duration_seconds is not None,
     )
     if not validation.valid:
         raise CopyRegisterV2Error("COPY_V2_BLUEPRINT_INVALID", "Blueprint cannot be approved while gates are blocked.", details=validation.model_dump(mode="json"))
@@ -1524,6 +1575,7 @@ async def approve_blueprint(blueprint_id: str, *, approved_by: str, semantic_rev
         approved_at=_now(),
         semantic_review=semantic_review,
         readiness_proof=readiness_proof,
+        require_duration_target=blueprint.target_duration_seconds is not None,
     ).model_copy(update={"status": "PRODUCTION_VALID"})
     db = await get_db()
     async with _db_lock:

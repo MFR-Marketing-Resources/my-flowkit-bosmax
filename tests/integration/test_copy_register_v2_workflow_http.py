@@ -45,26 +45,46 @@ def _install_synthetic_provider(monkeypatch, *, configured: bool) -> dict:
         elif service.FORMULA_PROMPT_VERSION in system:
             facts = payload["facts"]
             angle = payload["selected_angle"]["definition"]
-            result = {
-                "stages": [
-                    {
-                        "formula_stage_key": stage_key,
-                        "text": (
-                            "Semak maklumat produk dan pilih langkah seterusnya."
-                            if stage_key in {"cta", "action", "response"}
-                            else f"{angle}. {facts[index % len(facts)]['text']}."
-                        ),
-                        "evidence_fact_ids": (
-                            []
-                            if stage_key in {"cta", "action", "response"}
-                            else [facts[index % len(facts)]["fact_id"]]
-                        ),
-                    }
-                    for index, stage_key in enumerate(
-                        payload["formula"]["ordered_stage_keys"]
-                    )
-                ]
-            }
+            if payload.get("duration_authority"):
+                short_text = {
+                    "problem": "Masalah harian terasa mengganggu.",
+                    "agitate": "Rutin pun jadi berat.",
+                    "solution": facts[0]["text"],
+                    "cta": "Cuba sekarang.",
+                }
+                result = {
+                    "stages": [
+                        {
+                            "formula_stage_key": stage_key,
+                            "text": short_text[stage_key],
+                            "evidence_fact_ids": (
+                                [] if stage_key == "cta" else [facts[0]["fact_id"]]
+                            ),
+                        }
+                        for stage_key in payload["formula"]["ordered_stage_keys"]
+                    ]
+                }
+            else:
+                result = {
+                    "stages": [
+                        {
+                            "formula_stage_key": stage_key,
+                            "text": (
+                                "Semak maklumat produk dan pilih langkah seterusnya."
+                                if stage_key in {"cta", "action", "response"}
+                                else f"{angle}. {facts[index % len(facts)]['text']}."
+                            ),
+                            "evidence_fact_ids": (
+                                []
+                                if stage_key in {"cta", "action", "response"}
+                                else [facts[index % len(facts)]["fact_id"]]
+                            ),
+                        }
+                        for index, stage_key in enumerate(
+                            payload["formula"]["ordered_stage_keys"]
+                        )
+                    ]
+                }
         else:  # pragma: no cover - this integration only uses two authoring routes
             raise AssertionError("unexpected V2 prompt contract")
         receipt = {
@@ -163,6 +183,7 @@ async def test_real_http_workflow_persists_one_draft_then_approval_and_reload(
                 "angle_id": selected_angle["angle_id"],
                 "angle_definition": selected_angle["definition"],
                 "evidence_fact_ids": selected_facts,
+                "target_duration_seconds": 8,
             },
         )
         assert blueprint_response.status_code == 200

@@ -18,15 +18,19 @@ from agent.models.copy_blueprint_v2 import (
     FormulaStage,
     Objective,
     ProductTruthLineage,
+    ProductionReadinessProof,
+    SemanticReviewProof,
     digest_evidence_text,
 )
 from agent.services.copy_blueprint_v2_service import (
     CopyBlueprintV2Error,
     approve_copy_blueprint_v2,
     bind_copy_blueprint_v2,
+    canonical_duration_word_budget,
     create_blueprint_revision,
     validate_copy_blueprint_v2,
 )
+from agent.services import canonical_prompt_compiler as canonical
 
 
 def _lineage(snapshot_id: str = "pi-snapshot-1") -> ProductTruthLineage:
@@ -95,15 +99,15 @@ def _blueprint(**overrides) -> CopyBlueprintV2:
         "objective": Objective(objective_id="conversion", definition="Move a qualified buyer to try the product."),
         "angle": Angle(angle_id="routine-ease", definition="A simpler daily routine for a real buyer problem."),
         "stages": (
-            _stage("problem", 0, "Rutin harian terasa leceh bila produk lambat menyerap."),
-            _stage("agitate", 1, "Bila tertangguh, rasa malas nak teruskan rutin."),
-            _stage("solution", 2, "Formula ini menyerap cepat untuk rutin harian.", claim_bearing=True, fact_refs=(ref,)),
-            _stage("cta", 3, "Cuba masukkan dalam rutin kau hari ini."),
+            _stage("problem", 0, "Rutin harian terasa leceh."),
+            _stage("agitate", 1, "Bila tertangguh, rasa malas."),
+            _stage("solution", 2, "Formula ini menyerap cepat.", claim_bearing=True, fact_refs=(ref,)),
+            _stage("cta", 3, "Cuba dalam rutin kau."),
         ),
         "evidence_refs": (ref,),
         "target_duration_seconds": 8.0,
         "wps_profile": "SWEET_V1",
-        "estimated_word_count": 25,
+        "estimated_word_count": 16,
         "provenance": (("authoring", "operator-v2"),),
         "product_truth_lineage": _lineage(),
         "created_at": "2026-08-14T00:00:00Z",
@@ -142,9 +146,9 @@ def test_valid_v2_is_formula_native_and_projections_are_derived_only():
     assert result.production_valid is False  # draft is not production-valid
     projection = blueprint.derived_projections()
     assert projection.source_version == "copy-blueprint-v2"
-    assert projection.hook == "Rutin harian terasa leceh bila produk lambat menyerap."
+    assert projection.hook == "Rutin harian terasa leceh."
     assert "Formula ini menyerap cepat" in projection.body
-    assert projection.cta == "Cuba masukkan dalam rutin kau hari ini."
+    assert projection.cta == "Cuba dalam rutin kau."
     assert blueprint.model_dump(mode="json") == before
 
 
@@ -318,3 +322,98 @@ def test_duration_fit_fails_without_rewriting_approved_text():
     )
     assert "COPY_DURATION_FIT_FAILED" in result.error_codes
     assert blueprint.model_dump(mode="json") == before
+
+
+def test_duration_budget_is_derived_from_the_canonical_wps_authority():
+    expected = canonical.total_dialogue_word_budget(
+        8,
+        "BM_MS",
+        wps_mode="SWEET",
+        engine="GOOGLE_FLOW",
+    )
+    assert canonical_duration_word_budget(8) == expected
+    assert expected == canonical.dialogue_word_budget(8, "BM_MS", wps_mode="SWEET")
+
+
+def test_duration_targeted_copy_reports_objective_fit():
+    blueprint = _blueprint()
+    result = validate_copy_blueprint_v2(
+        blueprint,
+        current_product_truth=_lineage(),
+        evidence_registry=_registry(),
+    )
+    assert result.valid is True
+    assert result.duration_fit is True
+    assert result.duration_word_count == 16
+    assert result.duration_word_budget == canonical_duration_word_budget(8)
+
+
+def test_over_budget_copy_fails_closed_even_when_readiness_is_asserted():
+    blueprint = _blueprint(
+        stages=(
+            _stage("problem", 0, " ".join(["panjang"] * 23)),
+            _stage("agitate", 1, "Ringkas."),
+            _stage("solution", 2, "Menyerap cepat.", claim_bearing=True, fact_refs=(_fact().reference(),)),
+            _stage("cta", 3, "Cuba sekarang."),
+        ),
+    )
+    result = validate_copy_blueprint_v2(
+        blueprint,
+        current_product_truth=_lineage(),
+        evidence_registry=_registry(),
+    )
+    assert result.duration_fit is False
+    assert "COPY_V2_DURATION_BUDGET_EXCEEDED" in result.error_codes
+    with pytest.raises(CopyBlueprintV2Error) as exc_info:
+        approve_copy_blueprint_v2(
+            blueprint,
+            approved_by="operator-1",
+            current_product_truth=_lineage(),
+            evidence_registry=_registry(),
+            semantic_review=SemanticReviewProof(
+                decision="APPROVED",
+                reviewer="operator-1",
+                rationale="Synthetic duration governance proof.",
+                reviewed_at="2026-08-14T04:00:00Z",
+            ),
+            readiness_proof=ProductionReadinessProof(
+                readiness_validated=True,
+                provenance_validated=True,
+                safety_validated=True,
+                bridge_validated=True,
+                duration_validated=True,
+            ),
+        )
+    assert exc_info.value.code == "COPY_V2_DURATION_BUDGET_EXCEEDED"
+
+
+def test_missing_duration_target_cannot_be_asserted_duration_ready():
+    blueprint = _blueprint(target_duration_seconds=None)
+    result = validate_copy_blueprint_v2(
+        blueprint,
+        current_product_truth=_lineage(),
+        evidence_registry=_registry(),
+    )
+    assert result.duration_word_budget is None
+    assert result.duration_fit is None
+    with pytest.raises(CopyBlueprintV2Error) as exc_info:
+        approve_copy_blueprint_v2(
+            blueprint,
+            approved_by="operator-1",
+            current_product_truth=_lineage(),
+            evidence_registry=_registry(),
+            semantic_review=SemanticReviewProof(
+                decision="APPROVED",
+                reviewer="operator-1",
+                rationale="Synthetic duration target proof.",
+                reviewed_at="2026-08-14T04:00:00Z",
+            ),
+            readiness_proof=ProductionReadinessProof(
+                readiness_validated=True,
+                provenance_validated=True,
+                safety_validated=True,
+                bridge_validated=True,
+                duration_validated=True,
+            ),
+        )
+    assert exc_info.value.code == "COPY_V2_DURATION_TARGET_REQUIRED"
