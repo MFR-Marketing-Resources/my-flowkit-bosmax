@@ -14,6 +14,8 @@ interface SearchableProductSelectProps {
 	onSelect: (product: Product | null) => void;
 	readinessByProductId?: Record<string, WorkspacePackageReadinessItem>;
 	isLoadingReadiness?: boolean;
+	/** Hide legacy workspace readiness when a page owns a different authority. */
+	showReadinessBadge?: boolean;
 }
 
 /** Return the canonical readiness status for a product, respecting
@@ -46,6 +48,7 @@ export default function SearchableProductSelect({
 	onSelect,
 	readinessByProductId = {},
 	isLoadingReadiness = false,
+	showReadinessBadge = true,
 }: SearchableProductSelectProps) {
 	const [isOpen, setIsOpen] = useState(false);
 	const [search, setSearch] = useState("");
@@ -155,7 +158,7 @@ export default function SearchableProductSelect({
 											Reference only
 										</span>
 									) : null}
-									{(() => {
+									{showReadinessBadge ? (() => {
 										const status = resolveReadinessStatus(
 											selectedProduct,
 											readinessByProductId[selectedProduct.id],
@@ -168,9 +171,9 @@ export default function SearchableProductSelect({
 												{status}
 											</span>
 										);
-									})()}
+									})() : null}
 								</div>
-								{readinessByProductId[selectedProduct.id]?.detail ? (
+								{showReadinessBadge && readinessByProductId[selectedProduct.id]?.detail ? (
 									<div className="bosmax-wrap-safe mt-2 text-[10px] text-slate-400">
 										{readinessByProductId[selectedProduct.id]?.detail}
 									</div>
@@ -283,18 +286,20 @@ export default function SearchableProductSelect({
 															Reference only
 														</span>
 													) : null}
-													<span
-														className={`inline-flex rounded-full border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.14em] ${toneClass}`}
-													>
-														{status}
-													</span>
-												</span>
-												{referenceOnly ? (
-													<span className="bosmax-wrap-safe mt-1 block text-[9px] text-amber-300/70">
+									{showReadinessBadge ? (
+										<span
+											className={`inline-flex rounded-full border px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.14em] ${toneClass}`}
+										>
+											{status}
+										</span>
+									) : null}
+								</span>
+								{referenceOnly ? (
+									<span className="bosmax-wrap-safe mt-1 block text-[9px] text-amber-300/70">
 														REFERENCE_ONLY_PRODUCT — Convert/Register before
 														generation.
 													</span>
-												) : readiness?.detail ? (
+								) : showReadinessBadge && readiness?.detail ? (
 													<span className="bosmax-wrap-safe mt-1 block text-[9px] text-slate-500">
 														{readiness.detail}
 													</span>

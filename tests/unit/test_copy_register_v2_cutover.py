@@ -22,6 +22,8 @@ from agent.models.copy_blueprint_v2 import (
     digest_evidence_text,
 )
 from agent.services import copy_register_v2_service as service
+from agent.services import product_strategy_taxonomy_service
+from agent.services.copywriting_taxonomy_service import seed_copywriting_taxonomy_registry
 from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
     resolve_persisted_copy_execution_binding,
@@ -30,13 +32,43 @@ from agent.services.copy_execution_resolver import (
 
 async def _seed_truth():
     product = await crud.create_product(
-        raw_product_title="V2 Synthetic Product",
+        raw_product_title="Minyak Warisan Cap Burung 25ml",
         source="MANUAL",
-        product_display_name="V2 Synthetic Product",
-        product_short_name="V2 Product",
-        category="Skincare",
-        subcategory="Serum",
-        type="Topical",
+        product_display_name="Minyak Warisan Cap Burung 25ml",
+        product_short_name="Minyak Warisan Cap Burung",
+        category="Health & Personal Care",
+        subcategory="Traditional Wellness",
+        type="Traditional Herbal Oils",
+        product_type="TRADITIONAL_HERBAL_OIL",
+        product_type_id="BEAUTY_PERSONAL_CARE",
+        copywriting_product_type_code="traditional_topical_oil",
+        copywriting_angle="Heritage-led Nusantara herbs and targeted topical wellness support",
+        silo="baby_care_universal_01",
+        bosmax_product_family="BEAUTY_PERSONAL_CARE",
+    )
+    await seed_copywriting_taxonomy_registry(
+        dry_run=False,
+        confirm_apply="SEED_COPYWRITING_TAXONOMY_REGISTRY",
+    )
+    strategy_candidate = product_strategy_taxonomy_service.build_product_strategy_taxonomy_candidate(
+        product,
+        materialization_status="MATERIALIZED",
+    ).model_copy(
+        update={
+            "cluster": "traditional_wellness",
+            "product_type_group": "traditional_herbal_oil",
+            "scene_coverage_status": "COVERED",
+            "specific_strategy": True,
+            "review_status": "VERIFIED",
+            "consumer_status": "READY",
+            "authority_source": "MANUAL_OVERRIDE",
+            "reviewer_id": "synthetic-strategy-reviewer",
+            "reviewer_note": "Synthetic fixture has an explicit reviewed strategy authority.",
+            "reviewed_at": "2026-08-14T00:00:00Z",
+        }
+    )
+    await crud.upsert_manual_product_strategy_taxonomy(
+        product_strategy_taxonomy_service._taxonomy_to_record(strategy_candidate)
     )
     snapshot = await crud.create_product_intelligence_snapshot(
         product_id=product["id"],

@@ -22,6 +22,10 @@ from agent.authority.copy_blueprint_v2_authority import (
     strict_formula_id,
 )
 from agent.authority.copy_formula_registry import FORMULA_REGISTRY
+from agent.authority.copy_register_product_truth_authority import (
+    CopyRegisterProductTruthAuthority,
+    build_copy_register_product_truth_authority,
+)
 from agent.authority.copy_lane_matrix import get_lane_descriptor, producer_consumer_matrix
 from agent.db.schema import _db_lock, get_db
 from agent.models.copy_blueprint_v2 import (
@@ -403,10 +407,36 @@ async def _product_truth_rows(product_id: str) -> tuple[dict[str, Any] | None, d
         (product_id,),
     )
     snapshot_row = await snapshot_cursor.fetchone()
-    return (
-        dict(product_row) if product_row else None,
-        dict(snapshot_row) if snapshot_row else None,
-    )
+    product = dict(product_row) if product_row else None
+    snapshot = dict(snapshot_row) if snapshot_row else None
+    if product is not None:
+        code = _clean(
+            product.get("copywriting_product_type_code")
+            or product.get("product_type_code")
+            or product.get("type_code")
+        )
+        taxonomy_row = None
+        if code:
+            taxonomy_cursor = await db.execute(
+                "SELECT * FROM copywriting_taxonomy_registry "
+                "WHERE product_type_code=? AND registry_status='ACTIVE' LIMIT 1",
+                (code,),
+            )
+            taxonomy_row = await taxonomy_cursor.fetchone()
+        strategy_cursor = await db.execute(
+            "SELECT * FROM product_strategy_taxonomy WHERE product_id=? LIMIT 1",
+            (product_id,),
+        )
+        strategy_row = await strategy_cursor.fetchone()
+        authority = build_copy_register_product_truth_authority(
+            product,
+            copywriting_registry_row=dict(taxonomy_row) if taxonomy_row else None,
+            strategy_taxonomy_row=dict(strategy_row) if strategy_row else None,
+        )
+        # This is an in-memory read model only.  It is deliberately not a
+        # persisted enrichment and is never returned as a raw product column.
+        product["_copy_register_authority"] = authority
+    return product, snapshot
 
 
 def _fact_candidates(product: dict[str, Any], snapshot: dict[str, Any]) -> list[EvidenceFact]:
@@ -448,6 +478,13 @@ def _fact_candidates(product: dict[str, Any], snapshot: dict[str, Any]) -> list[
 
 
 def _lineage(product: dict[str, Any], snapshot: dict[str, Any]) -> ProductTruthLineage:
+    authority = product.get("_copy_register_authority")
+    if not isinstance(authority, CopyRegisterProductTruthAuthority):
+        authority = build_copy_register_product_truth_authority(
+            product,
+            copywriting_registry_row=None,
+            strategy_taxonomy_row=None,
+        )
     return ProductTruthLineage(
         product_id=str(product["id"]),
         snapshot_id=str(snapshot["snapshot_id"]),
@@ -456,6 +493,16 @@ def _lineage(product: dict[str, Any], snapshot: dict[str, Any]) -> ProductTruthL
         snapshot_status="APPROVED",
         approved_by=_clean(snapshot.get("approved_by")) or None,
         approved_at=_clean(snapshot.get("approved_at")) or None,
+        canonical_category=authority.canonical_category or None,
+        canonical_subcategory=authority.canonical_subcategory or None,
+        canonical_type=authority.canonical_type or None,
+        canonical_product_type_code=authority.canonical_product_type_code or None,
+        canonical_copy_cluster=authority.canonical_copy_cluster or None,
+        strategy_taxonomy_version=authority.strategy_taxonomy_version or None,
+        strategy_taxonomy_fingerprint=authority.strategy_taxonomy_fingerprint or None,
+        taxonomy_authority_version=authority.authority_version,
+        taxonomy_authority_fingerprint=authority.authority_fingerprint,
+        bosmax_product_family=authority.bosmax_product_family or None,
     )
 
 
@@ -479,7 +526,10 @@ def _truth_gate(product: dict[str, Any] | None, snapshot: dict[str, Any] | None)
         return ["V2_PRODUCT_TRUTH_CLAIM_GATE_BLOCKED"]
     if _clean(product.get("lifecycle_status") or "ACTIVE").upper() != "ACTIVE":
         return ["V2_PRODUCT_TRUTH_PRODUCT_INACTIVE"]
-    return []
+    authority = product.get("_copy_register_authority")
+    if isinstance(authority, CopyRegisterProductTruthAuthority):
+        return list(authority.blockers)
+    return ["V2_PRODUCT_TRUTH_TAXONOMY_AUTHORITY_UNRESOLVED"]
 
 
 async def _ensure_evidence_facts(facts: Iterable[EvidenceFact]) -> None:
@@ -529,16 +579,30 @@ async def get_product_truth_proof(product_id: str) -> dict[str, Any]:
         raise CopyRegisterV2Error("PRODUCT_NOT_FOUND", "Selected product was not found.", status_code=404)
     facts = _fact_candidates(product, snapshot) if snapshot else []
     lineage = _lineage(product, snapshot) if snapshot else None
+    authority = product.get("_copy_register_authority")
+    if not isinstance(authority, CopyRegisterProductTruthAuthority):
+        authority = None
     persona = _parse_dict(snapshot.get("buyer_persona_snapshot_json")) if snapshot else {}
+    authority_payload = authority.model_dump() if authority else {}
     return {
         "product_id": product_id,
         "product": {
             "display_name": _clean(product.get("product_display_name") or product.get("raw_product_title")),
-            "category": _clean(product.get("category")),
-            "subcategory": _clean(product.get("subcategory")),
-            "product_type": _clean(product.get("type") or product.get("product_type")),
-            "product_family": _clean(product.get("bosmax_product_family")),
-            "cluster": _clean(product.get("silo")),
+            "category": authority_payload.get("canonical_taxonomy", {}).get("category") or _clean(product.get("category")),
+            "subcategory": authority_payload.get("canonical_taxonomy", {}).get("subcategory") or _clean(product.get("subcategory")),
+            "product_type": authority_payload.get("canonical_taxonomy", {}).get("type") or _clean(product.get("type") or product.get("product_type")),
+            "product_type_code": authority_payload.get("canonical_taxonomy", {}).get("product_type_code") or _clean(product.get("copywriting_product_type_code")),
+            "product_family": authority_payload.get("bosmax_family", {}).get("value") or _clean(product.get("bosmax_product_family")),
+            "product_family_reason": authority_payload.get("bosmax_family", {}).get("reason") or "",
+            # ``cluster`` is retained as a compatibility alias, but now means
+            # the canonical copywriting cluster.  The raw silo is never put in
+            # this field again.
+            "cluster": authority_payload.get("canonical_taxonomy", {}).get("copy_cluster") or "",
+            "canonical_copy_cluster": authority_payload.get("canonical_taxonomy", {}).get("copy_cluster") or "",
+            "visual_internal_silo": authority_payload.get("visual_internal_silo", {}).get("value") or "",
+            "visual_internal_silo_source": authority_payload.get("visual_internal_silo", {}).get("source") or "",
+            "visual_internal_silo_status": authority_payload.get("visual_internal_silo", {}).get("status") or "NOT_SET",
+            "visual_internal_silo_is_canonical_copy_cluster": False,
         },
         "product_truth": {
             "approved": snapshot is not None,
@@ -558,6 +622,8 @@ async def get_product_truth_proof(product_id: str) -> dict[str, Any]:
         },
         "facts": [fact.model_dump(mode="json") for fact in facts],
         "blockers": blockers,
+        "blocker_details": authority_payload.get("blocker_details", []),
+        "authority": authority_payload,
         "ready_for_copy": not blockers and bool(facts),
         "legacy_copy_rows_read": 0,
     }
@@ -1363,13 +1429,22 @@ async def get_activation_status(product_id: str) -> dict[str, Any]:
         for item in producer_consumer_matrix()
         if item["copy_policy"] == "REQUIRED"
     )
+    product, snapshot = await _product_truth_rows(product_id)
+    current_lineage = _lineage(product, snapshot) if product and snapshot else None
+    if current_lineage is None or _truth_gate(product, snapshot):
+        return {
+            "active_blueprint_id": None,
+            "active_revision": None,
+            "active_lane_count": 0,
+            "required_lane_count": len(required_lanes),
+            "activated_at": None,
+        }
     placeholders = ",".join("?" for _ in required_lanes)
     db = await get_db()
     cursor = await db.execute(
         f"""
-        SELECT binding.blueprint_id, binding.revision,
-               COUNT(DISTINCT authority.lane) AS active_lane_count,
-               MAX(authority.activated_at) AS activated_at
+        SELECT binding.blueprint_id, binding.revision, authority.lane,
+               authority.activated_at, binding.product_truth_lineage_json
         FROM copy_execution_authority_v2 authority
         JOIN copy_execution_binding_v2 binding
           ON binding.binding_id = authority.binding_id
@@ -1382,20 +1457,42 @@ async def get_activation_status(product_id: str) -> dict[str, Any]:
           AND authority.lane IN ({placeholders})
           AND binding.binding_status = 'BOUND'
           AND blueprint.status = 'PRODUCTION_VALID'
-        GROUP BY binding.blueprint_id, binding.revision
-        HAVING COUNT(DISTINCT authority.lane) = ?
-        ORDER BY activated_at DESC
-        LIMIT 1
         """,
-        (product_id, *required_lanes, len(required_lanes)),
+        (product_id, *required_lanes),
     )
-    row = await cursor.fetchone()
+    candidates: dict[tuple[str, int], dict[str, Any]] = {}
+    for row in await cursor.fetchall():
+        try:
+            stored_lineage = ProductTruthLineage.model_validate(
+                _loads(row["product_truth_lineage_json"], {})
+            )
+        except Exception:  # noqa: BLE001 - stale persisted lineage fails closed
+            continue
+        if stored_lineage != current_lineage:
+            continue
+        key = (str(row["blueprint_id"]), int(row["revision"]))
+        candidate = candidates.setdefault(
+            key,
+            {"lanes": set(), "activated_at": []},
+        )
+        candidate["lanes"].add(str(row["lane"]))
+        candidate["activated_at"].append(str(row["activated_at"]))
+    eligible = [
+        (key, value)
+        for key, value in candidates.items()
+        if value["lanes"] == set(required_lanes)
+    ]
+    eligible.sort(
+        key=lambda item: max(item[1]["activated_at"] or [""]),
+        reverse=True,
+    )
+    row = eligible[0] if eligible else None
     return {
-        "active_blueprint_id": row["blueprint_id"] if row else None,
-        "active_revision": int(row["revision"]) if row else None,
-        "active_lane_count": int(row["active_lane_count"]) if row else 0,
+        "active_blueprint_id": row[0][0] if row else None,
+        "active_revision": row[0][1] if row else None,
+        "active_lane_count": len(row[1]["lanes"]) if row else 0,
         "required_lane_count": len(required_lanes),
-        "activated_at": row["activated_at"] if row else None,
+        "activated_at": max(row[1]["activated_at"]) if row else None,
     }
 
 

@@ -217,6 +217,24 @@ describe("SearchableProductSelect — server product search", () => {
 		expect(screen.getByText("Official Minyak Warisan")).toBeInTheDocument();
 	});
 
+	it("can hide the legacy readiness badge when the page owns V2 truth readiness", () => {
+		const product = baseProduct({
+			raw_product_title: "Minyak Warisan Cap Burung 25ml",
+			product_display_name: "Minyak Warisan Cap Burung 25ml",
+		});
+		render(
+			<SearchableProductSelect
+				products={[product]}
+				selectedProduct={product}
+				onSelect={vi.fn()}
+				showReadinessBadge={false}
+			/>,
+		);
+
+		expect(screen.getByText("MANUAL")).toBeInTheDocument();
+		expect(screen.queryByText("UNKNOWN")).not.toBeInTheDocument();
+	});
+
 	it("falls back to original preview when candidate is pending and not official", () => {
 		const product = baseProduct({
 			id: "prod-pending-88",

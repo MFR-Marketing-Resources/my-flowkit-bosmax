@@ -1600,7 +1600,10 @@ async def get_product_mapping(product_id: str):
     product = await crud.get_product(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    enriched = await _enrich_product(product, persist=True)
+    # Mapping is a read model.  GET must not persist enrichment or advance the
+    # product updated_at timestamp; governed writes belong to explicit import
+    # or mutation routes.
+    enriched = await _enrich_product(product, persist=False)
     return {
         key: enriched.get(key)
         for key in [

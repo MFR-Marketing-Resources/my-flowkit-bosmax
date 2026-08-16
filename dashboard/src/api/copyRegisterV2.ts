@@ -38,8 +38,15 @@ export interface CopyTruthProofV2 {
 		category: string;
 		subcategory: string;
 		product_type: string;
+		product_type_code?: string;
 		product_family: string;
+		product_family_reason?: string;
 		cluster: string;
+		canonical_copy_cluster?: string;
+		visual_internal_silo?: string;
+		visual_internal_silo_source?: string;
+		visual_internal_silo_status?: string;
+		visual_internal_silo_is_canonical_copy_cluster?: boolean;
 	};
 	product_truth: {
 		approved: boolean;
@@ -59,6 +66,11 @@ export interface CopyTruthProofV2 {
 	};
 	facts: EvidenceFactV2[];
 	blockers: string[];
+	blocker_details?: Array<Record<string, unknown>>;
+	authority?: {
+		authority_version?: string;
+		authority_fingerprint?: string | null;
+	};
 	ready_for_copy: boolean;
 }
 

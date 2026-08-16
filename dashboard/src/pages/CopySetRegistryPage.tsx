@@ -409,7 +409,12 @@ export default function CopySetRegistryPage() {
 
 			<Section title="1. Select product" helper="Only a product with a current approved Product Truth snapshot can continue.">
 				<div className="max-w-xl">
-					<SearchableProductSelect products={products} selectedProduct={selectedProduct} onSelect={selectProduct} />
+					<SearchableProductSelect
+						products={products}
+						selectedProduct={selectedProduct}
+						onSelect={selectProduct}
+						showReadinessBadge={false}
+					/>
 				</div>
 			</Section>
 
@@ -422,15 +427,32 @@ export default function CopySetRegistryPage() {
 					>
 						{truth ? (
 							<div className="space-y-3 text-xs text-slate-300" data-testid="product-truth-proof">
-								<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-									{[
-										["Category", truth.product.category],
-										["Subcategory", truth.product.subcategory],
-										["Type", truth.product.product_type],
-										["Family / cluster", [truth.product.product_family, truth.product.cluster].filter(Boolean).join(" · ")],
-									].map(([label, value]) => <div key={label}><span className="text-slate-500">{label}: </span>{value || "—"}</div>)}
+								<div className="grid gap-3 sm:grid-cols-2">
+									<div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3" data-testid="canonical-taxonomy-proof">
+										<p className="font-bold uppercase tracking-wider text-blue-200">Canonical Taxonomy</p>
+										<p className="mt-2"><span className="text-slate-500">Category: </span>{truth.product.category || "—"}</p>
+										<p><span className="text-slate-500">Subcategory: </span>{truth.product.subcategory || "—"}</p>
+										<p><span className="text-slate-500">Type: </span>{truth.product.product_type || "—"}</p>
+										<p><span className="text-slate-500">Product type code: </span><span className="font-mono">{truth.product.product_type_code || "—"}</span></p>
+									</div>
+									<div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3">
+										<p className="font-bold uppercase tracking-wider text-blue-200">Canonical Copy Cluster</p>
+										<p className="mt-2 text-sm text-slate-100">{truth.product.canonical_copy_cluster || truth.product.cluster || "—"}</p>
+										<p className="mt-1 text-[10px] text-slate-500">Copywriting taxonomy authority; never sourced from product.silo.</p>
+									</div>
+									<div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3">
+										<p className="font-bold uppercase tracking-wider text-blue-200">BOSMAX Family</p>
+										<p className="mt-2 text-sm text-slate-100">{truth.product.product_family || "—"}</p>
+										<p className="mt-1 text-[10px] text-slate-500">{truth.product.product_family_reason || "Independently derived family dimension."}</p>
+									</div>
+									<div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+										<p className="font-bold uppercase tracking-wider text-amber-200">Visual/Internal Silo</p>
+										<p className="mt-2 text-sm text-slate-100">{truth.product.visual_internal_silo || "—"}</p>
+										<p className="mt-1 text-[10px] text-amber-200/70">{truth.product.visual_internal_silo_status || "NOT_SET"} · not a Copy Register cluster authority.</p>
+									</div>
 								</div>
-								{truth.product_truth.snapshot ? <p><span className="text-slate-500">Approved snapshot: </span><span className="font-mono">{truth.product_truth.snapshot.snapshot_id}</span> · v{truth.product_truth.snapshot.version} · digest <span className="font-mono">{truth.product_truth.snapshot.digest.slice(0, 16)}…</span></p> : null}
+								{truth.authority?.authority_fingerprint ? <p><span className="text-slate-500">Taxonomy/strategy authority fingerprint: </span><span className="font-mono">{truth.authority.authority_fingerprint}</span></p> : null}
+								{truth.product_truth.snapshot ? <p><span className="text-slate-500">Approved Product Truth snapshot: </span><span className="font-mono">{truth.product_truth.snapshot.snapshot_id}</span> · v{truth.product_truth.snapshot.version} · digest <span className="font-mono">{truth.product_truth.snapshot.digest.slice(0, 16)}…</span></p> : null}
 								<p><span className="text-slate-500">Avatar/persona: </span>{JSON.stringify(truth.product_truth.persona) || "—"}</p>
 								<p><span className="text-slate-500">Allowed claims: </span>{truth.product_truth.allowed_claims.join(" · ") || "—"}</p>
 								{truth.blockers.length ? <HelperText tone="warn">Blockers: {truth.blockers.join("; ")}</HelperText> : <HelperText className="text-emerald-300/80">Product Truth lineage and claim gate are ready for formula copy.</HelperText>}
