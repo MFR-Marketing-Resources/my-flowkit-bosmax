@@ -75,13 +75,15 @@ class CutoutDecisionRequest(BaseModel):
 class VisualSetupSaveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    selected_visual: Literal["ORIGINAL", "AUTO", "MANUAL"]
+    selected_visual: Literal["ORIGINAL", "ORIGINAL_SOURCE_REAUTHORIZE", "AUTO", "MANUAL"]
     reviewed_by: str | None = Field(default=None, max_length=256)
     review_note: str | None = Field(default=None, max_length=2000)
     confirm_identity: bool = False
     confirm_label_logo: bool = False
     confirm_geometry_scale: bool = False
     confirm_product_isolation: bool = False
+    expected_previous_canonical_sha256: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
+    expected_replacement_sha256: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
 
 
 class CutoutTargetRequest(BaseModel):
@@ -350,15 +352,22 @@ async def fallback_visual_cutout(product_id: str, request: CutoutDecisionRequest
 @router.post("/{product_id}/save-visual-setup")
 async def save_visual_setup(product_id: str, request: VisualSetupSaveRequest):
     try:
+        kwargs = {
+            "product_id": product_id,
+            "selected_visual": request.selected_visual,
+            "reviewed_by": request.reviewed_by,
+            "review_note": request.review_note,
+            "confirm_identity": request.confirm_identity,
+            "confirm_label_logo": request.confirm_label_logo,
+            "confirm_geometry_scale": request.confirm_geometry_scale,
+            "confirm_product_isolation": request.confirm_product_isolation,
+        }
+        if request.expected_previous_canonical_sha256 is not None:
+            kwargs["expected_previous_canonical_sha256"] = request.expected_previous_canonical_sha256
+        if request.expected_replacement_sha256 is not None:
+            kwargs["expected_replacement_sha256"] = request.expected_replacement_sha256
         return await save_product_visual_setup(
-            product_id,
-            selected_visual=request.selected_visual,
-            reviewed_by=request.reviewed_by,
-            review_note=request.review_note,
-            confirm_identity=request.confirm_identity,
-            confirm_label_logo=request.confirm_label_logo,
-            confirm_geometry_scale=request.confirm_geometry_scale,
-            confirm_product_isolation=request.confirm_product_isolation,
+            **kwargs,
         )
     except ProductVisualOnboardingError as exc:
         raise _error(exc) from exc

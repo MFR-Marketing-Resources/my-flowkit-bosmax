@@ -462,6 +462,83 @@ async def upsert_product_truth_lock(product_id: str, **kwargs) -> dict | None:
     return await _get("product_visual_truth_lock", "product_id", product_id)
 
 
+async def cas_reauthorize_product_truth_lock_original_source(
+    product_id: str,
+    *,
+    expected_previous_canonical_sha256: str,
+    canonical_media_id: str,
+    canonical_sha256: str,
+    source_width: int,
+    source_height: int,
+    canonical_source_path: str,
+    review_status: str,
+    failure_state: str,
+    identity_lock: int,
+    geometry_lock: int,
+    label_lock: int,
+    logo_lock: int,
+    colour_lock: int,
+    scale_lock: int,
+    provenance_json: str,
+) -> dict | None:
+    """Atomically replace Original Source authority with a SHA CAS guard.
+
+    This deliberately has a narrow field list. A concurrent writer that has
+    changed the persisted source SHA causes zero rows to update, so callers
+    cannot accidentally perform last-write-wins reauthorization.
+    """
+    _validate_table("product_visual_truth_lock")
+    db = await get_db()
+    updated_at = _now()
+    async with _db_lock:
+        cur = await db.execute(
+            """
+            UPDATE product_visual_truth_lock
+               SET canonical_media_id=?,
+                   canonical_sha256=?,
+                   source_width=?,
+                   source_height=?,
+                   canonical_source_path=?,
+                   review_status=?,
+                   failure_state=?,
+                   identity_lock=?,
+                   geometry_lock=?,
+                   label_lock=?,
+                   logo_lock=?,
+                   colour_lock=?,
+                   scale_lock=?,
+                   provenance_json=?,
+                   updated_at=?
+             WHERE product_id=?
+               AND canonical_sha256=?
+            """,
+            (
+                canonical_media_id,
+                canonical_sha256,
+                int(source_width),
+                int(source_height),
+                canonical_source_path,
+                review_status,
+                failure_state,
+                int(identity_lock),
+                int(geometry_lock),
+                int(label_lock),
+                int(logo_lock),
+                int(colour_lock),
+                int(scale_lock),
+                provenance_json,
+                updated_at,
+                product_id,
+                expected_previous_canonical_sha256,
+            ),
+        )
+        if cur.rowcount != 1:
+            await db.rollback()
+            return None
+        await db.commit()
+        return await _get_with_db(db, "product_visual_truth_lock", "product_id", product_id)
+
+
 async def create_product_truth_lock_history(product_id: str, **kwargs) -> dict | None:
     """Append an immutable snapshot of the former active truth-lock candidate."""
     _validate_table("product_visual_truth_lock_history")
