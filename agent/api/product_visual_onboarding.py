@@ -372,6 +372,34 @@ async def get_visual_cutout_history(product_id: str):
         raise _error(exc) from exc
 
 
+def _preview_media_type(path) -> str:
+    """Serve the real image content-type (JPEG originals must not claim PNG)."""
+    suffix = str(getattr(path, "suffix", "") or "").lower()
+    if suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if suffix == ".webp":
+        return "image/webp"
+    if suffix == ".gif":
+        return "image/gif"
+    if suffix == ".png":
+        return "image/png"
+    try:
+        head = path.read_bytes()[:16]
+    except Exception:
+        return "application/octet-stream"
+    jpeg_magic = bytes([0xFF, 0xD8, 0xFF])
+    png_magic = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+    if head.startswith(jpeg_magic):
+        return "image/jpeg"
+    if head.startswith(png_magic):
+        return "image/png"
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    return "application/octet-stream"
+
+
 @router.get("/{product_id}/cutout/preview/{variant}")
 async def get_visual_cutout_preview(
     product_id: str,
@@ -380,7 +408,12 @@ async def get_visual_cutout_preview(
 ):
     try:
         path = await resolve_product_visual_preview(product_id, variant, history_id=history_id)
-        return FileResponse(path, media_type="image/png", filename=path.name)
+        return FileResponse(
+            path,
+            media_type=_preview_media_type(path),
+            filename=path.name,
+            headers={"Cache-Control": "no-store"},
+        )
     except ProductVisualOnboardingError as exc:
         raise _error(exc) from exc
 
