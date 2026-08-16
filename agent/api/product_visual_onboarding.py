@@ -33,6 +33,7 @@ from agent.services.product_visual_onboarding_service import (
     request_bulk_cutout_cancellation,
     resolve_product_visual_preview,
     run_bulk_cutout_preparation,
+    upload_original_source_candidate,
     upload_manual_product_cutout,
     use_original_product_fallback,
 )
@@ -84,6 +85,7 @@ class VisualSetupSaveRequest(BaseModel):
     confirm_product_isolation: bool = False
     expected_previous_canonical_sha256: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
     expected_replacement_sha256: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
+    replacement_media_id: str | None = Field(default=None, max_length=256)
 
 
 class CutoutTargetRequest(BaseModel):
@@ -325,6 +327,28 @@ async def upload_visual_manual_cutout(
         await cutout.close()
 
 
+@router.post("/{product_id}/source/reauthorization")
+async def upload_visual_original_source_candidate(
+    product_id: str,
+    source: UploadFile = File(...),
+    uploaded_by: str = Form("operator"),
+):
+    """Store a product-bound replacement candidate without changing Product Truth."""
+    try:
+        raw_bytes = await source.read()
+        return await upload_original_source_candidate(
+            product_id,
+            filename=source.filename or "product-source-image",
+            content_type=source.content_type,
+            raw_bytes=raw_bytes,
+            uploaded_by=uploaded_by,
+        )
+    except ProductVisualOnboardingError as exc:
+        raise _error(exc) from exc
+    finally:
+        await source.close()
+
+
 @router.post("/{product_id}/cutout/reject")
 async def reject_visual_cutout(product_id: str, request: CutoutDecisionRequest):
     try:
@@ -366,6 +390,8 @@ async def save_visual_setup(product_id: str, request: VisualSetupSaveRequest):
             kwargs["expected_previous_canonical_sha256"] = request.expected_previous_canonical_sha256
         if request.expected_replacement_sha256 is not None:
             kwargs["expected_replacement_sha256"] = request.expected_replacement_sha256
+        if request.replacement_media_id is not None:
+            kwargs["replacement_media_id"] = request.replacement_media_id
         return await save_product_visual_setup(
             **kwargs,
         )

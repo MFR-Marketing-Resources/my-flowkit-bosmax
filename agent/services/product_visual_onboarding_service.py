@@ -29,13 +29,16 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Iterable
+import uuid
 
 from PIL import Image
 
 from agent import config
 from agent.config import BASE_DIR
 from agent.db import crud
+from agent.db.schema import atomic
 from agent.models.product_truth_lock import (
     ProductTruthLockApprovalRequest,
     ProductTruthLockOnboardingRequest,
@@ -62,6 +65,7 @@ from agent.services.product_truth_lock_service import (
     create_pending_product_truth_lock,
     approve_product_truth_lock,
     register_product_truth_cutout_media,
+    resolve_approved_product_truth_lock,
     reject_product_truth_lock,
     select_product_truth_fallback,
 )
@@ -85,6 +89,15 @@ PREPARATION_STATES = {
     PREPARATION_FAILED,
     BLOCKED,
     REJECTED,
+}
+
+_SOURCE_REAUTH_MAX_BYTES = 10 * 1024 * 1024
+_SOURCE_REAUTH_MEDIA_PREFIX = "visual-source-reauthorization:"
+_SOURCE_REAUTH_FORMATS = {
+    "JPEG": ("jpg", "image/jpeg"),
+    "PNG": ("png", "image/png"),
+    "WEBP": ("webp", "image/webp"),
+    "GIF": ("gif", "image/gif"),
 }
 
 _COMPOSITOR_POOL: ProcessPoolExecutor | None = None
@@ -215,6 +228,209 @@ def _preview_servable_path(value: Any) -> Path | None:
     return candidate.resolve()
 
 
+def _safe_source_filename(filename: str | None) -> str:
+    raw = str(filename or "").replace("\\", "/")
+    safe = Path(raw).name.strip()
+    return (safe if safe and safe not in {".", ".."} else "product-source-image")[:255]
+
+
+def _safe_path_segment(value: str) -> str:
+    safe = "".join(char if char.isalnum() or char in "-_" else "_" for char in value)
+    return safe[:120] or "product"
+
+
+def _source_media_reference(
+    *,
+    product_id: str,
+    media_id: str,
+    path: Path,
+    filename: str,
+    mime_type: str | None,
+) -> Any:
+    """Build the server-owned reference used by explicit source reauthorization."""
+    try:
+        with Image.open(path) as image:
+            image_format = str(image.format or "").upper()
+            width, height = image.size
+            image.load()
+        metadata = _SOURCE_REAUTH_FORMATS.get(image_format)
+        if metadata is None:
+            raise ValueError(f"unsupported image format: {image_format or 'unknown'}")
+        detected_mime = metadata[1]
+        sha256 = _sha256_bytes(path.read_bytes())
+    except Exception as exc:  # noqa: BLE001 - replacement validation is fail-closed
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID",
+            f"Uploaded replacement source is not a valid image: {exc}",
+            status_code=422,
+        ) from exc
+    return SimpleNamespace(
+        source_type="PRODUCT_SOURCE_MEDIA_REAUTHORIZATION",
+        media_id=media_id,
+        local_path=str(path),
+        image_url=None,
+        mime_type=str(mime_type or detected_mime),
+        sha256=sha256,
+        width=int(width),
+        height=int(height),
+        provenance="SMART_REGISTRATION_SOURCE_REAUTHORIZATION_UPLOAD",
+        validation_status="VALIDATED",
+        product_id=product_id,
+        filename=filename,
+    )
+
+
+async def upload_original_source_candidate(
+    product_id: str,
+    *,
+    filename: str,
+    content_type: str | None,
+    raw_bytes: bytes,
+    uploaded_by: str,
+) -> dict[str, Any]:
+    """Persist an immutable, product-bound source candidate for explicit reauthorization.
+
+    This is deliberately separate from Product Truth lock mutation. Uploading a
+    candidate never changes the active source or attempts to archive/supersede a
+    lock; the existing ``ORIGINAL_SOURCE_REAUTHORIZE`` save path performs that
+    explicit, SHA-CAS-protected decision later.
+    """
+    product = await crud.get_product(product_id)
+    if not product:
+        raise ProductVisualOnboardingError(
+            "PRODUCT_NOT_FOUND",
+            f"Product {product_id} was not found.",
+            status_code=404,
+        )
+    blocked = await _blocked_reason(product)
+    if blocked:
+        raise ProductVisualOnboardingError(
+            blocked,
+            "Original Source replacement is blocked for this product cohort.",
+            status_code=409,
+        )
+    if not raw_bytes:
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID",
+            "Uploaded replacement source is empty.",
+            status_code=422,
+        )
+    if len(raw_bytes) > _SOURCE_REAUTH_MAX_BYTES:
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID",
+            "Uploaded replacement source exceeds the 10 MB limit.",
+            status_code=422,
+        )
+
+    safe_filename = _safe_source_filename(filename)
+    media_id = uuid.uuid4().hex
+    try:
+        with Image.open(io.BytesIO(raw_bytes)) as image:
+            image_format = str(image.format or "").upper()
+            width, height = image.size
+            image.load()
+        format_meta = _SOURCE_REAUTH_FORMATS.get(image_format)
+        if format_meta is None:
+            raise ValueError(f"unsupported image format: {image_format or 'unknown'}")
+    except Exception as exc:  # noqa: BLE001 - upload validation is fail-closed
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID",
+            f"Uploaded replacement source is not a valid image: {exc}",
+            status_code=422,
+        ) from exc
+
+    target = (
+        BASE_DIR
+        / "data"
+        / "product_registration"
+        / "source_reauthorization"
+        / _safe_path_segment(str(product_id))
+        / f"{media_id}.{format_meta[0]}"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(raw_bytes)
+    relative_path = str(target.resolve().relative_to(BASE_DIR.resolve())).replace("\\", "/")
+    try:
+        rows = await crud.list_product_source_media(product_id=product_id)
+        ordinal = max((int(row.get("ordinal") or 0) for row in rows), default=-1) + 1
+        row = await crud.create_product_source_media(
+            f"{_SOURCE_REAUTH_MEDIA_PREFIX}{product_id}",
+            "image",
+            media_id=media_id,
+            product_id=product_id,
+            local_path=relative_path,
+            filename=safe_filename,
+            mime=format_meta[1],
+            bytes=len(raw_bytes),
+            width=int(width),
+            height=int(height),
+            ordinal=ordinal,
+            status="PENDING_REAUTHORIZATION",
+        )
+    except Exception as exc:  # noqa: BLE001 - do not leave an unregistered candidate
+        target.unlink(missing_ok=True)
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_UPLOAD_FAILED",
+            f"Replacement source could not be registered: {exc}",
+            status_code=500,
+        ) from exc
+
+    sha256 = _sha256_bytes(raw_bytes)
+    return {
+        "product_id": str(product_id),
+        "media_id": media_id,
+        "sha256": sha256,
+        "filename": safe_filename,
+        "mime": format_meta[1],
+        "bytes": len(raw_bytes),
+        "width": int(width),
+        "height": int(height),
+        "status": str((row or {}).get("status") or "PENDING_REAUTHORIZATION"),
+        "uploaded_by": str(uploaded_by or "operator").strip() or "operator",
+        "created_without_credit": True,
+    }
+
+
+async def _resolve_uploaded_source_candidate(
+    product_id: str,
+    media_id: str,
+) -> Any:
+    row = await crud.get_product_source_media(media_id)
+    if not row or str(row.get("product_id") or "") != str(product_id):
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_PRODUCT_MISMATCH",
+            "Governed replacement media belongs to a different product or is unavailable.",
+            status_code=409,
+        )
+    if str(row.get("kind") or "").lower() != "image":
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID",
+            "Governed replacement media must be an image.",
+            status_code=422,
+        )
+    status = str(row.get("status") or "").upper()
+    if status not in {"PENDING_REAUTHORIZATION", "STORED"}:
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID",
+            "Governed replacement media is not available for reauthorization.",
+            status_code=422,
+        )
+    path = _preview_servable_path(row.get("local_path"))
+    if path is None:
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID",
+            "Governed replacement media bytes are unavailable under BASE_DIR.",
+            status_code=422,
+        )
+    return _source_media_reference(
+        product_id=product_id,
+        media_id=str(media_id),
+        path=path,
+        filename=str(row.get("filename") or path.name),
+        mime_type=str(row.get("mime") or "") or None,
+    )
+
+
 def _candidate_cutout_path(
     lock: dict[str, Any] | None,
     history: list[dict[str, Any]] | None,
@@ -252,11 +468,17 @@ async def _enrich_product_with_source_media(product: dict[str, Any]) -> dict[str
     for media in media_rows:
         if str(media.get("kind") or "").lower() != "image":
             continue
+        media_id = str(media.get("media_id") or "").strip()
+        draft_id = str(media.get("draft_id") or "")
+        # A source reauthorization upload is an explicit candidate, not an
+        # implicit replacement. It becomes readable by the normal resolver only
+        # after the reauthorization CAS makes its media id current on the product.
+        if draft_id.startswith(_SOURCE_REAUTH_MEDIA_PREFIX) and media_id != str(product.get("media_id") or "").strip():
+            continue
         path = _preview_servable_path(media.get("local_path"))
         if path is None:
             continue
         enriched = dict(product)
-        media_id = str(media.get("media_id") or "").strip()
         if media_id:
             enriched["media_id"] = media_id
         if not str(enriched.get("local_image_path") or "").strip():
@@ -290,6 +512,42 @@ def _governed_original_path_candidates(
     return values
 
 
+def _truth_lock_source_reference(lock: dict[str, Any] | None, product: dict[str, Any]) -> Any | None:
+    """Resolve the active same-product source directly from its persisted lock."""
+    if not lock:
+        return None
+    active_selection = str(_provenance(lock).get("active_selection") or "").upper()
+    if active_selection != "SAME_PRODUCT_TRUSTED_SOURCE":
+        return None
+    path = _preview_servable_path(lock.get("canonical_source_path"))
+    if path is None:
+        return None
+    expected_sha = str(lock.get("canonical_sha256") or "").strip().lower()
+    try:
+        with Image.open(path) as image:
+            image_format = str(image.format or "").upper()
+            width, height = image.size
+            image.load()
+        actual_sha = _sha256_bytes(path.read_bytes())
+    except Exception:  # noqa: BLE001 - readiness remains fail-closed
+        return None
+    if not expected_sha or actual_sha != expected_sha:
+        return None
+    mime_type = _SOURCE_REAUTH_FORMATS.get(image_format, ("", "image/octet-stream"))[1]
+    return SimpleNamespace(
+        source_type="PRODUCT_TRUTH_LOCK_SOURCE",
+        media_id=lock.get("canonical_media_id"),
+        local_path=str(path),
+        image_url=product.get("image_url"),
+        mime_type=mime_type,
+        sha256=actual_sha,
+        width=int(width),
+        height=int(height),
+        provenance="PRODUCT_VISUAL_TRUTH_LOCK_SOURCE",
+        validation_status="VALIDATED",
+    )
+
+
 async def _resolve_trusted_original_reference(
     product: dict[str, Any],
     *,
@@ -315,6 +573,10 @@ async def _resolve_trusted_original_reference(
             lock = await crud.get_product_truth_lock(product_id)
         except Exception:  # noqa: BLE001
             lock = None
+
+    locked_reference = _truth_lock_source_reference(lock, product)
+    if locked_reference is not None:
+        return locked_reference, True, None
 
     resolver_product = await _enrich_product_with_source_media(product)
     # Match prior readiness gates: local file / schema / pack / approved lock / PSM bytes.
@@ -752,6 +1014,9 @@ def _readiness_payload(
         "visual_canvas_label": STANDARD_VISUAL_CANVAS_LABEL,
         "visual_canvas_requirement": STANDARD_VISUAL_CANVAS_REQUIREMENT,
         "canonical_media_status": "AVAILABLE" if source_available else "MISSING",
+        "canonical_source_media_id": (lock or {}).get("canonical_media_id"),
+        "canonical_source_sha256": (lock or {}).get("canonical_sha256"),
+        "original_source_reauthorization_required": _original_authority_requires_reauthorization(lock),
         "reference_pack_status": str((pack or {}).get("pack_status") or "NOT_PREPARED"),
         "visual_grounding_status": grounding_status,
         "visual_grounding_source": "BLOCKED" if blocked_reason else (active_source if approved else _source_label(reference, approved=False)),
@@ -1431,6 +1696,7 @@ async def reauthorize_product_original_source(
     confirm_product_isolation: bool,
     expected_previous_canonical_sha256: str | None,
     expected_replacement_sha256: str | None,
+    replacement_media_id: str | None = None,
 ) -> dict[str, Any]:
     """Explicitly replace one product's stale Original Source authority.
 
@@ -1497,12 +1763,30 @@ async def reauthorize_product_original_source(
             status_code=409,
         )
 
-    try:
-        reference = resolve_governed_original_product_source(dict(product))
-    except ProductVisualReferenceRequiredError as exc:
-        message = str(exc)
-        code = "OFFICIAL_PRODUCT_VISUAL_INVALID" if message.startswith("OFFICIAL_PRODUCT_VISUAL_INVALID") else "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID"
-        raise ProductVisualOnboardingError(code, message, status_code=422) from exc
+    selected_media_id = str(replacement_media_id or "").strip()
+    if selected_media_id:
+        # An uploaded candidate is selected by an exact product-bound media id;
+        # the active approved cutout authority is still validated before this
+        # source switch can proceed.
+        if str(lock.get("review_status") or "").upper() == APPROVED and str(
+            _provenance(lock).get("active_selection") or ""
+        ).upper() != "SAME_PRODUCT_TRUSTED_SOURCE":
+            try:
+                resolve_approved_product_truth_lock(product_id)
+            except ProductTruthLockError as exc:
+                raise ProductVisualOnboardingError(
+                    "OFFICIAL_PRODUCT_VISUAL_INVALID",
+                    str(exc),
+                    status_code=422,
+                ) from exc
+        reference = await _resolve_uploaded_source_candidate(product_id, selected_media_id)
+    else:
+        try:
+            reference = resolve_governed_original_product_source(dict(product))
+        except ProductVisualReferenceRequiredError as exc:
+            message = str(exc)
+            code = "OFFICIAL_PRODUCT_VISUAL_INVALID" if message.startswith("OFFICIAL_PRODUCT_VISUAL_INVALID") else "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID"
+            raise ProductVisualOnboardingError(code, message, status_code=422) from exc
 
     source_path = _preview_servable_path(getattr(reference, "local_path", None))
     if source_path is None:
@@ -1591,24 +1875,56 @@ async def reauthorize_product_original_source(
         }
     )
 
-    persisted = await crud.cas_reauthorize_product_truth_lock_original_source(
-        product_id,
-        expected_previous_canonical_sha256=previous_sha,
-        canonical_media_id=replacement_media_id,
-        canonical_sha256=resolved_sha,
-        source_width=source_width,
-        source_height=source_height,
-        canonical_source_path=str(source_path),
-        review_status="REJECTED",
-        failure_state="FALLBACK_SELECTED",
-        identity_lock=0,
-        geometry_lock=0,
-        label_lock=0,
-        logo_lock=0,
-        colour_lock=0,
-        scale_lock=0,
-        provenance_json=json.dumps(provenance, sort_keys=True),
-    )
+    async with atomic():
+        persisted = await crud.cas_reauthorize_product_truth_lock_original_source(
+            product_id,
+            expected_previous_canonical_sha256=previous_sha,
+            canonical_media_id=replacement_media_id,
+            canonical_sha256=resolved_sha,
+            source_width=source_width,
+            source_height=source_height,
+            canonical_source_path=str(source_path),
+            review_status="REJECTED",
+            failure_state="FALLBACK_SELECTED",
+            identity_lock=0,
+            geometry_lock=0,
+            label_lock=0,
+            logo_lock=0,
+            colour_lock=0,
+            scale_lock=0,
+            provenance_json=json.dumps(provenance, sort_keys=True),
+        )
+        if persisted is not None and selected_media_id:
+            # These writes deliberately remain inside the same atomic boundary
+            # as the SHA-CAS lock mutation. A failure in either promotion step
+            # rolls the lock, product pointer, and candidate lifecycle back.
+            updated_product = await crud.update_product(
+                product_id,
+                media_id=replacement_media_id,
+                local_image_path=str(source_path),
+                image_asset_status="READY",
+                asset_status="DOWNLOADED",
+            )
+            if (
+                not updated_product
+                or str(updated_product.get("media_id") or "") != replacement_media_id
+                or str(updated_product.get("local_image_path") or "") != str(source_path)
+            ):
+                raise ProductVisualOnboardingError(
+                    "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_FAILED",
+                    "The product source pointer could not be promoted atomically.",
+                    status_code=500,
+                )
+            promoted_media = await crud.promote_product_source_media(
+                product_id,
+                replacement_media_id,
+            )
+            if not promoted_media or str(promoted_media.get("status") or "").upper() != "STORED":
+                raise ProductVisualOnboardingError(
+                    "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_FAILED",
+                    "The replacement media lifecycle could not be promoted atomically.",
+                    status_code=500,
+                )
     if persisted is None:
         raise ProductVisualOnboardingError(
             "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_STALE",
@@ -1654,6 +1970,7 @@ async def save_product_visual_setup(
     confirm_product_isolation: bool = False,
     expected_previous_canonical_sha256: str | None = None,
     expected_replacement_sha256: str | None = None,
+    replacement_media_id: str | None = None,
 ) -> dict[str, Any]:
     """Commit one page-level visual selection through existing authorities.
 
@@ -1694,6 +2011,7 @@ async def save_product_visual_setup(
             confirm_product_isolation=confirm_product_isolation,
             expected_previous_canonical_sha256=expected_previous_canonical_sha256,
             expected_replacement_sha256=expected_replacement_sha256,
+            replacement_media_id=replacement_media_id,
         )
 
     lock = await crud.get_product_truth_lock(product_id)

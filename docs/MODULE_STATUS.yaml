@@ -828,11 +828,14 @@ domains:
       - dashboard/src/components/product-registration/AllProductsTab.tsx
       - dashboard/src/api/productVisualOnboarding.ts
       - dashboard/src/api/productTruthLock.ts
+      - dashboard/src/components/product-registration/ProductOriginalSourceReupload.tsx
+      - dashboard/src/components/product-registration/ProductOriginalSourceReupload.test.tsx
       - dashboard/src/components/product-registration/ProductVisualReadinessPanel.tsx
       - docs/workflows/CANVA_PRODUCT_CUTOUT_WORKFLOW.md
       - docs/runbooks/canva-cutout-operator-runbook.md
       - dashboard/src/components/product-registration/ProductVisualReadinessPanel.test.tsx
       - dashboard/src/components/product-registration/AllProductsTab.test.tsx
+      - tests/integration/test_product_visual_source_reauthorization_workflow.py
       - dashboard/src/components/workspace/SearchableProductSelect.tsx
       - dashboard/src/components/workspace/T2VModule.tsx
       - dashboard/src/components/workspace/T2VModule.test.tsx
