@@ -162,7 +162,12 @@ class EvidenceRegistry(BaseModel):
 
 
 class ProductTruthLineage(BaseModel):
-    """Approved Product Truth snapshot lineage carried by V2 artifacts."""
+    """Approved Product Truth plus the canonical authority lineage consumed by V2.
+
+    The authority fields are additive so historical V2 rows can still be read
+    for reconciliation.  A new production binding must carry the populated
+    authority fingerprint; missing or changed authority lineage fails closed.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -173,6 +178,16 @@ class ProductTruthLineage(BaseModel):
     snapshot_status: Literal["APPROVED", "DRAFT", "SUPERSEDED", "REJECTED"]
     approved_by: str | None = None
     approved_at: str | None = None
+    canonical_category: str | None = None
+    canonical_subcategory: str | None = None
+    canonical_type: str | None = None
+    canonical_product_type_code: str | None = None
+    canonical_copy_cluster: str | None = None
+    strategy_taxonomy_version: str | None = None
+    strategy_taxonomy_fingerprint: str | None = Field(default=None, pattern=_SHA256_RE.pattern)
+    taxonomy_authority_version: str | None = None
+    taxonomy_authority_fingerprint: str | None = Field(default=None, pattern=_SHA256_RE.pattern)
+    bosmax_product_family: str | None = None
 
 
 class Objective(BaseModel):

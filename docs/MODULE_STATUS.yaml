@@ -142,11 +142,13 @@ domains:
       # explicit approval, persisted consumer bindings, and zero-credit proof.
       - agent/api/legacy_copy_guard.py
       - agent/api/copy_register_v2.py
+      - agent/authority/copy_register_product_truth_authority.py
       - agent/services/copy_register_v2_service.py
       - dashboard/src/api/copyRegisterV2.ts
       - dashboard/src/api/posterV2.ts
       - scripts/migrate_copy_register_v2_only.py
       - tests/api/test_copy_register_v2_api.py
+      - tests/unit/test_copy_register_v2_authority_remediation.py
       - tests/unit/test_copy_register_v2_cutover.py
       - tests/unit/test_copy_register_v2_only_guards.py
       - tests/unit/test_copy_register_v2_only_migration.py

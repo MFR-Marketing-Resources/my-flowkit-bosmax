@@ -203,6 +203,35 @@ def _compare_approval_artifact(blueprint: CopyBlueprintV2, issues: list[V2Valida
         )
 
 
+def _same_product_truth_snapshot(left: ProductTruthLineage, right: ProductTruthLineage) -> bool:
+    """Return whether two lineages point at the same approved snapshot."""
+
+    return (
+        left.product_id == right.product_id
+        and left.snapshot_id == right.snapshot_id
+        and left.snapshot_version == right.snapshot_version
+        and left.snapshot_digest == right.snapshot_digest
+        and left.snapshot_status == right.snapshot_status
+    )
+
+
+def _authority_lineage_changed(left: ProductTruthLineage, right: ProductTruthLineage) -> bool:
+    """Detect a taxonomy/strategy authority change without treating it as copy text drift."""
+
+    return (
+        left.taxonomy_authority_fingerprint != right.taxonomy_authority_fingerprint
+        or left.taxonomy_authority_version != right.taxonomy_authority_version
+        or left.canonical_category != right.canonical_category
+        or left.canonical_subcategory != right.canonical_subcategory
+        or left.canonical_type != right.canonical_type
+        or left.canonical_product_type_code != right.canonical_product_type_code
+        or left.canonical_copy_cluster != right.canonical_copy_cluster
+        or left.strategy_taxonomy_version != right.strategy_taxonomy_version
+        or left.strategy_taxonomy_fingerprint != right.strategy_taxonomy_fingerprint
+        or left.bosmax_product_family != right.bosmax_product_family
+    )
+
+
 def validate_copy_blueprint_v2(
     blueprint: CopyBlueprintV2,
     *,
@@ -301,7 +330,18 @@ def validate_copy_blueprint_v2(
     if current_product_truth is None:
         issues.append(_issue("COPY_V2_PRODUCT_TRUTH_LINEAGE_MISSING", "current Product Truth lineage is required"))
     elif blueprint.product_truth_lineage != current_product_truth:
-        issues.append(_issue("COPY_V2_EVIDENCE_STALE", "blueprint Product Truth lineage is stale"))
+        if _same_product_truth_snapshot(blueprint.product_truth_lineage, current_product_truth) and _authority_lineage_changed(
+            blueprint.product_truth_lineage,
+            current_product_truth,
+        ):
+            issues.append(
+                _issue(
+                    "COPY_V2_TAXONOMY_AUTHORITY_STALE",
+                    "blueprint taxonomy/strategy authority lineage is missing or stale",
+                )
+            )
+        else:
+            issues.append(_issue("COPY_V2_EVIDENCE_STALE", "blueprint Product Truth lineage is stale"))
     if blueprint.product_truth_lineage.snapshot_status != "APPROVED":
         issues.append(_issue("COPY_V2_EVIDENCE_NOT_APPROVED", "blueprint Product Truth snapshot is not approved"))
 
