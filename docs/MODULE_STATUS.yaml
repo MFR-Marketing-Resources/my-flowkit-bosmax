@@ -56,6 +56,7 @@ domains:
       - dashboard/src/utils/productVisualPresentation.ts
       - dashboard/src/utils/productVisualPresentation.test.ts
       - tests/unit/test_product_visual_onboarding_service.py
+      - tests/unit/test_product_visual_original_source_reauthorization.py
       - tests/api/test_product_visual_onboarding_api.py
       - tests/integration/test_product_visual_crud_workflow.py
       - tests/unit/test_canonical_runtime_lock.py

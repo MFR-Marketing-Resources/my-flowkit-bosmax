@@ -46,6 +46,7 @@ from agent.services.product_lock_builder import resolve_schema_entry
 from agent.services.product_visual_grounding_resolver import (
     ProductVisualReferenceRequiredError,
     durable_schema_canonical_source_path,
+    resolve_governed_original_product_source,
     resolve_product_reference_image,
 )
 from agent.services.product_visual_canvas_service import (
@@ -1401,6 +1402,246 @@ async def use_original_product_fallback(
     return await get_product_visual_readiness(product_id)
 
 
+def _original_authority_requires_reauthorization(lock: dict[str, Any] | None) -> bool:
+    """Return True when an explicit Original Source lock no longer validates."""
+    if not lock:
+        return False
+    active_selection = str(
+        _parse_json(lock.get("provenance_json"), {}).get("active_selection") or ""
+    ).upper()
+    if active_selection != "SAME_PRODUCT_TRUSTED_SOURCE":
+        return False
+    source_path = _preview_servable_path(lock.get("canonical_source_path"))
+    if source_path is None:
+        return True
+    try:
+        return _sha256_bytes(source_path.read_bytes()) != str(lock.get("canonical_sha256") or "").lower()
+    except OSError:
+        return True
+
+
+async def reauthorize_product_original_source(
+    product_id: str,
+    *,
+    reviewed_by: str | None,
+    review_note: str | None,
+    confirm_identity: bool,
+    confirm_label_logo: bool,
+    confirm_geometry_scale: bool,
+    confirm_product_isolation: bool,
+    expected_previous_canonical_sha256: str | None,
+    expected_replacement_sha256: str | None,
+) -> dict[str, Any]:
+    """Explicitly replace one product's stale Original Source authority.
+
+    The replacement is resolved server-side and persisted through a narrow
+    compare-and-swap writer. Existing cutout bytes and their audit metadata are
+    retained; the operation only makes the governed Original Source active.
+    """
+    operator = str(reviewed_by or "").strip()
+    note = str(review_note or "").strip()
+    if not operator or not note:
+        raise ProductVisualOnboardingError(
+            "HUMAN_REVIEW_NOTE_REQUIRED",
+            "Reviewer identity and reauthorization note are required.",
+            status_code=409,
+        )
+    if not (
+        confirm_identity
+        and confirm_label_logo
+        and confirm_geometry_scale
+        and confirm_product_isolation
+    ):
+        raise ProductVisualOnboardingError(
+            "HUMAN_REVIEW_CONFIRMATION_REQUIRED",
+            "Identity, label/logo, geometry/scale, and product-isolation confirmations are all required.",
+            status_code=409,
+        )
+
+    previous_sha = str(expected_previous_canonical_sha256 or "").strip().lower()
+    replacement_sha = str(expected_replacement_sha256 or "").strip().lower()
+    if len(previous_sha) != 64 or len(replacement_sha) != 64:
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INPUT_REQUIRED",
+            "Expected previous and replacement canonical SHA-256 values are required.",
+            status_code=400,
+        )
+
+    product = await crud.get_product(product_id)
+    if not product:
+        raise ProductVisualOnboardingError(
+            "PRODUCT_NOT_FOUND",
+            f"Product {product_id} was not found.",
+            status_code=404,
+        )
+    blocked = await _blocked_reason(product)
+    if blocked:
+        raise ProductVisualOnboardingError(
+            blocked,
+            "Visual source reauthorization is blocked for this product cohort.",
+            status_code=409,
+        )
+
+    lock = await crud.get_product_truth_lock(product_id)
+    if not lock:
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_REQUIRED",
+            "A persisted Original Source authority is required before reauthorization.",
+            status_code=409,
+        )
+    current_sha = str(lock.get("canonical_sha256") or "").strip().lower()
+    if current_sha != previous_sha:
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_STALE",
+            "The persisted Original Source SHA changed before reauthorization.",
+            status_code=409,
+        )
+
+    try:
+        reference = resolve_governed_original_product_source(dict(product))
+    except ProductVisualReferenceRequiredError as exc:
+        message = str(exc)
+        code = "OFFICIAL_PRODUCT_VISUAL_INVALID" if message.startswith("OFFICIAL_PRODUCT_VISUAL_INVALID") else "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID"
+        raise ProductVisualOnboardingError(code, message, status_code=422) from exc
+
+    source_path = _preview_servable_path(getattr(reference, "local_path", None))
+    if source_path is None:
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID",
+            "Governed replacement source is not a readable file under BASE_DIR.",
+            status_code=422,
+        )
+    try:
+        with Image.open(source_path) as image:
+            source_width, source_height = image.size
+        resolved_sha = _sha256_bytes(source_path.read_bytes())
+    except Exception as exc:  # noqa: BLE001 - fail closed before persistence
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID",
+            f"Governed replacement source is not a valid image: {exc}",
+            status_code=422,
+        ) from exc
+    if resolved_sha != str(getattr(reference, "sha256", "") or "").lower():
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID",
+            "Server-resolved replacement source changed during validation.",
+            status_code=422,
+        )
+    if resolved_sha != replacement_sha:
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_STALE",
+            "The governed replacement source SHA does not match the expected SHA.",
+            status_code=409,
+        )
+
+    # A registered source-media id is accepted only when its product binding is
+    # exact. Schema/creative-asset ids are already resolved by the server-side
+    # product resolver and remain valid canonical media authorities.
+    replacement_media_id = str(getattr(reference, "media_id", "") or "").strip()
+    media_row = None
+    if replacement_media_id:
+        media_row = await crud.get_product_source_media(replacement_media_id)
+        if media_row and str(media_row.get("product_id") or "") != str(product_id):
+            raise ProductVisualOnboardingError(
+                "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_PRODUCT_MISMATCH",
+                "Governed replacement media belongs to a different product.",
+                status_code=409,
+            )
+    pack = await crud.get_product_reference_pack(product_id)
+    governed_paths = {
+        candidate.resolve()
+        for raw_candidate in _governed_original_path_candidates(product, pack=pack)
+        if (candidate := _preview_servable_path(raw_candidate)) is not None
+    }
+    if source_path not in governed_paths and media_row is None:
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_PRODUCT_MISMATCH",
+            "Governed replacement source is not bound to the exact product.",
+            status_code=409,
+        )
+    if not replacement_media_id:
+        replacement_media_id = await _ensure_canonical_media(product, reference)
+    if not replacement_media_id:
+        raise ProductVisualOnboardingError(
+            "CANONICAL_MEDIA_ID_REQUIRED",
+            "Governed replacement source has no canonical media registry id.",
+            status_code=422,
+        )
+
+    provenance = _parse_json(lock.get("provenance_json"), {})
+    reauthorized_at = _now()
+    provenance.update(
+        {
+            "previous_canonical_media_id": lock.get("canonical_media_id"),
+            "previous_canonical_sha256": lock.get("canonical_sha256"),
+            "previous_canonical_source_path": lock.get("canonical_source_path"),
+            "previous_review_status": lock.get("review_status"),
+            "previous_failure_state": lock.get("failure_state"),
+            "replacement_canonical_media_id": replacement_media_id,
+            "replacement_canonical_sha256": resolved_sha,
+            "replacement_canonical_source_path": str(source_path),
+            "reauthorized_by": operator,
+            "reauthorization_note": note,
+            "reauthorized_at": reauthorized_at,
+            "reason": "LEGACY_CANONICAL_SOURCE_MISSING_OWNER_REAUTHORIZED",
+            "active_selection": "SAME_PRODUCT_TRUSTED_SOURCE",
+            "review_status": "FALLBACK_SELECTED",
+            "approval_status": "FALLBACK_SELECTED",
+            "human_review_required": False,
+        }
+    )
+
+    persisted = await crud.cas_reauthorize_product_truth_lock_original_source(
+        product_id,
+        expected_previous_canonical_sha256=previous_sha,
+        canonical_media_id=replacement_media_id,
+        canonical_sha256=resolved_sha,
+        source_width=source_width,
+        source_height=source_height,
+        canonical_source_path=str(source_path),
+        review_status="REJECTED",
+        failure_state="FALLBACK_SELECTED",
+        identity_lock=0,
+        geometry_lock=0,
+        label_lock=0,
+        logo_lock=0,
+        colour_lock=0,
+        scale_lock=0,
+        provenance_json=json.dumps(provenance, sort_keys=True),
+    )
+    if persisted is None:
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_STALE",
+            "The persisted Original Source SHA changed before the CAS write.",
+            status_code=409,
+        )
+
+    # Keep the existing preparation ledger honest without touching cutout
+    # bytes, history, Copy V2, or any provider-facing state.
+    await crud.upsert_product_cutout_preparation(
+        product_id,
+        status=PREPARATION_FAILED,
+        source_sha256=resolved_sha,
+        failure_code="FALLBACK_SELECTED",
+        failure_message=note,
+        last_finished_at=reauthorized_at,
+    )
+    readiness = await get_product_visual_readiness(product_id)
+    readiness["original_source_reauthorization"] = {
+        "product_id": product_id,
+        "previous_canonical_media_id": lock.get("canonical_media_id"),
+        "previous_canonical_sha256": lock.get("canonical_sha256"),
+        "previous_canonical_source_path": lock.get("canonical_source_path"),
+        "replacement_canonical_media_id": replacement_media_id,
+        "replacement_canonical_sha256": resolved_sha,
+        "replacement_canonical_source_path": str(source_path),
+        "reauthorized_by": operator,
+        "reauthorized_at": reauthorized_at,
+        "reason": "LEGACY_CANONICAL_SOURCE_MISSING_OWNER_REAUTHORIZED",
+    }
+    return readiness
+
+
 async def save_product_visual_setup(
     product_id: str,
     *,
@@ -1411,6 +1652,8 @@ async def save_product_visual_setup(
     confirm_label_logo: bool = False,
     confirm_geometry_scale: bool = False,
     confirm_product_isolation: bool = False,
+    expected_previous_canonical_sha256: str | None = None,
+    expected_replacement_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Commit one page-level visual selection through existing authorities.
 
@@ -1431,14 +1674,35 @@ async def save_product_visual_setup(
         )
 
     selection = str(selected_visual or "").strip().upper()
-    if selection not in {"ORIGINAL", "AUTO", "MANUAL"}:
+    if selection not in {"ORIGINAL", "ORIGINAL_SOURCE_REAUTHORIZE", "AUTO", "MANUAL"}:
         raise ProductVisualOnboardingError(
             "VISUAL_SELECTION_INVALID",
-            "Choose Original, Auto Cutout, or Manual / Canva.",
+            "Choose Original, Original Source Reauthorization, Auto Cutout, or Manual / Canva.",
             status_code=400,
         )
     operator = str(reviewed_by or "").strip()
     note = str(review_note or "").strip()
+
+    if selection == "ORIGINAL_SOURCE_REAUTHORIZE":
+        return await reauthorize_product_original_source(
+            product_id,
+            reviewed_by=reviewed_by,
+            review_note=review_note,
+            confirm_identity=confirm_identity,
+            confirm_label_logo=confirm_label_logo,
+            confirm_geometry_scale=confirm_geometry_scale,
+            confirm_product_isolation=confirm_product_isolation,
+            expected_previous_canonical_sha256=expected_previous_canonical_sha256,
+            expected_replacement_sha256=expected_replacement_sha256,
+        )
+
+    lock = await crud.get_product_truth_lock(product_id)
+    if selection == "ORIGINAL" and _original_authority_requires_reauthorization(lock):
+        raise ProductVisualOnboardingError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_REQUIRED",
+            "The selected Original Source authority is missing or changed; explicit source reauthorization is required.",
+            status_code=409,
+        )
     readiness = await get_product_visual_readiness(product_id)
     current_card = str(((readiness.get("current_system_visual") or {}).get("card") or "")).upper()
 

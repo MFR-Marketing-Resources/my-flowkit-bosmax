@@ -111,6 +111,36 @@ def test_visual_onboarding_routes_are_review_gated():
     assert "/product-visual-onboarding/{product_id}/cutout/preview/{variant}" in paths
 
 
+@pytest.mark.asyncio
+async def test_save_visual_setup_forwards_explicit_original_source_reauthorization(monkeypatch):
+    captured = {}
+
+    async def save(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(api, "save_product_visual_setup", save)
+    result = await api.save_visual_setup(
+        "mwcb-1",
+        api.VisualSetupSaveRequest(
+            selected_visual="ORIGINAL_SOURCE_REAUTHORIZE",
+            reviewed_by="Faris",
+            review_note="Owner-authorized governed source replacement.",
+            confirm_identity=True,
+            confirm_label_logo=True,
+            confirm_geometry_scale=True,
+            confirm_product_isolation=True,
+            expected_previous_canonical_sha256="1" * 64,
+            expected_replacement_sha256="2" * 64,
+        ),
+    )
+
+    assert result == {"ok": True}
+    assert captured["selected_visual"] == "ORIGINAL_SOURCE_REAUTHORIZE"
+    assert captured["expected_previous_canonical_sha256"] == "1" * 64
+    assert captured["expected_replacement_sha256"] == "2" * 64
+
+
 def test_preview_media_type_sniffs_jpeg_and_png(tmp_path):
     from agent.api.product_visual_onboarding import _preview_media_type
 

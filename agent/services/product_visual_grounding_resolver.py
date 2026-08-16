@@ -349,6 +349,7 @@ def resolve_product_reference_image(
     product: dict[str, Any],
     *,
     prefer_approved_cutout: bool = True,
+    _skip_persisted_truth_lock: bool = False,
 ) -> ProductReferenceInfo:
     """Resolve the authoritative product reference image in priority order.
 
@@ -362,51 +363,52 @@ def resolve_product_reference_image(
     # An approved Product Truth Lock outranks every URL/cache/creative-asset
     # fallback.  Pending or invalid locks remain review-only for the standard
     # reference-conditioned route; exact lanes reject them in the strategy gate.
-    try:
-        persisted_lock = truth_lock_service.load_product_truth_lock(product_id)
-    except truth_lock_service.ProductTruthLockError:
-        persisted_lock = None
-    if persisted_lock is not None and persisted_lock.review_status == "APPROVED":
+    if not _skip_persisted_truth_lock:
         try:
-            resolved = truth_lock_service.resolve_approved_product_truth_lock(product_id)
-            if prefer_approved_cutout:
-                cutout_path = Path(resolved.canonical_cutout_path)
-                cutout_meta = _inspect_image_file(cutout_path)
-                if cutout_meta and cutout_meta[3] == resolved.canonical_cutout_sha256:
-                    w, h, mime, sha = cutout_meta
+            persisted_lock = truth_lock_service.load_product_truth_lock(product_id)
+        except truth_lock_service.ProductTruthLockError:
+            persisted_lock = None
+        if persisted_lock is not None and persisted_lock.review_status == "APPROVED":
+            try:
+                resolved = truth_lock_service.resolve_approved_product_truth_lock(product_id)
+                if prefer_approved_cutout:
+                    cutout_path = Path(resolved.canonical_cutout_path)
+                    cutout_meta = _inspect_image_file(cutout_path)
+                    if cutout_meta and cutout_meta[3] == resolved.canonical_cutout_sha256:
+                        w, h, mime, sha = cutout_meta
+                        return ProductReferenceInfo(
+                            source_type="PRODUCT_TRUTH_LOCK_CUTOUT",
+                            media_id=resolved.canonical_cutout_media_id,
+                            local_path=str(cutout_path),
+                            image_url=product.get("image_url"),
+                            mime_type=mime,
+                            sha256=sha,
+                            width=w,
+                            height=h,
+                            provenance="PRODUCT_VISUAL_TRUTH_LOCK_CANONICAL_CUTOUT",
+                            validation_status="VALIDATED",
+                        )
+                source_path = Path(resolved.canonical_source_path)
+                meta = _inspect_image_file(source_path)
+                if meta and meta[3] == resolved.canonical_sha256:
+                    w, h, mime, sha = meta
                     return ProductReferenceInfo(
-                        source_type="PRODUCT_TRUTH_LOCK_CUTOUT",
-                        media_id=resolved.canonical_cutout_media_id,
-                        local_path=str(cutout_path),
+                        source_type="PRODUCT_TRUTH_LOCK",
+                        media_id=resolved.canonical_media_id,
+                        local_path=str(source_path),
                         image_url=product.get("image_url"),
                         mime_type=mime,
                         sha256=sha,
                         width=w,
                         height=h,
-                        provenance="PRODUCT_VISUAL_TRUTH_LOCK_CANONICAL_CUTOUT",
+                        provenance="PRODUCT_VISUAL_TRUTH_LOCK",
                         validation_status="VALIDATED",
                     )
-            source_path = Path(resolved.canonical_source_path)
-            meta = _inspect_image_file(source_path)
-            if meta and meta[3] == resolved.canonical_sha256:
-                w, h, mime, sha = meta
-                return ProductReferenceInfo(
-                    source_type="PRODUCT_TRUTH_LOCK",
-                    media_id=resolved.canonical_media_id,
-                    local_path=str(source_path),
-                    image_url=product.get("image_url"),
-                    mime_type=mime,
-                    sha256=sha,
-                    width=w,
-                    height=h,
-                    provenance="PRODUCT_VISUAL_TRUTH_LOCK",
-                    validation_status="VALIDATED",
-                )
-        except truth_lock_service.ProductTruthLockError:
-            # The exact strategy gate below will surface the stable blocker.
-            # Standard output may continue as explicitly non-deterministic and
-            # therefore remains PENDING_REVIEW.
-            pass
+            except truth_lock_service.ProductTruthLockError:
+                # The exact strategy gate below will surface the stable blocker.
+                # Standard output may continue as explicitly non-deterministic and
+                # therefore remains PENDING_REVIEW.
+                pass
     
     # Priority 0: Handcrafted Schema Canonical Source (e.g. MWCB canonical photo)
     # Prefer durable BASE_DIR copy / product local cache over external authoring paths.
@@ -623,6 +625,78 @@ def resolve_product_reference_image(
         f"PRODUCT_VISUAL_REFERENCE_REQUIRED: Selected product '{product.get('product_display_name') or product.get('name') or product_id}' "
         "has no valid readable image reference in local storage, database row, or creative asset registry."
     )
+
+
+def resolve_governed_original_product_source(
+    product: dict[str, Any],
+) -> ProductReferenceInfo:
+    """Resolve the current governed Original Source for an explicit reauthorization.
+
+    This is intentionally a separate authority seam from normal reference
+    resolution. It bypasses only the persisted Original Source bytes being
+    replaced; it never bypasses an active approved cutout's byte validation and
+    it never accepts a caller-supplied path.
+    """
+    product_id = str(product.get("id") or product.get("product_id") or "").strip()
+    if not product_id:
+        raise ProductVisualReferenceRequiredError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID: Product id is missing."
+        )
+
+    try:
+        lock = truth_lock_service.load_product_truth_lock(product_id)
+    except truth_lock_service.ProductTruthLockError as exc:
+        raise ProductVisualReferenceRequiredError(
+            f"PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID: {exc}"
+        ) from exc
+    active_selection = str((getattr(lock, "provenance", {}) or {}).get("active_selection") or "").upper() if lock else ""
+    if lock is not None and lock.review_status == "APPROVED" and active_selection != "SAME_PRODUCT_TRUSTED_SOURCE":
+        # An approved cutout remains a hard authority. Reauthorization may
+        # switch the active selection only after proving that authority is
+        # currently valid; it may never be used as a bypass around a broken
+        # approved cutout.
+        try:
+            truth_lock_service.resolve_approved_product_truth_lock(product_id)
+        except truth_lock_service.ProductTruthLockError as exc:
+            raise ProductVisualReferenceRequiredError(
+                f"OFFICIAL_PRODUCT_VISUAL_INVALID: {exc}"
+            ) from exc
+
+    try:
+        reference = resolve_product_reference_image(
+            dict(product),
+            prefer_approved_cutout=False,
+            _skip_persisted_truth_lock=True,
+        )
+    except TypeError as exc:
+        # Keep narrow test doubles and older resolver shims usable without
+        # silently falling back to persisted lock bytes in production.
+        if "_skip_persisted_truth_lock" not in str(exc):
+            raise
+        raise ProductVisualReferenceRequiredError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID: Governed resolver does not support source reauthorization."
+        ) from exc
+
+    source_path = Path(str(reference.local_path or ""))
+    if not source_path.is_absolute():
+        source_path = BASE_DIR / source_path
+    source_path = source_path.resolve()
+    if not _is_under_base_dir(source_path):
+        raise ProductVisualReferenceRequiredError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID: Governed replacement source is outside BASE_DIR."
+        )
+    metadata = _inspect_image_file(source_path)
+    if metadata is None or metadata[3] != str(reference.sha256 or "").lower():
+        raise ProductVisualReferenceRequiredError(
+            "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID: Governed replacement source bytes are not stable."
+        )
+    width, height, mime, sha = metadata
+    reference.local_path = str(source_path)
+    reference.width = width
+    reference.height = height
+    reference.mime_type = mime
+    reference.sha256 = sha
+    return reference
 
 
 def resolve_official_product_reference_image(
