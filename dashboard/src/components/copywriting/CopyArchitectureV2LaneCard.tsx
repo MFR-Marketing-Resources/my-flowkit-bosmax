@@ -24,6 +24,76 @@ function text(value: unknown, fallback = "Not selected") {
 	return typeof value === "string" && value.trim() ? value : fallback;
 }
 
+function issueText(value: unknown): string | null {
+	if (Array.isArray(value)) {
+		const items = value.map(issueText).filter((item): item is string => Boolean(item));
+		return items.length ? items.join("; ") : null;
+	}
+	if (typeof value === "string" && value.trim()) return value.trim();
+	if (typeof value === "number" && Number.isFinite(value)) return String(value);
+	if (value && typeof value === "object") {
+		try {
+			return JSON.stringify(value);
+		} catch {
+			return "Unserializable V2 error";
+		}
+	}
+	return null;
+}
+
+function executionIssue(
+	execution: CopyArchitectureV2Execution | null | undefined,
+	prefix: string,
+): string | null {
+	if (!execution) return null;
+	const explicit =
+		issueText(execution.error_code) ??
+		issueText(execution.error) ??
+		issueText(execution.blocker) ??
+		issueText(execution.blockers);
+	if (explicit) return `${prefix}: ${explicit}`;
+	const executionStatus = issueText(execution.status)?.toUpperCase();
+	if (executionStatus && /STALE|ERROR|FAILED|BLOCKED|REJECTED|UNAVAILABLE/.test(executionStatus)) {
+		return `${prefix} status: ${executionStatus}`;
+	}
+	return null;
+}
+
+function structuredResolutionError(reason: unknown): string {
+	const raw = reason instanceof Error ? reason.message : issueText(reason) || "V2 binding resolution failed";
+	const payloadText = raw.replace(/^API\s+\d+:\s*/i, "").trim();
+	let payload: unknown;
+	try {
+		payload = JSON.parse(payloadText);
+	} catch {
+		return raw;
+	}
+	const root = record(payload);
+	const detail = root.detail ?? payload;
+	const detailRecord = record(detail);
+	const code =
+		issueText(detailRecord.error_code) ??
+		issueText(detailRecord.error) ??
+		issueText(root.error_code) ??
+		issueText(root.error);
+	const message =
+		issueText(detailRecord.message) ??
+		issueText(detailRecord.detail) ??
+		issueText(root.message);
+	const detailText = typeof detail === "string" ? detail : null;
+	if (code && (message || detailText)) return `${code}: ${message || detailText}`;
+	if (code) return code;
+	if (message || detailText) return message || detailText || raw;
+	return raw;
+}
+
+interface PersistedResolutionState {
+	productId: string;
+	lane: CopyArchitectureV2Lane;
+	execution?: CopyArchitectureV2Execution;
+	error?: string;
+}
+
 export default function CopyArchitectureV2LaneCard({
 	lane,
 	productId,
@@ -31,57 +101,70 @@ export default function CopyArchitectureV2LaneCard({
 	onReadyChange,
 }: CopyArchitectureV2LaneCardProps) {
 	const { descriptor, status, loading, error } = useCopyArchitectureV2Lane(lane);
-	const [persistedExecution, setPersistedExecution] =
-		useState<CopyArchitectureV2Execution | null>(null);
-	const [resolutionLoading, setResolutionLoading] = useState(false);
-	const [resolutionError, setResolutionError] = useState<string | null>(null);
+	const [persistedResolution, setPersistedResolution] =
+		useState<PersistedResolutionState | null>(null);
 
 	useEffect(() => {
-		if (execution || !productId) {
-			setPersistedExecution(null);
-			setResolutionError(null);
-			setResolutionLoading(false);
-			return;
-		}
+		if (!productId) return;
 		let active = true;
-		setResolutionLoading(true);
-		setResolutionError(null);
 		void fetchCopyBindingResolution(productId, lane)
 			.then((response) => {
-				if (active) setPersistedExecution(response);
+				if (active) setPersistedResolution({ productId, lane, execution: response });
 			})
 			.catch((reason: unknown) => {
 				if (!active) return;
-				setPersistedExecution(null);
-				setResolutionError(
-					reason instanceof Error ? reason.message : "V2 binding resolution failed",
-				);
+				setPersistedResolution({
+					productId,
+					lane,
+					error: structuredResolutionError(reason),
+				});
 			})
-			.finally(() => {
-				if (active) setResolutionLoading(false);
-			});
 		return () => {
 			active = false;
 		};
-	}, [execution, lane, productId]);
+	}, [lane, productId]);
 
-	const effectiveExecution = execution ?? persistedExecution;
+	const selectionResolution =
+		persistedResolution &&
+		persistedResolution.productId === productId &&
+		persistedResolution.lane === lane
+			? persistedResolution
+			: null;
+	const persistedExecution = selectionResolution?.execution ?? null;
+	const resolutionError = selectionResolution?.error ?? null;
+	const resolutionLoading = Boolean(productId && !selectionResolution);
+	// A selected product always resolves readiness from the persisted V2
+	// authority. A package/queue receipt remains useful for display while the
+	// authority request is pending, but it cannot make the product READY.
+	const canonicalExecution = productId ? persistedExecution : execution;
+	const effectiveExecution = canonicalExecution ?? execution;
 	const projection = record(effectiveExecution?.projection);
 	const derivedCopy = record(projection.derived_copy);
 	const flags = status?.feature_flags;
 	const binding = record(effectiveExecution?.binding);
 	const enabled = Boolean(flags?.enabled);
-	const executionStatus = text(effectiveExecution?.status, "NOT_RESOLVED");
-	const ready = enabled && executionStatus === "READY";
+	const executionStatus = text(canonicalExecution?.status, "NOT_RESOLVED");
+	const authorityReady = productId
+		? Boolean(persistedExecution) && !resolutionLoading && !resolutionError && executionStatus === "READY"
+		: executionStatus === "READY";
+	const receiptIssue = productId ? executionIssue(execution ?? null, "WEP receipt") : null;
+	const authorityIssue = executionIssue(
+		canonicalExecution,
+		productId ? "Persisted V2 resolution" : "V2 receipt",
+	);
+	const ready = enabled && authorityReady && !receiptIssue && !authorityIssue;
 	const copyFree = descriptor?.copy_policy === "NOT_REQUIRED";
 
 	useEffect(() => {
 		onReadyChange?.(ready);
 	}, [onReadyChange, ready]);
 
+	const authorityChecking = Boolean(productId && !persistedExecution && !resolutionError);
 	const readiness = error
 		? "UNAVAILABLE — readiness not asserted"
-		: loading || resolutionLoading
+		: resolutionError
+			? "UNAVAILABLE — persisted V2 resolution failed"
+		: loading || resolutionLoading || authorityChecking
 			? "CHECKING V2 CONTRACT"
 			: !enabled
 				? "V2 MAINTENANCE MODE"
@@ -111,20 +194,18 @@ export default function CopyArchitectureV2LaneCard({
 		derivedCopy.hook,
 		ready ? "Approved Hook not present in V2 projection" : "Awaiting V2 binding",
 	);
-	const blocker = effectiveExecution?.blocker ?? effectiveExecution?.error ?? effectiveExecution?.blockers;
-	const blockers = Array.isArray(blocker)
-		? blocker.map(String)
-			: blocker
-			? [String(blocker)]
-			: resolutionError
-				? [resolutionError]
-			: enabled && !ready
-				? [
+	const explicitBlockers = [resolutionError, receiptIssue, authorityIssue].filter(
+		(item): item is string => Boolean(item),
+	);
+	const blockers = explicitBlockers.length
+		? explicitBlockers
+		: enabled && !ready
+			? [
 					copyFree
 						? "Copy-free adapter requires readiness, provenance and safety proof."
 						: "Approved V2 blueprint, Product Truth, evidence and safety proof are required.",
-				  ]
-				: [];
+			  ]
+			: [];
 
 	return (
 		<section
