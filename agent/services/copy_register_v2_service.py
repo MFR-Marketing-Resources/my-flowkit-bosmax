@@ -26,6 +26,13 @@ from agent.authority.copy_register_product_truth_authority import (
     CopyRegisterProductTruthAuthority,
     build_copy_register_product_truth_authority,
 )
+from agent.authority.copy_register_product_identity_authority import (
+    PRODUCT_IDENTITY_STALE,
+    PRODUCT_IDENTITY_UNRESOLVED,
+    product_identity_proof,
+    snapshot_product_identity_violations,
+    validate_product_identity_text,
+)
 from agent.authority.copy_lane_matrix import get_lane_descriptor, producer_consumer_matrix
 from agent.db.schema import _db_lock, get_db
 from agent.models.copy_blueprint_v2 import (
@@ -79,7 +86,9 @@ Create 3-8 materially distinct selling angles in the requested language and obje
 Every angle must be supported only by the supplied approved Product Truth facts. Use only
 the supplied fact_id values, cite at least one per angle, and never invent a fact, number,
 ingredient, outcome, offer, certification, price, guarantee, medical claim, or internal ID
-inside the visible definition. Do not choose or change the formula."""
+inside the visible definition. The request payload contains the canonical product identity;
+every product-name mention must match it exactly, with no legacy alias or inserted identity
+token. Do not choose or change the formula."""
 
 _FORMULA_SYSTEM_PROMPT = f"""You are the formula-native Copy Register V2 blueprint author.
 Prompt contract: {FORMULA_PROMPT_VERSION}.
@@ -96,7 +105,9 @@ never return [] for a claim-bearing stage. The CTA may carry [] only when it mak
 claim. When a target duration and canonical word budget are provided, keep the complete
 ordered stage text within that budget without omitting any required formula stage. Before
 returning JSON, check that every claim-bearing stage has at least one exact supplied
-fact_id and that every stage remains in the registered order."""
+fact_id and that every stage remains in the registered order. The request payload contains
+the canonical product identity; every product-name mention must match it exactly, with no
+legacy alias or inserted identity token."""
 
 _STAGE_REGEN_SYSTEM_PROMPT = f"""You regenerate one stage of a Copy Register V2 blueprint.
 Prompt contract: {STAGE_REGEN_PROMPT_VERSION}.
@@ -264,6 +275,18 @@ def _assert_generated_text_grounded(
             "Generated V2 text is empty or exceeds the bounded stage contract.",
             status_code=502,
         )
+    try:
+        normalized = validate_product_identity_text(normalized, product)
+    except ValueError as exc:
+        code = str(exc)
+        if code not in {PRODUCT_IDENTITY_STALE, PRODUCT_IDENTITY_UNRESOLVED}:
+            raise
+        raise CopyRegisterV2Error(
+            code,
+            "Generated V2 text contains a product identity that is not the current canonical product name.",
+            status_code=502 if code == PRODUCT_IDENTITY_STALE else 409,
+            details=getattr(exc, "details", None),
+        ) from exc
     lowered = normalized.casefold()
     if any(_clean(item).casefold() in lowered for item in internal_ids if _clean(item)):
         raise CopyRegisterV2Error(
@@ -526,6 +549,14 @@ def _truth_gate(product: dict[str, Any] | None, snapshot: dict[str, Any] | None)
         return ["V2_PRODUCT_TRUTH_CLAIM_GATE_BLOCKED"]
     if _clean(product.get("lifecycle_status") or "ACTIVE").upper() != "ACTIVE":
         return ["V2_PRODUCT_TRUTH_PRODUCT_INACTIVE"]
+    try:
+        identity_violations = snapshot_product_identity_violations(product, snapshot)
+    except ValueError as exc:
+        if str(exc) == PRODUCT_IDENTITY_UNRESOLVED:
+            return [PRODUCT_IDENTITY_UNRESOLVED]
+        raise
+    if identity_violations:
+        return [PRODUCT_IDENTITY_STALE]
     authority = product.get("_copy_register_authority")
     if isinstance(authority, CopyRegisterProductTruthAuthority):
         return list(authority.blockers)
@@ -670,6 +701,21 @@ async def get_product_truth_proof(product_id: str) -> dict[str, Any]:
         authority = None
     persona = _parse_dict(snapshot.get("buyer_persona_snapshot_json")) if snapshot else {}
     authority_payload = authority.model_dump() if authority else {}
+    identity_payload: dict[str, Any] = {}
+    identity_details: list[dict[str, Any]] = []
+    if product:
+        try:
+            identity_payload = product_identity_proof(product)
+            if snapshot:
+                identity_details = snapshot_product_identity_violations(product, snapshot)
+        except ValueError as exc:
+            identity_details = [
+                {
+                    "code": str(exc),
+                    "reason": "The current product row has no resolvable canonical display name.",
+                    "field": "product.product_display_name",
+                }
+            ]
     return {
         "product_id": product_id,
         "product": {
@@ -705,10 +751,14 @@ async def get_product_truth_proof(product_id: str) -> dict[str, Any]:
             "allowed_claims": _parse_list(snapshot.get("allowed_claims_json")) if snapshot else [],
             "blocked_claims": _parse_list(snapshot.get("blocked_claims_json")) if snapshot else [],
             "warnings": _parse_list(snapshot.get("warnings_text")) if snapshot else [],
+            "product_identity": identity_payload,
         },
         "facts": [fact.model_dump(mode="json") for fact in facts],
         "blockers": blockers,
-        "blocker_details": authority_payload.get("blocker_details", []),
+        "blocker_details": [
+            *authority_payload.get("blocker_details", []),
+            *identity_details,
+        ],
         "authority": authority_payload,
         "ready_for_copy": not blockers and bool(facts),
         "legacy_copy_rows_read": 0,
@@ -880,6 +930,7 @@ async def generate_angle_options(product_id: str, formula_id: str, objective: st
                 "product_type": _clean(product.get("type") or product.get("product_type")),
                 "product_family": _clean(product.get("bosmax_product_family")),
             },
+            "product_identity": product_identity_proof(product),
             "product_truth": {
                 "persona": _parse_dict(snapshot.get("buyer_persona_snapshot_json")),
                 "allowed_claims": _parse_list(snapshot.get("allowed_claims_json")),
@@ -904,12 +955,18 @@ async def generate_angle_options(product_id: str, formula_id: str, objective: st
             ],
         },
     )
-    options = _validate_ai_angle_options(
-        raw,
-        product=product,
-        snapshot=snapshot,
-        facts=facts,
-    )
+    try:
+        options = _validate_ai_angle_options(
+            raw,
+            product=product,
+            snapshot=snapshot,
+            facts=facts,
+        )
+    except CopyRegisterV2Error as exc:
+        details = dict(exc.details) if isinstance(exc.details, dict) else {}
+        details["provider_receipt"] = provider_receipt
+        exc.details = details
+        raise
     await _persist_angle_options(
         options,
         product=product,
@@ -974,6 +1031,18 @@ async def _require_angle_candidate(
             status_code=422,
         )
     candidate = dict(row)
+    try:
+        validate_product_identity_text(candidate.get("definition"), product)
+    except ValueError as exc:
+        code = str(exc)
+        if code not in {PRODUCT_IDENTITY_STALE, PRODUCT_IDENTITY_UNRESOLVED}:
+            raise
+        raise CopyRegisterV2Error(
+            code,
+            "The selected angle contains a product identity that is not the current canonical product name.",
+            status_code=409,
+            details=getattr(exc, "details", None),
+        ) from exc
     lineage = _lineage(product, snapshot)
     expected = {
         "product_id": str(product["id"]),
@@ -1128,6 +1197,7 @@ def _generate_formula_stage_payloads(
                 "subcategory": _clean(product.get("subcategory")),
                 "product_type": _clean(product.get("type") or product.get("product_type")),
             },
+            "product_identity": product_identity_proof(product),
             "product_truth": {
                 "persona": _parse_dict(snapshot.get("buyer_persona_snapshot_json")),
                 "allowed_claims": _parse_list(snapshot.get("allowed_claims_json")),
@@ -1163,13 +1233,19 @@ def _generate_formula_stage_payloads(
             ],
         },
     )
-    generated = _validate_ai_formula_stages(
-        raw,
-        product=product,
-        snapshot=snapshot,
-        formula_id=formula_id,
-        facts=facts,
-    )
+    try:
+        generated = _validate_ai_formula_stages(
+            raw,
+            product=product,
+            snapshot=snapshot,
+            formula_id=formula_id,
+            facts=facts,
+        )
+    except CopyRegisterV2Error as exc:
+        details = dict(exc.details) if isinstance(exc.details, dict) else {}
+        details["provider_receipt"] = receipt
+        exc.details = details
+        raise
     if duration_authority is not None:
         actual_word_count = sum(len(item["text"].split()) for item in generated)
         allowed_word_budget = int(duration_authority["allowed_word_budget"])
@@ -1593,6 +1669,18 @@ async def regenerate_stage(blueprint_id: str, stage_key: str) -> CopyBlueprintV2
     if blockers:
         raise CopyRegisterV2Error(blockers[0], "Current Product Truth is stale or unavailable; revision is blocked.", details={"blockers": blockers})
     assert product is not None and snapshot is not None
+    try:
+        validate_product_identity_text(previous.angle.definition, product)
+    except ValueError as exc:
+        code = str(exc)
+        if code not in {PRODUCT_IDENTITY_STALE, PRODUCT_IDENTITY_UNRESOLVED}:
+            raise
+        raise CopyRegisterV2Error(
+            code,
+            "The persisted blueprint angle contains a product identity that is not the current canonical product name.",
+            status_code=409,
+            details=getattr(exc, "details", None),
+        ) from exc
     facts = await _facts_for_refs(product, snapshot, [ref.fact_id for ref in previous.evidence_refs])
     matching = [stage for stage in previous.stages if stage.stage_key == stage_key]
     if not matching:
@@ -1610,6 +1698,7 @@ async def regenerate_stage(blueprint_id: str, stage_key: str) -> CopyBlueprintV2
                 "subcategory": _clean(product.get("subcategory")),
                 "product_type": _clean(product.get("type") or product.get("product_type")),
             },
+            "product_identity": product_identity_proof(product),
             "product_truth": {
                 "allowed_claims": _parse_list(snapshot.get("allowed_claims_json")),
                 "blocked_claims": _parse_list(snapshot.get("blocked_claims_json")),
