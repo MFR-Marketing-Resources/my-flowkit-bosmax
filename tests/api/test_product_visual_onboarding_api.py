@@ -109,3 +109,17 @@ def test_visual_onboarding_routes_are_review_gated():
     assert "/product-visual-onboarding/{product_id}/cutout/fallback" in paths
     assert "/product-visual-onboarding/{product_id}/cutout/history" in paths
     assert "/product-visual-onboarding/{product_id}/cutout/preview/{variant}" in paths
+
+
+def test_preview_media_type_sniffs_jpeg_and_png(tmp_path):
+    from agent.api.product_visual_onboarding import _preview_media_type
+
+    jpg = tmp_path / "orig.jpg"
+    jpg.write_bytes(bytes([0xFF, 0xD8, 0xFF, 0xE0]) + bytes(12))
+    png = tmp_path / "cut.png"
+    png.write_bytes(bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) + bytes(8))
+    bare = tmp_path / "bare.bin"
+    bare.write_bytes(bytes([0xFF, 0xD8, 0xFF, 0xE0]) + bytes(12))
+    assert _preview_media_type(jpg) == "image/jpeg"
+    assert _preview_media_type(png) == "image/png"
+    assert _preview_media_type(bare) == "image/jpeg"
