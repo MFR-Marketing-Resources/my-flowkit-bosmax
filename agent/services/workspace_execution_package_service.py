@@ -357,6 +357,7 @@ async def create_workspace_execution_package(
     # disagree on lineage — a silent preview-vs-final flip (2026-07-09 audit).
     resolved_source_mode = _resolve_preview_source_mode(mode, source_mode)
     resolved_model = model or _default_model_for_mode(normalized_mode)
+    variation_index = int((faceless_resolution or {}).get("variation_index") or 0)
     compiler_result = await compile_workspace_prompt_preview(
         product_id=product_id,
         mode=normalized_mode,
@@ -381,6 +382,7 @@ async def create_workspace_execution_package(
         creative_treatment=creative_treatment,
         scene_template=scene_template,
         camera_preset=camera_preset,
+        variation_index=variation_index,
     )
     copy_binding_lineage = compiler_result.get("copy_binding")
     # Explicit-Fallback-Confirmation V1: when the operator confirmed fallback
@@ -705,6 +707,7 @@ async def compile_workspace_prompt_preview(
     target_language: str = "BM_MS",
     camera_style: str = "UGC_IPHONE_RAW",
     character_presence: str = "VISIBLE_CREATOR",
+    variation_index: int = 0,
     creator_persona: str = "DEFAULT_CREATOR",
     overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
@@ -789,6 +792,7 @@ async def compile_workspace_prompt_preview(
             mode=normalized_mode,
             camera_style=camera_style,
             character_presence=character_presence,
+            variation_index=variation_index,
             creator_persona=creator_persona,
             target_language=target_language,
             generation_mode=generation_mode,

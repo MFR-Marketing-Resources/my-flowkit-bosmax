@@ -828,6 +828,7 @@ def compile_ugc_video_prompt(
     camera_style: str | None = None,
     character_presence: str | None = None,
     creator_persona: str | None = None,
+    variation_index: int = 0,
     target_language: str | None = None,
     generation_mode: str | None = None,
     duration_seconds: int = 8,
@@ -1089,7 +1090,7 @@ def compile_ugc_video_prompt(
     if resolved_source_mode != "IMAGES":
         selected_scene_variant = _scene_strategies.select_scene_strategy_variant(
             resolved_scene_strategy,
-            0,
+            variation_index,
             character_presence=resolved_character_presence,
         )
         scene_choreography_receipt = selected_scene_variant
@@ -1097,6 +1098,7 @@ def compile_ugc_video_prompt(
             **approved_package,
             "scene_context": _scene_strategies.build_scene_strategy_context(
                 resolved_scene_strategy,
+                variation_index=variation_index,
                 base_scene_context=_base_scene_context,
                 character_presence=resolved_character_presence,
             ),

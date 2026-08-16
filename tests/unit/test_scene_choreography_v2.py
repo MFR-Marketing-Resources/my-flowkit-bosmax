@@ -19,6 +19,9 @@ from agent.services.scene_choreography_catalog import (
     action_coverage_receipt,
     all_choreography_variants,
     coverage_map,
+    choreography_sha256,
+    eligible_variants_for_character_presence,
+    select_compatible_variant_for_strategy,
     select_variant_for_strategy,
 )
 from agent.services.scene_choreography_validator import validate_choreography_variant
@@ -262,34 +265,85 @@ def test_traditional_herbal_oil_8s_fixture_reaches_compiled_prompt() -> None:
     assert "Allowed product action:" not in prompt
 
 
-def test_face_required_choreography_fails_closed_for_faceless() -> None:
+def test_compatible_selection_skips_face_required_variants_for_faceless() -> None:
     strategy = resolve_scene_strategy(
         _product("Velvet Lip Tint", category="Beauty & Personal Care", type="Lip Makeup")
     )
-    with pytest.raises(ChoreographyValidationError) as exc:
-        select_scene_strategy_variant(
-            strategy,
-            0,
-            character_presence="FACELESS",
-        )
-    assert exc.value.code == "ERR_FACELESS_CHOREOGRAPHY_INCOMPATIBLE"
-    assert exc.value.choreography_id == "lip_color.v0"
+    eligible = eligible_variants_for_character_presence("LIP_COLOR", "FACELESS")
+    assert [variant.choreography_id for variant in eligible] == [
+        "lip_color.v1",
+        "lip_color.v3",
+    ]
+    assert select_variant_for_strategy("LIP_COLOR", 0).choreography_id == "lip_color.v0"
 
-    with pytest.raises(ValueError, match="ERR_FACELESS_CHOREOGRAPHY_INCOMPATIBLE"):
-        compile_ugc_video_prompt(
-            product=_product(
-                "Velvet Lip Tint",
-                category="Beauty & Personal Care",
-                type="Lip Makeup",
-            ),
-            approved_package={},
-            mode="F2V",
-            source_mode="HYBRID",
-            generation_mode="SINGLE",
-            duration_seconds=8,
-            character_presence="FACELESS",
-            target_language="BM_MS",
-        )
+    selected = select_compatible_variant_for_strategy("LIP_COLOR", 0, "FACELESS")
+    rotated = select_compatible_variant_for_strategy("LIP_COLOR", 1, "FACELESS")
+    wrapped = select_compatible_variant_for_strategy("LIP_COLOR", 2, "FACELESS")
+    assert selected.choreography_id == "lip_color.v1"
+    assert rotated.choreography_id == "lip_color.v3"
+    assert wrapped.choreography_id == "lip_color.v1"
+    assert "FACELESS" in selected.allowed_character_presence
+    assert choreography_sha256(selected) == choreography_sha256(
+        select_compatible_variant_for_strategy("LIP_COLOR", 0, "FACELESS")
+    )
+
+    selected_scene = select_scene_strategy_variant(
+        strategy,
+        0,
+        character_presence="FACELESS",
+    )
+    assert selected_scene["choreography_id"] == selected.choreography_id
+    assert selected_scene["compatible_contexts"] == selected.compatible_contexts
+
+    compiled = compile_ugc_video_prompt(
+        product=_product(
+            "Velvet Lip Tint",
+            category="Beauty & Personal Care",
+            type="Lip Makeup",
+        ),
+        approved_package={},
+        mode="F2V",
+        source_mode="HYBRID",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        character_presence="FACELESS",
+        target_language="BM_MS",
+    )
+    assert compiled["scene_choreography"]["choreography_id"] == selected.choreography_id
+    assert compiled["scene_choreography"]["choreography_sha256"] == choreography_sha256(
+        selected
+    )
+
+
+def test_compatible_selection_fails_closed_when_no_variant_is_eligible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import agent.services.scene_choreography_catalog as catalog
+
+    face_required = all_choreography_variants()["LIP_COLOR"][0]
+    monkeypatch.setattr(
+        catalog,
+        "list_production_variants",
+        lambda _strategy_id: (face_required,),
+    )
+    with pytest.raises(ChoreographyValidationError) as exc:
+        select_compatible_variant_for_strategy("LIP_COLOR", 0, "FACELESS")
+    assert exc.value.code == "ERR_FACELESS_CHOREOGRAPHY_INCOMPATIBLE"
+    assert exc.value.strategy_id == "LIP_COLOR"
+
+
+def test_visible_creator_selection_preserves_raw_variant_order() -> None:
+    strategy = resolve_scene_strategy(
+        _product("Velvet Lip Tint", category="Beauty & Personal Care", type="Lip Makeup")
+    )
+    raw = select_variant_for_strategy("LIP_COLOR", 0)
+    selected = select_scene_strategy_variant(
+        strategy,
+        0,
+        character_presence="VISIBLE_CREATOR",
+    )
+    assert raw.choreography_id == "lip_color.v0"
+    assert selected["choreography_id"] == raw.choreography_id
 
 
 def test_roll_on_choreography_is_product_appropriate() -> None:
