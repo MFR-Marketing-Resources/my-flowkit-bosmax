@@ -39,6 +39,60 @@ from agent.services import product_truth_lock_service as truth_lock_service
 logger = logging.getLogger(__name__)
 
 
+
+def _schema_key(entry: dict[str, Any] | None) -> str:
+    if not entry:
+        return ""
+    return str(entry.get("product_id") or entry.get("schema_key") or "").strip()
+
+
+def durable_schema_canonical_source_path(schema_key: str) -> Path:
+    """Server-owned durable copy under BASE_DIR (never machine-local authoring paths)."""
+    return BASE_DIR / "data" / "exact-product" / schema_key / "canonical_source.jpg"
+
+
+def _is_under_base_dir(path: Path) -> bool:
+    try:
+        path.resolve().relative_to(BASE_DIR.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _schema_canonical_path_candidates(product: dict[str, Any], entry: dict[str, Any]) -> list[Path]:
+    """Ordered candidate paths for schema-backed canonical photos.
+
+    Prefer governed durable/runtime media under BASE_DIR over external authoring
+    paths (e.g. desktop image databases). External paths remain last-resort for
+    generation resolvers that can read them; preview serving still gates on
+    BASE_DIR via product_visual_onboarding_service.
+    """
+    photo = entry.get("canonical_product_photo") if isinstance(entry.get("canonical_product_photo"), dict) else {}
+    key = _schema_key(entry)
+    ordered: list[Path] = []
+    seen: set[str] = set()
+
+    def _add(value: Any) -> None:
+        raw = str(value or "").strip()
+        if not raw:
+            return
+        path = Path(raw)
+        if not path.is_absolute():
+            path = BASE_DIR / path
+        token = str(path)
+        if token in seen:
+            return
+        seen.add(token)
+        ordered.append(path)
+
+    if key:
+        _add(durable_schema_canonical_source_path(key))
+    _add(product.get("local_image_path"))
+    _add(entry.get("canonical_source_path"))
+    _add(photo.get("source_path") if isinstance(photo, dict) else None)
+    return ordered
+
+
 class ProductVisualReferenceRequiredError(ValueError):
     """Raised when a selected product has no valid, readable visual image reference."""
     pass
@@ -355,32 +409,56 @@ def resolve_product_reference_image(
             pass
     
     # Priority 0: Handcrafted Schema Canonical Source (e.g. MWCB canonical photo)
+    # Prefer durable BASE_DIR copy / product local cache over external authoring paths.
     schema_entry = resolve_schema_entry(product)
     if schema_entry:
-        c_path_str = schema_entry.get("canonical_source_path") or (
-            schema_entry.get("canonical_product_photo") or {}
-        ).get("source_path")
-        if c_path_str:
-            c_path = Path(c_path_str)
-            if c_path.exists():
+        photo = schema_entry.get("canonical_product_photo") if isinstance(schema_entry.get("canonical_product_photo"), dict) else {}
+        expected_sha = str((photo or {}).get("sha256") or "").strip().lower()
+        candidates = _schema_canonical_path_candidates(product, schema_entry)
+        chosen_path: Path | None = None
+        chosen_meta = None
+        # Pass 1: governed (BASE_DIR) candidates only.
+        for c_path in candidates:
+            if not c_path.is_file() or c_path.stat().st_size <= 0:
+                continue
+            if not _is_under_base_dir(c_path):
+                continue
+            meta = _inspect_image_file(c_path)
+            if not meta:
+                continue
+            if expected_sha and meta[3] != expected_sha:
+                continue
+            chosen_path, chosen_meta = c_path, meta
+            break
+        # Pass 2: last-resort external authoring path (generation may still read it).
+        if chosen_path is None:
+            for c_path in candidates:
+                if not c_path.is_file() or c_path.stat().st_size <= 0:
+                    continue
                 meta = _inspect_image_file(c_path)
-                if meta:
-                    w, h, mime, sha = meta
-                    registered_media_id = str(product.get("media_id") or "").strip()
-                    if not registered_media_id:
-                        registered_media_id = _registered_reference_id_for_bytes(product_id, sha)
-                    return ProductReferenceInfo(
-                        source_type="SCHEMA_CANONICAL_SOURCE",
-                        media_id=registered_media_id or None,
-                        local_path=str(c_path),
-                        image_url=product.get("image_url"),
-                        mime_type=mime,
-                        sha256=sha,
-                        width=w,
-                        height=h,
-                        provenance="UNIVERSAL_PRODUCT_SCHEMA",
-                        validation_status="VALIDATED",
-                    )
+                if not meta:
+                    continue
+                if expected_sha and meta[3] != expected_sha:
+                    continue
+                chosen_path, chosen_meta = c_path, meta
+                break
+        if chosen_path is not None and chosen_meta is not None:
+            w, h, mime, sha = chosen_meta
+            registered_media_id = str(product.get("media_id") or "").strip()
+            if not registered_media_id:
+                registered_media_id = _registered_reference_id_for_bytes(product_id, sha)
+            return ProductReferenceInfo(
+                source_type="SCHEMA_CANONICAL_SOURCE",
+                media_id=registered_media_id or None,
+                local_path=str(chosen_path.resolve() if _is_under_base_dir(chosen_path) else chosen_path),
+                image_url=product.get("image_url"),
+                mime_type=mime,
+                sha256=sha,
+                width=w,
+                height=h,
+                provenance="UNIVERSAL_PRODUCT_SCHEMA",
+                validation_status="VALIDATED",
+            )
 
     # Priority 1: Product row local_image_path (if exists on disk)
     local_path = product.get("local_image_path")

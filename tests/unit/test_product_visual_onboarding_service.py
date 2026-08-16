@@ -1,3 +1,4 @@
+from pathlib import Path
 from io import BytesIO
 import json
 from types import SimpleNamespace
@@ -742,3 +743,97 @@ def test_active_approved_emits_preview_only_when_bytes_exist(tmp_path):
     )
     assert bad["active_cutout_preview_url"] is None
     assert bad["auto_cutout_preview_url"] is None
+
+
+def test_preview_servable_rejects_outside_base_dir(tmp_path):
+    outside = tmp_path / "outside.jpg"
+    Image.new("RGB", (8, 8), (1, 1, 1)).save(outside)
+    assert service._preview_servable_path(str(outside)) is None
+    # traversal-style sibling under fake root
+    assert service._preview_servable_path(str(tmp_path / ".." / "outside.jpg")) is None
+
+
+def test_preview_servable_accepts_governed_base_dir_path():
+    from agent.config import BASE_DIR
+    inside = BASE_DIR / "data" / "products" / "images" / "governed-accept-unit.jpg"
+    inside.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (10, 10), (9, 9, 9)).save(inside)
+    assert service._preview_servable_path(str(inside)) == inside.resolve()
+
+
+@pytest.mark.asyncio
+async def test_trusted_original_remaps_external_schema_to_governed_twin(tmp_path, monkeypatch):
+    """Rejected manual + external schema path must not suppress governed original."""
+    from agent.config import BASE_DIR
+    import hashlib
+    from types import SimpleNamespace
+
+    external = tmp_path / "authoring_schema.jpg"
+    Image.new("RGB", (32, 48), (20, 90, 30)).save(external, format="JPEG")
+    sha = hashlib.sha256(external.read_bytes()).hexdigest()
+
+    governed = BASE_DIR / "data" / "products" / "images" / "remap-governed-original.jpg"
+    governed.parent.mkdir(parents=True, exist_ok=True)
+    governed.write_bytes(external.read_bytes())
+
+    product = {
+        "id": "remap-product",
+        "local_image_path": str(governed),
+    }
+    external_ref = SimpleNamespace(
+        local_path=str(external),
+        sha256=sha,
+        source_type="SCHEMA_CANONICAL_SOURCE",
+        media_id=None,
+        mime_type="image/jpeg",
+        width=32,
+        height=48,
+        provenance="UNIVERSAL_PRODUCT_SCHEMA",
+        validation_status="VALIDATED",
+    )
+
+    async def fake_resolve(_product):
+        return external_ref
+
+    monkeypatch.setattr(service, "_resolve_source", fake_resolve)
+    monkeypatch.setattr(service, "_enrich_product_with_source_media", AsyncMock(return_value=product))
+
+    lock = {
+        "review_status": "REJECTED",
+        "canonical_cutout_path": str(tmp_path / "missing-cutout.png"),
+        "provenance_json": json.dumps({"source_kind": "USER_UPLOAD", "created_by": "operator"}),
+    }
+    ref, available, err = await service._resolve_trusted_original_reference(product, lock=lock, pack=None)
+    assert err is None
+    assert available is True
+    assert Path(ref.local_path).resolve() == governed.resolve()
+
+    readiness = service._readiness_payload(
+        product,
+        lock=lock,
+        pack=None,
+        prep={"status": "REJECTED"},
+        reference=ref,
+        source_available=True,
+        history=[],
+    )
+    assert readiness["original_preview_url"] == (
+        "/api/product-visual-onboarding/remap-product/cutout/preview/original"
+    )
+    assert readiness["manual_cutout_status"] == "REJECTED"
+    assert readiness["provider_operations"] == 0
+
+
+@pytest.mark.asyncio
+async def test_missing_bytes_emit_no_internal_original_preview(tmp_path):
+    readiness = service._readiness_payload(
+        {"id": "no-bytes", "local_image_path": str(tmp_path / "gone.jpg")},
+        lock=None,
+        pack=None,
+        prep=None,
+        reference=None,
+        source_available=False,
+        history=[],
+    )
+    assert readiness["original_preview_url"] is None
+    assert readiness["canonical_media_status"] == "MISSING"
