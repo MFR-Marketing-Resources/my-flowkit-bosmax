@@ -67,14 +67,45 @@ def _raise(error: service.CopyRegisterV2Error) -> None:
     raise HTTPException(status_code=error.status_code, detail=detail)
 
 
-def _blueprint_payload(blueprint) -> dict[str, Any]:
+def _blueprint_payload(
+    blueprint,
+    *,
+    current_authority_validation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     payload = blueprint.model_dump(mode="json")
     try:
         payload["derived_projection"] = blueprint.derived_projections().model_dump(mode="json")
     except Exception:
         payload["derived_projection"] = None
     payload["v2_badge"] = "V2 PRODUCTION_VALID" if blueprint.status == "PRODUCTION_VALID" else None
+    validation = current_authority_validation or {
+        "status": "DRAFT" if blueprint.status == "DRAFT" else "STALE_AUTHORITY_LINEAGE",
+        "valid": False,
+        "activation_allowed": False,
+        "reason": "CURRENT_AUTHORITY_VALIDATION_NOT_LOADED",
+        "mismatches": [],
+        "current_fingerprint": None,
+        "blueprint_fingerprint": blueprint.product_truth_lineage.taxonomy_authority_fingerprint,
+    }
+    payload["current_authority_status"] = validation["status"]
+    payload["current_authority_valid"] = bool(validation["valid"])
+    payload["current_authority_activation_allowed"] = bool(validation["activation_allowed"])
+    payload["current_authority_reason"] = validation["reason"]
+    payload["current_authority_mismatches"] = validation["mismatches"]
+    payload["current_authority_fingerprint"] = validation["current_fingerprint"]
+    payload["blueprint_authority_fingerprint"] = validation["blueprint_fingerprint"]
     return payload
+
+
+async def _current_blueprint_payload(blueprint) -> dict[str, Any]:
+    truth = await service.get_product_truth_proof(blueprint.product_id)
+    return _blueprint_payload(
+        blueprint,
+        current_authority_validation=service.get_blueprint_current_authority_validation(
+            blueprint,
+            truth,
+        ),
+    )
 
 
 @router.get("/formulas")
@@ -120,8 +151,9 @@ async def generate_angles(request: AngleOptionsRequest):
 async def generate_blueprint(request: GenerateBlueprintRequest):
     try:
         blueprint = await service.generate_blueprint(**request.model_dump())
+        payload = await _current_blueprint_payload(blueprint)
         return {
-            "blueprint": _blueprint_payload(blueprint),
+            "blueprint": payload,
             "status": blueprint.status,
             "production_valid": False,
             "provider_calls": 1,
@@ -136,9 +168,19 @@ async def generate_blueprint(request: GenerateBlueprintRequest):
 async def list_product_blueprints(product_id: str):
     try:
         items = await service.list_blueprints(product_id)
+        truth = await service.get_product_truth_proof(product_id)
         return {
             "product_id": product_id,
-            "items": [_blueprint_payload(item) for item in items],
+            "items": [
+                _blueprint_payload(
+                    item,
+                    current_authority_validation=service.get_blueprint_current_authority_validation(
+                        item,
+                        truth,
+                    ),
+                )
+                for item in items
+            ],
             "activation": await service.get_activation_status(product_id),
             "legacy_copy_rows_read": 0,
         }
@@ -149,7 +191,9 @@ async def list_product_blueprints(product_id: str):
 @router.get("/blueprints/{blueprint_id}")
 async def get_blueprint(blueprint_id: str, revision: int | None = Query(default=None, ge=1)):
     try:
-        return _blueprint_payload(await service.get_blueprint(blueprint_id, revision))
+        return await _current_blueprint_payload(
+            await service.get_blueprint(blueprint_id, revision)
+        )
     except service.CopyRegisterV2Error as error:
         _raise(error)
 
@@ -158,7 +202,7 @@ async def get_blueprint(blueprint_id: str, revision: int | None = Query(default=
 async def regenerate_stage(blueprint_id: str, stage_key: str):
     try:
         blueprint = await service.regenerate_stage(blueprint_id, stage_key)
-        return {"blueprint": _blueprint_payload(blueprint), "new_revision": blueprint.revision, "provider_calls": 1, "credit_spend": 0}
+        return {"blueprint": await _current_blueprint_payload(blueprint), "new_revision": blueprint.revision, "provider_calls": 1, "credit_spend": 0}
     except service.CopyRegisterV2Error as error:
         _raise(error)
 
@@ -173,7 +217,7 @@ async def approve_blueprint(blueprint_id: str, request: ApproveBlueprintRequest)
             readiness_proof=request.readiness_proof,
         )
         return {
-            "blueprint": _blueprint_payload(blueprint),
+            "blueprint": await _current_blueprint_payload(blueprint),
             "status": blueprint.status,
             "production_valid": blueprint.status == "PRODUCTION_VALID",
             "badge": "V2 PRODUCTION_VALID" if blueprint.status == "PRODUCTION_VALID" else None,

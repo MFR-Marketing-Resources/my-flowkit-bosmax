@@ -31,6 +31,51 @@ async def test_product_truth_uses_canonical_copy_cluster_and_quarantines_legacy_
 
 
 @pytest.mark.asyncio
+async def test_legacy_silo_change_does_not_invalidate_copy_authority():
+    product, _snapshot = await _seed_truth()
+    before = await copy_service.get_product_truth_proof(product["id"])
+
+    db = await get_db()
+    await db.execute(
+        "UPDATE product SET silo=? WHERE id=?",
+        ("visual_only_silo_changed", product["id"]),
+    )
+    await db.commit()
+
+    after = await copy_service.get_product_truth_proof(product["id"])
+    assert after["ready_for_copy"] is True
+    assert after["authority"]["authority_fingerprint"] == before["authority"]["authority_fingerprint"]
+    assert (
+        after["authority"]["strategy_taxonomy"]["fingerprint_scope"]
+        == "copy-register-strategy-product-subset-v1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_auto_derived_strategy_authority_is_not_copy_consumable():
+    product, _snapshot = await _seed_truth()
+    db = await get_db()
+    await db.execute(
+        """UPDATE product_strategy_taxonomy
+           SET review_status=?, consumer_status=?, authority_source=?
+           WHERE product_id=?""",
+        ("REVIEW_REQUIRED", "BLOCKED_REVIEW_REQUIRED", "AUTO_DERIVED", product["id"]),
+    )
+    await db.commit()
+
+    proof = await copy_service.get_product_truth_proof(product["id"])
+    assert proof["ready_for_copy"] is False
+    assert "V2_PRODUCT_TRUTH_STRATEGY_AUTHORITY_STALE" in proof["blockers"]
+    assert any(
+        detail["field"] == "authority_source"
+        and detail["observed"] == "AUTO_DERIVED"
+        and detail["expected"] == "MANUAL_OVERRIDE"
+        for detail in proof["blocker_details"]
+        if detail["code"] == "V2_PRODUCT_TRUTH_STRATEGY_AUTHORITY_STALE"
+    )
+
+
+@pytest.mark.asyncio
 async def test_mismatched_canonical_taxonomy_blocks_before_provider_call(monkeypatch):
     product, _snapshot = await _seed_truth()
     db = await get_db()

@@ -27,7 +27,7 @@ def test_taxonomy_registry_route_is_read_only_and_filterable(monkeypatch):
     async def fake_list(**kwargs):
         seen.update(kwargs)
         return {
-            "schema_version": "copywriting-taxonomy-v1",
+            "schema_version": "copywriting-taxonomy-v2",
             "source_workbook": "Download-Copywriting_Hub-Rev4-FIXED-WS-Database-Mapped.xlsx",
             "source_sheet": "Database",
             "items": [_entry()],
@@ -61,7 +61,7 @@ def test_taxonomy_registry_route_is_read_only_and_filterable(monkeypatch):
 def test_taxonomy_rollup_route_shape(monkeypatch):
     async def fake_rollup():
         return {
-            "schema_version": "copywriting-taxonomy-v1",
+            "schema_version": "copywriting-taxonomy-v2",
             "source_workbook": "Download-Copywriting_Hub-Rev4-FIXED-WS-Database-Mapped.xlsx",
             "source_sheet": "Database",
             "total_product_types": 313,
