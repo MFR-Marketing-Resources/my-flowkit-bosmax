@@ -42,6 +42,8 @@ from agent.models.copy_blueprint_v2 import (
     digest_evidence_text,
     digest_json,
 )
+from agent.services import canonical_prompt_compiler as canonical
+from agent.services.prompt_compiler_runtime_config_service import DEFAULT_TARGET_LANGUAGE
 
 
 class CopyBlueprintV2Error(ValueError):
@@ -73,10 +75,34 @@ class CopyBlueprintV2ValidationResult(BaseModel):
     error_codes: tuple[str, ...] = ()
     issues: tuple[V2ValidationIssue, ...] = ()
     derived_projection_available: bool = False
+    duration_word_count: int | None = None
+    duration_word_budget: int | None = None
+    duration_fit: bool | None = None
 
 
 def _issue(code: str, message: str, stage_key: str | None = None) -> V2ValidationIssue:
     return V2ValidationIssue(code=code, message=message, stage_key=stage_key)
+
+
+def canonical_duration_word_budget(
+    duration_seconds: float | None,
+    *,
+    target_language: str = DEFAULT_TARGET_LANGUAGE,
+    wps_mode: str = "SWEET",
+) -> int | None:
+    """Resolve a Copy V2 duration budget from the canonical planner authority."""
+
+    if duration_seconds is None:
+        return None
+    duration = float(duration_seconds)
+    if not duration.is_integer():
+        raise ValueError(f"COPY_V2_DURATION_AUTHORITY_UNRESOLVED:{duration_seconds}")
+    return canonical.total_dialogue_word_budget(
+        int(duration),
+        target_language,
+        wps_mode=wps_mode,
+        engine="GOOGLE_FLOW",
+    )
 
 
 def _unique_refs(refs: list[EvidenceReference]) -> tuple[EvidenceReference, ...]:
@@ -184,6 +210,7 @@ def validate_copy_blueprint_v2(
     evidence_registry: EvidenceRegistry | None = None,
     require_approval: bool = False,
     require_semantic_review: bool = False,
+    require_duration_target: bool = False,
     duration_word_limit: int | None = None,
     max_words_per_second: float | None = None,
 ) -> CopyBlueprintV2ValidationResult:
@@ -319,18 +346,50 @@ def validate_copy_blueprint_v2(
             if fact.snapshot_status != "APPROVED" or not fact.approved:
                 issues.append(_issue("COPY_V2_EVIDENCE_NOT_APPROVED", f"fact is not approved: {ref.fact_id}"))
 
+    duration_word_count = sum(len(stage.authored_text.split()) for stage in blueprint.stages)
+    duration_word_budget = None
+    duration_fit: bool | None = None
+    if blueprint.target_duration_seconds is None:
+        if require_duration_target:
+            issues.append(
+                _issue(
+                    "COPY_V2_DURATION_TARGET_REQUIRED",
+                    "Production approval requires an explicit target duration.",
+                )
+            )
+            duration_fit = False
+    else:
+        try:
+            duration_word_budget = canonical_duration_word_budget(
+                blueprint.target_duration_seconds
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            issues.append(
+                _issue(
+                    "COPY_V2_DURATION_AUTHORITY_UNRESOLVED",
+                    f"Canonical duration/WPS authority could not resolve the target: {exc}",
+                )
+            )
+        else:
+            duration_fit = duration_word_count <= duration_word_budget
+            if not duration_fit:
+                issues.append(
+                    _issue(
+                        "COPY_V2_DURATION_BUDGET_EXCEEDED",
+                        f"copy has {duration_word_count} words; canonical budget is {duration_word_budget}",
+                    )
+                )
+
     if duration_word_limit is not None:
-        word_count = sum(len(stage.authored_text.split()) for stage in blueprint.stages)
-        if word_count > duration_word_limit:
+        if duration_word_count > duration_word_limit:
             issues.append(
                 _issue(
                     "COPY_DURATION_FIT_FAILED",
-                    f"approved copy has {word_count} words; limit is {duration_word_limit}",
+                    f"approved copy has {duration_word_count} words; limit is {duration_word_limit}",
                 )
             )
     if max_words_per_second is not None and blueprint.target_duration_seconds:
-        word_count = sum(len(stage.authored_text.split()) for stage in blueprint.stages)
-        if word_count / blueprint.target_duration_seconds > max_words_per_second:
+        if duration_word_count / blueprint.target_duration_seconds > max_words_per_second:
             issues.append(
                 _issue(
                     "COPY_V2_WPS_FIT_FAILED",
@@ -371,6 +430,9 @@ def validate_copy_blueprint_v2(
         error_codes=error_codes,
         issues=tuple(issues),
         derived_projection_available=contract is not None and structural_valid,
+        duration_word_count=duration_word_count,
+        duration_word_budget=duration_word_budget,
+        duration_fit=duration_fit,
     )
 
 
@@ -383,6 +445,7 @@ def approve_copy_blueprint_v2(
     approved_at: str | None = None,
     semantic_review: SemanticReviewProof | None = None,
     readiness_proof: ProductionReadinessProof | None = None,
+    require_duration_target: bool = True,
 ) -> CopyBlueprintV2:
     """Perform the explicit human approval transition.
 
@@ -414,6 +477,7 @@ def approve_copy_blueprint_v2(
         artifact,
         current_product_truth=current_product_truth,
         evidence_registry=evidence_registry,
+        require_duration_target=require_duration_target,
     )
     if not result.valid:
         raise CopyBlueprintV2Error(
