@@ -532,6 +532,92 @@ def _truth_gate(product: dict[str, Any] | None, snapshot: dict[str, Any] | None)
     return ["V2_PRODUCT_TRUTH_TAXONOMY_AUTHORITY_UNRESOLVED"]
 
 
+_BLUEPRINT_AUTHORITY_LINEAGE_FIELDS = (
+    "product_id",
+    "snapshot_id",
+    "snapshot_version",
+    "snapshot_digest",
+    "snapshot_status",
+    "canonical_category",
+    "canonical_subcategory",
+    "canonical_type",
+    "canonical_product_type_code",
+    "canonical_copy_cluster",
+    "strategy_taxonomy_version",
+    "strategy_taxonomy_fingerprint",
+    "taxonomy_authority_version",
+    "taxonomy_authority_fingerprint",
+    "bosmax_product_family",
+)
+
+
+def get_blueprint_current_authority_validation(
+    blueprint: CopyBlueprintV2,
+    truth: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve the current authority state for a persisted blueprint.
+
+    The persisted blueprint status is historical state. This read-only
+    projection compares its complete Product Truth lineage with the current
+    Product Truth proof so the UI cannot turn an old ``PRODUCTION_VALID`` row
+    into an activation affordance. The activation service remains the final
+    enforcement boundary.
+    """
+
+    actual_lineage = blueprint.product_truth_lineage.model_dump(mode="json")
+    current_lineage = (
+        (truth.get("product_truth") or {}).get("lineage") or {}
+        if isinstance(truth, dict)
+        else {}
+    )
+    mismatches = [
+        {
+            "field": field,
+            "blueprint": actual_lineage.get(field),
+            "current": current_lineage.get(field),
+        }
+        for field in _BLUEPRINT_AUTHORITY_LINEAGE_FIELDS
+        if actual_lineage.get(field) != current_lineage.get(field)
+    ]
+    truth_blockers = [str(code) for code in (truth.get("blockers") or [])]
+    current_authority_valid = (
+        bool(truth.get("ready_for_copy"))
+        and not truth_blockers
+        and not mismatches
+        and bool(current_lineage.get("taxonomy_authority_fingerprint"))
+    )
+    if blueprint.status == "PRODUCTION_VALID":
+        status = (
+            "CURRENT · PRODUCTION_VALID"
+            if current_authority_valid
+            else "STALE_AUTHORITY_LINEAGE"
+        )
+    elif blueprint.status == "DRAFT":
+        status = "DRAFT"
+    else:
+        status = "NOT_PRODUCTION_VALID"
+
+    reasons: list[str] = []
+    if mismatches:
+        reasons.append("COPY_V2_TAXONOMY_AUTHORITY_STALE")
+    reasons.extend(truth_blockers)
+    if blueprint.status == "DRAFT":
+        reasons.append("EXPLICIT_HUMAN_APPROVAL_REQUIRED")
+    elif blueprint.status != "PRODUCTION_VALID":
+        reasons.append("BLUEPRINT_NOT_PRODUCTION_VALID")
+    return {
+        "status": status,
+        "valid": current_authority_valid,
+        "activation_allowed": (
+            blueprint.status == "PRODUCTION_VALID" and current_authority_valid
+        ),
+        "reason": ", ".join(dict.fromkeys(reasons)) or None,
+        "mismatches": mismatches,
+        "current_fingerprint": current_lineage.get("taxonomy_authority_fingerprint"),
+        "blueprint_fingerprint": actual_lineage.get("taxonomy_authority_fingerprint"),
+    }
+
+
 async def _ensure_evidence_facts(facts: Iterable[EvidenceFact]) -> None:
     rows = list(facts)
     if not rows:
@@ -1968,6 +2054,7 @@ __all__ = [
     "generate_angle_options",
     "generate_blueprint",
     "get_activation_status",
+    "get_blueprint_current_authority_validation",
     "get_blueprint",
     "get_binding",
     "get_binding_by_id",

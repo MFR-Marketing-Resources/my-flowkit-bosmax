@@ -26,11 +26,27 @@ from typing import Any, Mapping
 
 from agent.services.bosmax_product_family import derive_bosmax_product_family
 from agent.services.copywriting_taxonomy_service import canonical_category
-from agent.services.product_strategy_taxonomy_service import product_strategy_fingerprint
-
-
 COPY_REGISTER_AUTHORITY_VERSION = "copy-register-product-truth-authority-v1"
 NO_CANONICAL_VISUAL_SILO_AUTHORITY = "NO_CANONICAL_VISUAL_SILO_AUTHORITY"
+COPY_REGISTER_STRATEGY_FINGERPRINT_VERSION = "copy-register-strategy-product-subset-v1"
+
+# The product-strategy service intentionally keeps a broader identity
+# fingerprint for its own consumers. Copy Register V2 has a narrower contract:
+# product.silo is visual/internal metadata and must not invalidate copy
+# authority. Keep this subset local to the Copy Register authority so the
+# broader visual/strategy staleness rules remain unchanged.
+_COPY_REGISTER_STRATEGY_PRODUCT_FIELDS = (
+    "id",
+    "product_id",
+    "raw_product_title",
+    "product_display_name",
+    "product_short_name",
+    "category",
+    "subcategory",
+    "type",
+    "product_type",
+    "product_type_id",
+)
 
 
 def _text(value: Any) -> str:
@@ -51,6 +67,20 @@ def _canonical_json(value: Any) -> str:
 
 def _sha256(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def copy_register_strategy_product_fingerprint(
+    product: Mapping[str, Any],
+) -> str:
+    """Fingerprint copy-relevant product identity without the legacy silo."""
+
+    return _sha256(
+        {
+            field: product.get(field)
+            for field in _COPY_REGISTER_STRATEGY_PRODUCT_FIELDS
+            if product.get(field) is not None
+        }
+    )
 
 
 @dataclass(frozen=True)
@@ -84,6 +114,7 @@ class CopyRegisterProductTruthAuthority:
     copywriting_taxonomy_status: str
     strategy_taxonomy_status: str
     family_status: str
+    strategy_fingerprint_scope: str
     blockers: tuple[str, ...]
     blocker_details: tuple[dict[str, Any], ...]
     warnings: tuple[str, ...]
@@ -113,6 +144,7 @@ class CopyRegisterProductTruthAuthority:
                 "taxonomy_version": self.strategy_taxonomy_version,
                 "fingerprint": self.strategy_taxonomy_fingerprint,
                 "current_product_fingerprint": self.strategy_current_product_fingerprint,
+                "fingerprint_scope": self.strategy_fingerprint_scope,
                 "cluster": self.strategy_cluster,
                 "product_type_group": self.strategy_product_type_group,
                 "matched_scene_strategy_id": self.strategy_scene_strategy_id,
@@ -232,7 +264,7 @@ def build_copy_register_product_truth_authority(
         if re.fullmatch(r"[0-9a-f]{64}", strategy_fingerprint_raw)
         else ""
     )
-    current_strategy_fingerprint = product_strategy_fingerprint(dict(product))
+    current_strategy_fingerprint = copy_register_strategy_product_fingerprint(product)
     strategy_cluster = _text(_row_value(strategy_taxonomy_row, "cluster"))
     strategy_status = "EXACT"
     strategy_details: list[dict[str, Any]] = []
@@ -262,13 +294,19 @@ def build_copy_register_product_truth_authority(
                         "expected": expected_value,
                     }
                 )
-        if not strategy_fingerprint or strategy_fingerprint != current_strategy_fingerprint:
+        # product_strategy_taxonomy.product_fingerprint is a review snapshot
+        # owned by the broader product-strategy service. That service includes
+        # the legacy silo in its identity contract. Copy Register must not use
+        # that broad hash as a copy-readiness blocker; its current copy
+        # identity is carried by the scoped fingerprint below and by the
+        # canonical taxonomy/family checks above.
+        if not strategy_fingerprint:
             strategy_details.append(
                 {
                     "code": "V2_PRODUCT_TRUTH_STRATEGY_AUTHORITY_STALE",
                     "field": "product_fingerprint",
                     "observed": strategy_fingerprint or None,
-                    "expected": current_strategy_fingerprint,
+                    "expected": "64-character review snapshot fingerprint",
                 }
             )
         if registry_cluster and strategy_cluster and _normalized_token(strategy_cluster) != _normalized_token(registry_cluster):
@@ -317,8 +355,8 @@ def build_copy_register_product_truth_authority(
         },
         "observed_product_copy_taxonomy": canonical_fields,
         "strategy_taxonomy": {
+            "fingerprint_scope": COPY_REGISTER_STRATEGY_FINGERPRINT_VERSION,
             "taxonomy_version": _text(_row_value(strategy_taxonomy_row, "taxonomy_version")),
-            "product_fingerprint": strategy_fingerprint,
             "current_product_fingerprint": current_strategy_fingerprint,
             "cluster": strategy_cluster,
             "product_type_group": _text(_row_value(strategy_taxonomy_row, "product_type_group")),
@@ -328,6 +366,7 @@ def build_copy_register_product_truth_authority(
             "consumer_status": _text(_row_value(strategy_taxonomy_row, "consumer_status")),
             "materialization_status": _text(_row_value(strategy_taxonomy_row, "materialization_status")),
             "authority_source": _text(_row_value(strategy_taxonomy_row, "authority_source")),
+            "updated_at": _text(_row_value(strategy_taxonomy_row, "updated_at")),
         },
         "bosmax_family": {
             "stored": stored_family,
@@ -367,6 +406,7 @@ def build_copy_register_product_truth_authority(
         copywriting_taxonomy_status=taxonomy_status,
         strategy_taxonomy_status=strategy_status,
         family_status=family_status,
+        strategy_fingerprint_scope=COPY_REGISTER_STRATEGY_FINGERPRINT_VERSION,
         blockers=tuple(blockers),
         blocker_details=blocker_details,
         warnings=warnings,
@@ -375,7 +415,9 @@ def build_copy_register_product_truth_authority(
 
 __all__ = [
     "COPY_REGISTER_AUTHORITY_VERSION",
+    "COPY_REGISTER_STRATEGY_FINGERPRINT_VERSION",
     "NO_CANONICAL_VISUAL_SILO_AUTHORITY",
     "CopyRegisterProductTruthAuthority",
     "build_copy_register_product_truth_authority",
+    "copy_register_strategy_product_fingerprint",
 ]

@@ -6,7 +6,8 @@ from fastapi.testclient import TestClient
 
 from agent.api.copy_register_v2 import router
 from agent.services import copy_register_v2_service as service
-from tests.unit.test_copy_blueprint_v2_contract import _blueprint
+from tests.unit.test_copy_blueprint_v2_contract import _blueprint, _lineage, _registry
+from agent.services.copy_blueprint_v2_service import approve_copy_blueprint_v2
 
 
 def _client() -> TestClient:
@@ -78,8 +79,16 @@ def test_blueprint_list_includes_persisted_activation_state(monkeypatch):
             "activated_at": "2026-08-15T00:00:00Z",
         }
 
+    async def fake_truth(_product_id):
+        return {
+            "ready_for_copy": True,
+            "blockers": [],
+            "product_truth": {"lineage": {}},
+        }
+
     monkeypatch.setattr(service, "list_blueprints", fake_list)
     monkeypatch.setattr(service, "get_activation_status", fake_activation)
+    monkeypatch.setattr(service, "get_product_truth_proof", fake_truth)
     response = _client().get("/api/copy-register/v2/product/product-1/blueprints")
     assert response.status_code == 200
     expected = {
@@ -91,6 +100,52 @@ def test_blueprint_list_includes_persisted_activation_state(monkeypatch):
     }
     assert response.json()["activation"] == expected
     assert response.json()["legacy_copy_rows_read"] == 0
+
+
+def test_blueprint_list_marks_stale_approved_history_non_activatable(monkeypatch):
+    approved = approve_copy_blueprint_v2(
+        _blueprint(),
+        approved_by="test-reviewer",
+        current_product_truth=_lineage(),
+        evidence_registry=_registry(),
+    ).model_copy(update={"status": "PRODUCTION_VALID"})
+
+    async def fake_list(_product_id):
+        return [approved]
+
+    async def fake_truth(_product_id):
+        return {
+            "ready_for_copy": True,
+            "blockers": [],
+            "product_truth": {
+                "lineage": {
+                    **_lineage().model_dump(mode="json"),
+                    "taxonomy_authority_version": "copy-register-product-truth-authority-v1",
+                    "taxonomy_authority_fingerprint": "b" * 64,
+                }
+            },
+        }
+
+    monkeypatch.setattr(service, "list_blueprints", fake_list)
+    monkeypatch.setattr(service, "get_product_truth_proof", fake_truth)
+    async def fake_activation(_product_id):
+        return {
+            "active_blueprint_id": None,
+            "active_revision": None,
+            "active_lane_count": 0,
+            "required_lane_count": 8,
+            "activated_at": None,
+        }
+
+    monkeypatch.setattr(service, "get_activation_status", fake_activation)
+    response = _client().get("/api/copy-register/v2/product/product-1/blueprints")
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["status"] == "PRODUCTION_VALID"
+    assert item["current_authority_status"] == "STALE_AUTHORITY_LINEAGE"
+    assert item["current_authority_valid"] is False
+    assert item["current_authority_activation_allowed"] is False
+    assert "COPY_V2_TAXONOMY_AUTHORITY_STALE" in item["current_authority_reason"]
 
 
 def test_generate_unknown_formula_fails_closed_before_product_lookup():
@@ -131,7 +186,15 @@ def test_generated_payload_is_v2_only_and_never_exposes_legacy_id(monkeypatch):
     async def fake_generate(**_kwargs):
         return _blueprint()
 
+    async def fake_truth(_product_id):
+        return {
+            "ready_for_copy": True,
+            "blockers": [],
+            "product_truth": {"lineage": {}},
+        }
+
     monkeypatch.setattr(service, "generate_blueprint", fake_generate)
+    monkeypatch.setattr(service, "get_product_truth_proof", fake_truth)
     response = _client().post(
         "/api/copy-register/v2/blueprints/generate",
         json={

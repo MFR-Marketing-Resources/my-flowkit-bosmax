@@ -119,6 +119,10 @@ function blueprint(status: string = "DRAFT") {
 		approved_execution_text: status === "PRODUCTION_VALID" ? [{ stage_key: "stage-0-problem", text: "Problem" }] : [],
 		estimated_word_count: 4,
 		v2_badge: status === "PRODUCTION_VALID" ? "V2 PRODUCTION_VALID" : null,
+		current_authority_status: status === "PRODUCTION_VALID" ? "CURRENT · PRODUCTION_VALID" : "DRAFT",
+		current_authority_valid: status === "PRODUCTION_VALID",
+		current_authority_activation_allowed: status === "PRODUCTION_VALID",
+		current_authority_reason: status === "PRODUCTION_VALID" ? null : "EXPLICIT_HUMAN_APPROVAL_REQUIRED",
 	};
 }
 
@@ -212,7 +216,7 @@ describe("CopySetRegistryPage V2 cutover", () => {
 			semantic_review: expect.objectContaining({ decision: "APPROVED" }),
 			readiness_proof: expect.objectContaining({ safety_validated: true }),
 		})));
-		expect(await screen.findByText("V2 PRODUCTION_VALID")).toBeInTheDocument();
+		expect(await screen.findByText("CURRENT · PRODUCTION_VALID")).toBeInTheDocument();
 		fireEvent.click(await screen.findByTestId("activate-v2-blueprint"));
 		await waitFor(() => expect(mockedActivate).toHaveBeenCalledWith("bpv2_test"));
 		expect(await screen.findByText("ACTIVE · 8 REQUIRED LANES")).toBeInTheDocument();
