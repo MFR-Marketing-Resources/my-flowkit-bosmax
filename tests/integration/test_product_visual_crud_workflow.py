@@ -38,7 +38,10 @@ async def test_product_visual_crud_workflow_is_provider_free(tmp_path, monkeypat
     monkeypatch.setattr(service, "BASE_DIR", isolated_runtime_root)
     monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", isolated_runtime_root)
 
-    source = tmp_path / "product-source.png"
+    # Source must live under the monkeypatched BASE_DIR so readiness and the
+    # preview endpoint share the same servable-byte authority (no outside-root files).
+    source = isolated_runtime_root / "data" / "products" / "images" / "product-source.png"
+    source.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (32, 32), (35, 110, 160)).save(source)
     product = await crud.create_product(
         raw_product_title="Visual CRUD Integration Product",
