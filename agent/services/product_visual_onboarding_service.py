@@ -45,6 +45,7 @@ from agent.services.product_lifecycle_service import is_archived
 from agent.services.product_lock_builder import resolve_schema_entry
 from agent.services.product_visual_grounding_resolver import (
     ProductVisualReferenceRequiredError,
+    durable_schema_canonical_source_path,
     resolve_product_reference_image,
 )
 from agent.services.product_visual_canvas_service import (
@@ -263,6 +264,31 @@ async def _enrich_product_with_source_media(product: dict[str, Any]) -> dict[str
     return product
 
 
+
+def _governed_original_path_candidates(
+    product: dict[str, Any],
+    *,
+    pack: dict[str, Any] | None = None,
+) -> list[Any]:
+    """Candidate original-source paths that may be preview-servable under BASE_DIR."""
+    values: list[Any] = []
+    values.append(product.get("local_image_path"))
+    try:
+        entry = resolve_schema_entry(product) or {}
+        key = str(entry.get("product_id") or entry.get("schema_key") or "").strip()
+        if key:
+            values.append(durable_schema_canonical_source_path(key))
+        photo = entry.get("canonical_product_photo") if isinstance(entry.get("canonical_product_photo"), dict) else {}
+        values.append(entry.get("canonical_source_path"))
+        values.append((photo or {}).get("source_path"))
+    except Exception:  # noqa: BLE001
+        pass
+    pack_path = _reference_pack_file(pack)
+    if pack_path is not None:
+        values.append(str(pack_path))
+    return values
+
+
 async def _resolve_trusted_original_reference(
     product: dict[str, Any],
     *,
@@ -306,6 +332,24 @@ async def _resolve_trusted_original_reference(
     except ProductVisualOnboardingError as exc:
         return None, False, exc.code
     servable = _preview_servable_path(getattr(reference, "local_path", None))
+    if servable is None:
+        # Resolver may return an external authoring path (schema Priority-0) while
+        # a governed BASE_DIR twin already exists (durable exact-product copy,
+        # product row local cache, or PSM). Remap by SHA when possible; never
+        # expand the serve allowlist to arbitrary filesystem paths.
+        expected_sha = str(getattr(reference, "sha256", "") or "").strip().lower()
+        for candidate in _governed_original_path_candidates(resolver_product, pack=pack):
+            path = _preview_servable_path(candidate)
+            if path is None:
+                continue
+            if expected_sha:
+                try:
+                    if _sha256_bytes(path.read_bytes()) != expected_sha:
+                        continue
+                except OSError:
+                    continue
+            servable = path
+            break
     if servable is None:
         return None, False, None
     try:
@@ -374,13 +418,34 @@ async def _list_canva_workflow_rows(product_ids: list[str]) -> dict[str, dict[st
 def _reference_file(product: dict[str, Any]) -> Path | None:
     """Cheap local source check used by list/preview; it never downloads URLs."""
     local = _path(product.get("local_image_path"))
+    if local and _preview_servable_path(str(local)) is not None:
+        return local
+    if local:
+        # exists outside governed root — keep as signal only when no governed twin
+        pass
+    try:
+        entry = resolve_schema_entry(product) or {}
+        key = str(entry.get("product_id") or entry.get("schema_key") or "").strip()
+        if key:
+            durable = _preview_servable_path(str(durable_schema_canonical_source_path(key)))
+            if durable is not None:
+                return durable
+        schema_path = entry.get("canonical_source_path") or (
+            (entry.get("canonical_product_photo") or {}) if isinstance(entry.get("canonical_product_photo"), dict) else {}
+        ).get("source_path")
+        governed_schema = _preview_servable_path(schema_path)
+        if governed_schema is not None:
+            return governed_schema
+        # External schema authoring path may still be a local signal for has_local_signal.
+        external = _path(schema_path)
+        if external is not None:
+            return external
+    except Exception:  # noqa: BLE001
+        pass
     if local:
         return local
-    entry = resolve_schema_entry(product) or {}
-    schema_path = entry.get("canonical_source_path") or (
-        entry.get("canonical_product_photo") or {}
-    ).get("source_path")
-    return _path(schema_path)
+    return None
+
 
 
 def _reference_pack_file(pack: dict[str, Any] | None) -> Path | None:

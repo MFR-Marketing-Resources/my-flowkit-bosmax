@@ -345,3 +345,74 @@ def test_resolve_generation_strategy():
         is_poster=True,
     )
     assert strat_c == STRATEGY_FIXED_HERO_POSTER
+
+
+def test_schema_prefers_durable_base_dir_over_external_authoring_path(tmp_path, monkeypatch):
+    """MWCB-shaped: schema external path exists, durable twin under BASE_DIR wins."""
+    from agent.config import BASE_DIR
+    from agent.services import product_visual_grounding_resolver as module
+    import hashlib
+
+    external = tmp_path / "external_authoring.jpg"
+    Image.new("RGB", (96, 128), color=(10, 80, 40)).save(external, format="JPEG")
+    sha = hashlib.sha256(external.read_bytes()).hexdigest()
+
+    schema_key = "UNIT_SCHEMA_CANONICAL_X"
+    durable = BASE_DIR / "data" / "exact-product" / schema_key / "canonical_source.jpg"
+    durable.parent.mkdir(parents=True, exist_ok=True)
+    durable.write_bytes(external.read_bytes())
+
+    monkeypatch.setattr(
+        module,
+        "resolve_schema_entry",
+        lambda _product: {
+            "product_id": schema_key,
+            "canonical_product_photo": {
+                "source_path": str(external),
+                "sha256": sha,
+            },
+        },
+    )
+    monkeypatch.setattr(module, "_find_linked_approved_creative_asset", lambda _pid: None)
+    monkeypatch.setattr(module, "_registered_reference_id_for_bytes", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        module.truth_lock_service,
+        "load_product_truth_lock",
+        lambda _pid: (_ for _ in ()).throw(module.truth_lock_service.ProductTruthLockError("NO_LOCK")),
+    )
+
+    resolved = resolve_product_reference_image({"id": "unit-schema-product"})
+    assert resolved.source_type == "SCHEMA_CANONICAL_SOURCE"
+    assert Path(resolved.local_path).resolve() == durable.resolve()
+    assert module._is_under_base_dir(Path(resolved.local_path))
+    assert resolved.sha256 == sha
+
+
+def test_schema_external_only_still_resolves_for_generation(tmp_path, monkeypatch):
+    """External authoring path alone still resolves (generation), outside BASE_DIR."""
+    from agent.services import product_visual_grounding_resolver as module
+    import hashlib
+
+    external = tmp_path / "only_external.jpg"
+    Image.new("RGB", (40, 50), color=(1, 2, 3)).save(external, format="JPEG")
+    sha = hashlib.sha256(external.read_bytes()).hexdigest()
+
+    monkeypatch.setattr(
+        module,
+        "resolve_schema_entry",
+        lambda _product: {
+            "product_id": "NO_DURABLE_KEY",
+            "canonical_product_photo": {"source_path": str(external), "sha256": sha},
+        },
+    )
+    monkeypatch.setattr(module, "_find_linked_approved_creative_asset", lambda _pid: None)
+    monkeypatch.setattr(module, "_registered_reference_id_for_bytes", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        module.truth_lock_service,
+        "load_product_truth_lock",
+        lambda _pid: (_ for _ in ()).throw(module.truth_lock_service.ProductTruthLockError("NO_LOCK")),
+    )
+
+    resolved = resolve_product_reference_image({"id": "external-only"})
+    assert resolved.local_path == str(external)
+    assert not module._is_under_base_dir(Path(resolved.local_path))
