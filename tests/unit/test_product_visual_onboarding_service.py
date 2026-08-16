@@ -23,7 +23,9 @@ def _standard_cutout_bytes(color=(40, 80, 120)) -> bytes:
 
 @pytest.mark.asyncio
 async def test_readiness_separates_same_product_grounding_from_exact_approval(tmp_path):
-    source = tmp_path / "source.png"
+    from agent.config import BASE_DIR
+    source = BASE_DIR / "data" / "products" / "images" / "visual-readiness-unit-source.png"
+    source.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (24, 24), (30, 120, 150)).save(source)
     product = await crud.create_product(
         raw_product_title="Visual Readiness Product",
@@ -131,7 +133,7 @@ async def test_display_only_generate_uses_the_existing_write_lane_materializatio
         raw_product_title="Display Only Generate Product",
         source="MANUAL",
         image_url="https://example.test/display-source.png",
-        image_asset_status="MISSING",
+        image_asset_status="UNRESOLVED",
         asset_status="UNRESOLVED",
     )
     reference = SimpleNamespace(
@@ -561,3 +563,182 @@ async def test_manual_upload_is_pending_and_uses_user_provenance(tmp_path, monke
     assert captured["onboard"]["uploaded_by"] == "operator-1"
     assert captured["onboard"]["original_filename"] == r"..\operator\manual.png"
     assert captured["canonical_source"] is reference
+
+
+
+@pytest.mark.asyncio
+async def test_product_source_media_only_source_matches_original_preview(tmp_path, monkeypatch):
+    """PSM-only byte source: readiness and original preview share one authority."""
+    source = tmp_path / "psm-only.png"
+    Image.new("RGB", (32, 32), (10, 20, 30)).save(source)
+    from agent.config import BASE_DIR
+    hosted = BASE_DIR / "data" / "products" / "images" / f"psm-only-test-{source.name}"
+    hosted.parent.mkdir(parents=True, exist_ok=True)
+    hosted.write_bytes(source.read_bytes())
+
+    product = await crud.create_product(
+        raw_product_title="PSM Only Source Product",
+        source="MANUAL",
+        image_url="https://example.test/remote-only.jpg",
+        image_asset_status="UNRESOLVED",
+        asset_status="UNRESOLVED",
+    )
+    media = await crud.create_product_source_media(
+        f"visual-source:{product['id']}",
+        "image",
+        product_id=product["id"],
+        local_path=str(hosted),
+        filename=hosted.name,
+        mime="image/png",
+        bytes=hosted.stat().st_size,
+        width=32,
+        height=32,
+        status="STORED",
+    )
+    assert media and media.get("media_id")
+
+    readiness = await service.get_product_visual_readiness(product["id"])
+    assert readiness["canonical_media_status"] == "AVAILABLE"
+    assert readiness["original_preview_url"] == (
+        f"/api/product-visual-onboarding/{product['id']}/cutout/preview/original"
+    )
+    assert readiness["original_display_trust_status"] == "TRUSTED"
+
+    preview_path = await service.resolve_product_visual_preview(product["id"], "original")
+    assert preview_path.is_file()
+    assert preview_path.resolve() == hosted.resolve()
+    fresh = await crud.get_product(product["id"])
+    assert not (fresh or {}).get("local_image_path")
+
+
+@pytest.mark.asyncio
+async def test_url_only_readiness_stays_display_only_without_materialize(monkeypatch):
+    product = await crud.create_product(
+        raw_product_title="URL Only Display Product",
+        source="MANUAL",
+        image_url="https://cdn.example.com/image.jpg?signature=ABC&expires=123",
+        image_asset_status="UNRESOLVED",
+        asset_status="UNRESOLVED",
+    )
+
+    def boom(*_a, **_k):
+        raise AssertionError("resolve must not materialize remote URLs on readiness GET")
+
+    monkeypatch.setattr(
+        "agent.services.product_visual_grounding_resolver._materialize_image_url",
+        boom,
+    )
+    readiness = await service.get_product_visual_readiness(product["id"])
+    assert readiness["original_preview_url"] is None
+    assert readiness["original_display_url"] == "https://cdn.example.com/image.jpg?signature=ABC&expires=123"
+    assert readiness["original_display_trust_status"] == "DISPLAY_ONLY"
+    assert readiness["canonical_media_status"] == "MISSING"
+
+
+def test_candidate_missing_bytes_emits_null_preview_urls(tmp_path):
+    lock = {
+        "review_status": "PENDING_REVIEW",
+        "canonical_cutout_path": str(tmp_path / "missing-auto.png"),
+        "provenance_json": json.dumps({"source_kind": "AUTO_GENERATED", "created_by": "system:cutout"}),
+    }
+    readiness = service._readiness_payload(
+        {"id": "missing-bytes"},
+        lock=lock,
+        pack=None,
+        prep={"status": "PENDING_REVIEW"},
+        reference=None,
+        source_available=True,
+        history=[],
+    )
+    assert readiness["auto_cutout_status"] == "PENDING_REVIEW"
+    assert readiness["auto_cutout_preview_url"] is None
+    assert readiness["active_cutout_preview_url"] is None
+    assert readiness["cutout_preview_available"] is False
+
+
+def test_rejected_candidate_missing_bytes_has_no_preview_url(tmp_path):
+    lock = {
+        "review_status": "REJECTED",
+        "canonical_cutout_path": str(tmp_path / "gone-manual.png"),
+        "provenance_json": json.dumps({"source_kind": "USER_UPLOAD", "created_by": "operator"}),
+    }
+    readiness = service._readiness_payload(
+        {"id": "rejected-missing"},
+        lock=lock,
+        pack=None,
+        prep={"status": "REJECTED"},
+        reference=None,
+        source_available=True,
+        history=[],
+    )
+    assert readiness["manual_cutout_status"] == "REJECTED"
+    assert readiness["manual_cutout_preview_url"] is None
+
+
+def test_rejected_candidate_with_valid_bytes_keeps_preview(tmp_path):
+    from agent.config import BASE_DIR
+    cutout = BASE_DIR / "data" / "products" / "images" / "rejected-valid-cutout.png"
+    cutout.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (16, 16), (1, 2, 3, 255)).save(cutout)
+    lock = {
+        "review_status": "REJECTED",
+        "canonical_cutout_path": str(cutout),
+        "provenance_json": json.dumps({"source_kind": "USER_UPLOAD", "created_by": "operator"}),
+    }
+    readiness = service._readiness_payload(
+        {"id": "rejected-valid"},
+        lock=lock,
+        pack=None,
+        prep={"status": "REJECTED"},
+        reference=None,
+        source_available=True,
+        history=[],
+    )
+    assert readiness["manual_cutout_status"] == "REJECTED"
+    assert readiness["manual_cutout_preview_url"] == (
+        "/api/product-visual-onboarding/rejected-valid/cutout/preview/manual"
+    )
+    assert readiness["active_visual_source"] != "APPROVED_MANUAL_CANONICAL_CUTOUT"
+
+
+def test_active_approved_emits_preview_only_when_bytes_exist(tmp_path):
+    from agent.config import BASE_DIR
+    cutout = BASE_DIR / "data" / "products" / "images" / "approved-valid-cutout.png"
+    cutout.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (16, 16), (9, 9, 9, 255)).save(cutout)
+    lock = {
+        "review_status": "APPROVED",
+        "canonical_cutout_path": str(cutout),
+        "canonical_cutout_media_id": "mid-1",
+        "provenance_json": json.dumps({
+            "source_kind": "AUTO_GENERATED",
+            "created_by": "system:cutout",
+            "active_selection": "AUTO",
+        }),
+    }
+    ok = service._readiness_payload(
+        {"id": "approved-ok"},
+        lock=lock,
+        pack=None,
+        prep={"status": "APPROVED"},
+        reference=None,
+        source_available=True,
+        history=[],
+    )
+    assert ok["auto_cutout_status"] == "APPROVED"
+    assert ok["auto_cutout_preview_url"]
+    assert ok["active_cutout_preview_url"]
+
+    broken = dict(lock)
+    broken["canonical_cutout_path"] = str(tmp_path / "missing-approved.png")
+    bad = service._readiness_payload(
+        {"id": "approved-bad"},
+        lock=broken,
+        pack=None,
+        prep={"status": "APPROVED"},
+        reference=None,
+        source_available=True,
+        history=[],
+    )
+    assert bad["active_cutout_preview_url"] is None
+    assert bad["auto_cutout_preview_url"] is None

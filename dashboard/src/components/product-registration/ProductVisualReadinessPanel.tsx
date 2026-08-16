@@ -28,6 +28,7 @@ import {
 	type CanvaMethod,
 } from "../../api/productVisualOnboarding";
 import type { CanvaCutoutWorkflow, ProductVisualReadiness } from "../../types";
+import { withInternalPreviewCacheBust } from "../../utils/productVisualPresentation";
 
 interface Props {
 	productId: string;
@@ -417,6 +418,43 @@ function ProductAreaSelector({
 				</div>
 			)}
 		</div>
+	);
+}
+
+
+function PreviewImage({
+	src,
+	alt,
+	className,
+	testId,
+}: {
+	src: string;
+	alt: string;
+	className?: string;
+	testId?: string;
+}) {
+	const [failed, setFailed] = useState(false);
+	useEffect(() => {
+		setFailed(false);
+	}, [src]);
+	if (failed) {
+		return (
+			<span
+				className="px-2 text-center text-[10px] font-semibold uppercase tracking-widest text-slate-500"
+				data-testid="preview-unavailable"
+			>
+				Preview unavailable
+			</span>
+		);
+	}
+	return (
+		<img
+			src={src}
+			alt={alt}
+			className={className}
+			data-testid={testId}
+			onError={() => setFailed(true)}
+		/>
 	);
 }
 
@@ -841,7 +879,7 @@ export default function ProductVisualReadinessPanel({
 	// upload / approval. Any candidate change flips this token and forces reload.
 	const previewVersion = `${previewRevision}-${readiness.cutout_media_id ?? ""}-${readiness.attempt_count ?? 0}-${readiness.auto_cutout_status}-${readiness.manual_cutout_status}-${readiness.active_visual_source}`;
 	const withBust = (u: string | null | undefined): string | null | undefined =>
-		u ? `${u}${u.includes("?") ? "&" : "?"}v=${encodeURIComponent(previewVersion)}` : u;
+		withInternalPreviewCacheBust(u, previewVersion);
 	const isOfficialCard = (k: CardKey): boolean => cardBadges[k].some((b) => CURRENT_MARKERS.has(b));
 	const authoritativeVisual = cardForReadiness(readiness);
 	const selectionDirty = selectedVisual !== authoritativeVisual;
@@ -1016,7 +1054,7 @@ export default function ProductVisualReadinessPanel({
 								</div>
 								<CardBadges badges={cardBadges[key]} testid={testid} />
 								<div className="mt-2 flex h-36 items-center justify-center rounded bg-white" style={{ backgroundImage: "linear-gradient(45deg,#d1d5db 25%,transparent 25%),linear-gradient(-45deg,#d1d5db 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d1d5db 75%),linear-gradient(-45deg,transparent 75%,#d1d5db 75%)", backgroundSize: "16px 16px", backgroundPosition: "0 0,0 8px,8px -8px,-8px 0" }}>
-									{src ? <img src={withBust(src) ?? undefined} alt={`${name}${isAutoInput ? " source input" : " cutout"}`} className="max-h-full max-w-full object-contain" /> : <span className="text-[10px] text-slate-500">Not available</span>}
+									{src ? <PreviewImage src={withBust(src) ?? src} alt={`${name}${isAutoInput ? " source input" : " cutout"}`} className="max-h-full max-w-full object-contain" testId={`preview-image-${key}`} /> : <span className="text-[10px] text-slate-500" data-testid={`preview-missing-${key}`}>Not available</span>}
 								</div>
 								{isAutoInput && <div className="mt-1 text-center text-[8px] font-semibold uppercase tracking-widest text-sky-300/80" data-testid="auto-input-state">SOURCE INPUT · NOT GENERATED YET</div>}
 								{key === "original" && originalDisplayOnly && src && (
@@ -1214,7 +1252,16 @@ export default function ProductVisualReadinessPanel({
 					<div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-emerald-200" data-testid="reviewing-candidate-approval">Review {reviewingCandidate} before SAVE CHANGES — confirm the four checks below</div>
 					<div className="mb-3 flex flex-wrap items-start gap-4">
 						{readiness.cutout_preview_available && (
-							<img src={withBust(readiness.active_cutout_preview_url) || productTruthCutoutPreviewUrl(productId)} alt="Deterministic cutout candidate" className="h-32 w-32 rounded-lg border border-slate-700 bg-white object-contain" />
+							(withBust(readiness.active_cutout_preview_url) || productTruthCutoutPreviewUrl(productId)) ? (
+								<PreviewImage
+									src={(withBust(readiness.active_cutout_preview_url) || productTruthCutoutPreviewUrl(productId)) as string}
+									alt="Deterministic cutout candidate"
+									className="h-32 w-32 rounded-lg border border-slate-700 bg-white object-contain"
+									testId="preview-image-active"
+								/>
+							) : (
+								<span className="text-[10px] text-slate-500" data-testid="preview-missing-active">Not available</span>
+							)
 						)}
 						<div className="flex-1 text-[10px] leading-relaxed text-amber-200">
 							This candidate is not approved. Inspect identity, label/logo, geometry, scale, product isolation, and source lineage. SAVE CHANGES applies the existing Product Truth approval authority to the active candidate, including a Canva handoff, only after explicit human confirmation.

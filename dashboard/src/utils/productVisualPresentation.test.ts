@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+	isBosmaxInternalPreviewUrl,
 	isOfficialProductVisual,
 	resolveProductDisplayName,
 	resolveProductPreviewUrl,
 	resolveProductVisualPresentation,
+	withInternalPreviewCacheBust,
 } from './productVisualPresentation';
 import type { Product } from '../types';
 
@@ -257,5 +259,30 @@ describe('productVisualPresentation canonical resolver', () => {
 				product_name: 'Cohort Product Name',
 			} as unknown as Product),
 		).toBe('Cohort Product Name');
+	});
+});
+
+
+describe('internal preview cache-bust contract', () => {
+	it('cache-busts internal BOSMAX preview paths', () => {
+		const internal = '/api/product-visual-onboarding/p1/cutout/preview/original';
+		expect(isBosmaxInternalPreviewUrl(internal)).toBe(true);
+		expect(withInternalPreviewCacheBust(internal, '123')).toBe(
+			'/api/product-visual-onboarding/p1/cutout/preview/original?v=123',
+		);
+		expect(
+			withInternalPreviewCacheBust('/api/products/p1/image', 'abc'),
+		).toBe('/api/products/p1/image?v=abc');
+	});
+
+	it('leaves absolute external HTTPS URLs byte-for-byte unchanged', () => {
+		const external = 'https://cdn.example.com/image.jpg';
+		expect(isBosmaxInternalPreviewUrl(external)).toBe(false);
+		expect(withInternalPreviewCacheBust(external, '999')).toBe(external);
+	});
+
+	it('leaves signed external URLs with query strings unchanged', () => {
+		const signed = 'https://cdn.example.com/image.jpg?signature=ABC&expires=123';
+		expect(withInternalPreviewCacheBust(signed, 'bust-me')).toBe(signed);
 	});
 });

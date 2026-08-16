@@ -30,6 +30,44 @@ export type ProductInput =
 /**
  * Return a browser-safe URL candidate if valid non-empty string with http/path/data scheme.
  */
+/**
+ * True only for BOSMAX-controlled internal API paths eligible for cache-busting.
+ * External http(s) URLs — including signed/query-bearing CDN URLs — must remain
+ * byte-for-byte identical to backend authority.
+ */
+export function isBosmaxInternalPreviewUrl(url: string): boolean {
+	const trimmed = String(url || '').trim();
+	if (!trimmed) return false;
+	// Relative API paths
+	if (trimmed.startsWith('/api/product-visual-onboarding/')) return true;
+	if (trimmed.startsWith('/api/products/')) return true;
+	// Absolute same-origin style API URLs
+	try {
+		const parsed = new URL(trimmed, 'http://bosmax.internal');
+		const path = parsed.pathname || '';
+		if (path.startsWith('/api/product-visual-onboarding/')) return true;
+		if (path.startsWith('/api/products/')) return true;
+	} catch {
+		return false;
+	}
+	return false;
+}
+
+/**
+ * Append a cache-bust token only to internal BOSMAX preview routes.
+ * External URLs are returned unchanged (no ?v= / &v= mutation).
+ */
+export function withInternalPreviewCacheBust(
+	url: string | null | undefined,
+	version: string,
+): string | null | undefined {
+	if (url == null || url === '') return url;
+	if (!isBosmaxInternalPreviewUrl(url)) return url;
+	const token = encodeURIComponent(String(version ?? ''));
+	const sep = url.includes('?') ? '&' : '?';
+	return `${url}${sep}v=${token}`;
+}
+
 function safeUrl(candidate: unknown): string | null {
 	if (!candidate || typeof candidate !== "string") return null;
 	const trimmed = candidate.trim();

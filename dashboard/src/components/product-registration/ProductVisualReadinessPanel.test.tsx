@@ -100,8 +100,8 @@ const approvedAuto: ProductVisualReadiness = {
 	active_visual_source: "APPROVED_AUTO_CANONICAL_CUTOUT",
 	auto_cutout_status: "APPROVED",
 	manual_cutout_status: "NOT_UPLOADED",
-	original_preview_url: "https://example.test/original.png",
-	auto_cutout_preview_url: "https://example.test/auto.png",
+	original_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/original",
+	auto_cutout_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/auto",
 	manual_cutout_preview_url: null,
 	current_system_visual: { card: "AUTO_CUTOUT", label: "Auto Cutout", status: "OFFICIAL" },
 };
@@ -111,8 +111,8 @@ const approvedManual: ProductVisualReadiness = {
 	active_visual_source: "APPROVED_MANUAL_CANONICAL_CUTOUT",
 	auto_cutout_status: "NOT_PREPARED",
 	manual_cutout_status: "APPROVED",
-	original_preview_url: "https://example.test/original.png",
-	manual_cutout_preview_url: "https://example.test/manual.png",
+	original_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/original",
+	manual_cutout_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/manual",
 	current_system_visual: { card: "MANUAL_CUTOUT", label: "Manual / Canva Cutout", status: "OFFICIAL" },
 };
 
@@ -121,8 +121,8 @@ const trustedSourcePendingAuto: ProductVisualReadiness = {
 	active_visual_source: "SAME_PRODUCT_TRUSTED_SOURCE",
 	auto_cutout_status: "PENDING_REVIEW",
 	manual_cutout_status: "NOT_UPLOADED",
-	original_preview_url: "https://example.test/original.png",
-	auto_cutout_preview_url: "https://example.test/auto.png",
+	original_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/original",
+	auto_cutout_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/auto",
 	current_system_visual: { card: "ORIGINAL_SOURCE", label: "Original Source", status: "ORIGINAL_FALLBACK" },
 };
 
@@ -130,7 +130,7 @@ const sourceInputOnly: ProductVisualReadiness = {
 	...trustedSourcePendingAuto,
 	auto_cutout_status: "NOT_PREPARED",
 	auto_cutout_preview_url: null,
-	auto_input_preview_url: "https://example.test/original.png",
+	auto_input_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/original",
 	auto_input_source: "ORIGINAL_SOURCE_INPUT",
 	auto_input_trust_status: "TRUSTED",
 	can_prepare_cutout: true,
@@ -140,7 +140,7 @@ const sourceInputOnly: ProductVisualReadiness = {
 
 const targetRequired: ProductVisualReadiness = {
 	...pending,
-	original_preview_url: "https://example.test/original.png",
+	original_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/original",
 	product_isolation_status: "TARGET_SELECTION_REQUIRED",
 	target_selection_required: true,
 	target_selection_available: false,
@@ -148,7 +148,7 @@ const targetRequired: ProductVisualReadiness = {
 
 const targetNotRequired: ProductVisualReadiness = {
 	...pending,
-	original_preview_url: "https://example.test/original.png",
+	original_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/original",
 	target_selection_required: false,
 	target_selection_available: false,
 };
@@ -515,7 +515,7 @@ describe("ProductVisualReadinessPanel", () => {
 		const generated = {
 			...sourceInputOnly,
 			auto_cutout_status: "PENDING_REVIEW" as const,
-			auto_cutout_preview_url: "https://example.test/generated.png",
+			auto_cutout_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/auto",
 			auto_input_preview_url: null,
 		};
 		fetchProductVisualReadinessMock.mockResolvedValue(generated);
@@ -528,7 +528,7 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(screen.getByRole("button", { name: "UPLOAD MANUAL CUTOUT" })).toBeEnabled();
 
 		releasePrepare(sourceInputOnly);
-		await waitFor(() => expect(screen.getByAltText("Auto Cutout cutout")).toHaveAttribute("src", expect.stringContaining("generated.png")));
+		await waitFor(() => expect(screen.getByAltText("Auto Cutout cutout")).toHaveAttribute("src", expect.stringContaining("/cutout/preview/auto")));
 		expect(fetchProductVisualReadinessMock).toHaveBeenCalledWith("product-1");
 		expect(screen.getByTestId("card-badge-auto")).toHaveTextContent("PENDING REVIEW");
 		expect(screen.getByTestId("generate-auto-cutout")).toHaveTextContent("REGENERATE AUTO CUTOUT");
@@ -541,7 +541,7 @@ describe("ProductVisualReadinessPanel", () => {
 
 		fireEvent.click(screen.getByTestId("generate-auto-cutout"));
 		await waitFor(() => expect(screen.getByTestId("auto-cutout-message")).toHaveTextContent("Cutout generation failed"));
-		expect(screen.getByAltText("Auto Cutout source input")).toHaveAttribute("src", expect.stringContaining("original.png"));
+		expect(screen.getByAltText("Auto Cutout source input")).toHaveAttribute("src", expect.stringContaining("/cutout/preview/original"));
 		expect(screen.getByTestId("generate-auto-cutout")).toBeEnabled();
 	});
 
@@ -557,7 +557,7 @@ describe("ProductVisualReadinessPanel", () => {
 
 		fireEvent.click(screen.getByTestId("generate-auto-cutout"));
 		await waitFor(() => expect(screen.getByTestId("auto-cutout-message")).toHaveTextContent("Cutout generation failed"));
-		expect(screen.getByAltText("Auto Cutout source input")).toHaveAttribute("src", expect.stringContaining("original.png"));
+		expect(screen.getByAltText("Auto Cutout source input")).toHaveAttribute("src", expect.stringContaining("/cutout/preview/original"));
 		expect(screen.getByTestId("generate-auto-cutout")).toBeEnabled();
 	});
 
@@ -569,7 +569,7 @@ describe("ProductVisualReadinessPanel", () => {
 		const manualPending: ProductVisualReadiness = {
 			...sourceInputOnly,
 			manual_cutout_status: "PENDING_REVIEW",
-			manual_cutout_preview_url: "https://example.test/manual-new.png",
+			manual_cutout_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/manual",
 		};
 		fetchProductVisualReadinessMock.mockResolvedValue(manualPending);
 
@@ -583,7 +583,7 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(screen.getByTestId("generate-auto-cutout")).toBeEnabled();
 		releaseUpload(sourceInputOnly);
 
-		await waitFor(() => expect(screen.getByAltText("Manual / Canva cutout")).toHaveAttribute("src", expect.stringContaining("manual-new.png")));
+		await waitFor(() => expect(screen.getByAltText("Manual / Canva cutout")).toHaveAttribute("src", expect.stringContaining("/cutout/preview/manual")));
 		expect(fetchProductVisualReadinessMock).toHaveBeenCalledWith("product-1");
 		expect(screen.getByTestId("manual-upload-message")).toHaveTextContent("PENDING REVIEW");
 	});
@@ -650,4 +650,107 @@ describe("ProductVisualReadinessPanel", () => {
 		expect(screen.queryByTestId("official-ribbon-auto")).not.toBeInTheDocument();
 		expect(fetchProductVisualReadinessMock).not.toHaveBeenCalled();
 	});
+
+
+describe("ProductVisualReadinessPanel image failure handling", () => {
+	const baseVisual: ProductVisualReadiness = {
+		...pending,
+		canonical_media_status: "AVAILABLE",
+		auto_cutout_status: "NOT_PREPARED",
+		manual_cutout_status: "NOT_UPLOADED",
+		active_visual_source: "SAME_PRODUCT_TRUSTED_SOURCE",
+		original_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/original",
+		original_display_url: "/api/product-visual-onboarding/product-1/cutout/preview/original",
+		original_display_trust_status: "TRUSTED",
+		auto_cutout_preview_url: null,
+		manual_cutout_preview_url: null,
+		active_cutout_preview_url: null,
+		auto_input_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/original",
+		can_prepare_cutout: true,
+		can_rebuild_cutout: true,
+		can_upload_manual_cutout: true,
+		can_use_original_fallback: true,
+		current_system_visual: { card: "ORIGINAL_SOURCE", label: "Original Source", status: "ORIGINAL_FALLBACK" },
+	};
+
+	it("renders Preview unavailable when Original Source image fails", async () => {
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={baseVisual} />);
+		const img = await screen.findByTestId("preview-image-original");
+		fireEvent.error(img);
+		expect(await screen.findByTestId("preview-unavailable")).toHaveTextContent(/preview unavailable/i);
+		expect(screen.queryByTestId("preview-image-original")).not.toBeInTheDocument();
+	});
+
+	it("renders fallback when Auto Cutout image fails", async () => {
+		const autoReady: ProductVisualReadiness = {
+			...baseVisual,
+			auto_cutout_status: "PENDING_REVIEW",
+			auto_cutout_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/auto",
+			auto_input_preview_url: null,
+		};
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={autoReady} />);
+		const img = await screen.findByTestId("preview-image-auto");
+		fireEvent.error(img);
+		expect(await screen.findByTestId("preview-unavailable")).toHaveTextContent(/preview unavailable/i);
+	});
+
+	it("renders fallback when Manual Cutout image fails", async () => {
+		const manualReady: ProductVisualReadiness = {
+			...baseVisual,
+			manual_cutout_status: "PENDING_REVIEW",
+			manual_cutout_preview_url: "/api/product-visual-onboarding/product-1/cutout/preview/manual",
+		};
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={manualReady} />);
+		const img = await screen.findByTestId("preview-image-manual");
+		fireEvent.error(img);
+		expect(await screen.findByTestId("preview-unavailable")).toHaveTextContent(/preview unavailable/i);
+	});
+
+	it("clears prior failure state when src changes to a new valid URL", async () => {
+		const first: ProductVisualReadiness = {
+			...baseVisual,
+			original_preview_url: "/api/product-visual-onboarding/product-a/cutout/preview/original",
+			original_display_url: "/api/product-visual-onboarding/product-a/cutout/preview/original",
+			auto_input_preview_url: "/api/product-visual-onboarding/product-a/cutout/preview/original",
+		};
+		const { rerender } = render(
+			<ProductVisualReadinessPanel productId="product-a" readiness={first} />,
+		);
+		const img = await screen.findByTestId("preview-image-original");
+		fireEvent.error(img);
+		expect(await screen.findByTestId("preview-unavailable")).toBeInTheDocument();
+
+		const second: ProductVisualReadiness = {
+			...baseVisual,
+			product_id: "product-b",
+			original_preview_url: "/api/product-visual-onboarding/product-b/cutout/preview/original",
+			original_display_url: "/api/product-visual-onboarding/product-b/cutout/preview/original",
+			auto_input_preview_url: "/api/product-visual-onboarding/product-b/cutout/preview/original",
+		};
+		rerender(<ProductVisualReadinessPanel productId="product-b" readiness={second} />);
+		expect(await screen.findByTestId("preview-image-original")).toBeInTheDocument();
+		// Prior failure on Product A must not leave Original Source suppressed for Product B
+		expect(screen.queryByTestId("preview-image-original")).toBeTruthy();
+		expect(screen.queryByText("Preview unavailable")).not.toBeInTheDocument();
+	});
+
+	it("does not cache-bust external original display URLs", () => {
+		const external: ProductVisualReadiness = {
+			...baseVisual,
+			canonical_media_status: "MISSING",
+			original_preview_url: null,
+			original_display_url: "https://cdn.example.com/image.jpg?signature=ABC&expires=123",
+			original_display_trust_status: "DISPLAY_ONLY",
+			auto_input_preview_url: null,
+			active_visual_source: "BLOCKED",
+			current_system_visual: { card: null, label: null, status: "BLOCKED" },
+			can_use_original_fallback: false,
+		};
+		render(<ProductVisualReadinessPanel productId="product-ext" readiness={external} />);
+		const img = screen.getByTestId("preview-image-original");
+		expect(img.getAttribute("src")).toBe(
+			"https://cdn.example.com/image.jpg?signature=ABC&expires=123",
+		);
+	});
+});
 });

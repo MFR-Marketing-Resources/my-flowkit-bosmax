@@ -197,6 +197,125 @@ def _path(value: Any) -> Path | None:
     return candidate if candidate.is_file() and candidate.stat().st_size > 0 else None
 
 
+def _preview_servable_path(value: Any) -> Path | None:
+    """Return a readable local path that the preview endpoint is allowed to serve.
+
+    Readiness and preview must share this gate. A file that exists but sits
+    outside BASE_DIR media storage is NOT "available" for internal preview URLs.
+    """
+    candidate = _path(value)
+    if candidate is None:
+        return None
+    try:
+        candidate.resolve().relative_to(BASE_DIR.resolve())
+    except ValueError:
+        return None
+    return candidate.resolve()
+
+
+def _candidate_cutout_path(
+    lock: dict[str, Any] | None,
+    history: list[dict[str, Any]] | None,
+    source_kind: str,
+) -> Path | None:
+    """Resolve the newest byte-backed cutout path for AUTO/MANUAL without status inference."""
+    history = history or []
+    if lock and _candidate_source_kind(lock) == source_kind:
+        path = _preview_servable_path(lock.get("canonical_cutout_path"))
+        if path is not None:
+            return path
+    for item in history:
+        if str(item.get("source_kind") or "").upper() != source_kind:
+            continue
+        path = _preview_servable_path(item.get("canonical_cutout_path"))
+        if path is not None:
+            return path
+    return None
+
+
+async def _enrich_product_with_source_media(product: dict[str, Any]) -> dict[str, Any]:
+    """Attach the first readable same-product source-media image when the row lacks one.
+
+    Read-only: never writes DB rows or downloads remote URLs.
+    """
+    product_id = str(product.get("id") or product.get("product_id") or "").strip()
+    if not product_id:
+        return product
+    if _preview_servable_path(product.get("local_image_path")) is not None:
+        return product
+    try:
+        media_rows = await crud.list_product_source_media(product_id=product_id)
+    except Exception:  # noqa: BLE001 - readiness must stay fail-closed and read-only
+        return product
+    for media in media_rows:
+        if str(media.get("kind") or "").lower() != "image":
+            continue
+        path = _preview_servable_path(media.get("local_path"))
+        if path is None:
+            continue
+        enriched = dict(product)
+        media_id = str(media.get("media_id") or "").strip()
+        if media_id:
+            enriched["media_id"] = media_id
+        if not str(enriched.get("local_image_path") or "").strip():
+            enriched["local_image_path"] = str(path)
+        return enriched
+    return product
+
+
+async def _resolve_trusted_original_reference(
+    product: dict[str, Any],
+    *,
+    pack: dict[str, Any] | None = None,
+    lock: dict[str, Any] | None = None,
+) -> tuple[Any | None, bool, str | None]:
+    """Single authority for byte-backed original source used by readiness AND preview.
+
+    Returns (reference, source_available, source_error_code).
+    source_available is True only when the resolved local path is preview-servable.
+    GET/read remains side-effect free regarding DB writes; remote URL materialization
+    is avoided by only invoking the resolver when a local/cheap source signal exists
+    or product_source_media already holds a servable image.
+    """
+    product_id = str(product.get("id") or product.get("product_id") or "").strip()
+    if pack is None and product_id:
+        try:
+            pack = await crud.get_product_reference_pack(product_id)
+        except Exception:  # noqa: BLE001
+            pack = None
+    if lock is None and product_id:
+        try:
+            lock = await crud.get_product_truth_lock(product_id)
+        except Exception:  # noqa: BLE001
+            lock = None
+
+    resolver_product = await _enrich_product_with_source_media(product)
+    # Match prior readiness gates: local file / schema / pack / approved lock / PSM bytes.
+    # Bare remote image_url is never a resolve trigger (prevents GET-time download).
+    has_local_signal = bool(
+        _preview_servable_path(resolver_product.get("local_image_path"))
+        or _reference_file(resolver_product)
+        or _reference_pack_file(pack)
+        or _truth_row_approved(lock)
+    )
+    if not has_local_signal:
+        return None, False, None
+
+    try:
+        reference = await _resolve_source(resolver_product)
+    except ProductVisualOnboardingError as exc:
+        return None, False, exc.code
+    servable = _preview_servable_path(getattr(reference, "local_path", None))
+    if servable is None:
+        return None, False, None
+    try:
+        object.__setattr__(reference, "local_path", str(servable))
+    except Exception:  # noqa: BLE001
+        if hasattr(reference, "__dict__"):
+            reference.__dict__["local_path"] = str(servable)
+    return reference, True, None
+
+
 def _truth_row_approved(lock: dict[str, Any] | None) -> bool:
     if not lock or str(lock.get("review_status") or "").upper() != APPROVED:
         return False
@@ -579,8 +698,9 @@ def _readiness_payload(
         "cutout_media_id": (lock or {}).get("canonical_cutout_media_id")
         or (prep or {}).get("cutout_media_id"),
         "cutout_preview_available": bool(
-            (lock or {}).get("canonical_cutout_path")
-            or (prep or {}).get("cutout_media_id")
+            _preview_servable_path((lock or {}).get("canonical_cutout_path"))
+            or _candidate_cutout_path(lock, history, AUTO_GENERATED)
+            or _candidate_cutout_path(lock, history, USER_UPLOAD)
         ),
         "attempt_count": int((prep or {}).get("attempt_count") or 0),
         "failure_code": (prep or {}).get("failure_code"),
@@ -607,17 +727,23 @@ def _readiness_payload(
             if auto_status in {NOT_PREPARED, "NOT_UPLOADED"} and display_source["url"]
             else None
         ),
+        # Preview URLs require resolvable bytes — candidate status alone is insufficient.
         "auto_cutout_preview_url": (
             f"/api/product-visual-onboarding/{product.get('id')}/cutout/preview/auto"
-            if auto_status not in {NOT_PREPARED, "NOT_UPLOADED"} else None
+            if auto_status not in {NOT_PREPARED, "NOT_UPLOADED"}
+            and _candidate_cutout_path(lock, history, AUTO_GENERATED) is not None
+            else None
         ),
         "manual_cutout_preview_url": (
             f"/api/product-visual-onboarding/{product.get('id')}/cutout/preview/manual"
-            if manual_status not in {NOT_PREPARED, "NOT_UPLOADED"} else None
+            if manual_status not in {NOT_PREPARED, "NOT_UPLOADED"}
+            and _candidate_cutout_path(lock, history, USER_UPLOAD) is not None
+            else None
         ),
         "active_cutout_preview_url": (
             f"/api/product-visual-onboarding/{product.get('id')}/cutout/preview/active"
-            if lock and (lock.get("canonical_cutout_path") or lock.get("canonical_cutout_media_id")) else None
+            if lock and _preview_servable_path(lock.get("canonical_cutout_path")) is not None
+            else None
         ),
         "cutout_history_count": len(history),
         # ── Product-aware isolation + operator target (preparation metadata) ──
@@ -1406,7 +1532,13 @@ async def resolve_product_visual_preview(
     lock = await crud.get_product_truth_lock(product_id)
     history = await crud.list_product_truth_lock_history(product_id)
     if normalized == "original":
-        reference = await _resolve_source(product)
+        reference, available, _err = await _resolve_trusted_original_reference(product, lock=lock)
+        if not available or reference is None:
+            raise ProductVisualOnboardingError(
+                "CUTOUT_PREVIEW_NOT_FOUND",
+                "Requested cutout preview is not available.",
+                status_code=404,
+            )
         return _safe_preview_path(getattr(reference, "local_path", None))
     if normalized in {"active", "current"}:
         return _safe_preview_path((lock or {}).get("canonical_cutout_path"))
@@ -1416,12 +1548,10 @@ async def resolve_product_visual_preview(
     if normalized not in {"auto", "manual"}:
         raise ProductVisualOnboardingError("CUTOUT_PREVIEW_VARIANT_INVALID", "Preview variant is not supported.", status_code=400)
     source_kind = AUTO_GENERATED if normalized == "auto" else USER_UPLOAD
-    if lock and _candidate_source_kind(lock) == source_kind:
-        return _safe_preview_path(lock.get("canonical_cutout_path"))
-    for item in history:
-        if str(item.get("source_kind") or "").upper() == source_kind:
-            return _safe_preview_path(item.get("canonical_cutout_path"))
-    raise ProductVisualOnboardingError("CUTOUT_PREVIEW_NOT_FOUND", "Requested cutout candidate is not available.", status_code=404)
+    candidate = _candidate_cutout_path(lock, history, source_kind)
+    if candidate is None:
+        raise ProductVisualOnboardingError("CUTOUT_PREVIEW_NOT_FOUND", "Requested cutout candidate is not available.", status_code=404)
+    return candidate
 
 
 async def ensure_product_visual_onboarding(
@@ -1448,28 +1578,13 @@ async def get_product_visual_readiness(product_id: str) -> dict[str, Any]:
     prep = await crud.get_product_cutout_preparation(product_id)
     target = await crud.get_product_cutout_target(product_id)
     canva_workflow = await _get_canva_workflow_row(product_id)
-    reference = None
-    source_error = None
-    source_available = bool(_reference_file(product)) or bool(_reference_pack_file(pack)) or _truth_row_approved(lock)
-    resolver_product = product
-    # Detail reads stay read-only: the resolver is consulted only when a
-    # server-local source/approved lock already exists. URL-only rows remain
-    # displayable but visibly untrusted until a governed manual/prepare action
-    # materializes and registers the same product image.
-    if not source_available:
-        for media in await crud.list_product_source_media(product_id=product_id):
-            if str(media.get("kind") or "").lower() == "image" and _path(media.get("local_path")):
-                source_available = True
-                if media.get("media_id"):
-                    resolver_product = {**product, "media_id": media["media_id"]}
-                break
-    if source_available:
-        try:
-            reference = await _resolve_source(resolver_product)
-            source_available = bool(_path(getattr(reference, "local_path", None)))
-        except ProductVisualOnboardingError as exc:
-            source_error = exc.code
-            source_available = False
+    # One canonical byte-backed resolution path for readiness + original preview.
+    # Detail reads stay read-only: no DB writes and no silent DISPLAY_ONLY→TRUSTED upgrade.
+    reference, source_available, source_error = await _resolve_trusted_original_reference(
+        product,
+        pack=pack,
+        lock=lock,
+    )
     blocked_reason = await _blocked_reason(product)
     return _readiness_payload(
         product,
