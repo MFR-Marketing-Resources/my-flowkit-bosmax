@@ -533,10 +533,41 @@ async def cas_reauthorize_product_truth_lock_original_source(
             ),
         )
         if cur.rowcount != 1:
-            await db.rollback()
+            # When this CAS participates in a caller-owned atomic() boundary,
+            # that boundary owns rollback. The standalone path retains its
+            # historical rollback behavior.
+            if not getattr(db, "_flowkit_atomic_depth", 0):
+                await db.rollback()
             return None
         await db.commit()
         return await _get_with_db(db, "product_visual_truth_lock", "product_id", product_id)
+
+
+async def promote_product_source_media(product_id: str, media_id: str) -> dict | None:
+    """Promote one exact product-bound source candidate to durable STORED state.
+
+    The helper is safe both standalone and inside ``schema.atomic()``. A
+    reauthorization caller must keep this write in the same transaction as the
+    truth-lock CAS and product pointer update.
+    """
+    _validate_table("product_source_media")
+    db = await get_db()
+    async with _db_lock:
+        cur = await db.execute(
+            """
+            UPDATE product_source_media
+               SET status='STORED', updated_at=?
+             WHERE product_id=?
+               AND media_id=?
+               AND kind='image'
+               AND status IN ('PENDING_REAUTHORIZATION', 'STORED')
+            """,
+            (_now(), product_id, media_id),
+        )
+        await db.commit()
+        if cur.rowcount != 1:
+            return None
+        return await _get_with_db(db, "product_source_media", "media_id", media_id)
 
 
 async def create_product_truth_lock_history(product_id: str, **kwargs) -> dict | None:

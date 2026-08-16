@@ -119,6 +119,7 @@ async def test_upload_and_explicit_reauthorization_promotes_new_source_without_l
 
 	lock = await crud.get_product_truth_lock(product_id)
 	updated_product = await crud.get_product(product_id)
+	candidate = await crud.get_product_source_media(receipt["media_id"])
 	after_history = await crud.list_product_truth_lock_history(product_id)
 	assert lock is not None
 	assert lock["canonical_media_id"] == receipt["media_id"]
@@ -126,7 +127,17 @@ async def test_upload_and_explicit_reauthorization_promotes_new_source_without_l
 	assert lock["canonical_source_path"].endswith(f"{receipt['media_id']}.jpg")
 	assert updated_product["media_id"] == receipt["media_id"]
 	assert updated_product["local_image_path"] == lock["canonical_source_path"]
+	assert candidate is not None
+	assert candidate["status"] == "STORED"
+	candidate_path = Path(candidate["local_path"])
+	if not candidate_path.is_absolute():
+		candidate_path = runtime_root / candidate_path
+	assert candidate_path.read_bytes() == replacement_bytes
+	assert hashlib.sha256(candidate_path.read_bytes()).hexdigest() == lock["canonical_sha256"]
+	assert candidate["media_id"] == updated_product["media_id"] == lock["canonical_media_id"]
 	assert len(after_history) == len(before_history) == 1
+	assert after_history[0]["canonical_media_id"] == "old-media"
+	assert after_history[0]["canonical_sha256"] == OLD_SHA
 	assert json.loads(lock["provenance_json"])["previous_canonical_sha256"] == OLD_SHA
 	assert result["canonical_source_media_id"] == receipt["media_id"]
 	assert result["canonical_source_sha256"] == receipt["sha256"]
@@ -220,3 +231,60 @@ async def test_source_candidate_rejects_non_image_bytes(tmp_path, monkeypatch):
 		)
 
 	assert raised.value.code == "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_reauthorization_rolls_back_lock_product_and_candidate_on_promotion_failure(tmp_path, monkeypatch):
+	runtime_root = tmp_path / "runtime"
+	current_source = runtime_root / "data" / "products" / "current.jpg"
+	current_source.parent.mkdir(parents=True, exist_ok=True)
+	current_source.write_bytes(_image_bytes(color=(30, 80, 140)))
+	monkeypatch.setattr(service, "BASE_DIR", runtime_root)
+	monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", runtime_root)
+
+	product, original_lock = await _seed_product_and_lock(tmp_path, current_source=current_source)
+	product_id = str(product["id"])
+	receipt = await service.upload_original_source_candidate(
+		product_id,
+		filename="rollback-source.jpg",
+		content_type="image/jpeg",
+		raw_bytes=_image_bytes(color=(180, 40, 90)),
+		uploaded_by="registration-operator",
+	)
+	original_product = await crud.get_product(product_id)
+	original_candidate = await crud.get_product_source_media(receipt["media_id"])
+
+	original_promote = crud.promote_product_source_media
+
+	async def fail_after_candidate_promotion(product_id_arg: str, media_id_arg: str):
+		promoted = await original_promote(product_id_arg, media_id_arg)
+		assert promoted is not None
+		raise RuntimeError("injected failure after candidate promotion")
+
+	monkeypatch.setattr(crud, "promote_product_source_media", fail_after_candidate_promotion)
+
+	with pytest.raises(RuntimeError, match="injected failure after candidate promotion"):
+		await service.save_product_visual_setup(
+			product_id,
+			selected_visual="ORIGINAL_SOURCE_REAUTHORIZE",
+			reviewed_by="registration-operator",
+			review_note="Atomic rollback test",
+			confirm_identity=True,
+			confirm_label_logo=True,
+			confirm_geometry_scale=True,
+			confirm_product_isolation=True,
+			expected_previous_canonical_sha256=OLD_SHA,
+			expected_replacement_sha256=receipt["sha256"],
+			replacement_media_id=receipt["media_id"],
+		)
+
+	after_lock = await crud.get_product_truth_lock(product_id)
+	after_product = await crud.get_product(product_id)
+	after_candidate = await crud.get_product_source_media(receipt["media_id"])
+	assert after_lock["canonical_sha256"] == original_lock["canonical_sha256"]
+	assert after_lock["canonical_media_id"] == original_lock["canonical_media_id"]
+	assert after_lock["canonical_source_path"] == original_lock["canonical_source_path"]
+	assert after_product["media_id"] == original_product["media_id"]
+	assert after_product["local_image_path"] == original_product["local_image_path"]
+	assert after_candidate["status"] == original_candidate["status"] == "PENDING_REAUTHORIZATION"
+	assert after_candidate["media_id"] != after_product["media_id"]

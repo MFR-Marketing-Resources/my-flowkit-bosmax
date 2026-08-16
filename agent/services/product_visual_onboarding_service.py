@@ -38,6 +38,7 @@ from PIL import Image
 from agent import config
 from agent.config import BASE_DIR
 from agent.db import crud
+from agent.db.schema import atomic
 from agent.models.product_truth_lock import (
     ProductTruthLockApprovalRequest,
     ProductTruthLockOnboardingRequest,
@@ -1874,41 +1875,61 @@ async def reauthorize_product_original_source(
         }
     )
 
-    persisted = await crud.cas_reauthorize_product_truth_lock_original_source(
-        product_id,
-        expected_previous_canonical_sha256=previous_sha,
-        canonical_media_id=replacement_media_id,
-        canonical_sha256=resolved_sha,
-        source_width=source_width,
-        source_height=source_height,
-        canonical_source_path=str(source_path),
-        review_status="REJECTED",
-        failure_state="FALLBACK_SELECTED",
-        identity_lock=0,
-        geometry_lock=0,
-        label_lock=0,
-        logo_lock=0,
-        colour_lock=0,
-        scale_lock=0,
-        provenance_json=json.dumps(provenance, sort_keys=True),
-    )
+    async with atomic():
+        persisted = await crud.cas_reauthorize_product_truth_lock_original_source(
+            product_id,
+            expected_previous_canonical_sha256=previous_sha,
+            canonical_media_id=replacement_media_id,
+            canonical_sha256=resolved_sha,
+            source_width=source_width,
+            source_height=source_height,
+            canonical_source_path=str(source_path),
+            review_status="REJECTED",
+            failure_state="FALLBACK_SELECTED",
+            identity_lock=0,
+            geometry_lock=0,
+            label_lock=0,
+            logo_lock=0,
+            colour_lock=0,
+            scale_lock=0,
+            provenance_json=json.dumps(provenance, sort_keys=True),
+        )
+        if persisted is not None and selected_media_id:
+            # These writes deliberately remain inside the same atomic boundary
+            # as the SHA-CAS lock mutation. A failure in either promotion step
+            # rolls the lock, product pointer, and candidate lifecycle back.
+            updated_product = await crud.update_product(
+                product_id,
+                media_id=replacement_media_id,
+                local_image_path=str(source_path),
+                image_asset_status="READY",
+                asset_status="DOWNLOADED",
+            )
+            if (
+                not updated_product
+                or str(updated_product.get("media_id") or "") != replacement_media_id
+                or str(updated_product.get("local_image_path") or "") != str(source_path)
+            ):
+                raise ProductVisualOnboardingError(
+                    "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_FAILED",
+                    "The product source pointer could not be promoted atomically.",
+                    status_code=500,
+                )
+            promoted_media = await crud.promote_product_source_media(
+                product_id,
+                replacement_media_id,
+            )
+            if not promoted_media or str(promoted_media.get("status") or "").upper() != "STORED":
+                raise ProductVisualOnboardingError(
+                    "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_FAILED",
+                    "The replacement media lifecycle could not be promoted atomically.",
+                    status_code=500,
+                )
     if persisted is None:
         raise ProductVisualOnboardingError(
             "PRODUCT_VISUAL_SOURCE_REAUTHORIZATION_STALE",
             "The persisted Original Source SHA changed before the CAS write.",
             status_code=409,
-        )
-
-    if selected_media_id:
-        # The immutable candidate becomes the product-row source only after the
-        # truth-lock CAS succeeds. This keeps a pending upload from becoming an
-        # implicit current source and avoids overwriting any historical path.
-        await crud.update_product(
-            product_id,
-            media_id=replacement_media_id,
-            local_image_path=str(source_path),
-            image_asset_status="READY",
-            asset_status="DOWNLOADED",
         )
 
     # Keep the existing preparation ledger honest without touching cutout
