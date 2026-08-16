@@ -9,7 +9,10 @@ from agent.models.i2v_semantic_slot_resolver import (
     I2VSemanticSlotResolverRequest,
     I2VSemanticSlotResolverResponse,
 )
-from agent.services.approved_product_package_service import get_approved_product_package
+from agent.services.approved_product_package_service import (
+    get_approved_product_package,
+    get_v2_approved_product_package,
+)
 from agent.services.creative_asset_service import (
     build_resolved_workspace_asset,
     validate_selectable_asset,
@@ -46,9 +49,30 @@ def _clone_product_reference_asset(
 
 async def resolve_i2v_semantic_slots(
     request: I2VSemanticSlotResolverRequest,
+    *,
+    approved_package: dict[str, Any] | None = None,
 ) -> I2VSemanticSlotResolverResponse:
     recipe = get_i2v_slot_recipe(request.recipe_id)
-    package = await get_approved_product_package(request.product_id, "I2V")
+    if approved_package is None:
+        from agent.services.copy_execution_resolver import (
+            resolve_persisted_copy_execution_binding,
+        )
+
+        resolution = await resolve_persisted_copy_execution_binding(
+            request.product_id,
+            "I2V",
+        )
+        package = (
+            await get_v2_approved_product_package(
+                request.product_id,
+                "I2V",
+                copy_v2_resolution=resolution,
+            )
+            if resolution.v2_enabled
+            else await get_approved_product_package(request.product_id, "I2V")
+        )
+    else:
+        package = approved_package
     product_subject_asset = next(
         (
             slot.get("resolved_asset")
