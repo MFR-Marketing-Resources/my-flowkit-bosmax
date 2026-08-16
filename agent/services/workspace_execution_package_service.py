@@ -8,12 +8,13 @@ from typing import Any
 from agent.db import crud
 from agent.services.approved_product_package_service import (
     get_approved_product_package,
+    get_v2_approved_product_package,
     normalize_mode,
 )
 from agent.services.copy_binding_service import (
     COPY_FALLBACK_CONFIRMATION_SOURCE,
     COPY_FALLBACK_POLICY,
-    ERR_PRODUCTION_VALID_COPY_REQUIRED,
+    ERR_FALLBACK_CONFIRMATION_REQUIRED,
     CopyBindingError,
     resolve_compiler_copy_intelligence,
 )
@@ -340,16 +341,29 @@ async def create_workspace_execution_package(
         )
     # Preserve the existing flag-off production-copy gate exactly. V2-enabled
     # video requests never reach this branch: they carry a validated V2 binding.
-    if normalized_mode != "IMG" and not copy_set_id and not v2_enabled:
+    if (
+        normalized_mode != "IMG"
+        and not copy_set_id
+        and not v2_enabled
+        and not copy_fallback_confirmed
+    ):
         raise CopyBindingError(
-            ERR_PRODUCTION_VALID_COPY_REQUIRED,
+            ERR_FALLBACK_CONFIRMATION_REQUIRED,
             status_code=409,
             detail=(
-                "Generate Final Prompt for video modes requires a currently "
-                "production-valid approved Copy Set."
+                "Generate Final Prompt without a selected copy authority requires "
+                "explicit fallback confirmation."
             ),
         )
-    package = await get_approved_product_package(product_id, mode)
+    package = await (
+        get_v2_approved_product_package(
+            product_id,
+            mode,
+            copy_v2_resolution=v2_resolution,
+        )
+        if v2_enabled
+        else get_approved_product_package(product_id, mode)
+    )
     # Resolve the source lineage from the RAW mode BEFORE normalization, so a
     # caller-named canonical lineage (e.g. mode="FRAMES") is preserved into the
     # SAVED package instead of flipping to HYBRID. Without this, preview
@@ -378,6 +392,7 @@ async def create_workspace_execution_package(
         scene_context_override=scene_context_override,
         copy_set_id=copy_set_id,
         copy_v2_resolution=v2_resolution if v2_enabled else None,
+        copy_v2_context=copy_v2_context,
         approved_dialogue=(v2_resolution.approved_dialogue if v2_enabled else None),
         creative_treatment=creative_treatment,
         scene_template=scene_template,
@@ -412,18 +427,22 @@ async def create_workspace_execution_package(
             end_frame_asset_id=end_frame_asset_id,
         )
     elif normalized_mode == "I2V":
-        semantic_slot_resolver = (
-            await resolve_i2v_semantic_slots(
-                I2VSemanticSlotResolverRequest(
-                    product_id=product_id,
-                    recipe_id=recipe_id,
-                    product_reference_asset_id=product_reference_asset_id,
-                    character_reference_asset_id=character_reference_asset_id,
-                    scene_context_reference_asset_id=scene_context_reference_asset_id,
-                    style_reference_asset_id=style_reference_asset_id,
-                )
+        i2v_request = I2VSemanticSlotResolverRequest(
+            product_id=product_id,
+            recipe_id=recipe_id,
+            product_reference_asset_id=product_reference_asset_id,
+            character_reference_asset_id=character_reference_asset_id,
+            scene_context_reference_asset_id=scene_context_reference_asset_id,
+            style_reference_asset_id=style_reference_asset_id,
+        )
+        if copy_v2_resolution.v2_enabled:
+            i2v_result = await resolve_i2v_semantic_slots(
+                i2v_request,
+                approved_package=package,
             )
-        ).model_dump()
+        else:
+            i2v_result = await resolve_i2v_semantic_slots(i2v_request)
+        semantic_slot_resolver = i2v_result.model_dump()
         package_asset_slots = _merge_i2v_resolved_assets(
             package_asset_slots,
             semantic_slot_resolver,
@@ -755,7 +774,16 @@ async def compile_workspace_prompt_preview(
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
     enriched_product = await enrich_product(product, persist=False)
-    package = approved_package or await get_approved_product_package(product_id, normalized_mode)
+    if copy_v2_resolution.v2_enabled:
+        # A caller-supplied package cannot override the current V2 authority;
+        # rebuild the pure V2 projection from the persisted resolution.
+        package = await get_v2_approved_product_package(
+            product_id,
+            normalized_mode,
+            copy_v2_resolution=copy_v2_resolution,
+        )
+    else:
+        package = approved_package or await get_approved_product_package(product_id, normalized_mode)
     # Copy Selection & Compiler Binding V1: resolve the operator-selected Copy Set
     # (fail-closed if an explicit copy_set_id is invalid) into clean compiler copy.
     # Only to_compiler_copy fields cross into the compiler; the lineage below is
@@ -785,7 +813,14 @@ async def compile_workspace_prompt_preview(
             approved_package=package,
         )
     else:
-        safe_package = await get_stored_claim_safe_package(product_id) or {}
+        # V2 copy is already complete and immutable.  In that branch the
+        # compiler receives only the persisted V2 projection and approved
+        # dialogue; the legacy safe-package getter is maintenance-only.
+        safe_package = (
+            {}
+            if copy_v2_resolution.v2_enabled
+            else await get_stored_claim_safe_package(product_id) or {}
+        )
         compiler_result = compile_ugc_video_prompt(
             product=enriched_product,
             approved_package=package,

@@ -21,7 +21,10 @@ from agent.models.f2v_frame_source_resolver import (
     F2VFrameSourceResolverResponse,
     F2VResolvedFrame,
 )
-from agent.services.approved_product_package_service import get_approved_product_package
+from agent.services.approved_product_package_service import (
+    get_approved_product_package,
+    get_v2_approved_product_package,
+)
 from agent.services.creative_asset_service import validate_selectable_asset
 
 
@@ -48,7 +51,20 @@ def _frame_from_asset(asset: CreativeAssetRecord, slot_key: str) -> F2VResolvedF
 
 async def _resolve_product_start_frame(product_id: str) -> F2VResolvedFrame | None:
     try:
-        package = await get_approved_product_package(product_id, "F2V")
+        from agent.services.copy_execution_resolver import (
+            resolve_persisted_copy_execution_binding,
+        )
+
+        resolution = await resolve_persisted_copy_execution_binding(product_id, "F2V")
+        package = (
+            await get_v2_approved_product_package(
+                product_id,
+                "F2V",
+                copy_v2_resolution=resolution,
+            )
+            if resolution.v2_enabled
+            else await get_approved_product_package(product_id, "F2V")
+        )
     except Exception:
         return None
     slots = package.get("asset_slots", []) if isinstance(package, dict) else []

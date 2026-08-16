@@ -677,3 +677,145 @@ async def get_approved_product_package(product_id: str, mode: str) -> dict[str, 
         "source_of_truth_notes": source_of_truth_notes,
     }
 
+
+async def get_v2_approved_product_package(
+    product_id: str,
+    mode: str,
+    *,
+    copy_v2_resolution: Any,
+) -> dict[str, Any]:
+    """Build the execution-package projection for a persisted V2 binding.
+
+    The legacy package remains available for the explicit maintenance lane, but
+    a V2-bound request must not read or reinterpret
+    ``product.claim_safe_copy_payload`` (or any legacy CopySet projection) on
+    its way to the deterministic compiler.
+    """
+    normalized_mode = normalize_mode(mode)
+    if normalized_mode not in SUPPORTED_MODES:
+        raise ValueError("UNSUPPORTED_MODE")
+    if not copy_v2_resolution or not getattr(copy_v2_resolution, "v2_enabled", False):
+        raise ValueError("COPY_V2_EXECUTION_PACKAGE_REQUIRED")
+    if not getattr(copy_v2_resolution, "ready", False):
+        raise ValueError("COPY_V2_EXECUTION_NOT_READY")
+
+    product = await crud.get_product(product_id)
+    if not product and is_fastmoss_reference_product_id(product_id):
+        if await get_fastmoss_reference_product(product_id):
+            raise ValueError(REFERENCE_ONLY_BLOCKER)
+    if not product:
+        raise ValueError("PRODUCT_NOT_FOUND")
+
+    enriched = await enrich_product(product, persist=False)
+    if _clean(enriched.get("lifecycle_status")) == "ARCHIVED":
+        raise ValueError("PRODUCT_ARCHIVED")
+
+    # The persisted resolver proves current Product Truth. Keep the ordinary
+    # copy-eligibility gate as an additive fail-closed check, but do not consult
+    # the legacy claim-safe payload.
+    from agent.services.copy_eligibility_service import assert_copy_eligible
+
+    await assert_copy_eligible(product_id)
+
+    blockers, asset_slots = _asset_slots_for_mode(enriched, normalized_mode)
+    image_reference_status = _clean(enriched.get("image_readiness_status")) or "IMAGE_NOT_AVAILABLE"
+    projection = getattr(copy_v2_resolution, "projection", None)
+    copy_policy = str(getattr(copy_v2_resolution, "copy_policy", "REQUIRED") or "REQUIRED")
+    compiler_copy = dict(getattr(copy_v2_resolution, "compiler_copy_intelligence", None) or {})
+    approved_dialogue = _clean(getattr(copy_v2_resolution, "approved_dialogue", None))
+
+    if copy_policy == "REQUIRED":
+        if (
+            not approved_dialogue
+            or not compiler_copy.get("hook")
+            or not compiler_copy.get("usps")
+            or not compiler_copy.get("cta")
+        ):
+            raise ValueError("COPY_V2_EXECUTION_COPY_PROJECTION_INVALID")
+        prompt_text = approved_dialogue
+        approval_status = "COPY_BLUEPRINT_V2_PRODUCTION_VALID"
+    else:
+        # Explicit COPY_NOT_REQUIRED image lanes still use current Product Truth
+        # and official visual authority, but have no authored dialogue.
+        prompt_text = ""
+        approval_status = "COPY_BLUEPRINT_V2_COPY_FREE"
+
+    prompt_fingerprint = _prompt_fingerprint(prompt_text)
+    binding = getattr(copy_v2_resolution, "binding", None)
+    blueprint_id = str(getattr(binding, "blueprint_id", "") or "")
+    revision = getattr(binding, "revision", None)
+    package_snapshot_id = (
+        f"v2pkg_{blueprint_id}_r{revision}"
+        if blueprint_id and revision is not None
+        else _package_snapshot_id(product_id, normalized_mode, prompt_fingerprint, approval_status)
+    )
+    v2_metadata = (
+        copy_v2_resolution.to_metadata()
+        if hasattr(copy_v2_resolution, "to_metadata")
+        else {"v2_enabled": True, "status": "READY"}
+    )
+    official_visual = next(
+        (
+            slot.get("resolved_asset")
+            for slot in asset_slots
+            if isinstance(slot.get("resolved_asset"), dict)
+            and slot.get("resolved_asset", {}).get("official_visual")
+        ),
+        None,
+    )
+    source_of_truth_notes = [
+        "Current Product Truth and evidence lineage are carried by the persisted Copy Register V2 binding.",
+        "Immutable approved V2 stage text and the deterministic V2 projection are the only copy inputs.",
+        "Product Registration Official Product Visual is the only product reference for every generation lane.",
+        "Legacy CopySet and product.claim_safe_copy_payload are excluded from this V2 execution package.",
+    ]
+    return {
+        "prompt_package_snapshot_id": package_snapshot_id,
+        "product_id": product_id,
+        "product_name": enriched.get("product_display_name") or enriched.get("raw_product_title"),
+        "mode": normalized_mode,
+        "approval_status": approval_status,
+        "production_generation_allowed": True,
+        "prompt_text": prompt_text,
+        "prompt_fingerprint": prompt_fingerprint,
+        # Kept empty by contract: V2 receives immutable stage text and the V2
+        # projection, never a legacy claim-safe rewrite.
+        "claim_safe_rewrite": "",
+        "image_prompt": None,
+        "metadata_handoff": None,
+        "overlay_spec": None,
+        "export_spec": None,
+        "image_route": None,
+        "image_reference_status": image_reference_status,
+        "asset_requirements": [
+            "PROMPT_TEXT_REQUIRED",
+            *(
+                ["START_FRAME_REQUIRED", "END_FRAME_OPTIONAL"]
+                if normalized_mode == "F2V"
+                else ["SUBJECT_REQUIRED", "SCENE_OPTIONAL", "STYLE_OPTIONAL"]
+                if normalized_mode in {"I2V", "IMG"}
+                else ["NO_IMAGE_REQUIRED"]
+            ),
+        ],
+        "asset_slots": asset_slots,
+        "official_visual": official_visual,
+        "manual_fallback": _manual_fallback_payload(enriched, normalized_mode, asset_slots),
+        "provenance": [
+            "copy_register_v2_execution_package:v1",
+            f"copy_v2_status:{getattr(copy_v2_resolution, 'status', 'READY')}",
+            f"copy_v2_blueprint_id:{blueprint_id}",
+            f"copy_v2_revision:{revision}",
+        ],
+        "warnings": [],
+        "blockers": blockers,
+        "source_of_truth_notes": source_of_truth_notes,
+        "copy_architecture_v2": v2_metadata,
+        "copy_intelligence": compiler_copy,
+        "approved_dialogue": approved_dialogue or None,
+        "copy_v2_projection": (
+            projection.model_dump(mode="json")
+            if hasattr(projection, "model_dump")
+            else projection
+        ),
+    }
+

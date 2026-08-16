@@ -20,6 +20,7 @@ from typing import Any
 from agent.db import crud
 from agent.services.approved_product_package_service import (
     get_approved_product_package,
+    get_v2_approved_product_package,
     normalize_mode,
 )
 from agent.services.fastmoss_product_reference_service import (
@@ -131,6 +132,22 @@ async def _resolve_v2_package_context(
             status_code=exc.status_code,
             detail=exc.details or str(exc),
         ) from exc
+
+
+async def _get_execution_product_package(
+    product_id: str,
+    mode: str,
+    resolution: CopyExecutionResolution,
+) -> dict[str, Any]:
+    """Select the package authority without silently crossing the V2 boundary."""
+
+    if resolution.v2_enabled:
+        return await get_v2_approved_product_package(
+            product_id,
+            mode,
+            copy_v2_resolution=resolution,
+        )
+    return await get_approved_product_package(product_id, mode)
 
 
 def _attach_v2_package_metadata(
@@ -342,7 +359,11 @@ async def create_f2v_generation_package(
     )
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
-    approved = await get_approved_product_package(product_id, normalize_mode(mode))
+    approved = await _get_execution_product_package(
+        product_id,
+        normalize_mode(mode),
+        v2_resolution,
+    )
     if scene_context_override:
         approved = {**approved, "scene_context": scene_context_override}
 
@@ -602,7 +623,11 @@ async def create_i2v_generation_package(
     )
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
-    approved = await get_approved_product_package(product_id, normalize_mode(mode))
+    approved = await _get_execution_product_package(
+        product_id,
+        normalize_mode(mode),
+        v2_resolution,
+    )
     if scene_context_override:
         approved = {**approved, "scene_context": scene_context_override}
 
@@ -624,7 +649,13 @@ async def create_i2v_generation_package(
     # attribute get') — I2V was never creatable through this door (the test
     # stubs returned plain dicts, hiding it). Normalize to a dict and read the
     # real field (resolved_assets: [{slot_key, asset_id, ...}]).
-    resolver_output = await resolve_i2v_semantic_slots(resolver_req)
+    if v2_resolution.v2_enabled:
+        resolver_output = await resolve_i2v_semantic_slots(
+            resolver_req,
+            approved_package=approved,
+        )
+    else:
+        resolver_output = await resolve_i2v_semantic_slots(resolver_req)
     if hasattr(resolver_output, "model_dump"):
         resolver_output = resolver_output.model_dump()
 
@@ -966,7 +997,11 @@ async def create_t2v_generation_package(
     )
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
-    approved = await get_approved_product_package(product_id, normalize_mode(mode))
+    approved = await _get_execution_product_package(
+        product_id,
+        normalize_mode(mode),
+        v2_resolution,
+    )
     if scene_context_override:
         approved = {**approved, "scene_context": scene_context_override}
 
@@ -1144,7 +1179,11 @@ async def create_img_generation_package(
         raise ValueError("IMG_MODE_NO_EXTEND_TOTAL_DURATION")
     product_row = await crud.get_product(product_id)
     _assert_not_reference_only(product_id, product_row)
-    approved = await get_approved_product_package(product_id, normalize_mode(mode))
+    approved = await _get_execution_product_package(
+        product_id,
+        normalize_mode(mode),
+        v2_resolution,
+    )
 
     product_name_snapshot = approved.get("product_name", "")
     prompt_package_snapshot_id = approved.get("prompt_package_snapshot_id", "")
