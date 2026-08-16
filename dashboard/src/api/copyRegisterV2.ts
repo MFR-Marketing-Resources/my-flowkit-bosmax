@@ -110,6 +110,13 @@ export interface CopyBlueprintV2Record {
 	estimated_word_count: number;
 	derived_projection?: Record<string, unknown> | null;
 	v2_badge?: string | null;
+	current_authority_status?: string;
+	current_authority_valid?: boolean;
+	current_authority_activation_allowed?: boolean;
+	current_authority_reason?: string | null;
+	current_authority_mismatches?: Array<Record<string, unknown>>;
+	current_authority_fingerprint?: string | null;
+	blueprint_authority_fingerprint?: string | null;
 }
 
 export interface CopyExecutionBindingV2Record {

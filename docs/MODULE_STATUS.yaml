@@ -143,6 +143,7 @@ domains:
       - agent/api/legacy_copy_guard.py
       - agent/api/copy_register_v2.py
       - agent/authority/copy_register_product_truth_authority.py
+      - agent/authority/copy_register_product_identity_authority.py
       - agent/services/copy_register_v2_service.py
       - dashboard/src/api/copyRegisterV2.ts
       - dashboard/src/api/posterV2.ts
@@ -357,6 +358,7 @@ domains:
       - scripts/seed_copywriting_taxonomy_registry.py
       - tests/unit/test_copywriting_taxonomy_service.py
       - tests/api/test_taxonomy_api.py
+      - tests/api/test_copywriting_taxonomy_api.py
       # P5.5 Dedicated Product Type Registry — standalone operator control room
       - dashboard/src/pages/ProductTypeRegistryPage.tsx
       - dashboard/src/pages/ProductTypeRegistryPage.test.tsx
