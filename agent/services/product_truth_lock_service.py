@@ -874,6 +874,128 @@ def _prepare_durable_assets(
     )
 
 
+def _bound_recovery_media_path(
+    media: dict[str, Any] | None,
+    *,
+    product_id: str,
+) -> Path | None:
+    """Resolve one immutable product-bound media file for byte recovery."""
+    if (
+        not media
+        or str(media.get("product_id") or "") != str(product_id)
+        or str(media.get("kind") or "").lower() != "image"
+        or str(media.get("status") or "").upper() not in {"STORED", "APPROVED"}
+    ):
+        return None
+    raw_path = str(media.get("local_path") or "").strip()
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = BASE_DIR / path
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(BASE_DIR.resolve())
+    except ValueError:
+        return None
+    if not resolved.is_file() or resolved.stat().st_size <= 0:
+        return None
+    return resolved
+
+
+async def _recover_missing_truth_lock_bytes(
+    product_id: str,
+    existing: dict[str, Any],
+    *,
+    canonical_source: Path,
+    canonical_cutout: Path,
+) -> bool:
+    """Rebuild missing durable bytes only when persisted SHA authority matches.
+
+    The immutable source-media rows retain the exact inputs used by onboarding.
+    Re-running the same deterministic canvas/cutout encoding is safe only when
+    both rebuilt SHA-256 values (and the alpha mask, when recorded) exactly
+    match the existing truth lock.  Any mismatch leaves the history guard
+    closed.
+    """
+    source_media_id = str(existing.get("canonical_media_id") or "").strip()
+    cutout_media_id = str(existing.get("canonical_cutout_media_id") or "").strip()
+    expected_source_sha = str(existing.get("canonical_sha256") or "").strip().lower()
+    expected_cutout_sha = str(existing.get("canonical_cutout_sha256") or "").strip().lower()
+    if (
+        not source_media_id
+        or not cutout_media_id
+        or len(expected_source_sha) != 64
+        or len(expected_cutout_sha) != 64
+    ):
+        return False
+
+    source_media = await crud.get_product_source_media(source_media_id)
+    cutout_media = await crud.get_product_source_media(cutout_media_id)
+    source_media_path = _bound_recovery_media_path(source_media, product_id=product_id)
+    cutout_media_path = _bound_recovery_media_path(cutout_media, product_id=product_id)
+    if source_media_path is None or cutout_media_path is None:
+        return False
+
+    recovery_id = f"recovery-{uuid.uuid4().hex}"
+    recovery_directory = _truth_lock_directory(product_id) / "versions" / recovery_id
+    try:
+        source_kind = _cutout_source_kind(existing)
+        if source_kind == AUTO_GENERATED:
+            standardized_source_path = source_media_path
+        else:
+            standardized_source = standardize_image_file_to_canvas(
+                source_media_path,
+                recovery_directory / "standardized-source.png",
+            )
+            standardized_source_path = standardized_source.path
+
+        (
+            recovered_source,
+            recovered_cutout,
+            recovered_source_sha,
+            recovered_cutout_sha,
+            recovered_alpha_mask,
+        ) = _prepare_durable_assets(
+            product_id,
+            standardized_source_path,
+            cutout_media_path,
+            source_width=int(existing.get("source_width") or 0),
+            source_height=int(existing.get("source_height") or 0),
+            version_id=recovery_id,
+        )
+        expected_alpha_sha = str(
+            _json_field(existing, "alpha_mask_json", {}).get("sha256") or ""
+        ).strip().lower()
+        if (
+            recovered_source_sha != expected_source_sha
+            or recovered_cutout_sha != expected_cutout_sha
+            or (
+                expected_alpha_sha
+                and str(recovered_alpha_mask.get("sha256") or "").lower()
+                != expected_alpha_sha
+            )
+        ):
+            return False
+
+        canonical_source.parent.mkdir(parents=True, exist_ok=True)
+        canonical_cutout.parent.mkdir(parents=True, exist_ok=True)
+        if not canonical_source.is_file():
+            recovered_source.replace(canonical_source)
+        if not canonical_cutout.is_file():
+            recovered_cutout.replace(canonical_cutout)
+        return (
+            canonical_source.is_file()
+            and canonical_cutout.is_file()
+            and _sha256_path(canonical_source) == expected_source_sha
+            and _sha256_path(canonical_cutout) == expected_cutout_sha
+        )
+    except (OSError, ValueError, ProductTruthLockError):
+        return False
+    finally:
+        shutil.rmtree(recovery_directory, ignore_errors=True)
+
+
 async def _archive_existing_truth_lock(
     product_id: str,
     existing: dict[str, Any],
@@ -888,7 +1010,22 @@ async def _archive_existing_truth_lock(
     try:
         source = _path_from_server_record(str(existing.get("canonical_source_path") or ""))
         cutout = _path_from_server_record(str(existing.get("canonical_cutout_path") or ""))
+        recovered_history_bytes = False
         if not source.is_file() or not cutout.is_file():
+            recovered_history_bytes = await _recover_missing_truth_lock_bytes(
+                product_id,
+                existing,
+                canonical_source=source,
+                canonical_cutout=cutout,
+            )
+        expected_source_sha = str(existing.get("canonical_sha256") or "").strip().lower()
+        expected_cutout_sha = str(existing.get("canonical_cutout_sha256") or "").strip().lower()
+        if (
+            not source.is_file()
+            or not cutout.is_file()
+            or _sha256_path(source) != expected_source_sha
+            or _sha256_path(cutout) != expected_cutout_sha
+        ):
             raise ProductTruthLockError(
                 "TRUTH_LOCK_HISTORY_REQUIRED",
                 "The previous truth-lock bytes are unavailable; replacement is blocked to preserve audit history.",
@@ -907,6 +1044,8 @@ async def _archive_existing_truth_lock(
                 "superseded_reason": reason,
             }
         )
+        if recovered_history_bytes:
+            provenance["history_byte_recovery"] = "DETERMINISTIC_BOUND_MEDIA_SHA256_VERIFIED"
         await crud.create_product_truth_lock_history(
             product_id,
             history_id=history_id,
