@@ -183,6 +183,44 @@ async def test_scene_authority_resolves_faceless_receipt_and_concrete_auto_backg
     assert len(receipt["choreography_sha256"]) == 64
     assert receipt["character_presence"] == "FACELESS"
     assert receipt["compatibility_status"] == "COMPATIBLE"
+    assert receipt["variation_index"] == 0
+
+
+@pytest.mark.asyncio
+async def test_scene_authority_background_uses_final_faceless_compatible_variant(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    product = {
+        "id": "prod-lip",
+        "name": "Velvet Lip Tint",
+        "raw_product_title": "Velvet Lip Tint",
+        "category": "Beauty & Personal Care",
+        "product_type": "Lip Makeup",
+    }
+
+    async def _get_product(_: str):
+        return product
+
+    monkeypatch.setattr(fl.crud, "get_product", _get_product)
+    authority = await fl.resolve_faceless_scene_authority(
+        product_id="prod-lip",
+        hook_id="AUTO",
+        background_id="AUTO",
+    )
+    assert authority["choreography"]["choreography_id"] == "lip_color.v1"
+    assert "FACELESS" in authority["choreography"]["allowed_character_presence"]
+    assert authority["compatible_contexts"] == authority["choreography"][
+        "compatible_contexts"
+    ]
+    assert "KITCHEN" not in {option["id"] for option in authority["background_options"]}
+    assert authority["background"]["operator_selection"] == "AUTO"
+    assert authority["background"]["setting_id"] != "AUTO"
+
+    with pytest.raises(ValueError, match=fl.cls.ERR_FACELESS_BACKGROUND_INCOMPATIBLE):
+        await fl.resolve_faceless_scene_authority(
+            product_id="prod-lip",
+            background_id="KITCHEN",
+        )
 
 
 @pytest.mark.asyncio

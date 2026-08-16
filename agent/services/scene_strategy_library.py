@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Mapping, TypedDict
+from typing import Mapping, NotRequired, TypedDict
 
 from agent.authority.catalog_product_type_truth import (
     resolve_catalog_product_type_truth,
@@ -78,6 +78,8 @@ class SelectedSceneStrategyVariant(TypedDict):
     choreography_schema_version: str
     choreography_sha256: str
     allowed_character_presence: list[str]
+    compatible_contexts: NotRequired[list[str]]
+    variation_index: NotRequired[int]
 
 
 _COMMON_PHYSICS_FORBIDDEN = (
@@ -3178,17 +3180,27 @@ def select_scene_strategy_variant(
 
     from agent.services.scene_choreography_catalog import (
         choreography_sha256,
+        select_compatible_variant_for_strategy,
         select_variant_for_strategy,
     )
 
     offset = max(int(variation_index), 0)
     scripts = strategy["direct_script_slots"]
-    variant = select_variant_for_strategy(
-        strategy["strategy_id"],
-        offset,
-        character_presence=character_presence,
-    )
-    return {
+    if character_presence is None:
+        variant = select_variant_for_strategy(strategy["strategy_id"], offset)
+    elif str(character_presence).strip().upper() == "FACELESS":
+        variant = select_compatible_variant_for_strategy(
+            strategy["strategy_id"],
+            offset,
+            character_presence,
+        )
+    else:
+        variant = select_variant_for_strategy(
+            strategy["strategy_id"],
+            offset,
+            character_presence=character_presence,
+        )
+    selected: SelectedSceneStrategyVariant = {
         "scene_strategy_id": strategy["strategy_id"],
         "allowed_scene_strategy": variant.scene_strategy_label,
         "allowed_action": variant.intent_label,
@@ -3208,6 +3220,10 @@ def select_scene_strategy_variant(
         "choreography_sha256": choreography_sha256(variant),
         "allowed_character_presence": list(variant.allowed_character_presence),
     }
+    if str(character_presence or "").strip().upper() == "FACELESS":
+        selected["compatible_contexts"] = list(variant.compatible_contexts)
+        selected["variation_index"] = offset
+    return selected
 
 
 def build_scene_strategy_context(
@@ -3219,18 +3235,33 @@ def build_scene_strategy_context(
 ) -> str:
     """Render the ordered v2 choreography for the canonical compiler."""
 
-    from agent.services.scene_choreography_catalog import select_variant_for_strategy
-
     selected = select_scene_strategy_variant(
         strategy,
         variation_index,
         character_presence=character_presence,
     )
-    variant = select_variant_for_strategy(
-        strategy["strategy_id"],
-        variation_index,
-        character_presence=character_presence,
+    from agent.services.scene_choreography_catalog import (
+        select_compatible_variant_for_strategy,
+        select_variant_for_strategy,
     )
+
+    if character_presence is None:
+        variant = select_variant_for_strategy(
+            strategy["strategy_id"],
+            variation_index,
+        )
+    elif str(character_presence).strip().upper() == "FACELESS":
+        variant = select_compatible_variant_for_strategy(
+            strategy["strategy_id"],
+            variation_index,
+            character_presence,
+        )
+    else:
+        variant = select_variant_for_strategy(
+            strategy["strategy_id"],
+            variation_index,
+            character_presence=character_presence,
+        )
     step_lines = []
     for step in variant.steps:
         initial = "; ".join(

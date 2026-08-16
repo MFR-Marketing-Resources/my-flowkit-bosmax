@@ -13,7 +13,6 @@ from typing import Any, Optional
 from agent.db import crud
 from agent.services import creative_lane_settings_service as cls
 from agent.services import flow_mode_reference_contract as refc
-from agent.services.scene_choreography_catalog import select_variant_for_strategy
 from agent.services.scene_strategy_library import (
     resolve_scene_strategy,
     select_scene_strategy_variant,
@@ -303,6 +302,7 @@ def _faceless_resolution_receipt(
             "choreography_schema_version"
         ],
         "choreography_sha256": choreography["choreography_sha256"],
+        "variation_index": int(choreography.get("variation_index") or 0),
         "character_presence": FACELESS_CHARACTER_PRESENCE,
         "compatibility_status": "COMPATIBLE",
     }
@@ -335,13 +335,8 @@ async def resolve_faceless_scene_authority(
             "Product Truth did not resolve a production Scene Strategy"
         )
 
-    # Select through the existing Scene Choreography V2 catalog. The explicit
-    # character gate is also enforced again by the canonical compiler.
-    variant = select_variant_for_strategy(
-        strategy["strategy_id"],
-        variation_index,
-        character_presence=FACELESS_CHARACTER_PRESENCE,
-    )
+    # Select through the compatible Scene Choreography V2 subset. The canonical
+    # compiler uses the same explicit selector and variation index.
     selected = select_scene_strategy_variant(
         strategy,
         variation_index,
@@ -352,7 +347,7 @@ async def resolve_faceless_scene_authority(
         "resolution_source": strategy["resolution_source"],
         "fallback_used": bool(strategy["fallback_used"]),
     }
-    compatible_contexts = list(variant.compatible_contexts)
+    compatible_contexts = list(selected["compatible_contexts"])
     background = cls.resolve_background(
         background_id,
         scene_context_hint=scene_context_hint,

@@ -298,6 +298,7 @@ async def test_hybrid_explicit_pick_does_not_override_anchor(monkeypatch):
 @pytest.mark.asyncio
 async def test_workspace_execution_package_frames_binds_selected_start_frame(monkeypatch):
     captured = {}
+    compile_kwargs = {}
 
     async def fake_package(product_id: str, mode: str):
         return {
@@ -341,6 +342,7 @@ async def test_workspace_execution_package_frames_binds_selected_start_frame(mon
         }
 
     async def fake_compile(**kwargs):
+        compile_kwargs.update(kwargs)
         return {
             "final_compiled_prompt_text": "Block 1 (ANCHOR)\nUse one visible creator persona.",
             "prompt_blocks": [
@@ -382,6 +384,11 @@ async def test_workspace_execution_package_frames_binds_selected_start_frame(mon
             },
             "planner_version": "full_storyboard_first_extend_planner_v1",
             "planner_fingerprint": "planner_fp_001",
+            "scene_choreography": {
+                "choreography_id": "traditional_herbal_oil.v0",
+                "choreography_schema_version": "scene_choreography_v2",
+                "choreography_sha256": "a" * 64,
+            },
         }
 
     async def fake_store(**kwargs):
@@ -423,6 +430,7 @@ async def test_workspace_execution_package_frames_binds_selected_start_frame(mon
         "choreography_id": "traditional_herbal_oil.v0",
         "choreography_schema_version": "scene_choreography_v2",
         "choreography_sha256": "a" * 64,
+        "variation_index": 0,
         "character_presence": "FACELESS",
         "compatibility_status": "COMPATIBLE",
     }
@@ -456,10 +464,17 @@ async def test_workspace_execution_package_frames_binds_selected_start_frame(mon
     assert result["planner_result"]["planner_fingerprint"] == "planner_fp_001"
     assert result["canonical_package_fingerprint"] == "canonical_fp_001"
     assert result["faceless_resolution"] == faceless_receipt
+    assert compile_kwargs["variation_index"] == 0
     stored_lineage = json.loads(captured["request_lineage_payload"])
     assert stored_lineage["compiler"]["planner_result"] == result["planner_result"]
     assert stored_lineage["compiler"]["canonical_package_fingerprint"] == "canonical_fp_001"
     assert stored_lineage["faceless_resolution"] == faceless_receipt
+    assert stored_lineage["compiler"]["scene_choreography"]["choreography_id"] == (
+        faceless_receipt["choreography_id"]
+    )
+    assert stored_lineage["compiler"]["scene_choreography"]["choreography_sha256"] == (
+        faceless_receipt["choreography_sha256"]
+    )
 
 
 @pytest.mark.asyncio

@@ -856,6 +856,56 @@ def select_variant_for_strategy(
     return variant
 
 
+def eligible_variants_for_character_presence(
+    strategy_id: str,
+    character_presence: str,
+) -> tuple[ChoreographyVariant, ...]:
+    """Return validated production variants compatible with one surface."""
+
+    candidate = str(character_presence or "").strip().upper()
+    variants = list_production_variants(strategy_id)
+    for variant in variants:
+        validate_choreography_variant(variant)
+
+    eligible = tuple(
+        variant
+        for variant in variants
+        if candidate in variant.allowed_character_presence
+    )
+    if eligible:
+        return eligible
+
+    code = (
+        "ERR_FACELESS_CHOREOGRAPHY_INCOMPATIBLE"
+        if candidate == "FACELESS"
+        else "CHOREOGRAPHY_CHARACTER_PRESENCE_INCOMPATIBLE"
+    )
+    raise ChoreographyValidationError(
+        code,
+        strategy_id=str(strategy_id),
+        details={
+            "character_presence": candidate or "<empty>",
+            "variant_count": len(variants),
+            "eligible_count": 0,
+        },
+    )
+
+
+def select_compatible_variant_for_strategy(
+    strategy_id: str,
+    variation_index: int,
+    character_presence: str,
+) -> ChoreographyVariant:
+    """Select deterministically from the compatible production subset only."""
+
+    eligible = eligible_variants_for_character_presence(
+        strategy_id,
+        character_presence,
+    )
+    offset = max(int(variation_index), 0)
+    return eligible[offset % len(eligible)]
+
+
 def choreography_sha256(variant: ChoreographyVariant) -> str:
     return canonical_sha256(variant.model_dump(mode="json"))
 
