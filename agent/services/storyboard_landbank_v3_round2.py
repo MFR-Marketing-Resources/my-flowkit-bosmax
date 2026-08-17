@@ -120,6 +120,103 @@ def _unique(values: Sequence[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(str(value) for value in values if str(value).strip()))
 
 
+def _copy_tokens(text: str) -> set[str]:
+    return {word for word in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(word) > 2}
+
+
+def _copy_overlap(left: str, right: str) -> float:
+    left_tokens, right_tokens = _copy_tokens(left), _copy_tokens(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+
+
+def advisory_copy_dimensions(
+    stages: Sequence[Mapping[str, Any]],
+    *,
+    audience_text: str = "",
+    novelty_score: float = 1.0,
+    wps_valid: bool = True,
+) -> dict[str, float]:
+    """Deterministic, ADVISORY copywriting scores (0..1) over a Master's stages.
+
+    These explain *why* a candidate reads well or badly (hook clarity, formula
+    fidelity, body progression, Hook->Body and Body->CTA relevance, evidence
+    specificity, audience relevance, repetition, CTA clarity, WPS fit, novelty).
+    They are advisory only and never override the hard gates or human approval.
+
+    ``stages`` is a list of ``{role, text, claim_bearing, has_evidence}`` where
+    ``role`` is HOOK / BODY_CORE / CTA.
+    """
+    def clamp(value: float) -> float:
+        return round(max(0.0, min(1.0, value)), 4)
+
+    by_role: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for stage in stages:
+        by_role[str(stage.get("role") or "")].append(stage)
+    hook = " ".join(str(stage.get("text") or "") for stage in by_role.get("HOOK", []))
+    body_stages = by_role.get("BODY_CORE", [])
+    body = " ".join(str(stage.get("text") or "") for stage in body_stages)
+    cta = " ".join(str(stage.get("text") or "") for stage in by_role.get("CTA", []))
+    all_text = " ".join(str(stage.get("text") or "") for stage in stages)
+
+    hook_words = len(hook.split())
+    hook_clarity = clamp(
+        (1.0 if hook else 0.0)
+        * (1.0 if 3 <= hook_words <= 16 else 0.5)
+        * (1.0 if hook.strip().endswith("?") or hook_words <= 10 else 0.8)
+    )
+
+    roles = [str(stage.get("role") or "") for stage in stages]
+    order_key = {"HOOK": 0, "BODY_CORE": 1, "CTA": 2}
+    complete = bool(hook and body and cta)
+    ordered = roles == sorted(roles, key=lambda role: order_key.get(role, 9))
+    formula_stage_fidelity = clamp((0.5 if complete else 0.0) + (0.5 if complete and ordered else 0.0))
+
+    if len(body_stages) >= 2:
+        distinctness = 1.0 - _copy_overlap(str(body_stages[0].get("text") or ""), str(body_stages[-1].get("text") or ""))
+        body_progression = clamp(0.4 + 0.6 * distinctness)
+    else:
+        body_progression = clamp(0.6 if body else 0.0)
+
+    hook_body_relevance = clamp(_copy_overlap(hook, body) * 2.0)
+    body_cta_relevance = clamp(_copy_overlap(body, cta) * 2.0)
+
+    claim_stages = [stage for stage in stages if stage.get("claim_bearing")]
+    if claim_stages:
+        grounded = sum(1 for stage in claim_stages if stage.get("has_evidence")) / len(claim_stages)
+        specific = 1.0 if re.search(r"\d", all_text) else 0.6
+        evidence_specificity = clamp(0.5 * grounded + 0.5 * specific)
+    else:
+        evidence_specificity = 0.6
+
+    audience_relevance = clamp(0.5 + _copy_overlap(all_text, audience_text)) if audience_text else 0.6
+
+    words = re.findall(r"[a-z0-9]+", all_text.lower())
+    repetition = clamp(len(set(words)) / max(1, len(words)))
+
+    cta_words = cta.split()
+    cta_clarity = clamp(
+        (1.0 if cta else 0.0)
+        * (1.0 if 2 <= len(cta_words) <= 12 else 0.5)
+        * (1.0 if cta.strip().endswith((".", "!")) else 0.7)
+    )
+
+    return {
+        "hook_clarity": hook_clarity,
+        "formula_stage_fidelity": formula_stage_fidelity,
+        "body_progression": body_progression,
+        "hook_body_relevance": hook_body_relevance,
+        "body_cta_relevance": body_cta_relevance,
+        "evidence_specificity": evidence_specificity,
+        "audience_relevance": audience_relevance,
+        "repetition": repetition,
+        "cta_clarity": cta_clarity,
+        "wps_fit": 1.0 if wps_valid else 0.5,
+        "novelty": clamp(novelty_score),
+    }
+
+
 def _usage_number(payload: Mapping[str, Any], keys: Sequence[str], *, default: float = 0.0) -> float:
     for key in keys:
         value = payload.get(key)
@@ -1024,7 +1121,25 @@ class V3CopyRegisterRound2Service:
         if exact:
             issue_codes.append("EXACT_DUPLICATE")
         hard_pass = all((formula_valid, evidence_valid, bridge_valid, safety_valid, truth_current, wps_valid)) and not exact
-        quality_score = round(sum(bool(item) for item in (formula_valid, evidence_valid, bridge_valid, safety_valid, truth_current, wps_valid)) / 6, 4)
+        # Advisory dimensions: role by position (first=HOOK, last=CTA, else BODY_CORE).
+        stage_list = list(master.stages)
+        advisory_stages = [
+            {
+                "role": "HOOK" if index == 0 else "CTA" if index == len(stage_list) - 1 else "BODY_CORE",
+                "text": stage.authored_text,
+                "claim_bearing": bool(stage.claim_bearing),
+                "has_evidence": bool(stage.evidence_fact_ids),
+            }
+            for index, stage in enumerate(stage_list)
+        ]
+        dimensions = advisory_copy_dimensions(
+            advisory_stages,
+            audience_text=str(current.snapshot.get("target_customer_text") or ""),
+            novelty_score=round(max(0.0, 1.0 - nearest), 4),
+            wps_valid=wps_valid,
+        )
+        # Advisory score reflects copywriting quality, not merely gates passed.
+        quality_score = round(sum(dimensions.values()) / len(dimensions), 4)
         return V3QualitySignal(
             hard_pass=hard_pass,
             formula_valid=formula_valid,
@@ -1036,6 +1151,7 @@ class V3CopyRegisterRound2Service:
             issue_codes=_unique(issue_codes),
             novelty_signal=novelty,  # type: ignore[arg-type]
             novelty_score=round(max(0.0, 1.0 - nearest), 4),
+            quality_dimensions=dimensions,
             quality_score=quality_score,
         )
 

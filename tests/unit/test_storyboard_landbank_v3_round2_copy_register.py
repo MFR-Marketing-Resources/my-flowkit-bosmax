@@ -67,6 +67,7 @@ async def _add_extra_body(factory, recipe, angle, family, index):
     )
 from agent.services.storyboard_landbank_v3_round2 import (
     V3CopyRegisterRound2Service,
+    advisory_copy_dimensions,
 )
 from agent.models.storyboard_landbank_v3_round2 import V3ProviderSummary
 
@@ -675,6 +676,99 @@ async def test_round2_create_bootstraps_from_zero_supply(monkeypatch):
     assert {p["target_duration_seconds"] for p in master_item["projections"]} == {8, 16, 24}
     review = await service.review_queue(product_id)
     assert any(item["master"]["master_id"] == master_item["master"]["master_id"] for item in review["items"])
+
+
+def _stage(role, text, claim_bearing=True, has_evidence=True):
+    return {"role": role, "text": text, "claim_bearing": claim_bearing, "has_evidence": has_evidence}
+
+
+def _dim_mean(dims):
+    return sum(dims.values()) / len(dims)
+
+
+def test_round2_advisory_quality_distinguishes_good_from_bad_copy():
+    audience = "busy people who want a simple lightweight daily routine"
+
+    good_pas = [
+        _stage("HOOK", "Struggling with a heavy, complicated daily routine?"),
+        _stage("BODY_CORE", "Every extra step drains your morning energy and time."),
+        _stage("BODY_CORE", "Switch to one lightweight routine that keeps mornings simple."),
+        _stage("CTA", "Start your lighter routine today.", claim_bearing=False),
+    ]
+    good_aida = [
+        _stage("HOOK", "Want calmer mornings without the routine chaos?"),
+        _stage("BODY_CORE", "This lightweight routine trims every step to the essentials."),
+        _stage("BODY_CORE", "Picture a simple morning that saves your energy and time."),
+        _stage("CTA", "Begin your simple routine now.", claim_bearing=False),
+    ]
+    good_pastor = [
+        _stage("HOOK", "Tired of a routine that eats your whole morning?"),
+        _stage("BODY_CORE", "You have tried longer routines and still feel rushed."),
+        _stage("BODY_CORE", "One lightweight routine finally made mornings calm and simple."),
+        _stage("CTA", "Try the lighter routine today.", claim_bearing=False),
+    ]
+    good_pesta = [
+        _stage("HOOK", "What if your daily routine took half the time?"),
+        _stage("BODY_CORE", "Heavy routines quietly drain your energy every single morning."),
+        _stage("BODY_CORE", "This simple lightweight routine keeps every step easy to follow."),
+        _stage("CTA", "Start your simple routine now.", claim_bearing=False),
+    ]
+    goods = {"PAS": good_pas, "AIDA": good_aida, "PASTOR": good_pastor, "PESTA": good_pesta}
+
+    repeated = [
+        _stage("HOOK", "Simple routine simple routine."),
+        _stage("BODY_CORE", "Simple routine simple routine."),
+        _stage("BODY_CORE", "Simple routine simple routine."),
+        _stage("CTA", "Simple routine simple routine.", claim_bearing=False),
+    ]
+    unrelated_body = [
+        _stage("HOOK", "Struggling with a heavy, complicated daily routine?"),
+        _stage("BODY_CORE", "Industrial hydraulic pumps require quarterly viscosity calibration."),
+        _stage("BODY_CORE", "Bearings must be greased on a fixed maintenance schedule."),
+        _stage("CTA", "Start your lighter routine today.", claim_bearing=False),
+    ]
+    weak_cta = [
+        _stage("HOOK", "Struggling with a heavy, complicated daily routine?"),
+        _stage("BODY_CORE", "Every extra step drains your morning energy and time."),
+        _stage("BODY_CORE", "Switch to one lightweight routine that keeps mornings simple."),
+        _stage("CTA", "ok", claim_bearing=False),
+    ]
+    inverted = [
+        _stage("CTA", "Start your lighter routine today.", claim_bearing=False),
+        _stage("BODY_CORE", "Switch to one lightweight routine that keeps mornings simple."),
+        _stage("HOOK", "Struggling with a heavy, complicated daily routine?"),
+    ]
+    unsupported = [
+        _stage("HOOK", "Struggling with a heavy, complicated daily routine?"),
+        _stage("BODY_CORE", "This routine cures every disease overnight.", has_evidence=False),
+        _stage("BODY_CORE", "It also guarantees instant permanent life-changing results.", has_evidence=False),
+        _stage("CTA", "Start today.", claim_bearing=False),
+    ]
+    bads = {
+        "repeated": repeated, "unrelated_body": unrelated_body, "weak_cta": weak_cta,
+        "inverted": inverted, "unsupported": unsupported,
+    }
+
+    good_dims = {name: advisory_copy_dimensions(copy, audience_text=audience) for name, copy in goods.items()}
+    bad_dims = {name: advisory_copy_dimensions(copy, audience_text=audience) for name, copy in bads.items()}
+
+    good_mean = sum(_dim_mean(d) for d in good_dims.values()) / len(good_dims)
+    bad_mean = sum(_dim_mean(d) for d in bad_dims.values()) / len(bad_dims)
+    assert good_mean > bad_mean  # good copy scores higher on the advisory composite
+
+    # Well-formed copy scores its structural dimensions high.
+    for dims in good_dims.values():
+        assert dims["formula_stage_fidelity"] == 1.0
+        assert dims["hook_clarity"] >= 0.8
+
+    # Each deliberate defect is localized by the dimension that explains it, and
+    # scores clearly below the well-formed PAS reference on that same dimension.
+    ref = good_dims["PAS"]
+    assert bad_dims["repeated"]["repetition"] < 0.5 < ref["repetition"]
+    assert bad_dims["unrelated_body"]["hook_body_relevance"] < ref["hook_body_relevance"]
+    assert bad_dims["weak_cta"]["cta_clarity"] < 0.7 <= ref["cta_clarity"]
+    assert bad_dims["inverted"]["formula_stage_fidelity"] < ref["formula_stage_fidelity"]
+    assert bad_dims["unsupported"]["evidence_specificity"] < 0.6 < ref["evidence_specificity"]
 
 
 @pytest.mark.asyncio

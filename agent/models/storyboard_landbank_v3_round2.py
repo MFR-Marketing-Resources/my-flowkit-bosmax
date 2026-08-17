@@ -196,6 +196,9 @@ class V3QualitySignal(BaseModel):
     issue_codes: tuple[str, ...] = Field(default_factory=tuple)
     novelty_signal: Literal["NOVEL", "NEAR_DUPLICATE", "EXACT_DUPLICATE", "UNKNOWN"]
     novelty_score: float = Field(ge=0.0, le=1.0)
+    # Advisory, explainable copywriting dimensions (0..1).  NEVER override the
+    # hard gates above; a human makes the semantic call.
+    quality_dimensions: dict[str, float] = Field(default_factory=dict)
     quality_score: float = Field(ge=0.0, le=1.0)
 
 
