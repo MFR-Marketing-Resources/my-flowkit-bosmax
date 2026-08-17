@@ -12,11 +12,12 @@
     PR #265 merged exactly that way and broke the dashboard bundle rebuild. This gate
     runs the REAL build, not a weaker proxy. See docs/VERIFICATION_GATE.md.
 
-    ENFORCEMENT: this is a LOCAL process control, not a hard block. There is no CI and
-    no required branch protection yet, and the pre-push hook is optional (not installed),
-    so a human or agent CAN still bypass it. It does not make a broken build "impossible"
-    to merge — it makes the real build easy to run and check before reporting green.
-    Server-side enforcement (GitHub Actions / required checks) is a separate future step.
+    ENFORCEMENT: this is local process-control proof. The canonical GitHub Actions
+    `verify` workflow runs this same gate on pull requests targeting `main`, and main
+    branch protection requires the `verify` check before a normal merge. The protection
+    also requires a pull request, enforces the policy for admins, disables force pushes
+    and branch deletion, and has an empty direct-push allowlist. This script still cannot
+    prove that remote CI ran; report local and remote proof separately.
 
     LOCAL ONLY — this is not CI. It runs on the developer/agent machine. Do not report
     a change as CI-verified on the basis of this gate.

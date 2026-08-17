@@ -275,7 +275,9 @@ auto-approve Copy Sets, and **must not** use fallback copy as the baseline produ
 
 ### Gate rulings
 
-1. **"CI results" may never be cited as proof** while no CI exists. A proof line that cannot be produced must not appear in any report.
+1. **"CI results" may be cited only when the remote `verify` workflow result is present and
+   green.** A local gate pass is not CI proof, and a proof line that cannot be produced must not
+   appear in any report.
 2. **"Merge rights" is not a meaningful control here** — it was never withheld. Restraint is therefore *procedural*, not technical: an agent operating under `REMOTE PR` must not merge even though it technically can. This is the single weakest control in the workstream and the owner should treat it as such.
 3. **"Post-merge validation" must be defined concretely or not claimed.** Minimum definition: runtime restarted from the canonical worktree; live `git_head` equals the merge SHA; `source_stale_since_start=false`; the affected surface re-rendered and observed.
 4. **No credit-bearing session for Rounds A–D.**
@@ -430,7 +432,7 @@ the notice. Per-step attribution would be a **new owner decision**. Recorded in 
 | Step 5 credit burn / duplicate submission | **HIGH** | `OWNER-ONLY`, per-run authorization, baseline+delta (§11, §10 Round E) |
 | Dry-run mistaken for live | MED | Dry-run flag captured; D+E never bundled (§6) |
 | Merge before proof / self-merge | **HIGH** | `REMOTE PR` only; named human reviewer; `review` restored (§5, M11) |
-| Bad merge with no rollback on unprotected `main` | **HIGH** | Rollback clause required (M12) — **currently undefined** |
+| Bad merge with no rollback owner on protected `main` | **HIGH** | Rollback clause required (M12) — **currently undefined** |
 | Stale runtime / stale dist masking reality | MED | Origin pinned + `git_head` + `source_stale_since_start` in every proof (§4) |
 | Approval revoked mid-run (stale client cache) | MED | Round B read-only w.r.t. approval; re-verify before Step 4 (§8) |
 | Agent restraint is procedural, not technical | **HIGH** | Acknowledged explicitly (§9.2) — owner accepts this residual risk knowingly |
@@ -441,9 +443,9 @@ the notice. Per-step attribution would be a **new owner decision**. Recorded in 
 
 `FULL DELIVERY` is **refused for every round of this workstream today**. The feasibility contract's
 own Green Signal states an agent must not claim full delivery unless repo, **CI**, merge, runtime,
-and post-merge validation access are available. Verified: **there is no CI and `main` is
-unprotected**, so the claim is unavailable by the contract's own rule, and the contract's own
-Auditor Rule concludes that the maximum acceptable next step is **phased delivery**.
+and post-merge validation access are available. The repository-level CI and required protection
+prerequisites are now present (`verify` is required on `main`), but the claim remains unavailable
+because the remaining owner-only conditions below are not all satisfied.
 
 All of the following must be true before FULL DELIVERY may even be *discussed*:
 
@@ -754,7 +756,7 @@ Decision 2 authorizes **merge only**. The live-run authorization is separate and
 |---|---|---|
 | **B12** | **No per-run written owner authorization for a live T2V run.** §11.3 requires it per run; none exists. | Owner records one, quoted in the run report. |
 | **B13** | **B6 still stands** — no non-production product, no isolated DB. A live run hits the live DB. | Safe test data exists, or the owner waives B6 in writing for one named product. |
-| **B14** | **No named human reviewer / rollback owner** (§Status, four open `OWNER_DECISION_REQUIRED` fields). `main` is unprotected and there is no CI. | Owner names both. |
+| **B14** | **No named human reviewer / rollback owner** (§Status, four open `OWNER_DECISION_REQUIRED` fields). `main` is protected with required `verify`, but a named human review and rollback owner are still not recorded. | Owner names both. |
 
 ### 17.6 Verdict — Round F
 

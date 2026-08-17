@@ -428,9 +428,10 @@ traceability.
 
 `FULL DELIVERY` is **refused for every round of this workstream** at this time. This is compelled by
 this contract's own Green Signal — *"It does not claim full delivery unless repo, CI, merge, runtime,
-and post-merge validation access are available"* — because **there is no CI in this repo and `main`
-is unprotected**. This contract's own BOSMAX Auditor Rule then applies: *"the maximum acceptable next
-step is phased delivery, not full delivery."*
+and post-merge validation access are available"* — because, **at the time of this amendment, there
+was no CI in this repo and `main` was unprotected**. The repository-level CI and required protection
+prerequisites are now present, but this contract's remaining owner-only conditions still keep the
+maximum acceptable next step at phased delivery, not full delivery.
 
 Authority ceiling per round:
 
@@ -470,7 +471,7 @@ Each round requires a **separate** owner decision. **`D+E`, `A+B`, and `E+F` mus
 ### 4. Rollback (M12)
 
 `FULL DELIVERY` is defined through merge and post-merge validation but previously had **no rollback
-clause**, on an unprotected `main`. Binding:
+clause**, before branch protection was configured on `main`. Binding:
 
 - **Post-merge validation is concretely defined as:** runtime restarted from the canonical worktree;
   live `git_head` equals the merge SHA; `source_stale_since_start=false`; the affected surface
@@ -502,9 +503,9 @@ Round E requires: per-run written owner authorization quoted in the report; a **
 defined in advance**; and explicit reconciliation with `AGENTS.md`'s live-UAT rule. "The RPA stopped
 before Step 5" must be proven by a **request-count delta of zero**, never self-reported.
 
-**"CI results" must never be cited as proof while no CI exists** — a proof line that cannot be
-produced must not appear in any report. Screenshots are **supporting evidence only, never sole
-proof**.
+**"CI results" may be cited only when the remote `verify` workflow result is present and green** —
+a local gate pass is not CI proof. A proof line that cannot be produced must not appear in any
+report. Screenshots are **supporting evidence only, never sole proof**.
 
 ### 7. Accepted optional amendments
 
