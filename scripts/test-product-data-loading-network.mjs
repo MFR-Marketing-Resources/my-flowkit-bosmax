@@ -331,6 +331,19 @@ async function clickAction(page, testId, action) {
 	return Date.now() - startedAt;
 }
 
+async function runAndAwaitLiveResponse(page, action, matches, description) {
+	const responsePromise = page.waitForResponse(
+		(response) => {
+			if (!matches(response)) return false;
+			return response.status() >= 200 && response.status() < 300;
+		},
+		{ timeout: LIVE_TIMEOUT_MS },
+	);
+	await action();
+	const response = await responsePromise;
+	assert(response.ok(), `${description} returned ${response.status()}`);
+}
+
 function responseObservations(capture) {
 	const byPath = new Map();
 	for (const response of capture.responses) {
@@ -450,8 +463,12 @@ async function runLive() {
 		await page.getByRole("button", { name: /Search and select product/i }).waitFor({ timeout: LIVE_TIMEOUT_MS });
 		await page.getByRole("button", { name: /Search and select product/i }).click();
 		const selectorSearch = page.locator('input[placeholder="Search all products by name..."]');
-		await selectorSearch.fill("outside");
-		await page.waitForTimeout(1_000);
+		await runAndAwaitLiveResponse(
+			page,
+			() => selectorSearch.fill("outside"),
+			(response) => new URL(response.url()).pathname === "/api/products/search",
+			"selector search",
+		);
 
 		await page.goto(`${BASE_URL}/product-registration`, {
 			waitUntil: "domcontentloaded",
@@ -459,8 +476,19 @@ async function runLive() {
 		});
 		await page.getByTestId("product-registry-table").waitFor({ timeout: LIVE_TIMEOUT_MS });
 		const allSearch = page.locator('input[placeholder="product title…"]');
-		await allSearch.fill("outside");
-		await page.waitForTimeout(1_000);
+		await runAndAwaitLiveResponse(
+			page,
+			() => allSearch.fill("outside"),
+			(response) => {
+				const url = new URL(response.url());
+				return (
+					url.pathname === "/api/products" &&
+					url.searchParams.get("view") === "REGISTRY" &&
+					url.searchParams.get("q") === "outside"
+				);
+			},
+			"Smart Registration search",
+		);
 		const firstRow = page.locator('[data-testid="product-registry-table"] tbody tr').first();
 		if (await firstRow.count()) {
 			await firstRow.click();
@@ -489,8 +517,18 @@ async function runLive() {
 		await p6Picker.locator("button").first().click();
 		const p6Search = page.getByLabel("Search governed products");
 		await p6Search.waitFor({ timeout: LIVE_TIMEOUT_MS });
-		await p6Search.fill("outside");
-		await page.waitForTimeout(1_000);
+		await runAndAwaitLiveResponse(
+			page,
+			() => p6Search.fill("outside"),
+			(response) => {
+				const url = new URL(response.url());
+				return (
+					url.pathname === "/api/creative-production/cohort-authority" &&
+					url.searchParams.get("q") === "outside"
+				);
+			},
+			"P6 cohort search",
+		);
 		const next = page.getByRole("button", { name: "Next" });
 		if (await next.count() && await next.isEnabled()) await next.click();
 		await page.waitForTimeout(1_000);
