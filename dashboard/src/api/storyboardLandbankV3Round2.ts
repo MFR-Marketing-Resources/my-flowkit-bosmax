@@ -396,3 +396,114 @@ export async function materializeV3ProjectionsBulk(input: { items: Array<{ proje
 		request_id: requestId("v3-materialize-bulk"),
 	});
 }
+
+// --- Round 3 P4: production copy capacity + manifest ------------------------
+// Read-only capacity is a FOUR-tier truth (semantic -> projection -> executable
+// -> production) plus a stale count. It is deliberately NOT a Cartesian product
+// guarantee; `production_capacity_note` carries that caveat for the operator.
+export interface V3ProductionCapacity {
+	product_id: string;
+	semantic_capacity: number;
+	projection_capacity: number;
+	executable_copy_capacity: number;
+	production_capacity: number;
+	stale_copy_count: number;
+	production_capacity_note: string;
+}
+
+// A manifest is DRAFT until an operator freezes it (-> FROZEN). Kept as an open
+// string so an unrecognised backend status is surfaced verbatim, never guessed.
+export type V3ProductionManifestStatus = "DRAFT" | "FROZEN";
+
+export interface V3ProductionManifestSummary {
+	manifest_id: string;
+	revision: number;
+	status: V3ProductionManifestStatus | string;
+	item_count: number;
+	valid_item_count: number;
+	blocked_item_count: number;
+	manifest_digest: string;
+	[key: string]: unknown;
+}
+
+export interface V3ProductionManifestBlocked {
+	projection_id: string;
+	reason: string;
+}
+
+export interface V3ProductionManifestItem {
+	projection_id?: string;
+	[key: string]: unknown;
+}
+
+export interface V3ProductionManifestResponse {
+	manifest: V3ProductionManifestSummary;
+	items: V3ProductionManifestItem[];
+	selected_count: number;
+	valid_count: number;
+	blocked_count: number;
+	blocked: V3ProductionManifestBlocked[];
+	shortfall: number;
+	reuse_policy: string;
+}
+
+export interface V3ProductionManifestDetail {
+	manifest: V3ProductionManifestSummary;
+	items: V3ProductionManifestItem[];
+}
+
+// GET — read-only four-tier capacity snapshot for a single product.
+export async function fetchV3ProductionCapacity(productId: string): Promise<V3ProductionCapacity> {
+	return getAPI<V3ProductionCapacity>(
+		`/api/storyboard-landbank/v3/copy-register/capacity?product_id=${encodeURIComponent(productId)}`,
+	);
+}
+
+// POST — build (or refresh) the DRAFT supply manifest for a product at the
+// requested capacity. Selection is server-authoritative; blocked projections
+// come back with reasons and any shortfall is reported, never invented.
+export async function buildV3ProductionManifest(input: {
+	productId: string;
+	requestedCapacity: number;
+	durationSeconds?: number;
+	campaignKey?: string;
+	productionPlanId?: string;
+}): Promise<V3ProductionManifestResponse> {
+	return postAPI("/api/storyboard-landbank/v3/copy-register/manifest", {
+		product_id: input.productId,
+		requested_capacity: input.requestedCapacity,
+		...(input.durationSeconds != null ? { duration_seconds: input.durationSeconds } : {}),
+		...(input.campaignKey ? { campaign_key: input.campaignKey } : {}),
+		...(input.productionPlanId ? { production_plan_id: input.productionPlanId } : {}),
+		actor_id: "dashboard-operator",
+		request_id: requestId("v3-manifest"),
+	});
+}
+
+// POST — freeze a DRAFT manifest at an exact revision (optimistic-concurrency
+// guarded server-side). Same actor_id/request_id mutation-receipt pattern as
+// the approve/materialize client fns.
+export async function freezeV3ProductionManifest(input: {
+	manifestId: string;
+	revision: number;
+}): Promise<{ manifest: V3ProductionManifestSummary }> {
+	return postAPI(
+		`/api/storyboard-landbank/v3/copy-register/manifest/${encodeURIComponent(input.manifestId)}/freeze`,
+		{
+			revision: input.revision,
+			actor_id: "dashboard-operator",
+			request_id: requestId("v3-manifest-freeze"),
+		},
+	);
+}
+
+// GET — re-read a manifest (optionally pinned to a revision). Read-only.
+export async function fetchV3ProductionManifest(input: {
+	manifestId: string;
+	revision?: number;
+}): Promise<V3ProductionManifestDetail> {
+	const query = input.revision != null ? `?revision=${input.revision}` : "";
+	return getAPI<V3ProductionManifestDetail>(
+		`/api/storyboard-landbank/v3/copy-register/manifest/${encodeURIComponent(input.manifestId)}${query}`,
+	);
+}
