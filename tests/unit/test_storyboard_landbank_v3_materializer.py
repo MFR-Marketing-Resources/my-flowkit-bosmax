@@ -209,12 +209,15 @@ async def _approved_supply(monkeypatch, product_id: str):
     monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
     factory, recipe, _angle, _family = await _seed_v2_production_ready_v3_supply(product_id)
     svc = V3CopyRegisterRound2Service(factory=factory)
+    # Product-scoped request ids so the V3 factory idempotency ledger never
+    # collides when multiple suites share one pytest session DB (verify-gate/CI).
     plan = await svc.plan_assistant(
         recipe.product_id, recipe.recipe_id, mode="CREATE",
-        actor_id="op", request_id="plan",
+        actor_id="op", request_id=f"{product_id}:plan",
     )
     result = await svc.execute_assistant(
-        plan.plan_id, actor_id="op", request_id="exec", provider_mode="FAKE_TEST"
+        plan.plan_id, actor_id="op", request_id=f"{product_id}:exec",
+        provider_mode="FAKE_TEST",
     )
     approval = await svc.human_approve(
         result["master"]["entity_id"],
@@ -223,7 +226,7 @@ async def _approved_supply(monkeypatch, product_id: str):
         approved_by="owner",
         rationale="Reviewed storyboard, evidence, formula, bridge, safety, durations.",
         actor_id="owner",
-        request_id="approve",
+        request_id=f"{product_id}:approve",
     )
     assert approval["master"]["status"] == "APPROVED"
     return svc, result, approval
