@@ -360,4 +360,110 @@ describe("CopywritingSourceSelector Governance & Features", () => {
 		expect(approveCalls.length).toBe(0);
 		expect(activateCalls.length).toBe(0);
 	});
+
+	it("prevents activation when PRODUCTION_VALID but current_authority_activation_allowed is false", async () => {
+		const mockStaleBlueprint: CopyBlueprintV2Record = {
+			...mockApprovedBlueprint,
+			blueprint_id: "bp-stale-1",
+			status: "PRODUCTION_VALID",
+			current_authority_activation_allowed: false,
+		};
+		const fetchMock = stubFetch([mockStaleBlueprint], null);
+		render(<CopywritingSourceSelector productId="prod-1" productName="Test Oil" lane="HYBRID" />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId("copy-status-stale")).toBeInTheDocument();
+		});
+
+		expect(screen.getByTestId("copy-status-stale")).toHaveTextContent("STALE — REVALIDATION REQUIRED");
+		expect(screen.queryByTestId("copy-status-approved")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("use-this-copy-button")).not.toBeInTheDocument();
+
+		const reviewLink = screen.getByTestId("review-in-copy-register-link");
+		expect(reviewLink).toBeInTheDocument();
+		expect(reviewLink).toHaveTextContent(/Revalidate in Copy Register/i);
+
+		const activateCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/activate"));
+		expect(activateCalls.length).toBe(0);
+	});
+
+	it("prevents activation when V2_APPROVED but current_authority_activation_allowed is false", async () => {
+		const mockStaleV2ApprovedBlueprint: CopyBlueprintV2Record = {
+			...mockApprovedBlueprint,
+			blueprint_id: "bp-stale-2",
+			status: "V2_APPROVED",
+			current_authority_activation_allowed: false,
+		};
+		const fetchMock = stubFetch([mockStaleV2ApprovedBlueprint], null);
+		render(<CopywritingSourceSelector productId="prod-1" productName="Test Oil" lane="HYBRID" />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId("copy-status-stale")).toBeInTheDocument();
+		});
+
+		expect(screen.queryByTestId("use-this-copy-button")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("copy-status-approved")).not.toBeInTheDocument();
+
+		const activateCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/activate"));
+		expect(activateCalls.length).toBe(0);
+	});
+
+	it("shows a truthful stale state for an ACTIVE blueprint whose current authority is no longer valid (4D)", async () => {
+		const staleActive: CopyBlueprintV2Record = {
+			...mockApprovedBlueprint,
+			blueprint_id: "bp-1",
+			status: "PRODUCTION_VALID",
+			current_authority_activation_allowed: false,
+		};
+		stubFetch([staleActive], "bp-1");
+		render(<CopywritingSourceSelector productId="prod-1" productName="Test Oil" lane="HYBRID" />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId("copywriting-selected-summary")).toBeInTheDocument();
+		});
+
+		expect(screen.getByTestId("copy-active-stale-warning")).toBeInTheDocument();
+		expect(screen.getByText(/Active Copy — Revalidation Required/i)).toBeInTheDocument();
+		expect(screen.getByTestId("active-stale-revalidate-link")).toHaveAttribute(
+			"href",
+			expect.stringContaining("blueprint_id=bp-1"),
+		);
+		// The reassuring "Copywriting Selected" green header must NOT be shown for stale active copy.
+		expect(screen.queryByText(/^Copywriting Selected$/i)).not.toBeInTheDocument();
+	});
+
+	it("does not show the stale-warning when the ACTIVE blueprint remains current", async () => {
+		stubFetch([mockApprovedBlueprint], "bp-1");
+		render(<CopywritingSourceSelector productId="prod-1" productName="Test Oil" lane="HYBRID" />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId("copywriting-selected-summary")).toBeInTheDocument();
+		});
+
+		expect(screen.queryByTestId("copy-active-stale-warning")).not.toBeInTheDocument();
+		expect(screen.getByText(/Copywriting Selected/i)).toBeInTheDocument();
+	});
+
+	it("uses only Copy Register V2 endpoints — never the legacy copy_set API (no legacy fallback)", async () => {
+		const fetchMock = stubFetch([mockApprovedBlueprint], null);
+		render(<CopywritingSourceSelector productId="prod-1" productName="Test Oil" lane="HYBRID" />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId("copy-source-register")).toBeInTheDocument();
+		});
+
+		const legacyCalls = fetchMock.mock.calls.filter(([url]) => {
+			const u = String(url);
+			return u.includes("/copy-sets") || u.includes("/api/copy-sets");
+		});
+		expect(legacyCalls.length).toBe(0);
+
+		const copyCalls = fetchMock.mock.calls
+			.map(([url]) => String(url))
+			.filter((u) => u.includes("/copy"));
+		expect(copyCalls.length).toBeGreaterThan(0);
+		for (const u of copyCalls) {
+			expect(u).toContain("/copy-register/v2/");
+		}
+	});
 });

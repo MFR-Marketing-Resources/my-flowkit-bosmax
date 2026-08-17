@@ -174,10 +174,14 @@ export function CopywritingSourceSelector({
 	}, [filteredBlueprints, page]);
 
 	const handleUseCopy = async (bp: CopyBlueprintV2Record) => {
-		// Strict Governance Rule: NEVER auto-approve or activate non-production-valid copy
-		const isEligible = bp.status === "PRODUCTION_VALID" || bp.status === "V2_APPROVED" || Boolean(bp.current_authority_activation_allowed);
-		if (!isEligible) {
-			setError("This copy set is in DRAFT status. Please review and approve it in the Copy Register before using.");
+		// Strict Governance Rule: Activation must be based on CURRENT authority, not merely historical status
+		const canActivate = bp.current_authority_activation_allowed === true;
+		if (!canActivate) {
+			if (bp.status === "PRODUCTION_VALID" || bp.status === "V2_APPROVED") {
+				setError("This copy set is historically approved but its Product Truth authority is stale. Please revalidate in Copy Register.");
+			} else {
+				setError("This copy set is in DRAFT status. Please review and approve it in the Copy Register before using.");
+			}
 			return;
 		}
 
@@ -272,17 +276,22 @@ export function CopywritingSourceSelector({
 		const body = extractBody(activeBlueprint);
 		const cta = extractCta(activeBlueprint);
 		const angleText = activeBlueprint.angle?.definition || "General Angle";
+		// Truthful CURRENT-ACTIVE state: an activation record is historical. If the
+		// product's current authority no longer permits this blueprint (Product Truth
+		// advanced after activation) it must NOT be presented as a clean, production-
+		// ready selection. The activation binding still points here, but it is stale.
+		const activeIsCurrent = activeBlueprint.current_authority_activation_allowed === true;
 
 		return (
 			<div className={`space-y-3 ${className}`} data-testid="copywriting-selected-summary">
-				<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
-					<div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-500/10 pb-3">
+				<div className={`rounded-xl border p-4 ${activeIsCurrent ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/40 bg-amber-500/5"}`}>
+					<div className={`flex flex-wrap items-center justify-between gap-2 border-b pb-3 ${activeIsCurrent ? "border-emerald-500/10" : "border-amber-500/20"}`}>
 						<div className="flex items-center gap-2">
-							<span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/20 text-[10px] font-bold text-emerald-300">
-								✓
+							<span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${activeIsCurrent ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"}`}>
+								{activeIsCurrent ? "✓" : "!"}
 							</span>
-							<span className="text-xs font-bold uppercase tracking-wider text-emerald-200">
-								Copywriting Selected
+							<span className={`text-xs font-bold uppercase tracking-wider ${activeIsCurrent ? "text-emerald-200" : "text-amber-200"}`}>
+								{activeIsCurrent ? "Copywriting Selected" : "Active Copy — Revalidation Required"}
 							</span>
 							<span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-300">
 								{activeSource === "REGISTER" ? "Copy Register" : "AI Copy Assistant"}
@@ -300,6 +309,28 @@ export function CopywritingSourceSelector({
 							Change Copy
 						</button>
 					</div>
+
+					{!activeIsCurrent ? (
+						<div
+							className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-[11px] text-amber-100"
+							data-testid="copy-active-stale-warning"
+						>
+							<p className="font-semibold">This active copy is stale — its Product Truth authority is no longer current.</p>
+							<p className="mt-1 text-amber-200/80">
+								The product's approved Product Truth advanced after this copy was activated. Regenerate and re-approve it in the Copy Register before the next production run.
+							</p>
+							<a
+								href={`/creative/copy-registry?product_id=${encodeURIComponent(productId || "")}&blueprint_id=${encodeURIComponent(activeBlueprint.blueprint_id)}`}
+								target="_blank"
+								rel="noreferrer"
+								data-testid="active-stale-revalidate-link"
+								className="mt-2 inline-flex items-center gap-1 font-semibold text-amber-200 hover:text-amber-100"
+							>
+								<span>Revalidate in Copy Register</span>
+								<ExternalLink size={12} />
+							</a>
+						</div>
+					) : null}
 
 					<div className="mt-3 space-y-2 text-xs">
 						<div>
@@ -503,7 +534,8 @@ export function CopywritingSourceSelector({
 									const body = extractBody(bp);
 									const cta = extractCta(bp);
 									const isCurrent = bp.blueprint_id === activeBlueprintId;
-									const isProductionValid = bp.status === "PRODUCTION_VALID" || bp.status === "V2_APPROVED" || Boolean(bp.current_authority_activation_allowed);
+									const canActivate = bp.current_authority_activation_allowed === true;
+									const isStaleHistorical = (bp.status === "PRODUCTION_VALID" || bp.status === "V2_APPROVED") && !canActivate;
 
 									return (
 										<div
@@ -512,9 +544,11 @@ export function CopywritingSourceSelector({
 											className={`flex flex-col justify-between rounded-xl border p-3.5 transition-colors ${
 												isCurrent
 													? "border-emerald-500/50 bg-emerald-500/10"
-													: isProductionValid
+													: canActivate
 														? "border-slate-800 bg-slate-950/70 hover:border-slate-700"
-														: "border-amber-500/20 bg-amber-500/5"
+														: isStaleHistorical
+															? "border-amber-500/30 bg-amber-500/5"
+															: "border-slate-800/80 bg-slate-950/40"
 											}`}
 										>
 											<div className="space-y-2 text-xs">
@@ -526,9 +560,13 @@ export function CopywritingSourceSelector({
 														<span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400" data-testid="copy-status-active">
 															<Check size={12} /> ACTIVE
 														</span>
-													) : isProductionValid ? (
+													) : canActivate ? (
 														<span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold text-emerald-300" data-testid="copy-status-approved">
 															APPROVED
+														</span>
+													) : isStaleHistorical ? (
+														<span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-300" data-testid="copy-status-stale">
+															STALE — REVALIDATION REQUIRED
 														</span>
 													) : (
 														<span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-300" data-testid="copy-status-needs-approval">
@@ -577,7 +615,7 @@ export function CopywritingSourceSelector({
 													>
 														Active Copy
 													</button>
-												) : isProductionValid ? (
+												) : canActivate ? (
 													<button
 														type="button"
 														data-testid="use-this-copy-button"
@@ -587,6 +625,17 @@ export function CopywritingSourceSelector({
 													>
 														Use This Copy
 													</button>
+												) : isStaleHistorical ? (
+													<a
+														href={`/creative/copy-registry?product_id=${encodeURIComponent(productId || "")}&blueprint_id=${encodeURIComponent(bp.blueprint_id)}`}
+														target="_blank"
+														rel="noreferrer"
+														data-testid="review-in-copy-register-link"
+														className="inline-flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/20"
+													>
+														<span>Revalidate in Copy Register</span>
+														<ExternalLink size={12} />
+													</a>
 												) : (
 													<a
 														href={`/creative/copy-registry?product_id=${encodeURIComponent(productId || "")}&blueprint_id=${encodeURIComponent(bp.blueprint_id)}`}
