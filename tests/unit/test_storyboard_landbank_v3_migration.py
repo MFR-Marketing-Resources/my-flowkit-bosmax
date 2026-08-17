@@ -186,7 +186,14 @@ async def test_v3_core_tables_indexes_and_deferred_tables_are_exact():
         "storyboard_component_v3": {"objective_id", "formula_stage_keys_json", "content_digest"},
         "copy_recipe_v3": {"campaign_key", "objective_id", "deterministic_seed", "config_digest"},
         "master_storyboard_v3": {"objective_id", "exact_stage_texts_json", "duplicate_fingerprint"},
-        "duration_projection_v3": {"master_id", "target_duration_seconds", "wps_authority_digest"},
+        "duration_projection_v3": {
+            "master_id",
+            "target_duration_seconds",
+            "wps_authority_digest",
+            "stage_allocations_json",
+            "stage_allocation_digest",
+            "stage_allocation_receipt_json",
+        },
     }
     for table, required_columns in expected_columns.items():
         cursor = await db.execute(f"PRAGMA table_info({table})")
@@ -235,6 +242,21 @@ async def test_v3_constraints_immutability_append_only_and_revision_supersession
     with pytest.raises(sqlite3.IntegrityError, match="ANGLE_V3_IMMUTABLE"):
         await db.execute("DELETE FROM angle_v3 WHERE angle_id='angle-v3-constraints' AND revision=1")
     await db.rollback()
+
+    for terminal_status in ("FROZEN", "REJECTED", "BLOCKED"):
+        angle_id = f"angle-v3-{terminal_status.lower()}"
+        await _insert_angle("constraints", angle_id, status=terminal_status)
+        with pytest.raises(sqlite3.IntegrityError, match="ANGLE_V3_IMMUTABLE"):
+            await db.execute(
+                "UPDATE angle_v3 SET definition='terminal edit' WHERE angle_id=? AND revision=1",
+                (angle_id,),
+            )
+        await db.rollback()
+        with pytest.raises(sqlite3.IntegrityError, match="ANGLE_V3_IMMUTABLE"):
+            await db.execute(
+                "DELETE FROM angle_v3 WHERE angle_id=? AND revision=1", (angle_id,)
+            )
+        await db.rollback()
 
     await _insert_angle("constraints", "angle-v3-constraints", revision=2, status="DRAFT")
     superseded = await (await db.execute(

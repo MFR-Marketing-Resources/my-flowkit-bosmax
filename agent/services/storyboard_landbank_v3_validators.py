@@ -34,6 +34,7 @@ from agent.models.storyboard_landbank_v3 import (
     exact_resolved_content_fingerprint,
     master_content_digest,
     normalized_text,
+    projected_stage_allocations_digest,
     projection_content_digest,
     validation_receipt_digest,
     word_count,
@@ -42,7 +43,14 @@ from agent.services import canonical_prompt_compiler
 
 
 V3_VALIDATOR_VERSION = "storyboard-landbank-v3-validator-1"
-_IMMUTABLE_STATUSES = {"APPROVED", "FROZEN", "SUPERSEDED", "ARCHIVED"}
+_IMMUTABLE_STATUSES = {
+    "APPROVED",
+    "FROZEN",
+    "REJECTED",
+    "BLOCKED",
+    "SUPERSEDED",
+    "ARCHIVED",
+}
 _RECEIPT_REQUIRED_STATUSES = {"VALIDATED", "APPROVED", "FROZEN"}
 
 
@@ -175,6 +183,22 @@ def _receipt_issue(name: str, receipt: V3ValidationReceipt) -> tuple[str, str] |
     if _receipt_is_valid(receipt):
         return None
     return ("INVALID_VALIDATION_RECEIPT", f"{name} receipt is not a valid deterministic receipt")
+
+
+def _ordered_token_subsequence(projected: str, source: str) -> bool:
+    """Prove same-language compression without a semantic/provider comparison."""
+
+    source_tokens = normalized_text(source).split()
+    projected_tokens = normalized_text(projected).split()
+    if not projected_tokens or len(projected_tokens) >= len(source_tokens):
+        return False
+    source_index = 0
+    for token in projected_tokens:
+        try:
+            source_index = source_tokens.index(token, source_index) + 1
+        except ValueError:
+            return False
+    return True
 
 
 class FormulaContractValidator:
@@ -604,6 +628,8 @@ class DurationProjectionValidator:
         cls,
         projection: V3DurationProjection,
         master: V3MasterStoryboard,
+        *,
+        evidence_registry: EvidenceRegistry | None = None,
     ) -> V3ValidationResult:
         issues: list[tuple[str, str]] = []
         if not _same_ref(projection.master, master.master_id, master.revision):
@@ -652,6 +678,258 @@ class DurationProjectionValidator:
         actual_dialogue = " ".join(normalized_text(item) for item in projection.per_block_slices).strip()
         if actual_dialogue != normalized_text(projection.exact_resolved_dialogue):
             issues.append(("DIALOGUE_SLICE_CONCATENATION_MISMATCH", "exact dialogue differs from block slices"))
+
+        # The projection is a child of the Master, not an independent copy
+        # authority. Every allocation must identify exactly one real Master
+        # stage, preserve its order and digest, stay within its evidence
+        # lineage, and use an explicit deterministic transform contract.
+        master_stages = tuple(master.stages)
+        master_stage_by_key = {stage.stage_key: stage for stage in master_stages}
+        allocations = tuple(projection.stage_allocations)
+        if projection.stage_allocation_digest != projected_stage_allocations_digest(allocations):
+            issues.append(
+                (
+                    "PROJECTION_STAGE_ALLOCATION_DIGEST_MISMATCH",
+                    "stage allocation digest is not exact",
+                )
+            )
+        allocation_keys = tuple(item.master_stage_key for item in allocations)
+        expected_stage_keys = tuple(stage.stage_key for stage in master_stages)
+        allocation_orders = tuple(item.order for item in allocations)
+        if allocation_orders != tuple(range(len(allocations))):
+            issues.append(("PROJECTION_STAGE_ORDER_MISMATCH", repr(allocation_orders)))
+        if allocation_keys != expected_stage_keys:
+            if len(allocation_keys) == len(expected_stage_keys) and set(allocation_keys) == set(
+                expected_stage_keys
+            ):
+                issues.append(("PROJECTION_STAGE_ORDER_MISMATCH", repr(allocation_keys)))
+            else:
+                issues.append(("PROJECTION_STAGE_COVERAGE_MISMATCH", repr(allocation_keys)))
+
+        registry_required = projection.status in _RECEIPT_REQUIRED_STATUSES
+        if registry_required and evidence_registry is None:
+            issues.append(
+                (
+                    "PROJECTION_EVIDENCE_REGISTRY_REQUIRED",
+                    "VALIDATED projections require the current approved evidence registry",
+                )
+            )
+        for allocation in allocations:
+            stage = master_stage_by_key.get(allocation.master_stage_key)
+            if stage is None:
+                issues.append(
+                    (
+                        "PROJECTION_UNKNOWN_MASTER_STAGE",
+                        allocation.master_stage_key,
+                    )
+                )
+                continue
+            if allocation.transform_mode not in {"IDENTITY", "COMPRESSED", "MERGED_ADJACENT"}:
+                issues.append(("PROJECTION_TRANSFORM_MODE_INVALID", allocation.master_stage_key))
+            if allocation.omission_state not in {"PRESENT", "OMITTED"}:
+                issues.append(("PROJECTION_OMISSION_STATE_INVALID", allocation.master_stage_key))
+            if allocation.master_formula_stage_key != stage.formula_stage_key:
+                issues.append(
+                    (
+                        "PROJECTION_MASTER_FORMULA_STAGE_MISMATCH",
+                        allocation.master_stage_key,
+                    )
+                )
+            if allocation.master_semantic_class != stage.semantic_class:
+                issues.append(
+                    (
+                        "PROJECTION_MASTER_STAGE_SEMANTIC_MISMATCH",
+                        allocation.master_stage_key,
+                    )
+                )
+            if allocation.master_stage_text_digest != stage.text_digest:
+                issues.append(
+                    (
+                        "PROJECTION_MASTER_STAGE_DIGEST_MISMATCH",
+                        allocation.master_stage_key,
+                    )
+                )
+            if stage.text_digest != digest_text(stage.authored_text):
+                issues.append(
+                    (
+                        "PROJECTION_MASTER_STAGE_TEXT_DIGEST_INVALID",
+                        allocation.master_stage_key,
+                    )
+                )
+            if allocation.projected_text_digest != digest_text(allocation.projected_text):
+                issues.append(
+                    (
+                        "PROJECTION_PROJECTED_TEXT_DIGEST_MISMATCH",
+                        allocation.master_stage_key,
+                    )
+                )
+            if allocation.source_evidence_digest != _evidence_ids_digest(
+                allocation.source_evidence_fact_ids
+            ):
+                issues.append(
+                    (
+                        "PROJECTION_SOURCE_EVIDENCE_DIGEST_MISMATCH",
+                        allocation.master_stage_key,
+                    )
+                )
+            if not set(allocation.source_evidence_fact_ids).issubset(
+                set(stage.evidence_fact_ids)
+            ):
+                issues.append(
+                    (
+                        "PROJECTION_EVIDENCE_OUTSIDE_MASTER",
+                        allocation.master_stage_key,
+                    )
+                )
+            if evidence_registry is not None:
+                evidence_result = EvidenceLineageValidator.validate(
+                    master.product_truth,
+                    allocation.source_evidence_fact_ids,
+                    evidence_registry,
+                    claim_bearing=stage.claim_bearing,
+                )
+                issues.extend(zip(evidence_result.issue_codes, evidence_result.details))
+
+            if tuple(sorted(set(allocation.target_block_indices))) != allocation.target_block_indices:
+                issues.append(
+                    (
+                        "PROJECTION_TARGET_BLOCK_ORDER_INVALID",
+                        allocation.master_stage_key,
+                    )
+                )
+            if any(index < 0 for index in allocation.target_block_indices):
+                issues.append(
+                    (
+                        "PROJECTION_TARGET_BLOCK_UNKNOWN",
+                        allocation.master_stage_key,
+                    )
+                )
+            if len(allocation.target_block_indices) != 1:
+                issues.append(
+                    (
+                        "PROJECTION_MULTIBLOCK_ALLOCATION_UNSUPPORTED",
+                        allocation.master_stage_key,
+                    )
+                )
+            elif allocation.target_block_indices[0] >= len(expected_blocks):
+                issues.append(
+                    (
+                        "PROJECTION_TARGET_BLOCK_UNKNOWN",
+                        allocation.master_stage_key,
+                    )
+                )
+
+            if allocation.omission_state == "OMITTED":
+                if allocation.projected_text:
+                    issues.append(
+                        (
+                            "PROJECTION_OMISSION_TEXT_PRESENT",
+                            allocation.master_stage_key,
+                        )
+                    )
+                if allocation.projected_text_digest != digest_text(""):
+                    issues.append(
+                        (
+                            "PROJECTION_OMISSION_DIGEST_MISMATCH",
+                            allocation.master_stage_key,
+                        )
+                    )
+                if stage.semantic_class in {"HOOK", "CTA"}:
+                    issues.append(
+                        (
+                            "PROJECTION_REQUIRED_STAGE_OMITTED",
+                            allocation.master_stage_key,
+                        )
+                    )
+                continue
+
+            if not allocation.projected_text:
+                issues.append(("PROJECTION_PROJECTED_TEXT_REQUIRED", allocation.master_stage_key))
+            if allocation.transform_mode == "IDENTITY":
+                if normalized_text(allocation.projected_text) != normalized_text(stage.authored_text):
+                    issues.append(
+                        (
+                            "PROJECTION_IDENTITY_DERIVATION_INVALID",
+                            allocation.master_stage_key,
+                        )
+                    )
+            elif allocation.transform_mode == "COMPRESSED":
+                if not _ordered_token_subsequence(allocation.projected_text, stage.authored_text):
+                    issues.append(
+                        (
+                            "PROJECTION_COMPRESSED_DERIVATION_INVALID",
+                            allocation.master_stage_key,
+                        )
+                    )
+            elif allocation.transform_mode == "MERGED_ADJACENT":
+                issues.append(
+                    (
+                        "PROJECTION_MERGED_ADJACENT_UNSUPPORTED",
+                        "Phase 2 requires an explicit one-stage allocation for merged text",
+                    )
+                )
+
+        present_allocations = tuple(
+            item for item in allocations if item.omission_state == "PRESENT"
+        )
+        present_semantic_classes = {item.master_semantic_class for item in present_allocations}
+        if not {"HOOK", "BODY_CORE", "CTA"}.issubset(present_semantic_classes):
+            issues.append(
+                (
+                    "PROJECTION_SEMANTIC_CLASSES_INCOMPLETE",
+                    repr(sorted(present_semantic_classes)),
+                )
+            )
+        if not master_stages or master_stages[-1].semantic_class != "CTA":
+            issues.append(("FORMULA_ARC_SEMANTIC_CLASSES_INCOMPLETE", "master has no final CTA stage"))
+        cta_allocations = tuple(
+            item for item in present_allocations if item.master_semantic_class == "CTA"
+        )
+        if len(cta_allocations) != 1 or not master_stages:
+            issues.append(("PROJECTION_CTA_SOURCE_INVALID", "projection must allocate one Master CTA"))
+        else:
+            cta_allocation = cta_allocations[0]
+            final_stage = master_stages[-1]
+            if cta_allocation.master_stage_key != final_stage.stage_key:
+                issues.append(("PROJECTION_CTA_SOURCE_INVALID", "CTA is not sourced from final Master CTA"))
+            if cta_allocation.target_block_indices != (len(expected_blocks) - 1,):
+                issues.append(("CTA_NOT_FINAL_BLOCK", "Master CTA allocation must land in final block"))
+
+        expected_allocation_slices = tuple(
+            " ".join(
+                normalized_text(item.projected_text)
+                for item in allocations
+                if item.omission_state == "PRESENT"
+                and len(item.target_block_indices) == 1
+                and item.target_block_indices[0] == block_index
+            ).strip()
+            for block_index in range(len(expected_blocks))
+        )
+        if projection.per_block_slices != expected_allocation_slices:
+            issues.append(
+                (
+                    "PROJECTION_BLOCK_SLICE_ALLOCATION_MISMATCH",
+                    "block slices are not reconstructed from stage allocations",
+                )
+            )
+        expected_dialogue = " ".join(expected_allocation_slices).strip()
+        if normalized_text(projection.exact_resolved_dialogue) != expected_dialogue:
+            issues.append(
+                (
+                    "PROJECTION_DIALOGUE_MASTER_DERIVATION_MISMATCH",
+                    "exact dialogue is not reconstructed from derived Master stage text",
+                )
+            )
+        if normalized_text(projection.exact_resolved_dialogue) != " ".join(
+            normalized_text(item.projected_text)
+            for item in present_allocations
+        ).strip():
+            issues.append(
+                (
+                    "PROJECTION_DIALOGUE_STAGE_ORDER_MISMATCH",
+                    "exact dialogue stage order differs from allocation order",
+                )
+            )
         if canonical_language and expected_blocks:
             expected_budgets = tuple(
                 canonical_prompt_compiler.strict_dialogue_word_budget(
@@ -672,16 +950,6 @@ class DurationProjectionValidator:
             issues.append(("WPS_BUDGET_EXCEEDED", "a block exceeds canonical WPS budget"))
         if projection.cta_block_index != len(expected_blocks) - 1:
             issues.append(("CTA_NOT_FINAL_BLOCK", "CTA must land in the final authority block"))
-        semantic_classes = {stage.semantic_class for stage in master.stages}
-        if not {"HOOK", "BODY_CORE", "CTA"}.issubset(semantic_classes):
-            issues.append(
-                (
-                    "FORMULA_ARC_SEMANTIC_CLASSES_INCOMPLETE",
-                    repr(sorted(semantic_classes)),
-                )
-            )
-        if not master.stages or master.stages[-1].semantic_class != "CTA":
-            issues.append(("FORMULA_ARC_SEMANTIC_CLASSES_INCOMPLETE", "master has no final CTA stage"))
         if master.stages and projection.cta_stage_key != master.stages[-1].stage_key:
             issues.append(("CTA_STAGE_MISMATCH", "projection CTA does not point to master final stage"))
         if projection.master_stage_keys != tuple(stage.stage_key for stage in master.stages):
@@ -705,10 +973,18 @@ class DurationProjectionValidator:
         for receipt_name, receipt in (
             ("continuity", projection.continuity_receipt),
             ("formula_arc", projection.formula_arc_receipt),
+            ("stage_allocation", projection.stage_allocation_receipt),
         ):
             receipt_issue = _receipt_issue(receipt_name, receipt)
             if receipt_issue:
                 issues.append(receipt_issue)
+        if projection.status in _RECEIPT_REQUIRED_STATUSES and projection.stage_allocation_receipt.validator != cls.name:
+            issues.append(
+                (
+                    "PROJECTION_STAGE_ALLOCATION_RECEIPT_INVALID",
+                    "validated projection requires a DurationProjectionValidator allocation receipt",
+                )
+            )
         if projection.exact_projection_digest != projection_content_digest(projection):
             issues.append(("PROJECTION_CONTENT_DIGEST_MISMATCH", "projection digest is not exact"))
         return _result(cls.name, issues)
@@ -742,6 +1018,92 @@ class ExactDuplicateValidator:
         if expected in set(existing_fingerprints):
             issues.append(("EXACT_DUPLICATE", expected))
         return _result(cls.name, issues)
+
+
+class V3CandidateGateResult(BaseModel):
+    """Provider/DB-free receipt envelope for one computed FAST54 candidate."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    candidate_id: str = Field(min_length=1)
+    valid: bool
+    issue_codes: tuple[str, ...] = ()
+    details: tuple[str, ...] = ()
+    receipts: tuple[V3ValidationResult, ...] = ()
+    gate_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class CandidateGateEvaluator:
+    """Evaluate actual candidate data and retain every validator receipt."""
+
+    name = "CandidateGateEvaluator"
+
+    @classmethod
+    def evaluate(
+        cls,
+        candidate_id: str,
+        *,
+        master: V3MasterStoryboard,
+        components: Sequence[V3StoryboardComponent] = (),
+        evidence_registry: EvidenceRegistry | None = None,
+        projection: V3DurationProjection | None = None,
+        existing_fingerprints: Iterable[str] = (),
+        angle: V3Angle | None = None,
+        storyline_family: V3StorylineFamily | None = None,
+    ) -> V3CandidateGateResult:
+        receipts: list[V3ValidationResult] = []
+        if components:
+            for component in components:
+                receipts.append(ComponentStageValidator.validate(component))
+            receipts.append(StorylineCompatibilityValidator.validate_component_set(components))
+        receipts.append(
+            MasterStoryboardValidator.validate(
+                master,
+                evidence_registry=evidence_registry,
+                angle=angle,
+                storyline_family=storyline_family,
+                components=components,
+            )
+        )
+        receipts.append(
+            ExactDuplicateValidator.validate(
+                master,
+                existing_fingerprints=existing_fingerprints,
+            )
+        )
+        if projection is not None:
+            receipts.append(
+                DurationProjectionValidator.validate(
+                    projection,
+                    master,
+                    evidence_registry=evidence_registry,
+                )
+            )
+
+        issue_codes: list[str] = []
+        details: list[str] = []
+        for receipt in receipts:
+            for code, detail in zip(receipt.issue_codes, receipt.details):
+                if code not in issue_codes:
+                    issue_codes.append(code)
+                    details.append(detail)
+        valid = not issue_codes
+        payload = {
+            "candidate_id": candidate_id,
+            "valid": valid,
+            "issue_codes": issue_codes,
+            "details": details,
+            "receipts": [receipt.model_dump(mode="json") for receipt in receipts],
+        }
+        result = V3CandidateGateResult(
+            candidate_id=candidate_id,
+            valid=valid,
+            issue_codes=tuple(issue_codes),
+            details=tuple(details),
+            receipts=tuple(receipts),
+            gate_digest="0" * 64,
+        )
+        return result.model_copy(update={"gate_digest": deterministic_digest(payload)})
 
 
 class RevisionImmutabilityValidator:
@@ -818,6 +1180,8 @@ __all__ = [
     "MasterStoryboardValidator",
     "DurationProjectionValidator",
     "ExactDuplicateValidator",
+    "V3CandidateGateResult",
+    "CandidateGateEvaluator",
     "RevisionImmutabilityValidator",
     "DeterministicDigestValidator",
 ]

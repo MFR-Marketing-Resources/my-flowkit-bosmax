@@ -30,6 +30,8 @@ V3LifecycleStatus = Literal[
 ]
 V3SemanticClass = Literal["HOOK", "BODY_CORE", "CTA", "STAGE"]
 V3WpsMode = Literal["SAFE", "SWEET"]
+V3ProjectionTransformMode = Literal["IDENTITY", "COMPRESSED", "MERGED_ADJACENT"]
+V3ProjectionOmissionState = Literal["PRESENT", "OMITTED"]
 
 
 def canonical_json(value: Any) -> str:
@@ -167,6 +169,30 @@ class V3FormulaStage(BaseModel):
         if not value:
             raise ValueError("V3_STAGE_TEXT_REQUIRED")
         return value
+
+
+class V3ProjectedStageSlice(BaseModel):
+    """A deterministic, typed allocation from one Master stage into a projection."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    master_stage_key: str = Field(min_length=1)
+    master_formula_stage_key: str = Field(min_length=1)
+    master_semantic_class: V3SemanticClass
+    master_stage_text_digest: str = Field(pattern=_SHA256_RE.pattern)
+    projected_text: str = ""
+    projected_text_digest: str = Field(pattern=_SHA256_RE.pattern)
+    source_evidence_fact_ids: tuple[str, ...] = Field(default_factory=tuple)
+    source_evidence_digest: str = Field(pattern=_SHA256_RE.pattern)
+    target_block_indices: tuple[int, ...] = Field(min_length=1)
+    order: int = Field(ge=0)
+    transform_mode: V3ProjectionTransformMode
+    omission_state: V3ProjectionOmissionState = "PRESENT"
+
+    @field_validator("projected_text")
+    @classmethod
+    def _clean_projected_text(cls, value: str) -> str:
+        return normalized_text(value)
 
 
 class V3SceneProjectionRef(BaseModel):
@@ -349,11 +375,14 @@ class V3DurationProjection(BaseModel):
     per_block_slices: tuple[str, ...] = Field(min_length=1)
     per_block_word_counts: tuple[int, ...] = Field(min_length=1)
     per_block_word_budgets: tuple[int, ...] = Field(min_length=1)
+    stage_allocations: tuple[V3ProjectedStageSlice, ...] = Field(min_length=1)
+    stage_allocation_digest: str = Field(pattern=_SHA256_RE.pattern)
     cta_block_index: int = Field(ge=0)
     cta_stage_key: str = Field(min_length=1)
     seam_states: tuple[V3SeamState, ...] = Field(default_factory=tuple)
     continuity_receipt: V3ValidationReceipt
     formula_arc_receipt: V3ValidationReceipt
+    stage_allocation_receipt: V3ValidationReceipt
     master_stage_keys: tuple[str, ...] = Field(min_length=1)
     master_stage_text_digests: tuple[str, ...] = Field(min_length=1)
     master_exact_content_digest: str = Field(pattern=_SHA256_RE.pattern)
@@ -440,6 +469,16 @@ def master_content_digest(master: V3MasterStoryboard) -> str:
     return deterministic_digest(master_content_payload(master))
 
 
+def projected_stage_slice_payload(slice_value: V3ProjectedStageSlice) -> dict[str, Any]:
+    return slice_value.model_dump(mode="json")
+
+
+def projected_stage_allocations_digest(
+    allocations: tuple[V3ProjectedStageSlice, ...] | list[V3ProjectedStageSlice],
+) -> str:
+    return deterministic_digest([projected_stage_slice_payload(item) for item in allocations])
+
+
 def projection_content_payload(projection: V3DurationProjection) -> dict[str, Any]:
     return {
         "schema_version": projection.schema_version,
@@ -457,6 +496,10 @@ def projection_content_payload(projection: V3DurationProjection) -> dict[str, An
         "per_block_slices": list(projection.per_block_slices),
         "per_block_word_counts": list(projection.per_block_word_counts),
         "per_block_word_budgets": list(projection.per_block_word_budgets),
+        "stage_allocations": [
+            projected_stage_slice_payload(item) for item in projection.stage_allocations
+        ],
+        "stage_allocation_digest": projection.stage_allocation_digest,
         "cta_block_index": projection.cta_block_index,
         "cta_stage_key": projection.cta_stage_key,
         "seam_states": [seam.model_dump(mode="json") for seam in projection.seam_states],
@@ -507,6 +550,8 @@ __all__ = [
     "V3LifecycleStatus",
     "V3SemanticClass",
     "V3WpsMode",
+    "V3ProjectionTransformMode",
+    "V3ProjectionOmissionState",
     "V3RevisionRef",
     "V3ProductTruthLineage",
     "V3Objective",
@@ -516,6 +561,7 @@ __all__ = [
     "V3ValidationReceipt",
     "V3SeamState",
     "V3FormulaStage",
+    "V3ProjectedStageSlice",
     "V3SceneProjectionRef",
     "V3Angle",
     "V3StorylineFamily",
@@ -534,6 +580,8 @@ __all__ = [
     "evidence_refs_digest",
     "master_content_payload",
     "master_content_digest",
+    "projected_stage_slice_payload",
+    "projected_stage_allocations_digest",
     "projection_content_payload",
     "projection_content_digest",
     "validation_receipt_payload",

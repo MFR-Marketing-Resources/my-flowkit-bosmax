@@ -1532,10 +1532,14 @@ CREATE TABLE IF NOT EXISTS duration_projection_v3 (
     per_block_slices_json          TEXT NOT NULL DEFAULT '[]',
     per_block_word_counts_json     TEXT NOT NULL DEFAULT '[]',
     per_block_word_budgets_json    TEXT NOT NULL DEFAULT '[]',
+    stage_allocations_json         TEXT NOT NULL DEFAULT '[]',
+    stage_allocation_digest        TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000'
+                                   CHECK(length(stage_allocation_digest) = 64),
     cta_placement_json              TEXT NOT NULL DEFAULT '{}',
     seam_states_json                TEXT NOT NULL DEFAULT '[]',
     continuity_receipt_json         TEXT NOT NULL DEFAULT '{}',
     formula_arc_receipt_json        TEXT NOT NULL DEFAULT '{}',
+    stage_allocation_receipt_json   TEXT NOT NULL DEFAULT '{}',
     master_stage_keys_json          TEXT NOT NULL DEFAULT '[]',
     master_stage_text_digests_json TEXT NOT NULL DEFAULT '[]',
     master_exact_content_digest     TEXT NOT NULL CHECK(length(master_exact_content_digest) = 64),
@@ -1592,80 +1596,93 @@ CREATE INDEX IF NOT EXISTS idx_review_event_v3_product
 CREATE INDEX IF NOT EXISTS idx_review_event_v3_digest
     ON review_event_v3(payload_digest);
 
+DROP TRIGGER IF EXISTS trg_angle_v3_frozen_immutable_update;
+DROP TRIGGER IF EXISTS trg_angle_v3_frozen_immutable_delete;
+DROP TRIGGER IF EXISTS trg_storyline_family_v3_frozen_immutable_update;
+DROP TRIGGER IF EXISTS trg_storyline_family_v3_frozen_immutable_delete;
+DROP TRIGGER IF EXISTS trg_storyboard_component_v3_frozen_immutable_update;
+DROP TRIGGER IF EXISTS trg_storyboard_component_v3_frozen_immutable_delete;
+DROP TRIGGER IF EXISTS trg_copy_recipe_v3_frozen_immutable_update;
+DROP TRIGGER IF EXISTS trg_copy_recipe_v3_frozen_immutable_delete;
+DROP TRIGGER IF EXISTS trg_master_storyboard_v3_frozen_immutable_update;
+DROP TRIGGER IF EXISTS trg_master_storyboard_v3_frozen_immutable_delete;
+DROP TRIGGER IF EXISTS trg_duration_projection_v3_frozen_immutable_update;
+DROP TRIGGER IF EXISTS trg_duration_projection_v3_frozen_immutable_delete;
+
 CREATE TRIGGER IF NOT EXISTS trg_angle_v3_frozen_immutable_update
 BEFORE UPDATE ON angle_v3
-WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+WHEN OLD.status IN ('APPROVED','FROZEN','REJECTED','BLOCKED','SUPERSEDED','ARCHIVED')
 BEGIN
     SELECT RAISE(ABORT, 'ANGLE_V3_IMMUTABLE');
 END;
 CREATE TRIGGER IF NOT EXISTS trg_angle_v3_frozen_immutable_delete
 BEFORE DELETE ON angle_v3
-WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+WHEN OLD.status IN ('APPROVED','FROZEN','REJECTED','BLOCKED','SUPERSEDED','ARCHIVED')
 BEGIN
     SELECT RAISE(ABORT, 'ANGLE_V3_IMMUTABLE');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_storyline_family_v3_frozen_immutable_update
 BEFORE UPDATE ON storyline_family_v3
-WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+WHEN OLD.status IN ('APPROVED','FROZEN','REJECTED','BLOCKED','SUPERSEDED','ARCHIVED')
 BEGIN
     SELECT RAISE(ABORT, 'STORYLINE_FAMILY_V3_IMMUTABLE');
 END;
 CREATE TRIGGER IF NOT EXISTS trg_storyline_family_v3_frozen_immutable_delete
 BEFORE DELETE ON storyline_family_v3
-WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+WHEN OLD.status IN ('APPROVED','FROZEN','REJECTED','BLOCKED','SUPERSEDED','ARCHIVED')
 BEGIN
     SELECT RAISE(ABORT, 'STORYLINE_FAMILY_V3_IMMUTABLE');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_storyboard_component_v3_frozen_immutable_update
 BEFORE UPDATE ON storyboard_component_v3
-WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+WHEN OLD.status IN ('APPROVED','FROZEN','REJECTED','BLOCKED','SUPERSEDED','ARCHIVED')
 BEGIN
     SELECT RAISE(ABORT, 'STORYBOARD_COMPONENT_V3_IMMUTABLE');
 END;
 CREATE TRIGGER IF NOT EXISTS trg_storyboard_component_v3_frozen_immutable_delete
 BEFORE DELETE ON storyboard_component_v3
-WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+WHEN OLD.status IN ('APPROVED','FROZEN','REJECTED','BLOCKED','SUPERSEDED','ARCHIVED')
 BEGIN
     SELECT RAISE(ABORT, 'STORYBOARD_COMPONENT_V3_IMMUTABLE');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_copy_recipe_v3_frozen_immutable_update
 BEFORE UPDATE ON copy_recipe_v3
-WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+WHEN OLD.status IN ('APPROVED','FROZEN','REJECTED','BLOCKED','SUPERSEDED','ARCHIVED')
 BEGIN
     SELECT RAISE(ABORT, 'COPY_RECIPE_V3_IMMUTABLE');
 END;
 CREATE TRIGGER IF NOT EXISTS trg_copy_recipe_v3_frozen_immutable_delete
 BEFORE DELETE ON copy_recipe_v3
-WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+WHEN OLD.status IN ('APPROVED','FROZEN','REJECTED','BLOCKED','SUPERSEDED','ARCHIVED')
 BEGIN
     SELECT RAISE(ABORT, 'COPY_RECIPE_V3_IMMUTABLE');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_master_storyboard_v3_frozen_immutable_update
 BEFORE UPDATE ON master_storyboard_v3
-WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+WHEN OLD.status IN ('APPROVED','FROZEN','REJECTED','BLOCKED','SUPERSEDED','ARCHIVED')
 BEGIN
     SELECT RAISE(ABORT, 'MASTER_STORYBOARD_V3_IMMUTABLE');
 END;
 CREATE TRIGGER IF NOT EXISTS trg_master_storyboard_v3_frozen_immutable_delete
 BEFORE DELETE ON master_storyboard_v3
-WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+WHEN OLD.status IN ('APPROVED','FROZEN','REJECTED','BLOCKED','SUPERSEDED','ARCHIVED')
 BEGIN
     SELECT RAISE(ABORT, 'MASTER_STORYBOARD_V3_IMMUTABLE');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_duration_projection_v3_frozen_immutable_update
 BEFORE UPDATE ON duration_projection_v3
-WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+WHEN OLD.status IN ('APPROVED','FROZEN','REJECTED','BLOCKED','SUPERSEDED','ARCHIVED')
 BEGIN
     SELECT RAISE(ABORT, 'DURATION_PROJECTION_V3_IMMUTABLE');
 END;
 CREATE TRIGGER IF NOT EXISTS trg_duration_projection_v3_frozen_immutable_delete
 BEFORE DELETE ON duration_projection_v3
-WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+WHEN OLD.status IN ('APPROVED','FROZEN','REJECTED','BLOCKED','SUPERSEDED','ARCHIVED')
 BEGIN
     SELECT RAISE(ABORT, 'DURATION_PROJECTION_V3_IMMUTABLE');
 END;
@@ -5355,6 +5372,36 @@ END;
         # Product Truth table, evidence table, activation pointer, provider,
         # materialization, or P6 manifest is introduced by this phase.
         await db.executescript(V3_CORE_SCHEMA)
+        await db.commit()
+
+        # Phase 2 correction: upgrade a disposable database created from the
+        # prior review head so the typed Master-to-projection allocation and
+        # its validation receipt cannot be silently omitted by IF NOT EXISTS.
+        projection_columns_cursor = await db.execute(
+            "PRAGMA table_info(duration_projection_v3)"
+        )
+        projection_columns = {
+            row[1] for row in await projection_columns_cursor.fetchall()
+        }
+        v3_projection_columns = (
+            (
+                "stage_allocations_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            ),
+            (
+                "stage_allocation_digest",
+                "TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000' CHECK(length(stage_allocation_digest) = 64)",
+            ),
+            (
+                "stage_allocation_receipt_json",
+                "TEXT NOT NULL DEFAULT '{}'",
+            ),
+        )
+        for column_name, definition in v3_projection_columns:
+            if column_name not in projection_columns:
+                await db.execute(
+                    f"ALTER TABLE duration_projection_v3 ADD COLUMN {column_name} {definition}"
+                )
         await db.commit()
 
 

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import re
+from collections import Counter
+
 import pytest
 
 from agent.authority.copy_blueprint_v2_authority import (
@@ -19,6 +22,7 @@ from agent.models.storyboard_landbank_v3 import (
     V3FormulaRef,
     V3MasterStoryboard,
     V3Objective,
+    V3ProjectedStageSlice,
     V3ProductTruthLineage,
     V3RevisionRef,
     V3SeamState,
@@ -30,12 +34,14 @@ from agent.models.storyboard_landbank_v3 import (
     exact_resolved_content_fingerprint,
     master_content_digest,
     projection_content_digest,
+    projected_stage_allocations_digest,
     validation_receipt_digest,
     word_count,
 )
 from agent.services import canonical_prompt_compiler as canonical
 from agent.services.storyboard_landbank_v3_validators import (
     BridgeContinuityValidator,
+    CandidateGateEvaluator,
     ComponentStageValidator,
     DeterministicDigestValidator,
     DurationProjectionValidator,
@@ -202,7 +208,7 @@ def _context(formula_id: str = "PAS", master_id: str | None = None) -> dict:
     for index, stage_key in enumerate(required):
         entry = "arc:start" if index == 0 else f"arc:{index - 1}"
         exit = "arc:end" if index == len(required) - 1 else f"arc:{index}"
-        text = f"{formula_id} {stage_key} synthetic fact-safe copy"
+        text = f"{formula_id} {stage_key} fact"
         component_id = f"component-{formula_id.lower()}-{stage_key}"
         stage_ref = V3RevisionRef(entity_id=component_id, revision=1)
         stage = V3FormulaStage(
@@ -285,7 +291,32 @@ def _context(formula_id: str = "PAS", master_id: str | None = None) -> dict:
 
 def _projection(master: V3MasterStoryboard, duration: int) -> V3DurationProjection:
     blocks = tuple(canonical.resolve_block_plan("GOOGLE_FLOW", duration))
-    slices = tuple(f"hook body cta block {index + 1}" for index in range(len(blocks)))
+    stage_allocations = tuple(
+        V3ProjectedStageSlice(
+            master_stage_key=stage.stage_key,
+            master_formula_stage_key=stage.formula_stage_key,
+            master_semantic_class=stage.semantic_class,
+            master_stage_text_digest=stage.text_digest,
+            projected_text=stage.authored_text,
+            projected_text_digest=digest_text(stage.authored_text),
+            source_evidence_fact_ids=stage.evidence_fact_ids,
+            source_evidence_digest=deterministic_digest(list(stage.evidence_fact_ids)),
+            target_block_indices=(min(index, len(blocks) - 1),),
+            order=index,
+            transform_mode="IDENTITY",
+            omission_state="PRESENT",
+        )
+        for index, stage in enumerate(master.stages)
+    )
+    slices = tuple(
+        " ".join(
+            item.projected_text
+            for item in stage_allocations
+            if item.target_block_indices == (block_index,)
+        ).strip()
+        for block_index in range(len(blocks))
+    )
+    exact_dialogue = " ".join(item.projected_text for item in stage_allocations).strip()
     seams = tuple(
         V3SeamState(
             block_index=index,
@@ -309,18 +340,21 @@ def _projection(master: V3MasterStoryboard, duration: int) -> V3DurationProjecti
         wps_authority_version=canonical.wps_authority_version(),
         wps_authority_digest=canonical.wps_authority_digest(),
         block_plan_seconds=blocks,
-        exact_resolved_dialogue=" ".join(slices),
+        exact_resolved_dialogue=exact_dialogue,
         per_block_slices=slices,
         per_block_word_counts=tuple(word_count(item) for item in slices),
         per_block_word_budgets=tuple(
             canonical.strict_dialogue_word_budget(item, "Malay", wps_mode="SAFE")
             for item in blocks
         ),
+        stage_allocations=stage_allocations,
+        stage_allocation_digest=projected_stage_allocations_digest(stage_allocations),
         cta_block_index=len(blocks) - 1,
         cta_stage_key=master.stages[-1].stage_key,
         seam_states=seams,
         continuity_receipt=_receipt("BridgeContinuityValidator"),
         formula_arc_receipt=_receipt("MasterStoryboardValidator"),
+        stage_allocation_receipt=_receipt("DurationProjectionValidator"),
         master_stage_keys=tuple(stage.stage_key for stage in master.stages),
         master_stage_text_digests=tuple(stage.text_digest for stage in master.stages),
         master_exact_content_digest=master_content_digest(master),
@@ -332,6 +366,40 @@ def _projection(master: V3MasterStoryboard, duration: int) -> V3DurationProjecti
     )
     return projection.model_copy(
         update={"exact_projection_digest": projection_content_digest(projection)}
+    )
+
+
+def _rebind_projection(
+    projection: V3DurationProjection,
+    allocations: tuple[V3ProjectedStageSlice, ...],
+) -> V3DurationProjection:
+    """Recompute only the deterministic child fields for adversarial fixtures."""
+
+    slices = tuple(
+        " ".join(
+            item.projected_text
+            for item in allocations
+            if item.omission_state == "PRESENT"
+            and len(item.target_block_indices) == 1
+            and item.target_block_indices[0] == block_index
+        ).strip()
+        for block_index in range(len(projection.block_plan_seconds))
+    )
+    exact_dialogue = " ".join(
+        item.projected_text for item in allocations if item.omission_state == "PRESENT"
+    ).strip()
+    rebound = projection.model_copy(
+        update={
+            "stage_allocations": allocations,
+            "stage_allocation_digest": projected_stage_allocations_digest(allocations),
+            "exact_resolved_dialogue": exact_dialogue,
+            "per_block_slices": slices,
+            "per_block_word_counts": tuple(word_count(item) for item in slices),
+            "exact_projection_digest": "0" * 64,
+        }
+    )
+    return rebound.model_copy(
+        update={"exact_projection_digest": projection_content_digest(rebound)}
     )
 
 
@@ -476,7 +544,9 @@ def test_duration_golden_8_16_24_uses_canonical_authority_and_preserves_parent_i
     master = context["master"]
     for duration in (8, 16, 24):
         projection = _projection(master, duration)
-        result = DurationProjectionValidator.validate(projection, master)
+        result = DurationProjectionValidator.validate(
+            projection, master, evidence_registry=context["registry"]
+        )
         assert result.valid is True, result.details
         blocks = canonical.resolve_block_plan("GOOGLE_FLOW", duration)
         authority_profile = canonical.strict_wps_profile("Malay")
@@ -492,13 +562,68 @@ def test_duration_golden_8_16_24_uses_canonical_authority_and_preserves_parent_i
         assert projection.cta_block_index == len(blocks) - 1
     invalid_language = _projection(master, 8).model_copy(update={"language_profile": "Unknown"})
     assert "LANGUAGE_PROFILE_UNKNOWN" in DurationProjectionValidator.validate(
-        invalid_language, master
+        invalid_language, master, evidence_registry=context["registry"]
     ).issue_codes
     invented_copy = _projection(master, 8).model_copy(
         update={"exact_resolved_dialogue": "unrelated invented copy"}
     )
-    assert "DIALOGUE_SLICE_CONCATENATION_MISMATCH" in DurationProjectionValidator.validate(
-        invented_copy, master
+    assert "PROJECTION_DIALOGUE_MASTER_DERIVATION_MISMATCH" in DurationProjectionValidator.validate(
+        invented_copy, master, evidence_registry=context["registry"]
+    ).issue_codes
+
+
+def test_duration_projection_adversarial_stage_lineage_cases_fail_closed():
+    context = _context("PAS")
+    master = context["master"]
+    baseline = _projection(master, 8)
+
+    unrelated = baseline.stage_allocations[0].model_copy(
+        update={
+            "projected_text": "unrelated invented copy",
+            "projected_text_digest": digest_text("unrelated invented copy"),
+        }
+    )
+    case_a = _rebind_projection(baseline, (unrelated, *baseline.stage_allocations[1:]))
+    assert "PROJECTION_IDENTITY_DERIVATION_INVALID" in DurationProjectionValidator.validate(
+        case_a, master, evidence_registry=context["registry"]
+    ).issue_codes
+
+    digest_mismatch = baseline.stage_allocations[0].model_copy(
+        update={"master_stage_text_digest": "f" * 64}
+    )
+    case_b = _rebind_projection(
+        baseline, (digest_mismatch, *baseline.stage_allocations[1:])
+    )
+    assert "PROJECTION_MASTER_STAGE_DIGEST_MISMATCH" in DurationProjectionValidator.validate(
+        case_b, master, evidence_registry=context["registry"]
+    ).issue_codes
+
+    case_c = _rebind_projection(baseline, tuple(reversed(baseline.stage_allocations)))
+    assert "PROJECTION_STAGE_ORDER_MISMATCH" in DurationProjectionValidator.validate(
+        case_c, master, evidence_registry=context["registry"]
+    ).issue_codes
+
+    new_evidence = baseline.stage_allocations[0].model_copy(
+        update={
+            "source_evidence_fact_ids": ("unapproved-new-fact",),
+            "source_evidence_digest": deterministic_digest(["unapproved-new-fact"]),
+        }
+    )
+    case_d = _rebind_projection(baseline, (new_evidence, *baseline.stage_allocations[1:]))
+    case_d_result = DurationProjectionValidator.validate(
+        case_d, master, evidence_registry=context["registry"]
+    )
+    assert "PROJECTION_EVIDENCE_OUTSIDE_MASTER" in case_d_result.issue_codes
+    assert "EVIDENCE_FACT_MISSING" in case_d_result.issue_codes
+
+    non_cta = baseline.stage_allocations[-1].model_copy(
+        update={"master_semantic_class": "BODY_CORE"}
+    )
+    case_e = _rebind_projection(
+        baseline, (*baseline.stage_allocations[:-1], non_cta)
+    )
+    assert "PROJECTION_CTA_SOURCE_INVALID" in DurationProjectionValidator.validate(
+        case_e, master, evidence_registry=context["registry"]
     ).issue_codes
 
 
@@ -559,112 +684,194 @@ def test_fast54_is_theoretical_capacity_and_adversarial_gates_reduce_valid_count
         )
         for index in range(3)
     )
-    duration_gate = DurationProjectionValidator.validate(_projection(_context("PAS")["master"], 8), _context("PAS")["master"])
-    assert duration_gate.valid is True
-    bridge_blocked = {(0, 0, 0), (1, 0, 0), (2, 0, 0), (3, 0, 0)}
-    duplicate_blocked = {(4, 1, 1), (5, 1, 1)}
-    evidence_blocked = {(0, 2, 2)}
-    attempted = valid = bridge_count = duplicate_count = evidence_count = 0
+    hooks = (
+        hooks[0].model_copy(
+            update={
+                "exit_key": "arc:broken",
+                "bridge_contract": V3BridgeContract(
+                    entry_key="arc:start", exit_key="arc:broken"
+                ),
+            }
+        ),
+        hooks[1],
+        hooks[2],
+        hooks[3],
+        hooks[4].model_copy(
+            update={
+                "authored_text": "hook duplicate fact-safe",
+                "content_digest": digest_text("hook duplicate fact-safe"),
+                "word_count": word_count("hook duplicate fact-safe"),
+            }
+        ),
+        hooks[5].model_copy(
+            update={
+                "authored_text": "hook duplicate fact-safe",
+                "content_digest": digest_text("hook duplicate fact-safe"),
+                "word_count": word_count("hook duplicate fact-safe"),
+            }
+        ),
+    )
+    bodies = (
+        bodies[0].model_copy(
+            update={
+                "evidence_fact_ids": ("missing-fast54-fact",),
+                "evidence_digest": _evidence_ids_digest(("missing-fast54-fact",)),
+            }
+        ),
+        bodies[1],
+        bodies[2],
+    )
+    long_cta = "cta " + "word " * 30
+    ctas = (
+        ctas[0].model_copy(update={"semantic_class": "BODY_CORE"}),
+        ctas[1],
+        ctas[2].model_copy(
+            update={
+                "authored_text": long_cta,
+                "content_digest": digest_text(long_cta),
+                "word_count": word_count(long_cta),
+            }
+        ),
+    )
+
+    def build_master(hook, body, cta, candidate_id):
+        stages = (
+            V3FormulaStage(
+                stage_key=f"{candidate_id}-problem",
+                order=0,
+                formula_stage_key="problem",
+                semantic_class=hook.semantic_class,
+                authored_text=hook.authored_text,
+                entry_key=hook.entry_key,
+                exit_key=hook.exit_key,
+                bridge_contract=hook.bridge_contract,
+                claim_bearing=hook.claim_bearing,
+                evidence_fact_ids=hook.evidence_fact_ids,
+                text_digest=digest_text(hook.authored_text),
+                component_ref=V3RevisionRef(entity_id=hook.component_id, revision=hook.revision),
+            ),
+            V3FormulaStage(
+                stage_key=f"{candidate_id}-agitate",
+                order=1,
+                formula_stage_key="agitate",
+                semantic_class=body.semantic_class,
+                authored_text=body.authored_text,
+                entry_key=body.entry_key,
+                exit_key=body.exit_key,
+                bridge_contract=body.bridge_contract,
+                claim_bearing=body.claim_bearing,
+                evidence_fact_ids=body.evidence_fact_ids,
+                text_digest=digest_text(body.authored_text),
+                component_ref=V3RevisionRef(entity_id=body.component_id, revision=body.revision),
+            ),
+            V3FormulaStage(
+                stage_key=f"{candidate_id}-solution",
+                order=2,
+                formula_stage_key="solution",
+                semantic_class=body.semantic_class,
+                authored_text=body.authored_text,
+                entry_key=body.exit_key,
+                exit_key=body.exit_key,
+                bridge_contract=V3BridgeContract(
+                    entry_key=body.exit_key, exit_key=body.exit_key
+                ),
+                claim_bearing=body.claim_bearing,
+                evidence_fact_ids=body.evidence_fact_ids,
+                text_digest=digest_text(body.authored_text),
+                component_ref=V3RevisionRef(entity_id=body.component_id, revision=body.revision),
+            ),
+            V3FormulaStage(
+                stage_key=f"{candidate_id}-cta",
+                order=3,
+                formula_stage_key="cta",
+                semantic_class=cta.semantic_class,
+                authored_text=cta.authored_text,
+                entry_key=cta.entry_key,
+                exit_key=cta.exit_key,
+                bridge_contract=cta.bridge_contract,
+                claim_bearing=cta.claim_bearing,
+                evidence_fact_ids=cta.evidence_fact_ids,
+                text_digest=digest_text(cta.authored_text),
+                component_ref=V3RevisionRef(entity_id=cta.component_id, revision=cta.revision),
+            ),
+        )
+        master = V3MasterStoryboard(
+            master_id=candidate_id,
+            revision=1,
+            recipe=V3RevisionRef(entity_id="recipe-fast54", revision=1),
+            product_id=truth.product_id,
+            product_truth=truth,
+            objective=objective,
+            angle=angle_ref,
+            storyline_family=family_ref,
+            formula=formula,
+            stages=stages,
+            resolved_component_refs=tuple(
+                V3RevisionRef(entity_id=item.component_id, revision=item.revision)
+                for item in (hook, body, cta)
+            ),
+            evidence_map={stage.stage_key: stage.evidence_fact_ids for stage in stages},
+            evidence_digest=deterministic_digest(
+                {stage.stage_key: stage.evidence_fact_ids for stage in stages}
+            ),
+            bridge_continuity_receipt=_receipt("BridgeContinuityValidator"),
+            formula_validation_receipt=_receipt("FormulaContractValidator"),
+            claim_safety_receipt=_receipt("EvidenceLineageValidator"),
+            exact_content_digest="0" * 64,
+            duplicate_fingerprint="0" * 64,
+            word_count=sum(word_count(stage.authored_text) for stage in stages),
+            status="VALIDATED",
+            source="synthetic-fast54",
+            created_at="2026-08-17T00:00:00Z",
+            created_by="synthetic-owner",
+        )
+        return master.model_copy(
+            update={
+                "exact_content_digest": master_content_digest(master),
+                "duplicate_fingerprint": exact_resolved_content_fingerprint(master),
+            }
+        )
+
+    registry = _registry()
+    seen_fingerprints: set[str] = set()
+    results = []
     for hook_index, hook in enumerate(hooks):
         for body_index, body in enumerate(bodies):
             for cta_index, cta in enumerate(ctas):
-                attempted += 1
-                key = (hook_index, body_index, cta_index)
-                assert all(
-                    ComponentStageValidator.validate(item).valid
-                    for item in (hook, body, cta)
+                candidate_id = f"fast54-{hook_index}-{body_index}-{cta_index}"
+                master = build_master(hook, body, cta, candidate_id)
+                result = CandidateGateEvaluator.evaluate(
+                    candidate_id,
+                    master=master,
+                    components=(hook, body, cta),
+                    evidence_registry=registry,
+                    projection=_projection(master, 8),
+                    existing_fingerprints=seen_fingerprints,
                 )
-                assert StorylineCompatibilityValidator.validate_component_set((hook, body, cta)).valid
-                if key in bridge_blocked:
-                    bridge_count += 1
-                    continue
-                if key in duplicate_blocked:
-                    duplicate_count += 1
-                    duplicate = ExactDuplicateValidator.validate(
-                        {"hook": hook.component_id, "body": body.component_id, "cta": cta.component_id},
-                        existing_fingerprints=(
-                            ExactDuplicateValidator.fingerprint(
-                                {"hook": hook.component_id, "body": body.component_id, "cta": cta.component_id}
-                            ),
-                        ),
-                    )
-                    assert "EXACT_DUPLICATE" in duplicate.issue_codes
-                    continue
-                if key in evidence_blocked:
-                    evidence_count += 1
-                    missing = EvidenceLineageValidator.validate(
-                        truth,
-                        ("missing-fast54-fact",),
-                        _registry(),
-                        claim_bearing=True,
-                    )
-                    assert "EVIDENCE_FACT_MISSING" in missing.issue_codes
-                    continue
-                bridge = BridgeContinuityValidator.validate(
-                    (
-                        V3FormulaStage(
-                            stage_key="hook",
-                            order=0,
-                            formula_stage_key="problem",
-                            semantic_class="HOOK",
-                            authored_text=hook.authored_text,
-                            entry_key="arc:start",
-                            exit_key="arc:join",
-                            bridge_contract=V3BridgeContract(entry_key="arc:start", exit_key="arc:join"),
-                            claim_bearing=True,
-                            evidence_fact_ids=("fact-lightweight",),
-                            text_digest=digest_text(hook.authored_text),
-                        ),
-                        V3FormulaStage(
-                            stage_key="body-agitate",
-                            order=1,
-                            formula_stage_key="agitate",
-                            semantic_class="BODY_CORE",
-                            authored_text=body.authored_text,
-                            entry_key="arc:join",
-                            exit_key="arc:resolve",
-                            bridge_contract=V3BridgeContract(entry_key="arc:join", exit_key="arc:resolve"),
-                            claim_bearing=True,
-                            evidence_fact_ids=("fact-lightweight",),
-                            text_digest=digest_text(body.authored_text),
-                        ),
-                        V3FormulaStage(
-                            stage_key="body-solution",
-                            order=2,
-                            formula_stage_key="solution",
-                            semantic_class="BODY_CORE",
-                            authored_text=body.authored_text,
-                            entry_key="arc:resolve",
-                            exit_key="arc:resolve",
-                            bridge_contract=V3BridgeContract(entry_key="arc:resolve", exit_key="arc:resolve"),
-                            claim_bearing=True,
-                            evidence_fact_ids=("fact-lightweight",),
-                            text_digest=digest_text(body.authored_text),
-                        ),
-                        V3FormulaStage(
-                            stage_key="cta",
-                            order=3,
-                            formula_stage_key="cta",
-                            semantic_class="CTA",
-                            authored_text=cta.authored_text,
-                            entry_key="arc:resolve",
-                            exit_key="arc:end",
-                            bridge_contract=V3BridgeContract(entry_key="arc:resolve", exit_key="arc:end"),
-                            claim_bearing=True,
-                            evidence_fact_ids=("fact-lightweight",),
-                            text_digest=digest_text(cta.authored_text),
-                        ),
-                    ),
-                    expected_stage_keys=("problem", "agitate", "solution", "cta"),
-                )
-                assert bridge.valid
-                assert duration_gate.valid
-                valid += 1
-    assert attempted == 54
-    assert valid == 47
-    assert bridge_count == 4
-    assert duplicate_count == 2
-    assert evidence_count == 1
+                results.append(result)
+                seen_fingerprints.add(ExactDuplicateValidator.fingerprint(master))
+
+    attempted = len(results)
+    valid = sum(result.valid for result in results)
+    excluded = tuple(result for result in results if not result.valid)
+    issue_counts = Counter(
+        code for result in excluded for code in result.issue_codes
+    )
+    assert attempted == 6 * 3 * 3
+    assert valid + len(excluded) == 54
+    assert valid > 0
+    assert all(result.issue_codes and result.receipts for result in excluded)
+    assert issue_counts["BRIDGE_CONTINUITY_BROKEN"] >= 9
+    assert issue_counts["EVIDENCE_FACT_MISSING"] >= 18
+    assert issue_counts["SEMANTIC_CLASS_MAPPING_INVALID"] >= 18
+    assert issue_counts["WPS_BUDGET_EXCEEDED"] >= 18
+    assert issue_counts["EXACT_DUPLICATE"] >= 2
+    source = inspect.getsource(test_fast54_is_theoretical_capacity_and_adversarial_gates_reduce_valid_count)
+    assert not re.search(
+        r"^\s*(bridge_blocked|duplicate_blocked|evidence_blocked)\s*=",
+        source,
+        re.MULTILINE,
+    )
 
 
 def test_exact_duplicate_revision_and_digest_contracts_are_deterministic():
@@ -694,6 +901,25 @@ def test_exact_duplicate_revision_and_digest_contracts_are_deterministic():
         supersedes=V3RevisionRef(entity_id="master-one", revision=1),
         content_changed=True,
     ).valid is True
+    for terminal_status in ("REJECTED", "BLOCKED"):
+        assert RevisionImmutabilityValidator.validate(
+            previous_status=terminal_status,
+            previous_entity_id="master-one",
+            previous_revision=1,
+            candidate_entity_id="master-one",
+            candidate_revision=1,
+            supersedes=None,
+            content_changed=True,
+        ).valid is False
+        assert RevisionImmutabilityValidator.validate(
+            previous_status=terminal_status,
+            previous_entity_id="master-one",
+            previous_revision=1,
+            candidate_entity_id="master-one",
+            candidate_revision=2,
+            supersedes=V3RevisionRef(entity_id="master-one", revision=1),
+            content_changed=True,
+        ).valid is True
     payload_left = {"a": 1, "b": ["same", 2]}
     payload_right = {"b": ["same", 2], "a": 1}
     assert DeterministicDigestValidator.validate_same_input(payload_left, payload_right).valid
