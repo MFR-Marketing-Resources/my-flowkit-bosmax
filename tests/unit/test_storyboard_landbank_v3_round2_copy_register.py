@@ -1079,3 +1079,60 @@ async def test_round2_landbank_paginates_in_db_across_pages(monkeypatch):
     rq_seen = {item["master"]["master_id"] for item in rq1["items"]}
     rq_seen |= {item["master"]["master_id"] for item in rq2["items"]}
     assert len(rq_seen) == 3
+
+
+class _RegenProvider:
+    def complete_json_with_receipt(self, _system: str, user: str):
+        start = user.index("<UNTRUSTED_COMPONENT_STAGES>") + len("<UNTRUSTED_COMPONENT_STAGES>")
+        end = user.index("</UNTRUSTED_COMPONENT_STAGES>")
+        stages = json.loads(user[start:end].strip())
+        segments = [{"formula_stage_key": stage["formula_stage_key"], "authored_text": f"Segar semula peringkat {stage['formula_stage_key']} untuk rutin ringkas anda."} for stage in stages]
+        return {"segments": segments}, {"provider_id": "fake-regen", "model_id": "fix", "response_status": "SUCCEEDED", "json_parse_status": "VALID", "usage": {}}
+
+
+@pytest.mark.asyncio
+async def test_round2_regenerate_component_new_revision_preserves_parent(monkeypatch):
+    monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
+    factory, recipe, _angle, _family = await _seed_round2_fixture("round2-regen")
+    service = V3CopyRegisterRound2Service(factory=factory)
+    plan = await service.plan_assistant(recipe.product_id, recipe.recipe_id, mode="CREATE", actor_id="op", request_id="regen:plan")
+    await service.execute_assistant(plan.plan_id, actor_id="op", request_id="regen:exec", provider_mode="FAKE_TEST")
+    components = await factory.repository.list("STORYBOARD_COMPONENT", product_id=recipe.product_id, limit=50)
+    hook = next(component for component in components if component.semantic_class == "HOOK")
+    old_text = hook.stage_segments[0].authored_text
+
+    regen = V3CopyRegisterRound2Service(factory=factory, provider=_RegenProvider())
+    result = await regen.regenerate_component(hook.component_id, revision=hook.revision, provider_mode="LIVE_TEXT_ASSIST", actor_id="op", request_id="regen:1")
+    assert result["automatic_approval"] is False
+    assert result["source_revision"] == hook.revision
+    assert result["new_revision"] == hook.revision + 1
+    new_text = result["component"]["stage_segments"][0]["authored_text"]
+    assert new_text != old_text and new_text.startswith("Segar semula")
+    # Parent revision preserved as history (never edited in place).
+    parent = await factory.repository.get("STORYBOARD_COMPONENT", hook.component_id, hook.revision)
+    assert parent is not None and parent.stage_segments[0].authored_text == old_text
+    # Terminal components cannot be regenerated (fail closed).
+    body = next(component for component in components if component.semantic_class == "BODY_CORE")
+    await factory.transition("STORYBOARD_COMPONENT", body.component_id, body.revision, "ARCHIVED", actor_id="op", request_id="regen:archive")
+    latest_body = await factory.repository.get("STORYBOARD_COMPONENT", body.component_id)
+    with pytest.raises(Exception) as error:
+        await regen.regenerate_component(body.component_id, revision=latest_body.revision, provider_mode="LIVE_TEXT_ASSIST", actor_id="op", request_id="regen:2")
+    assert error.value.code == "COMPONENT_TERMINAL"
+
+
+@pytest.mark.asyncio
+async def test_round2_safe_delete_draft_and_blocks_referenced(monkeypatch):
+    factory, recipe, angle, family = await _seed_round2_fixture("round2-del")
+    # An unreferenced DRAFT component safe-deletes.
+    hook = await _add_extra_hook(factory, recipe, angle, family, 9)
+    assert hook.status == "DRAFT"
+    deleted = await factory.delete_draft("STORYBOARD_COMPONENT", hook.component_id, hook.revision, actor_id="op", request_id="del:1")
+    assert deleted is True
+    assert await factory.repository.get("STORYBOARD_COMPONENT", hook.component_id, hook.revision) is None
+    # A referenced entity (the angle backs the family/recipe) is NOT safe-deletable.
+    try:
+        result = await factory.delete_draft("ANGLE", angle.angle_id, angle.revision, actor_id="op", request_id="del:2")
+        assert result is False
+    except Exception as error:  # noqa: BLE001 - either fail-closed shape is acceptable
+        assert getattr(error, "code", None)
+    assert await factory.repository.get("ANGLE", angle.angle_id, angle.revision) is not None

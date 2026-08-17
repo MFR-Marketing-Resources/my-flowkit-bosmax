@@ -1,4 +1,4 @@
-import { getAPI, postAPI } from "./client";
+import { fetchAPI, getAPI, postAPI } from "./client";
 
 export type V3AssistantMode = "CREATE" | "EXPAND" | "FILL_CAPACITY";
 
@@ -126,6 +126,7 @@ export interface V3LandbankItem {
 		source: string;
 		exact_content_digest: string;
 		word_count: number;
+		resolved_component_refs?: Array<{ entity_id: string; revision: number }>;
 	};
 	projections: readonly V3Projection[];
 	quality: V3QualitySignal;
@@ -222,6 +223,23 @@ export async function reviewV3Entity(action: "validate" | "submit" | "reject" | 
 		revision,
 		actor_id: "dashboard-operator",
 		request_id: requestId(`v3-${action}`),
+	});
+}
+
+export async function regenerateV3Component(componentId: string, revision: number, providerMode: "LIVE_TEXT_ASSIST" | "FAKE_TEST"): Promise<{ new_revision: number; source_revision: number; component: Record<string, unknown>; automatic_approval: false; run_id: string }> {
+	return postAPI(`/api/storyboard-landbank/v3/copy-register/components/${encodeURIComponent(componentId)}/regenerate`, {
+		revision,
+		provider_mode: providerMode,
+		actor_id: "dashboard-operator",
+		request_id: requestId("v3-regenerate"),
+	});
+}
+
+export async function deleteV3Draft(entityType: string, entityId: string, revision: number): Promise<{ deleted: boolean }> {
+	// DELETE draft endpoint reads X-Actor-Id / X-Request-Id headers; backend fails closed if unsafe.
+	return fetchAPI(`/api/storyboard-landbank/v3/drafts/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/${revision}`, {
+		method: "DELETE",
+		headers: { "X-Actor-Id": "dashboard-operator", "X-Request-Id": requestId("v3-delete") },
 	});
 }
 

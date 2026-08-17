@@ -519,6 +519,25 @@ async def derive_v3_ai_assisted_projection(request: Request, payload: dict[str, 
         raise _error(exc) from exc
 
 
+@router.post("/copy-register/components/{component_id}/regenerate")
+async def regenerate_v3_component(request: Request, component_id: str, payload: dict[str, Any]):
+    """Provider-backed regeneration of a DRAFT component into a NEW revision."""
+    try:
+        actor_id, request_id, _source = _meta(request, payload)
+        mode = str(payload.get("provider_mode") or "LIVE_TEXT_ASSIST").upper()
+        if mode not in {"LIVE_TEXT_ASSIST", "FAKE_TEST"}:
+            raise V3FactoryError("PROVIDER_MODE_INVALID", "provider_mode must be LIVE_TEXT_ASSIST or FAKE_TEST.", status_code=422)
+        return await round2_service.regenerate_component(
+            component_id,
+            revision=int(payload.get("revision") or 1),
+            provider_mode=mode,  # type: ignore[arg-type]
+            actor_id=actor_id,
+            request_id=request_id,
+        )
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
 @router.get("/copy-register/runs/{product_id}")
 async def list_v3_copy_assistant_runs(product_id: str, limit: int = Query(default=50, ge=1, le=100), offset: int = Query(default=0, ge=0)):
     try:

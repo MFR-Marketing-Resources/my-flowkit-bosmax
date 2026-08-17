@@ -27,6 +27,8 @@ vi.mock("../api/storyboardLandbankV3Round2", () => ({
 	approveV3MasterBatch: vi.fn(),
 	setupV3Campaign: vi.fn(),
 	reviewV3Entity: vi.fn(),
+	deleteV3Draft: vi.fn(),
+	regenerateV3Component: vi.fn(),
 }));
 
 import {
@@ -37,6 +39,8 @@ import {
 	fetchV3CopyRegisterProviderStatus,
 	fetchV3ProductTruth,
 	planV3Assistant,
+	deleteV3Draft,
+	regenerateV3Component,
 	reviewV3Entity,
 	setupV3Campaign,
 } from "../api/storyboardLandbankV3Round2";
@@ -50,6 +54,8 @@ const mockedTruth = vi.mocked(fetchV3ProductTruth);
 const mockedApprove = vi.mocked(approveV3Master);
 const mockedSetup = vi.mocked(setupV3Campaign);
 const mockedReview = vi.mocked(reviewV3Entity);
+const mockedRegenerate = vi.mocked(regenerateV3Component);
+const mockedDelete = vi.mocked(deleteV3Draft);
 
 const item = {
 	master: {
@@ -98,6 +104,11 @@ const item = {
 	p6_status: "NOT_IN_ROUND2",
 } as const;
 
+const draftItem = {
+	...item,
+	master: { ...item.master, master_id: "master-draft", status: "DRAFT", resolved_component_refs: [{ entity_id: "component-v3", revision: 1 }] },
+};
+
 function renderPage() {
 	return render(
 		<MemoryRouter initialEntries={["/creative/storyboard-landbank-v3?product_id=p1"]}>
@@ -118,6 +129,8 @@ describe("StoryboardLandbankV3Page Round 2 contract", () => {
 		mockedApprove.mockResolvedValue({ receipt: { receipt_id: "receipt-v3" }, master: { ...item.master, status: "APPROVED" }, projections: item.projections, automatic_approval: false });
 		mockedSetup.mockResolvedValue({ recipe_id: "recipe-preset", recipe_revision: 1, preset: "FAST54", reused: false, recipe: {} });
 		mockedReview.mockResolvedValue({});
+		mockedRegenerate.mockResolvedValue({ new_revision: 2, source_revision: 1, component: { entity_id: "component-v3", revision: 2 }, automatic_approval: false, run_id: "run-regen" });
+		mockedDelete.mockResolvedValue({ deleted: true });
 	});
 
 	afterEach(() => cleanup());
@@ -187,5 +200,39 @@ describe("StoryboardLandbankV3Page Round 2 contract", () => {
 		fireEvent.change(await screen.findByTestId("v3-recipe-id"), { target: { value: "recipe-v3" } });
 		fireEvent.click(screen.getByTestId("v3-plan-assistant"));
 		expect(await screen.findByTestId("v3-generate-live")).toBeEnabled();
+	});
+
+	it("gates safe-delete to DRAFT but allows regenerate on any reviewable master", async () => {
+		const validatedWithRefs = { ...item, master: { ...item.master, resolved_component_refs: [{ entity_id: "component-v3", revision: 1 }] } };
+		mockedLandbank.mockResolvedValue({ source: "V3_COPY_REGISTER", product_id: "p1", items: [validatedWithRefs], total: 1, limit: 50, offset: 0, has_more: false, provider_calls: 0, v2_mixed: false, full_storyboard_first: true });
+		renderPage();
+		await screen.findByTestId("storyboard-landbank-v3-page");
+		await screen.findByTestId("v3-action-validate");
+		// Regenerate is allowed on any reviewable (non-terminal) master; Safe Delete stays DRAFT-only and fails closed here.
+		expect(await screen.findByTestId("v3-action-regenerate")).toBeInTheDocument();
+		expect(screen.queryByTestId("v3-action-delete")).not.toBeInTheDocument();
+	});
+
+	it("regenerates a draft component into a new revision without auto-approval", async () => {
+		mockedLandbank.mockResolvedValue({ source: "V3_COPY_REGISTER", product_id: "p1", items: [draftItem], total: 1, limit: 50, offset: 0, has_more: false, provider_calls: 0, v2_mixed: false, full_storyboard_first: true });
+		renderPage();
+		const regenerate = await screen.findByTestId("v3-action-regenerate");
+		const callsBefore = mockedLandbank.mock.calls.length;
+		fireEvent.click(regenerate);
+		// Provider is NOT_CONFIGURED by default, so the FE routes through the FAKE_TEST lane.
+		await waitFor(() => expect(mockedRegenerate).toHaveBeenCalledWith("component-v3", 1, "FAKE_TEST"));
+		// The landbank is reloaded so the new immutable revision surfaces; approval is never automatic.
+		await waitFor(() => expect(mockedLandbank.mock.calls.length).toBeGreaterThan(callsBefore));
+	});
+
+	it("safe-deletes an unreferenced draft only after explicit confirmation", async () => {
+		mockedLandbank.mockResolvedValue({ source: "V3_COPY_REGISTER", product_id: "p1", items: [draftItem], total: 1, limit: 50, offset: 0, has_more: false, provider_calls: 0, v2_mixed: false, full_storyboard_first: true });
+		renderPage();
+		fireEvent.click(await screen.findByTestId("v3-action-delete"));
+		// Explicit confirmation dialog is mandatory; no delete call fires before confirm.
+		expect(await screen.findByTestId("v3-delete-dialog")).toBeInTheDocument();
+		expect(mockedDelete).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByTestId("v3-delete-confirm"));
+		await waitFor(() => expect(mockedDelete).toHaveBeenCalledWith("MASTER_STORYBOARD", "master-draft", 1));
 	});
 });
