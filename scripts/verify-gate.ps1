@@ -70,6 +70,12 @@ $SmokeTests = @(
     'tests/unit/test_storyboard_landbank_v3_round1_factory.py',
     'tests/unit/test_storyboard_landbank_v3_round2_copy_register.py',
     'tests/unit/test_storyboard_landbank_v3_api.py',
+    # Formula-driven Storyboard Landbank V3 Macro Round 3 production integration.
+    'tests/unit/test_storyboard_landbank_v3_materializer.py',
+    'tests/unit/test_production_copy_supply_service.py',
+    'tests/unit/test_production_supply_manifest_service.py',
+    'tests/unit/test_production_allocation_service.py',
+    'tests/unit/test_production_scale_and_recovery.py',
     'tests/unit/test_formula_validator_service.py',
     'tests/unit/test_copy_set_service.py',
     'tests/unit/test_copy_binding_service.py',
