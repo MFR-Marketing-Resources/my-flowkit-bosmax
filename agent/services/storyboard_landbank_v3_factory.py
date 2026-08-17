@@ -1244,15 +1244,97 @@ class V3CopyFactoryRepository:
         row = await cursor.fetchone()
         return _row_to_entity(entity_type, dict(row)) if row else None
 
+    def _filter_clauses(
+        self,
+        entity_type: str,
+        *,
+        product_id: str | None = None,
+        status: str | None = None,
+        statuses: Sequence[str] | None = None,
+        formula_id: str | None = None,
+        angle_id: str | None = None,
+        storyline_family_id: str | None = None,
+        recipe_id: str | None = None,
+        source: str | None = None,
+    ) -> tuple[list[str], list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if product_id:
+            clauses.append("t.product_id=?")
+            params.append(product_id)
+        if status:
+            clauses.append("t.status=?")
+            params.append(status)
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            clauses.append(f"t.status IN ({placeholders})")
+            params.extend(str(item) for item in statuses)
+        if formula_id:
+            clauses.append("t.formula_id=?")
+            params.append(formula_id)
+        if angle_id and entity_type in {"STORYLINE_FAMILY", "STORYBOARD_COMPONENT", "MASTER_STORYBOARD"}:
+            clauses.append("t.angle_id=?")
+            params.append(angle_id)
+        if storyline_family_id and entity_type in {"STORYBOARD_COMPONENT", "MASTER_STORYBOARD"}:
+            clauses.append("t.storyline_family_id=?")
+            params.append(storyline_family_id)
+        if recipe_id and entity_type == "MASTER_STORYBOARD":
+            clauses.append("t.recipe_id=?")
+            params.append(recipe_id)
+        if source and entity_type in {"MASTER_STORYBOARD", "DURATION_PROJECTION", "STORYBOARD_COMPONENT"}:
+            clauses.append("t.source=?")
+            params.append(source)
+        return clauses, params
+
+    async def count(
+        self,
+        entity_type: str,
+        *,
+        product_id: str | None = None,
+        status: str | None = None,
+        statuses: Sequence[str] | None = None,
+        formula_id: str | None = None,
+        angle_id: str | None = None,
+        storyline_family_id: str | None = None,
+        recipe_id: str | None = None,
+        source: str | None = None,
+        latest_only: bool = True,
+    ) -> int:
+        """Bounded count of latest-revision rows matching the structural filters."""
+        entity_type = entity_type.upper()
+        table, id_column = _ENTITY_TABLES.get(entity_type, (None, None))
+        if table is None:
+            raise V3FactoryError("V3_ENTITY_UNKNOWN", entity_type, status_code=422)
+        clauses, params = self._filter_clauses(
+            entity_type, product_id=product_id, status=status, statuses=statuses,
+            formula_id=formula_id, angle_id=angle_id, storyline_family_id=storyline_family_id,
+            recipe_id=recipe_id, source=source,
+        )
+        where = " AND ".join(clauses) or "1=1"
+        if latest_only:
+            query = (
+                f"SELECT COUNT(*) AS n FROM {table} t JOIN (SELECT {id_column}, MAX(revision) AS latest_revision "
+                f"FROM {table} GROUP BY {id_column}) latest ON latest.{id_column}=t.{id_column} "
+                f"AND latest.latest_revision=t.revision WHERE {where}"
+            )
+        else:
+            query = f"SELECT COUNT(*) AS n FROM {table} t WHERE {where}"
+        db = await get_db()
+        row = await (await db.execute(query, params)).fetchone()
+        return int((row["n"] if row is not None else 0) or 0)
+
     async def list(
         self,
         entity_type: str,
         *,
         product_id: str | None = None,
         status: str | None = None,
+        statuses: Sequence[str] | None = None,
         formula_id: str | None = None,
         angle_id: str | None = None,
         storyline_family_id: str | None = None,
+        recipe_id: str | None = None,
+        source: str | None = None,
         limit: int = 100,
         offset: int = 0,
         latest_only: bool = True,
@@ -1263,24 +1345,11 @@ class V3CopyFactoryRepository:
             raise V3FactoryError("V3_ENTITY_UNKNOWN", entity_type, status_code=422)
         limit = min(MAX_PAGE_SIZE, max(1, int(limit)))
         offset = max(0, int(offset))
-        clauses: list[str] = []
-        params: list[Any] = []
-        if product_id:
-            clauses.append("t.product_id=?")
-            params.append(product_id)
-        if status:
-            clauses.append("t.status=?")
-            params.append(status)
-        if formula_id:
-            clauses.append("t.formula_id=?")
-            params.append(formula_id)
-        if angle_id and entity_type in {"STORYLINE_FAMILY", "STORYBOARD_COMPONENT", "MASTER_STORYBOARD"}:
-            clauses.append("t.angle_id=?")
-            params.append(angle_id)
-        if storyline_family_id and entity_type in {"STORYBOARD_COMPONENT", "MASTER_STORYBOARD"}:
-            column = "storyline_family_id"
-            clauses.append(f"t.{column}=?")
-            params.append(storyline_family_id)
+        clauses, params = self._filter_clauses(
+            entity_type, product_id=product_id, status=status, statuses=statuses,
+            formula_id=formula_id, angle_id=angle_id, storyline_family_id=storyline_family_id,
+            recipe_id=recipe_id, source=source,
+        )
         where = " AND ".join(clauses) or "1=1"
         if latest_only:
             query = (

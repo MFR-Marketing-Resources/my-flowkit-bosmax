@@ -55,6 +55,7 @@ from agent.services.storyboard_landbank_v3_factory import (
     V3FactoryError,
     _TERMINAL_STATUSES,
     _now as _round1_now,
+    _row_to_entity,
 )
 from agent.authority.copy_blueprint_v2_authority import required_formula_stage_keys
 
@@ -63,6 +64,11 @@ ROUND2_SOURCE = "STORYBOARD_LANDBANK_V3_ROUND2_COPY_REGISTER_AI"
 PROMPT_VERSION = "storyboard-landbank-v3-copy-assistant-1"
 MAX_RUN_PROPOSALS = 24
 MAX_PAGE = 100
+# Bounded window for COMPUTED (search/quality/blocker) landbank filters, which
+# require per-master evaluation.  Structural filters paginate exactly in the DB;
+# only computed filters fall back to this scan, and hitting it is surfaced as
+# scan_bounded=True (never a silent truncation).
+MAX_FILTER_SCAN = 400
 MAX_PROVIDER_CALLS = 1
 MAX_OUTPUT_TOKENS = 20_000
 MAX_COST = 0
@@ -867,6 +873,64 @@ class V3CopyRegisterRound2Service:
         row = await (await db.execute("SELECT * FROM v3_human_approval_receipt WHERE target_type='MASTER_STORYBOARD' AND target_id=? ORDER BY created_at DESC LIMIT 1", (master_id,))).fetchone()
         return dict(row) if row else None
 
+    async def _projections_for_masters(self, product_id: str, masters: Sequence[V3MasterStoryboard]) -> dict[str, list[V3DurationProjection]]:
+        """Load latest-revision projections for exactly the page's masters."""
+        by_master: dict[str, list[V3DurationProjection]] = defaultdict(list)
+        ids = list({master.master_id for master in masters})
+        if not ids:
+            return by_master
+        placeholders = ",".join("?" for _ in ids)
+        db = await get_db()
+        rows = await (await db.execute(
+            "SELECT t.* FROM duration_projection_v3 t JOIN (SELECT projection_id, MAX(revision) AS latest_revision "
+            "FROM duration_projection_v3 GROUP BY projection_id) latest "
+            "ON latest.projection_id=t.projection_id AND latest.latest_revision=t.revision "
+            f"WHERE t.product_id=? AND t.master_id IN ({placeholders}) ORDER BY t.created_at DESC, t.projection_id DESC",
+            [product_id, *ids],
+        )).fetchall()
+        for row in rows:
+            projection = _row_to_entity("DURATION_PROJECTION", dict(row))
+            by_master[projection.master.entity_id].append(projection)
+        return by_master
+
+    @staticmethod
+    def _master_matches_search(master: V3MasterStoryboard, needle: str | None) -> bool:
+        if not needle:
+            return True
+        haystack = " ".join([
+            master.master_id,
+            master.source,
+            master.formula.formula_id,
+            master.angle.entity_id,
+            master.storyline_family.entity_id,
+            " ".join(stage.authored_text for stage in master.stages),
+        ]).casefold()
+        return needle in haystack
+
+    async def _build_landbank_items(self, product_id: str, masters: Sequence[V3MasterStoryboard], truth: Any, duration_seconds: int | None) -> list[dict[str, Any]]:
+        by_master = await self._projections_for_masters(product_id, masters)
+        items: list[dict[str, Any]] = []
+        for master in masters:
+            master_ref = V3RevisionRef(entity_id=master.master_id, revision=master.revision)
+            projection_refs = {master_ref}
+            if master.supersedes is not None:
+                projection_refs.add(master.supersedes)
+            projections = [item for item in by_master.get(master.master_id, []) if item.master in projection_refs]
+            if duration_seconds is not None:
+                projections = [item for item in projections if item.target_duration_seconds == int(duration_seconds)]
+            quality_signal = await self.quality_signal(master, projections)
+            receipt = await self._approval_receipt_for_master(master.master_id)
+            items.append({
+                "master": master.model_dump(mode="json"),
+                "projections": [item.model_dump(mode="json") for item in projections],
+                "quality": quality_signal.model_dump(mode="json"),
+                "current_truth": master.product_truth == truth.lineage,
+                "approval_receipt": receipt,
+                "v2_materialization": "NOT_IN_ROUND2",
+                "p6_status": "NOT_IN_ROUND2",
+            })
+        return items
+
     async def copy_register_landbank(
         self,
         product_id: str,
@@ -874,6 +938,7 @@ class V3CopyRegisterRound2Service:
         limit: int = 50,
         offset: int = 0,
         status: str | None = None,
+        statuses: Sequence[str] | None = None,
         formula_id: str | None = None,
         angle_id: str | None = None,
         storyline_family_id: str | None = None,
@@ -887,61 +952,52 @@ class V3CopyRegisterRound2Service:
         limit = min(MAX_PAGE, max(1, int(limit)))
         offset = max(0, int(offset))
         truth = await self.factory.truth_adapter.current(product_id)
-        masters = await self.factory.repository.list(
-            "MASTER_STORYBOARD", product_id=product_id, status=status, formula_id=formula_id,
-            angle_id=angle_id, storyline_family_id=storyline_family_id, limit=MAX_PAGE_SIZE,
-        )
-        items: list[dict[str, Any]] = []
-        all_projections = await self.factory.repository.list("DURATION_PROJECTION", product_id=product_id, limit=MAX_PAGE_SIZE)
-        for master in masters:
-            if source and master.source != source:
-                continue
-            if recipe_id and master.recipe.entity_id != recipe_id:
-                continue
-            if search:
-                needle = normalized_text(search).casefold()
-                haystack = " ".join([
-                    master.master_id,
-                    master.source,
-                    master.formula.formula_id,
-                    master.angle.entity_id,
-                    master.storyline_family.entity_id,
-                    " ".join(stage.authored_text for stage in master.stages),
-                ]).casefold()
-                if needle not in haystack:
+        structural: dict[str, Any] = {
+            "product_id": product_id,
+            "status": status,
+            "statuses": tuple(statuses) if statuses else None,
+            "formula_id": formula_id,
+            "angle_id": angle_id,
+            "storyline_family_id": storyline_family_id,
+            "recipe_id": recipe_id,
+            "source": source,
+        }
+        needle = normalized_text(search).casefold() if search else None
+        # search/quality/blocker are per-master computed filters; every other
+        # dimension partitions and paginates exactly in the DB.
+        computed_filter = bool(needle) or bool(quality) or bool(blocker)
+        scan_bounded = False
+        if not computed_filter:
+            masters = await self.factory.repository.list("MASTER_STORYBOARD", limit=limit, offset=offset, **structural)
+            total = await self.factory.repository.count("MASTER_STORYBOARD", **structural)
+            items = await self._build_landbank_items(product_id, masters[:limit], truth, duration_seconds)
+            has_more = offset + len(items) < total
+        else:
+            scanned = await self.factory.repository.list("MASTER_STORYBOARD", limit=MAX_FILTER_SCAN, offset=0, **structural)
+            scan_bounded = len(scanned) >= MAX_FILTER_SCAN
+            searched = [master for master in scanned if self._master_matches_search(master, needle)]
+            built = await self._build_landbank_items(product_id, searched, truth, duration_seconds)
+            want_pass = bool(quality) and quality.upper() == "HARD_PASS"
+            filtered: list[dict[str, Any]] = []
+            for item in built:
+                signal = item["quality"]
+                if want_pass and not signal["hard_pass"]:
                     continue
-            master_ref = V3RevisionRef(entity_id=master.master_id, revision=master.revision)
-            projection_refs = {master_ref}
-            if master.supersedes is not None:
-                projection_refs.add(master.supersedes)
-            projections = [item for item in all_projections if item.master in projection_refs]
-            if duration_seconds is not None:
-                projections = [item for item in projections if item.target_duration_seconds == int(duration_seconds)]
-            quality_signal = await self.quality_signal(master, projections)
-            if quality and quality.upper() == "HARD_PASS" and not quality_signal.hard_pass:
-                continue
-            if blocker and blocker not in quality_signal.issue_codes:
-                continue
-            receipt = await self._approval_receipt_for_master(master.master_id)
-            items.append({
-                "master": master.model_dump(mode="json"),
-                "projections": [item.model_dump(mode="json") for item in projections],
-                "quality": quality_signal.model_dump(mode="json"),
-                "current_truth": master.product_truth == truth.lineage,
-                "approval_receipt": receipt,
-                "v2_materialization": "NOT_IN_ROUND2",
-                "p6_status": "NOT_IN_ROUND2",
-            })
-        total = len(items)
-        sliced = items[offset:offset + limit]
+                if blocker and blocker not in signal["issue_codes"]:
+                    continue
+                filtered.append(item)
+            total = len(filtered)
+            items = filtered[offset:offset + limit]
+            has_more = offset + len(items) < total
         return {
             "source": "V3_COPY_REGISTER",
             "product_id": product_id,
-            "items": sliced,
+            "items": items,
             "total": total,
             "limit": limit,
             "offset": offset,
-            "has_more": total > offset + len(sliced),
+            "has_more": has_more,
+            "scan_bounded": scan_bounded,
             "provider_calls": 0,
             "v2_mixed": False,
             "full_storyboard_first": True,
@@ -950,17 +1006,12 @@ class V3CopyRegisterRound2Service:
     async def review_queue(self, product_id: str | None = None, *, statuses: Sequence[str] = ("DRAFT", "REVIEW_REQUIRED", "VALIDATED", "BLOCKED"), limit: int = 50, offset: int = 0, **filters: Any) -> dict[str, Any]:
         if not product_id:
             raise V3FactoryError("PRODUCT_REQUIRED", "Round 2 review queue requires a product filter.", status_code=422)
-        response = await self.copy_register_landbank(product_id, limit=MAX_PAGE, offset=0, **filters)
-        allowed = {str(item).upper() for item in statuses}
-        filtered = [item for item in response["items"] if item["master"]["status"] in allowed]
-        page_limit = min(MAX_PAGE, max(1, int(limit)))
-        response["items"] = filtered[offset:offset + page_limit]
-        response["total"] = len(filtered)
-        response["has_more"] = len(filtered) > offset + len(response["items"])
-        response["limit"] = page_limit
-        response["offset"] = offset
+        allowed = tuple(sorted({str(item).upper() for item in statuses}))
+        # Status filtering is pushed into the DB partition so the review queue
+        # paginates exactly instead of capping at a preload window.
+        response = await self.copy_register_landbank(product_id, statuses=allowed, limit=limit, offset=offset, **filters)
         response["queue"] = "V3_REVIEW_QUEUE"
-        response["status_filter"] = sorted(allowed)
+        response["status_filter"] = list(allowed)
         response["full_storyboard_first"] = True
         return response
 

@@ -278,50 +278,54 @@ async def test_round2_modes_are_explicit_and_capacity_bounded(monkeypatch):
     assert fill.explicit_execute_required is True
 
 
-async def _second_same_product_route(factory, product_id: str):
-    """Author a second distinct PAS route (angle B + family B + recipe B) under
-    the same product so a same-product batch can bind two distinct Masters."""
+async def _extra_route(factory, product_id: str, suffix: str):
+    """Author an additional distinct PAS route (angle/family/recipe) under the
+    same product so a product can hold several distinct Masters."""
     fact_id = f"{product_id}-fact"
-    angle_b = await factory.create_angle(
+    angle = await factory.create_angle(
         product_id,
         {
-            "angle_id": f"{product_id}-angle-b",
-            "definition": "A second distinct lightweight routine angle for qualified buyers",
+            "angle_id": f"{product_id}-angle-{suffix}",
+            "definition": f"A distinct lightweight routine angle {suffix} for qualified buyers",
             "formula_id": "PAS",
             "objective_id": "conversion",
             "objective_definition": "Drive a safe trial",
             "evidence_fact_ids": [fact_id],
         },
         actor_id="round2-fixture",
-        request_id=f"{product_id}:angle-b",
+        request_id=f"{product_id}:angle-{suffix}",
     )
     await factory.create_storyline_family(
         product_id,
         {
-            "family_id": f"{product_id}-family-b",
-            "angle_id": angle_b.angle_id,
+            "family_id": f"{product_id}-family-{suffix}",
+            "angle_id": angle.angle_id,
             "formula_id": "PAS",
             "objective_compatibility": {"objective_ids": ["conversion"]},
-            "reviewed_definition": "A second continuous daily routine route for the buyer",
+            "reviewed_definition": f"A distinct continuous daily routine route {suffix} for the buyer",
         },
         actor_id="round2-fixture",
-        request_id=f"{product_id}:family-b",
+        request_id=f"{product_id}:family-{suffix}",
     )
-    recipe_b = await factory.create_recipe(
+    recipe = await factory.create_recipe(
         product_id,
         {
-            "recipe_id": f"{product_id}-recipe-b",
+            "recipe_id": f"{product_id}-recipe-{suffix}",
             "formula_id": "PAS",
             "objective_id": "conversion",
             "objective_definition": "Drive a safe trial",
-            "target_angles": [{"entity_id": angle_b.angle_id, "revision": angle_b.revision}],
+            "target_angles": [{"entity_id": angle.angle_id, "revision": angle.revision}],
             "component_count_targets": {"HOOK": 1, "BODY_CORE": 1, "CTA": 1},
             "supported_durations_seconds": [8, 16, 24],
         },
         actor_id="round2-fixture",
-        request_id=f"{product_id}:recipe-b",
+        request_id=f"{product_id}:recipe-{suffix}",
     )
-    return recipe_b
+    return recipe
+
+
+async def _second_same_product_route(factory, product_id: str):
+    return await _extra_route(factory, product_id, "b")
 
 
 @pytest.mark.asyncio
@@ -548,3 +552,50 @@ async def test_round2_cost_budget_enforced_only_when_positive_ceiling_exceeded(m
         (plan.run_id,),
     )).fetchone()
     assert tuple(row) == ("FAILED", "BUDGET_EXCEEDED")
+
+
+@pytest.mark.asyncio
+async def test_round2_landbank_paginates_in_db_across_pages(monkeypatch):
+    monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
+    product_id = "round2-page"
+    factory, recipe_a, _angle, _family = await _seed_round2_fixture(product_id)
+    service = V3CopyRegisterRound2Service(factory=factory)
+    recipes = [
+        recipe_a,
+        await _extra_route(factory, product_id, "b"),
+        await _extra_route(factory, product_id, "c"),
+    ]
+    for recipe in recipes:
+        plan = await service.plan_assistant(
+            product_id, recipe.recipe_id, mode="CREATE",
+            actor_id="round2-operator", request_id=f"{recipe.recipe_id}:plan",
+        )
+        await service.execute_assistant(
+            plan.plan_id, actor_id="round2-operator",
+            request_id=f"{recipe.recipe_id}:exec", provider_mode="FAKE_TEST",
+        )
+
+    # Three distinct Masters exist; a 2-per-page window must page exactly through
+    # the DB and report the true total, not a preload-window length.
+    page1 = await service.copy_register_landbank(product_id, limit=2, offset=0)
+    assert page1["total"] == 3
+    assert len(page1["items"]) == 2
+    assert page1["has_more"] is True
+    assert page1["scan_bounded"] is False
+    page2 = await service.copy_register_landbank(product_id, limit=2, offset=2)
+    assert page2["total"] == 3
+    assert len(page2["items"]) == 1
+    assert page2["has_more"] is False
+    seen = {item["master"]["master_id"] for item in page1["items"]}
+    seen |= {item["master"]["master_id"] for item in page2["items"]}
+    assert len(seen) == 3  # exact coverage: no overlap, no silent omission
+
+    # Review queue pushes its status set into the same DB partition and pages
+    # exactly (it no longer caps at a fixed preload window).
+    rq1 = await service.review_queue(product_id, limit=2, offset=0)
+    rq2 = await service.review_queue(product_id, limit=2, offset=2)
+    assert rq1["total"] == 3 and rq2["total"] == 3
+    assert rq1["queue"] == "V3_REVIEW_QUEUE"
+    rq_seen = {item["master"]["master_id"] for item in rq1["items"]}
+    rq_seen |= {item["master"]["master_id"] for item in rq2["items"]}
+    assert len(rq_seen) == 3
