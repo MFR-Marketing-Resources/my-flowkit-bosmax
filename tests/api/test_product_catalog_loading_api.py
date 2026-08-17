@@ -134,7 +134,8 @@ def test_operator_page_does_not_silently_swallow_product_error():
     # Product catalog errors are centralized so every consumer gets the same
     # explicit error state instead of maintaining independent silent catches.
     assert "useProductCatalog" in src
-    assert "setProductsError(" in hook
+    assert "setState({" in hook
+    assert "productsError:" in hook
 
 
 def test_workspace_jobs_page_does_not_silently_swallow_product_error():
