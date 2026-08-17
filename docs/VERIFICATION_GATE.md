@@ -9,10 +9,11 @@ runs the checks that actually reflect the production + local-agent build path, s
 > and by manual workflow dispatch. A local pass is still local proof; a remote pass is
 > reported separately as GitHub Actions proof.
 
-> **Enforcement status — workflow present, branch protection separate.** GitHub Actions now
-> runs the gate, but `main` still requires repository-admin configuration before the check can
-> become a mandatory branch-protection rule. Rule of thumb: **PRs should not be reported green
-> unless `scripts/verify-gate.ps1` passes locally and the remote workflow is green.**
+> **Enforcement status — server-side `verify` is required.** GitHub Actions runs the gate for
+> pull requests targeting `main`, and branch protection requires the exact `verify` check before
+> a normal merge. `main` also requires a pull request, enforces the policy for admins, disables
+> force pushes and branch deletion, and has an empty direct-push allowlist. A PR should still be
+> reported green only when the local gate and the remote workflow are both explicitly evidenced.
 
 ## Why this exists
 
@@ -22,13 +23,13 @@ PR #265 merged exactly that way: it added a `boolean` field to `PosterBuilderDra
 broke `PosterBuilderShellForm`'s generic `value={draft[key]}` binding under `tsc -b`, so the
 dashboard bundle could no longer be rebuilt — but the weaker checks that had been run were
 green. PR #266 fixed the regression; this gate closes the local-verification gap that let it
-through (it does not, by itself, make the miss impossible — see Enforcement status above).
+through, while the required remote check closes the normal merge path.
 
 **Acceptance (gate behavior):** if the real dashboard build fails, the gate exits non-zero —
 even when vitest and pytest are green. (Verified: a transient `tsc -b` error yields
 `DASHBOARD_BUILD FAIL` / `GATE RESULT: FAIL` / exit 1 while the other gates pass.) This
-guarantees the gate's *own* exit code, not that the gate was run — running it is a process
-discipline until server-side enforcement exists.
+guarantees the gate's *own* exit code. The required GitHub `verify` check supplies the
+server-side merge enforcement; a local pass remains local proof only.
 
 ## What it runs
 
@@ -84,14 +85,12 @@ powershell -ExecutionPolicy Bypass -File scripts/verify-gate.ps1 || {
 
 When reporting a change as verified, cite the gate's exact result (e.g. `GATE RESULT: PASS`
 with each sub-gate's status) and label it **local proof only** (no CI ran). Never report a
-change green if `DASHBOARD_BUILD` is FAIL. Prefer "PRs should not be reported green unless
-`scripts/verify-gate.ps1` passes locally" over absolute claims like "impossible to merge broken"
-— that is only true once server-side enforcement exists.
+change green if `DASHBOARD_BUILD` is FAIL. Report the remote `verify` check separately from
+the local gate; a pending or failed required check blocks a normal merge to `main`.
 
 ## Server-side enforcement status
 
 `.github/workflows/verify.yml` runs the same layers on pull requests: dependency installation,
-the real dashboard build, Vitest, the curated backend pytest smoke set, and Mandor ownership
-validation. Marking the resulting `verify / verify` check as **required** via branch protection
-on `main` remains a repository-admin action; until that is configured, the workflow is genuine
-remote evidence but not an immutable merge block.
+the real dashboard build, Vitest, the product-data network fixture contract, the curated backend
+pytest smoke set, and Mandor ownership validation. The resulting exact `verify` check is required
+by branch protection on `main`; a pending or failed check therefore blocks a normal merge.
