@@ -758,6 +758,7 @@ domains:
       - dashboard/src/api/creativeAssets.ts
       - dashboard/src/api/creativeAssets.test.ts
       - dashboard/src/api/products.ts
+      - dashboard/src/api/products.test.ts
       - dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.tsx
       - dashboard/src/components/product-intelligence/ProductIntelligenceReviewDraftPanel.test.tsx
       - dashboard/src/api/workspacePackages.ts
@@ -768,6 +769,7 @@ domains:
       - tests/api/test_avatar_registry_active_product_fit_api.py
       - dashboard/src/components/workspace/SearchableProductSelect.tsx
       - dashboard/src/components/workspace/SearchableProductSelect.test.tsx
+      - dashboard/src/hooks/useProductCatalog.ts
       - dashboard/src/pages/CreativeLibraryPage.tsx
       - dashboard/src/pages/CreativeLibraryPage.test.tsx
       - dashboard/src/pages/CreativeLibraryWorkspacePage.tsx
@@ -972,6 +974,7 @@ domains:
       - tests/ui/test_workspace_authoring_layout_ui_contract.py
       - tests/ui/test_workspace_jobs_page_ui_contract.py
       - tests/ui/test_workspace_package_bridge_ui_contract.py
+      - tests/api/test_product_catalog_loading_api.py
       - tests/ui/test_product_catalog_selector_loading_ui_contract.py
       - tests/ui/test_reference_only_workspace_blockers_ui_contract.py
       - tests/ui/test_product_lifecycle_confirmation_ui_contract.py

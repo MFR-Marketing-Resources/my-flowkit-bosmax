@@ -30,7 +30,8 @@ def test_operator_page_catch_sets_products_error():
     hook = _read("dashboard/src/hooks/useProductCatalog.ts")
     assert "useProductCatalog" in src
     assert "productsError" in src
-    assert "setProductsError(" in hook
+    assert "setState({" in hook
+    assert "productsError:" in hook
 
 
 def test_operator_page_shows_loading_indicator():
