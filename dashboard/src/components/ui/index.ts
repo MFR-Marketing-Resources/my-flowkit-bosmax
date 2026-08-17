@@ -18,3 +18,5 @@ export type {
 } from "./DataTable";
 export { ConfirmActionModal } from "./ConfirmActionModal";
 export type { ConfirmActionModalProps } from "./ConfirmActionModal";
+export { TechnicalDetails } from "./TechnicalDetails";
+export type { TechnicalDetailsProps } from "./TechnicalDetails";

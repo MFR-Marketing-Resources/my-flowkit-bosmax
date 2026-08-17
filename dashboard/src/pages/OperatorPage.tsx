@@ -33,6 +33,7 @@ import {
 } from "../api/workspacePackages";
 import BackendVersionBanner from "../components/BackendVersionBanner";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
+import CopywritingSourceSelector from "../components/copywriting/CopywritingSourceSelector";
 import NativeExtendPanel from "../components/NativeExtendPanel";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
@@ -2365,15 +2366,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				<div className="mb-4">
 					<BackendVersionBanner onRuntimeStaleChange={setBackendRuntimeStale} />
 				</div>
-				{!isImageMode ? (
-					<CopyArchitectureV2LaneCard
-						lane={mode === "HYBRID" ? "HYBRID" : mode}
-						productId={selectedProduct?.id}
-						execution={workspacePackage?.copy_architecture_v2}
-						onReadyChange={setV2CopyReady}
-					/>
-				) : null}
-
 				<div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row">
 					<main className="min-w-0 space-y-3 pb-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
 						{/* Step 1 — Product */}
@@ -2429,28 +2421,29 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						) : (
 							<>
 
-						{/* Step 2 — Message & angle */}
+						{/* Step 2 — Copywriting */}
 						<WorkflowStep
 							index={2}
-							title="Message & angle"
+							title="Copywriting"
 							status={s2}
 							open={v4IsOpen(2, s2)}
 							onToggleOpen={() => v4Toggle(2, v4IsOpen(2, s2))}
-							summary={copyBound ? "V2 blueprint binding ready" : "V2 binding required"}
-							helper="This lane resolves the product's active formula-native V2 binding; no legacy CopySet can be selected."
+							summary={copyBound || v2CopyReady ? "Copy selected" : "Copywriting required"}
+							helper="Choose existing approved copy from Copy Register or generate with AI Copy Assistant."
 						>
 							<div className="space-y-3">
-								<SceneStrategySummary
-									hasProduct={Boolean(selectedProduct)}
-									productName={selectedProduct?.product_display_name ?? null}
-									taxonomy={selectedProduct?.strategy_taxonomy ?? null}
+								<CopywritingSourceSelector
+									productId={selectedProduct?.id}
+									productName={selectedProduct?.product_display_name}
+									lane={mode === "HYBRID" ? "HYBRID" : mode}
+									onCopySelected={() => setWorkspacePackage(null)}
 								/>
-								<a
-									href={selectedProduct ? `/creative/copy-registry?product_id=${encodeURIComponent(selectedProduct.id)}` : "/creative/copy-registry"}
-									className="inline-flex rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 py-2 text-[11px] font-bold uppercase text-blue-100"
-								>
-									Open Copy Register V2
-								</a>
+								<CopyArchitectureV2LaneCard
+									lane={mode === "HYBRID" ? "HYBRID" : mode}
+									productId={selectedProduct?.id}
+									execution={workspacePackage?.copy_architecture_v2}
+									onReadyChange={setV2CopyReady}
+								/>
 							</div>
 						</WorkflowStep>
 

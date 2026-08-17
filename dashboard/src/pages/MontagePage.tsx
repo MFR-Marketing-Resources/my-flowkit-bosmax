@@ -33,6 +33,7 @@ import {
 } from "../components/workflow";
 import ResultsSidebar from "../components/workspace/ResultsSidebar";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
+import CopywritingSourceSelector from "../components/copywriting/CopywritingSourceSelector";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
 import { useProductCatalog } from "../hooks/useProductCatalog";
@@ -148,6 +149,7 @@ export default function MontagePage() {
 		run?.scenes?.filter((s) => s.workspace_execution_package_id).length ?? 0;
 
 	const sProduct: WorkflowStepStatus = selectedProduct ? "done" : "active";
+	const sCopy: WorkflowStepStatus = !selectedProduct ? "upcoming" : v2CopyReady ? "done" : "active";
 	const sCreative: WorkflowStepStatus =
 		selectedProduct && settingsAvailable
 			? "done"
@@ -408,17 +410,6 @@ export default function MontagePage() {
 				</p>
 			</header>
 
-			<CopyArchitectureV2LaneCard
-				lane="MONTAGE"
-				productId={selectedProduct?.id}
-				execution={
-					run?.config?.copy_architecture_v2 as
-					| Record<string, unknown>
-					| undefined
-				}
-				onReadyChange={setV2CopyReady}
-			/>
-
 			<div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
 				<div className="min-h-0 space-y-3 overflow-y-auto pr-1">
 					<WorkflowStep
@@ -452,10 +443,39 @@ export default function MontagePage() {
 
 					<WorkflowStep
 						index={2}
+						title="Copywriting"
+						status={sCopy}
+						open={v4IsOpen(2, sCopy)}
+						onToggleOpen={() => v4Toggle(2, v4IsOpen(2, sCopy))}
+						summary={v2CopyReady ? "Copy selected" : "Copywriting required"}
+						helper="Choose existing approved copy from Copy Register or generate with AI Copy Assistant."
+					>
+						<div className="space-y-3">
+							<CopywritingSourceSelector
+								productId={selectedProduct?.id}
+								productName={selectedProduct?.raw_product_title}
+								lane="MONTAGE"
+								onCopySelected={() => setPlan(null)}
+							/>
+							<CopyArchitectureV2LaneCard
+								lane="MONTAGE"
+								productId={selectedProduct?.id}
+								execution={
+									run?.config?.copy_architecture_v2 as
+									| Record<string, unknown>
+									| undefined
+								}
+								onReadyChange={setV2CopyReady}
+							/>
+						</div>
+					</WorkflowStep>
+
+					<WorkflowStep
+						index={3}
 						title="Hook & background"
 						status={sCreative}
-						open={v4IsOpen(2, sCreative)}
-						onToggleOpen={() => v4Toggle(2, v4IsOpen(2, sCreative))}
+						open={v4IsOpen(3, sCreative)}
+						onToggleOpen={() => v4Toggle(3, v4IsOpen(3, sCreative))}
 						summary={`${hookLabel} · ${backgroundLabel}`}
 						helper="Options from GET /api/creative-lane-settings only (no local SSOT copy)."
 					>
@@ -515,11 +535,11 @@ export default function MontagePage() {
 					</WorkflowStep>
 
 					<WorkflowStep
-						index={3}
+						index={4}
 						title="Video settings"
 						status={canOperate ? "done" : "upcoming"}
-						open={v4IsOpen(3, canOperate ? "done" : "upcoming")}
-						onToggleOpen={() => v4Toggle(3, v4IsOpen(3, canOperate ? "done" : "upcoming"))}
+						open={v4IsOpen(4, canOperate ? "done" : "upcoming")}
+						onToggleOpen={() => v4Toggle(4, v4IsOpen(4, canOperate ? "done" : "upcoming"))}
 						summary={
 							validSelection
 								? `${validSelection.model} · ${validSelection.durationSeconds}s / scene`
@@ -581,11 +601,11 @@ export default function MontagePage() {
 </WorkflowStep>
 
 					<WorkflowStep
-						index={4}
+						index={5}
 						title="Plan scenes"
 						status={sPlan}
-						open={v4IsOpen(4, sPlan)}
-						onToggleOpen={() => v4Toggle(4, v4IsOpen(4, sPlan))}
+						open={v4IsOpen(5, sPlan)}
+						onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sPlan))}
 						summary={
 							plan
 								? `${plan.scene_count} scenes · ${plan.assembly_path}`
@@ -619,11 +639,11 @@ export default function MontagePage() {
 					</WorkflowStep>
 
 					<WorkflowStep
-						index={5}
+						index={6}
 						title="Generate Montage"
 						status={sExec}
-						open={v4IsOpen(5, sExec)}
-						onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sExec))}
+						open={v4IsOpen(6, sExec)}
+						onToggleOpen={() => v4Toggle(6, v4IsOpen(6, sExec))}
 						summary={
 							run
 								? `${run.total_scenes} scene(s) · ${estimate?.summary || "operation estimate loading"}`

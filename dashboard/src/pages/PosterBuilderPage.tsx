@@ -17,6 +17,7 @@ import {
 	type PosterV2ComposeResponse,
 } from "../api/posterV2";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
+import CopywritingSourceSelector from "../components/copywriting/CopywritingSourceSelector";
 import PosterRecipeSelector from "../components/poster/PosterRecipeSelector";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
@@ -283,24 +284,43 @@ export default function PosterBuilderPage() {
 					{productsError ? <p className="mt-2 text-sm text-rose-300">{productsError}</p> : null}
 				</section>
 
-				<CopyArchitectureV2LaneCard
-					lane="POSTER_BUILDER"
-					productId={selectedProduct?.id ?? null}
-					onReadyChange={setCopyReady}
-				/>
+				<section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5">
+					<h2 className="text-sm font-bold">2. Copywriting</h2>
+					<p className="mt-1 text-xs text-slate-400">
+						Select approved copy from Copy Register or generate with AI Copy Assistant.
+					</p>
+					<div className="mt-3 space-y-3">
+						<CopywritingSourceSelector
+							productId={selectedProduct?.id}
+							productName={selectedProduct?.product_display_name || selectedProduct?.raw_product_title}
+							lane="POSTER_BUILDER"
+							onCopySelected={() => setPromptPackage(null)}
+						/>
+						<CopyArchitectureV2LaneCard
+							lane="POSTER_BUILDER"
+							productId={selectedProduct?.id ?? null}
+							onReadyChange={setCopyReady}
+						/>
+					</div>
+				</section>
 
-				<PosterRecipeSelector
-					recipes={recipes}
-					selectedRecipeId={selectedRecipeId}
-					onSelect={setSelectedRecipeId}
-					error={recipesError}
-				/>
+				<section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5">
+					<h2 className="text-sm font-bold">3. Poster recipe & layout</h2>
+					<div className="mt-3">
+						<PosterRecipeSelector
+							recipes={recipes}
+							selectedRecipeId={selectedRecipeId}
+							onSelect={setSelectedRecipeId}
+							error={recipesError}
+						/>
+					</div>
+				</section>
 
 				<section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5">
 					<div className="flex items-start gap-3">
 						<FileCheck2 className="mt-0.5 text-indigo-300" size={18} />
 						<div>
-							<h2 className="text-sm font-bold">3. Resolve V2 prompt package</h2>
+							<h2 className="text-sm font-bold">4. Resolve prompt package</h2>
 							<p className="mt-1 text-xs text-slate-400">
 								The backend projects immutable approved blueprint text through
 								 <code>/api/poster/prompt-draft</code>. Empty or manual copy is never submitted.
@@ -332,7 +352,7 @@ export default function PosterBuilderPage() {
 				</section>
 
 				<section className="rounded-2xl border border-amber-500/30 bg-amber-950/10 p-5">
-					<h2 className="text-sm font-bold">4. Optional live background generation</h2>
+					<h2 className="text-sm font-bold">5. Optional live background generation</h2>
 					<p className="mt-1 text-xs text-slate-400">
 						This is the only provider action on this page. It requires a separate
 						explicit confirmation and produces a background artifact; final copy and
