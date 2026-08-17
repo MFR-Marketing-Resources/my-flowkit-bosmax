@@ -407,6 +407,12 @@ class V3ToV2Materializer:
                 # A concurrent materialization already approved this exact
                 # deterministic blueprint: converge on the single canonical row.
                 approved = await v2svc.get_blueprint(blueprint_id)
+                if approved.status != "PRODUCTION_VALID":
+                    raise MaterializationError(
+                        "MATERIALIZATION_BLUEPRINT_NOT_PRODUCTION_VALID",
+                        "Converged blueprint is not PRODUCTION_VALID.",
+                        details={"status": approved.status},
+                    ) from exc
             else:
                 # The existing V2 gate rejected the materialization: fail closed
                 # and preserve the exact V2 authority reason.

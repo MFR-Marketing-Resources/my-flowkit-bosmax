@@ -227,7 +227,9 @@ async def allocate_from_manifest(
         allocations.append(
             {
                 "p6_item_id": p6_item_id,
-                "p6_item_index": len(allocations) - 1,
+                # Index matches the p6_item_id suffix (both are the pre-append
+                # position); computed before append so the first item is 0, not -1.
+                "p6_item_index": len(allocations),
                 # This is the EXACT per-item production copy selection a P6 item
                 # carries; it resolves copy directly, bypassing global activation.
                 "round3_manifest_item": {
@@ -287,15 +289,27 @@ async def revalidate_item_selection(selection: dict[str, Any]) -> dict[str, Any]
             "v2_blueprint_id": v2_blueprint_id,
             "v2_blueprint_revision": v2_blueprint_revision,
         }
+    current_snapshot_id = (
+        blueprint.approval_snapshot.approval_snapshot_id
+        if blueprint.approval_snapshot is not None
+        else ""
+    )
+    # Defense-in-depth: the exact selected blueprint revision is immutable, but if
+    # the caller's recorded approval snapshot no longer matches, fail closed rather
+    # than execute copy the selection was not approved against.
+    expected_snapshot_id = str(selection.get("v2_approval_snapshot_id") or "")
+    if expected_snapshot_id and expected_snapshot_id != current_snapshot_id:
+        return {
+            "valid": False,
+            "reason": "APPROVAL_SNAPSHOT_MISMATCH",
+            "v2_blueprint_id": v2_blueprint_id,
+            "v2_blueprint_revision": v2_blueprint_revision,
+        }
     return {
         "valid": True,
         "v2_blueprint_id": v2_blueprint_id,
         "v2_blueprint_revision": v2_blueprint_revision,
-        "v2_approval_snapshot_id": (
-            blueprint.approval_snapshot.approval_snapshot_id
-            if blueprint.approval_snapshot is not None
-            else ""
-        ),
+        "v2_approval_snapshot_id": current_snapshot_id,
         "approved_execution_text": [
             {"stage_key": entry.stage_key, "text": entry.text}
             for entry in blueprint.approved_execution_text

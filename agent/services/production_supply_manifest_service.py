@@ -75,8 +75,10 @@ async def _validate_link(
         )
     except v2svc.CopyRegisterV2Error:
         return False, "V2_BLUEPRINT_MISSING"
-    if blueprint.status != "PRODUCTION_VALID" or link.status != "PRODUCTION_VALID":
+    if blueprint.status != "PRODUCTION_VALID":
         return False, f"BLUEPRINT_{blueprint.status}"
+    if link.status != "PRODUCTION_VALID":
+        return False, f"LINK_{link.status}"
     if current_truth is None:
         return False, "PRODUCT_TRUTH_UNAVAILABLE"
     if (

@@ -198,19 +198,26 @@ async def insert_manifest_with_items(
     manifest_placeholders = ", ".join("?" for _ in _MANIFEST_COLUMNS)
     item_placeholders = ", ".join("?" for _ in _ITEM_COLUMNS)
     async with _db_lock:
-        await db.execute(
-            f"INSERT INTO production_copy_supply_manifest_v3 "
-            f"({', '.join(_MANIFEST_COLUMNS)}) VALUES ({manifest_placeholders})",
-            tuple(manifest_data[column] for column in _MANIFEST_COLUMNS),
-        )
-        for item in items:
-            item_data = item.model_dump(mode="python")
+        try:
             await db.execute(
-                f"INSERT INTO manifest_item_v3 ({', '.join(_ITEM_COLUMNS)}) "
-                f"VALUES ({item_placeholders})",
-                tuple(item_data[column] for column in _ITEM_COLUMNS),
+                f"INSERT INTO production_copy_supply_manifest_v3 "
+                f"({', '.join(_MANIFEST_COLUMNS)}) VALUES ({manifest_placeholders})",
+                tuple(manifest_data[column] for column in _MANIFEST_COLUMNS),
             )
-        await db.commit()
+            for item in items:
+                item_data = item.model_dump(mode="python")
+                await db.execute(
+                    f"INSERT INTO manifest_item_v3 ({', '.join(_ITEM_COLUMNS)}) "
+                    f"VALUES ({item_placeholders})",
+                    tuple(item_data[column] for column in _ITEM_COLUMNS),
+                )
+            await db.commit()
+        except Exception:
+            # sqlite3 does not auto-rollback; without this the half-written
+            # manifest header would be flushed by the next writer's commit on the
+            # shared connection (an over-counted manifest => capacity inflation).
+            await db.rollback()
+            raise
 
 
 async def get_manifest(

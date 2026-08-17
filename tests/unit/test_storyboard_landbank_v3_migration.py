@@ -551,4 +551,27 @@ async def test_v3_round3_usage_ledger_append_only_and_manifest_terminal_immutabl
             "UPDATE materialization_link_v3 SET status='BLOCKED' WHERE link_id='link-r3-terminal'"
         )
     await db.rollback()
+    # A terminal link cannot be deleted either.
+    with pytest.raises(
+        sqlite3.IntegrityError, match="MATERIALIZATION_LINK_V3_IMMUTABLE"
+    ):
+        await db.execute(
+            "DELETE FROM materialization_link_v3 WHERE link_id='link-r3-terminal'"
+        )
+    await db.rollback()
+    # A new item cannot be inserted under a FROZEN manifest (FK off isolates the
+    # frozen-parent trigger from FK enforcement).
+    with pytest.raises(sqlite3.IntegrityError, match="MANIFEST_ITEM_V3_IMMUTABLE"):
+        await db.execute(
+            "INSERT INTO manifest_item_v3 (item_id, manifest_id, manifest_revision, item_index, "
+            "product_id, master_id, master_revision, projection_id, projection_revision, "
+            "projection_exact_digest, approval_receipt_id, materialization_link_id, "
+            "materialization_link_revision, v2_blueprint_id, v2_blueprint_revision, "
+            "v2_approval_snapshot_id, product_truth_snapshot_digest, formula_id, formula_version, "
+            "duration_seconds, item_digest, created_at, created_by) VALUES "
+            "('mig-frozen-item','man-r3-frozen',1,0,'v3-product-round3','m',1,'p',1,?,'r','l',1,'b',3,"
+            "'a',?,'PAS','fv',8,?,'2026-08-18T00:00:00Z','x')",
+            ("a" * 64, "a" * 64, "a" * 64),
+        )
+    await db.rollback()
     await db.execute("PRAGMA foreign_keys=ON")

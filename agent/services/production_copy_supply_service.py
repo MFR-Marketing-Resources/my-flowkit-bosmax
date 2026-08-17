@@ -34,6 +34,11 @@ async def _current_truth(product_id: str) -> dict[str, Any] | None:
     product, snapshot = await v2svc._product_truth_rows(product_id)
     if product is None or snapshot is None:
         return None
+    # Respect the V2 production truth gate: a snapshot that regressed to
+    # non-APPROVED / incomplete / claim-blocked yields NO current truth, so status
+    # reads report STALE (never MATERIALIZED) and capacity/build/allocate fail closed.
+    if v2svc._truth_gate(product, snapshot):
+        return None
     return {
         "snapshot_id": str(snapshot["snapshot_id"]),
         "version": int(snapshot["version"]),

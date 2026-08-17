@@ -163,3 +163,42 @@ async def test_rebuild_creates_new_revision(monkeypatch):
     assert first["manifest"].manifest_id == second["manifest"].manifest_id
     assert first["manifest"].revision == 1
     assert second["manifest"].revision == 2
+
+
+@pytest.mark.asyncio
+async def test_manifest_insert_rolls_back_on_partial_item_failure():
+    """A mid-transaction item INSERT failure must roll back the whole manifest —
+    never leave a committed header whose counts overstate persisted items."""
+    from agent.models.storyboard_landbank_v3_round3 import (
+        ManifestItemV3,
+        ProductionCopySupplyManifestV3,
+    )
+    from agent.services import production_supply_repository as repo
+
+    db = await get_db()
+    await db.execute(
+        "INSERT INTO product (id, raw_product_title, product_display_name, product_short_name, lifecycle_status) "
+        "VALUES ('rollback-prod','t','d','s','ACTIVE')"
+    )
+    await db.commit()
+    d = "a" * 64
+    now = "2026-08-18T00:00:00Z"
+    manifest = ProductionCopySupplyManifestV3(
+        manifest_id="rollback-man", revision=1, product_id="rollback-prod",
+        recipe_policy_version="p", source_authority_digest=d, manifest_digest=d,
+        status="DRAFT", source="t", created_at=now, created_by="t",
+    )
+    # Non-existent materialization_link + receipt FK targets -> item INSERT aborts.
+    bad_item = ManifestItemV3(
+        item_id="rollback-item", manifest_id="rollback-man", manifest_revision=1,
+        item_index=0, product_id="rollback-prod", master_id="m", master_revision=1,
+        projection_id="p", projection_revision=1, projection_exact_digest=d,
+        approval_receipt_id="nonexistent-receipt", materialization_link_id="nonexistent-link",
+        materialization_link_revision=1, v2_blueprint_id="b", v2_blueprint_revision=1,
+        v2_approval_snapshot_id="s", product_truth_snapshot_digest=d, formula_id="PAS",
+        formula_version="fv", duration_seconds=8, item_digest=d, created_at=now, created_by="t",
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        await repo.insert_manifest_with_items(manifest, [bad_item])
+    # Rolled back: the header is not left committed on the shared connection.
+    assert await repo.get_manifest("rollback-man", 1) is None
