@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ExternalLink } from "lucide-react";
 import {
 	useCopyArchitectureV2Lane,
 	type CopyArchitectureV2Execution,
@@ -263,8 +264,20 @@ export default function CopyArchitectureV2LaneCard({
 
 			{/* Blocker alert if blocked */}
 			{blockers.length && !ready && !copyFree ? (
-				<div className="mt-2.5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
-					{blockers[0]}
+				<div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+					<span className="flex-1">{blockers[0]}</span>
+					{productId ? (
+						<a
+							href={`/creative/copy-registry?product_id=${encodeURIComponent(productId)}`}
+							target="_blank"
+							rel="noreferrer"
+							data-testid="p6-open-copy-register"
+							className="inline-flex items-center gap-1 rounded bg-amber-600/90 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-amber-500"
+						>
+							<span>Open Copy Register</span>
+							<ExternalLink size={11} />
+						</a>
+					) : null}
 				</div>
 			) : null}
 

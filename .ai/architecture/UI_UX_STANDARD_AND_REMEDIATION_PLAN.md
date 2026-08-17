@@ -49,10 +49,13 @@ Normal user surfaces must NEVER display raw technical metadata:
 ### 3. Machine State vs Human Presentation Rule
 Preserve all underlying V2 authority checks, readiness gates, lineages, and telemetry internally; only remove internal jargon from default visual presentation. All `data-testid` elements required by testing harnesses remain accessible inside diagnostic wrappers.
 
-### 4. Shared Copywriting Selection Contract
-All copy-required lanes must use the shared `CopywritingSourceSelector` component providing two distinct choices:
-- **Choice 1: AI Copy Assistant** (Strategy/Formula selector → Angle generation → Draft copy generation with review handoff).
-- **Choice 2: Copy Register** (Angle filter → Paginated copy sets with Angle/Hook/Body/CTA → "Use This Copy" activation).
+### 4. Shared Copywriting Selection Contract & Multi-Product Cohort Rule
+- **Single-Product Creator Lanes** (`OperatorPage`, `FacelessVideoPage`, `MontagePage`, `PosterBuilderPage`):
+  Must embed the canonical `CopywritingSourceSelector` in Step 2, providing two distinct choices:
+  - **Choice 1: AI Copy Assistant** (Strategy/Formula selector → Angle generation → Draft copy generation with review handoff).
+  - **Choice 2: Copy Register** (Angle filter → Paginated copy sets with Angle/Hook/Body/CTA → "Use This Copy" activation).
+- **Multi-Product Cohort Exception (Production Studio P6 & Production Queue)**:
+  Production Studio operates over multi-product cohorts (e.g. 5–20 products concurrently). Embedding full interactive authoring selectors for every product in a cohort list would cause severe layout fragmentation. Therefore, multi-product cohort surfaces use the concise `CopyArchitectureV2LaneCard` per allocated product. This displays human-readable status ("Copy Ready" vs "Copywriting Required") and an actionable `"Open Copy Register ↗"` deep link per blocked product, with all technical authority metadata kept within `<TechnicalDetails>`.
 
 ### 5. Explicit No-Auto-Approval Rule (Zero Client-Side Fabrication)
 - **Selection is NOT Approval**: "Use This Copy" is an activation action for approved copy. It MUST NEVER auto-approve a `DRAFT` or non-production-valid blueprint.
