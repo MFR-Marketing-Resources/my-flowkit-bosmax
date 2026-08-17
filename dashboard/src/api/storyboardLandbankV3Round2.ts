@@ -176,8 +176,53 @@ function requestId(prefix: string): string {
 	return `${prefix}:${uuid}`;
 }
 
+export type V3RecipePreset = "QUICK TEST" | "FAST54" | "MULTI-ANGLE" | "SCALE" | "CUSTOM";
+
 export async function fetchV3CopyRegisterProviderStatus(): Promise<V3ProviderStatus> {
 	return getAPI<V3ProviderStatus>("/api/storyboard-landbank/v3/copy-register/provider-status");
+}
+
+export async function setupV3Campaign(input: {
+	product_id: string;
+	objective_id: string;
+	objective_definition?: string;
+	formula_id: string;
+	preset: V3RecipePreset;
+	supported_durations_seconds?: number[];
+	target_capacity?: number;
+	language_profile?: string;
+	wps_mode?: "SAFE" | "SWEET";
+	component_count_targets?: Record<string, number>;
+}): Promise<{ recipe_id: string; recipe_revision: number; preset: string; reused: boolean; recipe: Record<string, unknown> }> {
+	return postAPI("/api/storyboard-landbank/v3/copy-register/setup-campaign", {
+		...input,
+		actor_id: "dashboard-operator",
+		request_id: requestId("v3-setup"),
+	});
+}
+
+export async function deriveV3AiAssistedProjection(input: {
+	master_id: string;
+	master_revision?: number;
+	duration_seconds: number;
+	provider_mode: "LIVE_TEXT_ASSIST" | "FAKE_TEST";
+	language_profile?: string;
+	wps_mode?: "SAFE" | "SWEET";
+}): Promise<{ derivation_source: string; compressed_stages: string[]; projection: Record<string, unknown>; automatic_approval: false }> {
+	return postAPI("/api/storyboard-landbank/v3/copy-register/assistant/projection/ai-assisted", {
+		...input,
+		actor_id: "dashboard-operator",
+		request_id: requestId("v3-ai-projection"),
+	});
+}
+
+export async function reviewV3Entity(action: "validate" | "submit" | "reject" | "archive", entityType: string, entityId: string, revision: number): Promise<Record<string, unknown>> {
+	// `revision` is honoured as a query param (validate) and in the body (submit/reject/archive).
+	return postAPI(`/api/storyboard-landbank/v3/review/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/${action}?revision=${revision}`, {
+		revision,
+		actor_id: "dashboard-operator",
+		request_id: requestId(`v3-${action}`),
+	});
 }
 
 export async function planV3Assistant(input: {

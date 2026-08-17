@@ -25,6 +25,8 @@ vi.mock("../api/storyboardLandbankV3Round2", () => ({
 	fetchV3ProductTruth: vi.fn(),
 	approveV3Master: vi.fn(),
 	approveV3MasterBatch: vi.fn(),
+	setupV3Campaign: vi.fn(),
+	reviewV3Entity: vi.fn(),
 }));
 
 import {
@@ -35,6 +37,8 @@ import {
 	fetchV3CopyRegisterProviderStatus,
 	fetchV3ProductTruth,
 	planV3Assistant,
+	reviewV3Entity,
+	setupV3Campaign,
 } from "../api/storyboardLandbankV3Round2";
 
 const mockedStatus = vi.mocked(fetchV3CopyRegisterProviderStatus);
@@ -44,6 +48,8 @@ const mockedExecute = vi.mocked(executeV3Assistant);
 const mockedLandbank = vi.mocked(fetchV3CopyRegisterLandbank);
 const mockedTruth = vi.mocked(fetchV3ProductTruth);
 const mockedApprove = vi.mocked(approveV3Master);
+const mockedSetup = vi.mocked(setupV3Campaign);
+const mockedReview = vi.mocked(reviewV3Entity);
 
 const item = {
 	master: {
@@ -110,9 +116,35 @@ describe("StoryboardLandbankV3Page Round 2 contract", () => {
 		mockedPreview.mockResolvedValue({ preview: { prompt_digest: "c".repeat(64), system_instructions: "strict", untrusted_truth_json: "{}", requested_output_contract: {} }, provider_calls: 0, credit_spend: 0 });
 		mockedExecute.mockResolvedValue({ run_id: "run-v3", plan_id: "plan-v3", status: "EXECUTED", provider: { mode: "FAKE_TEST", provider_id: "fake", model_id: "fixture" }, master: { entity_id: "master-v3", revision: 1 }, projections: [], quality: item.quality, provider_calls: 0, credit_spend: 0, projection_derivation: "DETERMINISTIC_WPS_FROM_AI_AUTHORED_MASTER" });
 		mockedApprove.mockResolvedValue({ receipt: { receipt_id: "receipt-v3" }, master: { ...item.master, status: "APPROVED" }, projections: item.projections, automatic_approval: false });
+		mockedSetup.mockResolvedValue({ recipe_id: "recipe-preset", recipe_revision: 1, preset: "FAST54", reused: false, recipe: {} });
+		mockedReview.mockResolvedValue({});
 	});
 
 	afterEach(() => cleanup());
+
+	it("builds a campaign recipe from a preset without a raw recipe id", async () => {
+		renderPage();
+		expect(await screen.findByTestId("storyboard-landbank-v3-page")).toBeInTheDocument();
+		fireEvent.change(screen.getByTestId("v3-preset"), { target: { value: "FAST54" } });
+		fireEvent.change(screen.getByTestId("v3-formula"), { target: { value: "PAS" } });
+		fireEvent.click(screen.getByTestId("v3-build-campaign"));
+		await waitFor(() => expect(mockedSetup).toHaveBeenCalledWith(expect.objectContaining({ product_id: "p1", preset: "FAST54", formula_id: "PAS", wps_mode: "SWEET" })));
+		expect(await screen.findByTestId("v3-active-recipe")).toBeInTheDocument();
+		// The raw recipe id lives in the Technical Details drawer, not the main path.
+		expect(screen.getByTestId("v3-technical-details")).toBeInTheDocument();
+	});
+
+	it("surfaces draft review actions and separates clean candidates from exceptions", async () => {
+		renderPage();
+		await screen.findByTestId("storyboard-landbank-v3-page");
+		// Review-verb actions are available on the reviewable master card.
+		fireEvent.click(await screen.findByTestId("v3-action-validate"));
+		await waitFor(() => expect(mockedReview).toHaveBeenCalledWith("validate", "MASTER_STORYBOARD", "master-v3", 1));
+		// Batch approval dialog shows the exact machine-clean scope.
+		fireEvent.click(screen.getByTestId("v3-open-bulk-approval"));
+		expect(await screen.findByTestId("v3-batch-scope")).toBeInTheDocument();
+		expect(screen.getByTestId("v3-batch-clean-item")).toHaveTextContent("master-v3");
+	});
 
 	it("keeps V3 jobs separated and walks explicit plan → fake execute → full review → approval", async () => {
 		renderPage();
