@@ -97,6 +97,22 @@ export interface V3StoryboardStage {
 	text_digest?: string;
 }
 
+// Macro Round 3 (P3): read-only V2 production materialization status. A single
+// projection is NOT_MATERIALIZED / MATERIALIZED / STALE / BLOCKED; the item rollup
+// additionally reports PARTIALLY_MATERIALIZED when only some projections are live.
+export type V3MaterializationStatus = "NOT_MATERIALIZED" | "MATERIALIZED" | "STALE" | "BLOCKED";
+export type V3MaterializationRollup = V3MaterializationStatus | "PARTIALLY_MATERIALIZED";
+
+export interface V3ProjectionMaterialization {
+	status: V3MaterializationStatus;
+	link_id?: string | null;
+	v2_blueprint_id?: string;
+	v2_blueprint_revision?: number;
+	v2_approval_snapshot_id?: string;
+	materialization_digest?: string;
+	reason?: string;
+}
+
 export interface V3Projection {
 	projection_id: string;
 	revision: number;
@@ -109,6 +125,9 @@ export interface V3Projection {
 	wps_mode?: string;
 	wps_authority_digest?: string;
 	stage_allocations?: Array<{ master_stage_key: string; transform_mode: string; projected_text?: string; target_block_indices?: number[] }>;
+	// Read-only enrichment from the GET landbank endpoint (Round 3 P3).
+	exact_projection_digest?: string;
+	materialization?: V3ProjectionMaterialization;
 }
 
 export interface V3LandbankItem {
@@ -131,9 +150,15 @@ export interface V3LandbankItem {
 	projections: readonly V3Projection[];
 	quality: V3QualitySignal;
 	current_truth: boolean;
-	approval_receipt?: Record<string, unknown> | null;
-	v2_materialization: "NOT_IN_ROUND2";
-	p6_status: "NOT_IN_ROUND2";
+	approval_receipt?: V3ApprovalReceipt | null;
+	// Round 3 P3 replaces the Round 2 "NOT_IN_ROUND2" stub with a truthful rollup.
+	v2_materialization: V3MaterializationRollup | "NOT_IN_ROUND2";
+	p6_status: string;
+}
+
+export interface V3ApprovalReceipt {
+	receipt_id?: string;
+	[key: string]: unknown;
 }
 
 export interface V3LandbankResponse {
@@ -317,5 +342,57 @@ export async function approveV3MasterBatch(input: {
 		...input,
 		actor_id: input.approved_by,
 		request_id: requestId("v3-batch-approval"),
+	});
+}
+
+export interface V3MaterializeResult {
+	projection_id: string;
+	status: "MATERIALIZED";
+	blueprint_status: string;
+	blueprint_id: string;
+	revision: number;
+	link_id: string;
+	v2_approval_snapshot_id: string;
+	materialization_digest: string;
+	idempotent_reuse: boolean;
+}
+
+export interface V3MaterializeBlocked {
+	projection_id: string | null;
+	code: string;
+	detail: string;
+	details?: Record<string, unknown> | null;
+}
+
+export interface V3MaterializeBulkResult {
+	requested: number;
+	materialized_count: number;
+	blocked_count: number;
+	materialized: V3MaterializeResult[];
+	blocked: V3MaterializeBlocked[];
+}
+
+// Round 3 P3: explicitly materialize ONE approved projection into a V2
+// PRODUCTION_VALID blueprint. actor_id/request_id follow the same mutation-receipt
+// pattern as approveV3Master; the human approval receipt is the authority carried
+// forward, so a receipt_id is mandatory server-side.
+export async function materializeV3Projection(input: { productId?: string; projectionId: string; receiptId: string }): Promise<V3MaterializeResult> {
+	return postAPI("/api/storyboard-landbank/v3/copy-register/materialize", {
+		projection_id: input.projectionId,
+		receipt_id: input.receiptId,
+		...(input.productId ? { product_id: input.productId } : {}),
+		actor_id: "dashboard-operator",
+		request_id: requestId("v3-materialize"),
+	});
+}
+
+// Round 3 P3: bounded bulk materialization (partial success). Each item is
+// independent — one blocked projection never poisons the clean ones. The server
+// caps the batch at 25 items per call.
+export async function materializeV3ProjectionsBulk(input: { items: Array<{ projectionId: string; receiptId: string }> }): Promise<V3MaterializeBulkResult> {
+	return postAPI("/api/storyboard-landbank/v3/copy-register/materialize-bulk", {
+		items: input.items.map((entry) => ({ projection_id: entry.projectionId, receipt_id: entry.receiptId })),
+		actor_id: "dashboard-operator",
+		request_id: requestId("v3-materialize-bulk"),
 	});
 }

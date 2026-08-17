@@ -29,6 +29,8 @@ vi.mock("../api/storyboardLandbankV3Round2", () => ({
 	reviewV3Entity: vi.fn(),
 	deleteV3Draft: vi.fn(),
 	regenerateV3Component: vi.fn(),
+	materializeV3Projection: vi.fn(),
+	materializeV3ProjectionsBulk: vi.fn(),
 }));
 
 import {
@@ -38,11 +40,14 @@ import {
 	fetchV3CopyRegisterLandbank,
 	fetchV3CopyRegisterProviderStatus,
 	fetchV3ProductTruth,
+	materializeV3Projection,
+	materializeV3ProjectionsBulk,
 	planV3Assistant,
 	deleteV3Draft,
 	regenerateV3Component,
 	reviewV3Entity,
 	setupV3Campaign,
+	type V3LandbankItem,
 } from "../api/storyboardLandbankV3Round2";
 
 const mockedStatus = vi.mocked(fetchV3CopyRegisterProviderStatus);
@@ -56,6 +61,8 @@ const mockedSetup = vi.mocked(setupV3Campaign);
 const mockedReview = vi.mocked(reviewV3Entity);
 const mockedRegenerate = vi.mocked(regenerateV3Component);
 const mockedDelete = vi.mocked(deleteV3Draft);
+const mockedMaterialize = vi.mocked(materializeV3Projection);
+const mockedMaterializeBulk = vi.mocked(materializeV3ProjectionsBulk);
 
 const item = {
 	master: {
@@ -109,6 +116,26 @@ const draftItem = {
 	master: { ...item.master, master_id: "master-draft", status: "DRAFT", resolved_component_refs: [{ entity_id: "component-v3", revision: 1 }] },
 };
 
+// Round 3 P3: an APPROVED landbank item enriched with per-projection V2
+// materialization status (MATERIALIZED + STALE + NOT_MATERIALIZED) and an approval
+// receipt. Typed as V3LandbankItem so the status string literals stay narrow.
+const approvedItem: V3LandbankItem = {
+	...item,
+	master: { ...item.master, master_id: "master-approved", status: "APPROVED" },
+	approval_receipt: { receipt_id: "receipt-approved" },
+	v2_materialization: "PARTIALLY_MATERIALIZED",
+	p6_status: "NOT_ALLOCATED",
+	projections: [
+		{ projection_id: "proj-mat", revision: 1, target_duration_seconds: 8, exact_resolved_dialogue: "Want a lighter routine?", derivation_source: "DETERMINISTIC", status: "APPROVED", per_block_word_budgets: [19], exact_projection_digest: "e".repeat(64), materialization: { status: "MATERIALIZED", link_id: "link-mat", v2_blueprint_id: "bp-mat", v2_blueprint_revision: 1 } },
+		{ projection_id: "proj-stale", revision: 1, target_duration_seconds: 16, exact_resolved_dialogue: "Want a lighter routine?", derivation_source: "DETERMINISTIC", status: "APPROVED", per_block_word_budgets: [19], exact_projection_digest: "f".repeat(64), materialization: { status: "STALE", link_id: "link-stale", reason: "PRODUCT_TRUTH_ADVANCED" } },
+		{ projection_id: "proj-fresh", revision: 1, target_duration_seconds: 24, exact_resolved_dialogue: "Want a lighter routine?", derivation_source: "DETERMINISTIC", status: "APPROVED", per_block_word_budgets: [19], exact_projection_digest: "0".repeat(64), materialization: { status: "NOT_MATERIALIZED", link_id: null } },
+	],
+};
+
+function approvedLandbankResponse(items: V3LandbankItem[] = [approvedItem]) {
+	return { source: "V3_COPY_REGISTER" as const, product_id: "p1", items, total: items.length, limit: 50, offset: 0, has_more: false, provider_calls: 0, v2_mixed: false as const, full_storyboard_first: true as const };
+}
+
 function renderPage() {
 	return render(
 		<MemoryRouter initialEntries={["/creative/storyboard-landbank-v3?product_id=p1"]}>
@@ -131,6 +158,8 @@ describe("StoryboardLandbankV3Page Round 2 contract", () => {
 		mockedReview.mockResolvedValue({});
 		mockedRegenerate.mockResolvedValue({ new_revision: 2, source_revision: 1, component: { entity_id: "component-v3", revision: 2 }, automatic_approval: false, run_id: "run-regen" });
 		mockedDelete.mockResolvedValue({ deleted: true });
+		mockedMaterialize.mockResolvedValue({ projection_id: "proj-fresh", status: "MATERIALIZED", blueprint_status: "PRODUCTION_VALID", blueprint_id: "bp-fresh", revision: 1, link_id: "link-fresh", v2_approval_snapshot_id: "snap-fresh", materialization_digest: "m".repeat(64), idempotent_reuse: false });
+		mockedMaterializeBulk.mockResolvedValue({ requested: 1, materialized_count: 1, blocked_count: 0, materialized: [], blocked: [] });
 	});
 
 	afterEach(() => cleanup());
@@ -234,5 +263,53 @@ describe("StoryboardLandbankV3Page Round 2 contract", () => {
 		expect(mockedDelete).not.toHaveBeenCalled();
 		fireEvent.click(screen.getByTestId("v3-delete-confirm"));
 		await waitFor(() => expect(mockedDelete).toHaveBeenCalledWith("MASTER_STORYBOARD", "master-draft", 1));
+	});
+
+	it("renders per-projection materialization status chips in the approved landbank and never materializes on load", async () => {
+		mockedLandbank.mockResolvedValue(approvedLandbankResponse());
+		renderPage();
+		await screen.findByTestId("storyboard-landbank-v3-page");
+		// Status chips are driven by projection.materialization.status.
+		expect(await screen.findByTestId("v3-materialization-chip-proj-mat")).toHaveTextContent("MATERIALIZED");
+		expect(screen.getByTestId("v3-materialization-chip-proj-stale")).toHaveTextContent("STALE");
+		expect(screen.getByTestId("v3-materialization-chip-proj-fresh")).toHaveTextContent("NOT_MATERIALIZED");
+		expect(screen.getByTestId("v3-materialization-rollup")).toHaveTextContent("PARTIALLY_MATERIALIZED");
+		// Opening the landbank is read-only — no materialize call fires on initial render.
+		expect(mockedMaterialize).not.toHaveBeenCalled();
+		expect(mockedMaterializeBulk).not.toHaveBeenCalled();
+	});
+
+	it("enables Materialize only for NOT_MATERIALIZED / STALE projections and calls it with the projection id + receipt id", async () => {
+		mockedLandbank.mockResolvedValue(approvedLandbankResponse());
+		renderPage();
+		// A MATERIALIZED projection cannot be re-materialized; clean + stale can.
+		expect(await screen.findByTestId("v3-materialize-proj-mat")).toBeDisabled();
+		expect(screen.getByTestId("v3-materialize-proj-stale")).toBeEnabled();
+		const fresh = screen.getByTestId("v3-materialize-proj-fresh");
+		expect(fresh).toBeEnabled();
+		const callsBefore = mockedLandbank.mock.calls.length;
+		fireEvent.click(fresh);
+		await waitFor(() => expect(mockedMaterialize).toHaveBeenCalledWith(expect.objectContaining({ projectionId: "proj-fresh", receiptId: "receipt-approved" })));
+		// The landbank is refetched so the new production status surfaces.
+		await waitFor(() => expect(mockedLandbank.mock.calls.length).toBeGreaterThan(callsBefore));
+	});
+
+	it("bulk-materializes only the clean NOT_MATERIALIZED projections, receipt-bound", async () => {
+		mockedLandbank.mockResolvedValue(approvedLandbankResponse());
+		renderPage();
+		const bulk = await screen.findByTestId("v3-materialize-all-clean");
+		// Only proj-fresh is NOT_MATERIALIZED (proj-mat is live, proj-stale is stale).
+		expect(bulk).toHaveTextContent("1");
+		fireEvent.click(bulk);
+		await waitFor(() => expect(mockedMaterializeBulk).toHaveBeenCalledWith({ items: [{ projectionId: "proj-fresh", receiptId: "receipt-approved" }] }));
+	});
+
+	it("blocks materialization when the approved storyboard has no approval receipt", async () => {
+		mockedLandbank.mockResolvedValue(approvedLandbankResponse([{ ...approvedItem, approval_receipt: null }]));
+		renderPage();
+		// Without a receipt id, even the clean projection and the bulk action stay closed.
+		expect(await screen.findByTestId("v3-materialize-proj-fresh")).toBeDisabled();
+		expect(screen.getByTestId("v3-materialize-all-clean")).toBeDisabled();
+		expect(mockedMaterialize).not.toHaveBeenCalled();
 	});
 });
