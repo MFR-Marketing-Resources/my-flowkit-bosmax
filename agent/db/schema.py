@@ -1239,6 +1239,450 @@ CREATE INDEX IF NOT EXISTS idx_image_generation_operation_job
 """
 
 
+# Formula-Driven Storyboard Landbank V3 Phase 2 core.  This is deliberately
+# limited to the seven physical records authorized by the owner.  No approval
+# receipt, V2 materialization, P6 manifest, usage ledger, Product Truth table,
+# evidence table, formula authority, WPS authority, or activation pointer is
+# created here.  The DDL is additive and runs after the existing Product Truth
+# and Copy Register V2 substrates have been initialized.
+V3_CORE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS angle_v3 (
+    angle_id                       TEXT NOT NULL,
+    revision                       INTEGER NOT NULL CHECK(revision >= 1),
+    product_id                     TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    product_truth_snapshot_id     TEXT NOT NULL
+                                   REFERENCES product_intelligence_snapshot(snapshot_id) ON DELETE RESTRICT,
+    product_truth_snapshot_version INTEGER NOT NULL CHECK(product_truth_snapshot_version >= 1),
+    product_truth_snapshot_digest TEXT NOT NULL CHECK(length(product_truth_snapshot_digest) = 64),
+    definition                     TEXT NOT NULL,
+    objective_compatibility_json   TEXT NOT NULL DEFAULT '{}',
+    audience_compatibility_json    TEXT NOT NULL DEFAULT '{}',
+    evidence_fact_ids_json         TEXT NOT NULL DEFAULT '[]',
+    evidence_digest                TEXT NOT NULL CHECK(length(evidence_digest) = 64),
+    formula_id                     TEXT,
+    formula_version                TEXT,
+    source                         TEXT NOT NULL,
+    status                         TEXT NOT NULL DEFAULT 'DRAFT'
+                                   CHECK(status IN ('DRAFT','REVIEW_REQUIRED','VALIDATED','APPROVED','FROZEN','REJECTED','ARCHIVED','SUPERSEDED','BLOCKED')),
+    angle_digest                   TEXT NOT NULL CHECK(length(angle_digest) = 64),
+    supersedes_angle_id            TEXT,
+    supersedes_angle_revision      INTEGER CHECK(supersedes_angle_revision >= 1),
+    created_at                     TEXT NOT NULL,
+    created_by                     TEXT NOT NULL,
+    PRIMARY KEY (angle_id, revision),
+    FOREIGN KEY (supersedes_angle_id, supersedes_angle_revision)
+        REFERENCES angle_v3(angle_id, revision) ON DELETE RESTRICT,
+    CHECK(
+        (formula_id IS NULL AND formula_version IS NULL)
+        OR (formula_id IS NOT NULL AND formula_version IS NOT NULL)
+    ),
+    CHECK(
+        (supersedes_angle_id IS NULL AND supersedes_angle_revision IS NULL)
+        OR (supersedes_angle_id IS NOT NULL AND supersedes_angle_revision IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_angle_v3_product_status
+    ON angle_v3(product_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_angle_v3_truth
+    ON angle_v3(product_id, product_truth_snapshot_id, product_truth_snapshot_version);
+CREATE INDEX IF NOT EXISTS idx_angle_v3_formula
+    ON angle_v3(product_id, formula_id, formula_version, status);
+CREATE INDEX IF NOT EXISTS idx_angle_v3_digest
+    ON angle_v3(angle_digest);
+
+CREATE TABLE IF NOT EXISTS storyline_family_v3 (
+    family_id                      TEXT NOT NULL,
+    revision                       INTEGER NOT NULL CHECK(revision >= 1),
+    product_id                     TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    product_truth_snapshot_id      TEXT NOT NULL
+                                   REFERENCES product_intelligence_snapshot(snapshot_id) ON DELETE RESTRICT,
+    product_truth_snapshot_version INTEGER NOT NULL CHECK(product_truth_snapshot_version >= 1),
+    product_truth_snapshot_digest  TEXT NOT NULL CHECK(length(product_truth_snapshot_digest) = 64),
+    angle_id                       TEXT NOT NULL,
+    angle_revision                 INTEGER NOT NULL CHECK(angle_revision >= 1),
+    formula_id                     TEXT NOT NULL,
+    formula_version                TEXT NOT NULL,
+    objective_compatibility_json   TEXT NOT NULL DEFAULT '{}',
+    reviewed_definition            TEXT NOT NULL,
+    narrative_route_json           TEXT NOT NULL DEFAULT '{}',
+    entry_contract_json            TEXT NOT NULL DEFAULT '{}',
+    exit_contract_json             TEXT NOT NULL DEFAULT '{}',
+    proof_placement_json           TEXT NOT NULL DEFAULT '{}',
+    cta_closure_intent_json        TEXT NOT NULL DEFAULT '{}',
+    evidence_requirements_json     TEXT NOT NULL DEFAULT '{}',
+    status                         TEXT NOT NULL DEFAULT 'DRAFT'
+                                   CHECK(status IN ('DRAFT','REVIEW_REQUIRED','VALIDATED','APPROVED','FROZEN','REJECTED','ARCHIVED','SUPERSEDED','BLOCKED')),
+    family_digest                  TEXT NOT NULL CHECK(length(family_digest) = 64),
+    source                         TEXT NOT NULL,
+    supersedes_family_id           TEXT,
+    supersedes_family_revision     INTEGER CHECK(supersedes_family_revision >= 1),
+    created_at                     TEXT NOT NULL,
+    created_by                     TEXT NOT NULL,
+    PRIMARY KEY (family_id, revision),
+    FOREIGN KEY (angle_id, angle_revision)
+        REFERENCES angle_v3(angle_id, revision) ON DELETE RESTRICT,
+    FOREIGN KEY (supersedes_family_id, supersedes_family_revision)
+        REFERENCES storyline_family_v3(family_id, revision) ON DELETE RESTRICT,
+    CHECK(
+        (supersedes_family_id IS NULL AND supersedes_family_revision IS NULL)
+        OR (supersedes_family_id IS NOT NULL AND supersedes_family_revision IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_storyline_family_v3_product_status
+    ON storyline_family_v3(product_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_storyline_family_v3_angle
+    ON storyline_family_v3(product_id, angle_id, angle_revision, status);
+CREATE INDEX IF NOT EXISTS idx_storyline_family_v3_formula
+    ON storyline_family_v3(product_id, formula_id, formula_version, status);
+CREATE INDEX IF NOT EXISTS idx_storyline_family_v3_digest
+    ON storyline_family_v3(family_digest);
+
+CREATE TABLE IF NOT EXISTS storyboard_component_v3 (
+    component_id                   TEXT NOT NULL,
+    revision                       INTEGER NOT NULL CHECK(revision >= 1),
+    product_id                     TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    product_truth_snapshot_id     TEXT NOT NULL
+                                   REFERENCES product_intelligence_snapshot(snapshot_id) ON DELETE RESTRICT,
+    product_truth_snapshot_version INTEGER NOT NULL CHECK(product_truth_snapshot_version >= 1),
+    product_truth_snapshot_digest TEXT NOT NULL CHECK(length(product_truth_snapshot_digest) = 64),
+    objective_id                   TEXT NOT NULL,
+    objective_json                 TEXT NOT NULL DEFAULT '{}',
+    angle_id                       TEXT NOT NULL,
+    angle_revision                 INTEGER NOT NULL CHECK(angle_revision >= 1),
+    storyline_family_id            TEXT NOT NULL,
+    storyline_family_revision      INTEGER NOT NULL CHECK(storyline_family_revision >= 1),
+    formula_id                     TEXT NOT NULL,
+    formula_version                TEXT NOT NULL,
+    semantic_class                 TEXT NOT NULL
+                                   CHECK(semantic_class IN ('HOOK','BODY_CORE','CTA','STAGE')),
+    formula_stage_keys_json        TEXT NOT NULL DEFAULT '[]',
+    ordered_stage_coverage_json    TEXT NOT NULL DEFAULT '[]',
+    authored_text                  TEXT NOT NULL,
+    entry_key                      TEXT NOT NULL,
+    exit_key                       TEXT NOT NULL,
+    bridge_contract_json            TEXT NOT NULL DEFAULT '{}',
+    evidence_fact_ids_json         TEXT NOT NULL DEFAULT '[]',
+    evidence_digest                TEXT NOT NULL CHECK(length(evidence_digest) = 64),
+    claim_bearing                   INTEGER NOT NULL DEFAULT 0 CHECK(claim_bearing IN (0,1)),
+    content_digest                 TEXT NOT NULL CHECK(length(content_digest) = 64),
+    semantic_fingerprint            TEXT,
+    word_count                     INTEGER NOT NULL DEFAULT 0 CHECK(word_count >= 0),
+    status                         TEXT NOT NULL DEFAULT 'DRAFT'
+                                   CHECK(status IN ('DRAFT','REVIEW_REQUIRED','VALIDATED','APPROVED','FROZEN','REJECTED','ARCHIVED','SUPERSEDED','BLOCKED')),
+    source                         TEXT NOT NULL,
+    supersedes_component_id        TEXT,
+    supersedes_component_revision  INTEGER CHECK(supersedes_component_revision >= 1),
+    created_at                     TEXT NOT NULL,
+    created_by                     TEXT NOT NULL,
+    PRIMARY KEY (component_id, revision),
+    FOREIGN KEY (angle_id, angle_revision)
+        REFERENCES angle_v3(angle_id, revision) ON DELETE RESTRICT,
+    FOREIGN KEY (storyline_family_id, storyline_family_revision)
+        REFERENCES storyline_family_v3(family_id, revision) ON DELETE RESTRICT,
+    FOREIGN KEY (supersedes_component_id, supersedes_component_revision)
+        REFERENCES storyboard_component_v3(component_id, revision) ON DELETE RESTRICT,
+    CHECK(
+        (supersedes_component_id IS NULL AND supersedes_component_revision IS NULL)
+        OR (supersedes_component_id IS NOT NULL AND supersedes_component_revision IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_storyboard_component_v3_product_status
+    ON storyboard_component_v3(product_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_storyboard_component_v3_angle_storyline
+    ON storyboard_component_v3(product_id, angle_id, angle_revision, storyline_family_id, storyline_family_revision, status);
+CREATE INDEX IF NOT EXISTS idx_storyboard_component_v3_formula_stage
+    ON storyboard_component_v3(product_id, formula_id, formula_version, semantic_class, status);
+CREATE INDEX IF NOT EXISTS idx_storyboard_component_v3_digest
+    ON storyboard_component_v3(content_digest);
+
+CREATE TABLE IF NOT EXISTS copy_recipe_v3 (
+    recipe_id                      TEXT NOT NULL,
+    revision                       INTEGER NOT NULL CHECK(revision >= 1),
+    product_id                     TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    product_truth_snapshot_id      TEXT
+                                   REFERENCES product_intelligence_snapshot(snapshot_id) ON DELETE RESTRICT,
+    product_truth_snapshot_version INTEGER CHECK(product_truth_snapshot_version IS NULL OR product_truth_snapshot_version >= 1),
+    product_truth_snapshot_digest  TEXT CHECK(product_truth_snapshot_digest IS NULL OR length(product_truth_snapshot_digest) = 64),
+    campaign_key                   TEXT NOT NULL DEFAULT '',
+    campaign_scope_json            TEXT NOT NULL DEFAULT '{}',
+    formula_id                     TEXT NOT NULL,
+    formula_version                TEXT NOT NULL,
+    objective_id                   TEXT NOT NULL,
+    objective_json                 TEXT NOT NULL DEFAULT '{}',
+    target_angle_ids_json          TEXT NOT NULL DEFAULT '[]',
+    storyline_policy_json          TEXT NOT NULL DEFAULT '{}',
+    component_count_targets_json   TEXT NOT NULL DEFAULT '{}',
+    supported_durations_json       TEXT NOT NULL DEFAULT '[]',
+    wps_mode                       TEXT NOT NULL DEFAULT 'SAFE'
+                                   CHECK(wps_mode IN ('SAFE','SWEET')),
+    novelty_policy_json            TEXT NOT NULL DEFAULT '{}',
+    exact_reuse_policy_json        TEXT NOT NULL DEFAULT '{}',
+    review_policy_json             TEXT NOT NULL DEFAULT '{}',
+    target_capacity_json           TEXT NOT NULL DEFAULT '{}',
+    deterministic_seed             TEXT NOT NULL,
+    config_digest                  TEXT NOT NULL CHECK(length(config_digest) = 64),
+    status                         TEXT NOT NULL DEFAULT 'DRAFT'
+                                   CHECK(status IN ('DRAFT','REVIEW_REQUIRED','VALIDATED','APPROVED','FROZEN','REJECTED','ARCHIVED','SUPERSEDED','BLOCKED')),
+    source                         TEXT NOT NULL,
+    supersedes_recipe_id           TEXT,
+    supersedes_recipe_revision     INTEGER CHECK(supersedes_recipe_revision >= 1),
+    created_at                     TEXT NOT NULL,
+    created_by                     TEXT NOT NULL,
+    PRIMARY KEY (recipe_id, revision),
+    FOREIGN KEY (supersedes_recipe_id, supersedes_recipe_revision)
+        REFERENCES copy_recipe_v3(recipe_id, revision) ON DELETE RESTRICT,
+    CHECK(
+        (product_truth_snapshot_id IS NULL AND product_truth_snapshot_version IS NULL AND product_truth_snapshot_digest IS NULL)
+        OR (product_truth_snapshot_id IS NOT NULL AND product_truth_snapshot_version IS NOT NULL AND product_truth_snapshot_digest IS NOT NULL)
+    ),
+    CHECK(
+        (supersedes_recipe_id IS NULL AND supersedes_recipe_revision IS NULL)
+        OR (supersedes_recipe_id IS NOT NULL AND supersedes_recipe_revision IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_copy_recipe_v3_product_status
+    ON copy_recipe_v3(product_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_copy_recipe_v3_formula
+    ON copy_recipe_v3(product_id, formula_id, formula_version, status);
+CREATE INDEX IF NOT EXISTS idx_copy_recipe_v3_campaign
+    ON copy_recipe_v3(product_id, campaign_key, status);
+CREATE INDEX IF NOT EXISTS idx_copy_recipe_v3_digest
+    ON copy_recipe_v3(config_digest);
+
+CREATE TABLE IF NOT EXISTS master_storyboard_v3 (
+    master_id                      TEXT NOT NULL,
+    revision                       INTEGER NOT NULL CHECK(revision >= 1),
+    recipe_id                      TEXT NOT NULL,
+    recipe_revision                INTEGER NOT NULL CHECK(recipe_revision >= 1),
+    product_id                     TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    product_truth_snapshot_id      TEXT NOT NULL
+                                   REFERENCES product_intelligence_snapshot(snapshot_id) ON DELETE RESTRICT,
+    product_truth_snapshot_version INTEGER NOT NULL CHECK(product_truth_snapshot_version >= 1),
+    product_truth_snapshot_digest  TEXT NOT NULL CHECK(length(product_truth_snapshot_digest) = 64),
+    objective_id                   TEXT NOT NULL,
+    objective_json                 TEXT NOT NULL DEFAULT '{}',
+    angle_id                       TEXT NOT NULL,
+    angle_revision                 INTEGER NOT NULL CHECK(angle_revision >= 1),
+    storyline_family_id            TEXT NOT NULL,
+    storyline_family_revision      INTEGER NOT NULL CHECK(storyline_family_revision >= 1),
+    formula_id                     TEXT NOT NULL,
+    formula_version                TEXT NOT NULL,
+    ordered_stage_plan_json        TEXT NOT NULL DEFAULT '[]',
+    resolved_component_refs_json   TEXT NOT NULL DEFAULT '[]',
+    exact_stage_texts_json         TEXT NOT NULL DEFAULT '[]',
+    evidence_map_json              TEXT NOT NULL DEFAULT '{}',
+    evidence_digest                TEXT NOT NULL CHECK(length(evidence_digest) = 64),
+    bridge_continuity_receipt_json TEXT NOT NULL DEFAULT '{}',
+    formula_validation_receipt_json TEXT NOT NULL DEFAULT '{}',
+    claim_safety_receipt_json      TEXT NOT NULL DEFAULT '{}',
+    exact_content_digest            TEXT NOT NULL CHECK(length(exact_content_digest) = 64),
+    duplicate_fingerprint           TEXT NOT NULL CHECK(length(duplicate_fingerprint) = 64),
+    word_count                     INTEGER NOT NULL DEFAULT 0 CHECK(word_count >= 0),
+    status                         TEXT NOT NULL DEFAULT 'DRAFT'
+                                   CHECK(status IN ('DRAFT','REVIEW_REQUIRED','VALIDATED','APPROVED','FROZEN','REJECTED','ARCHIVED','SUPERSEDED','BLOCKED')),
+    source                         TEXT NOT NULL,
+    supersedes_master_id           TEXT,
+    supersedes_master_revision     INTEGER CHECK(supersedes_master_revision >= 1),
+    created_at                     TEXT NOT NULL,
+    created_by                     TEXT NOT NULL,
+    PRIMARY KEY (master_id, revision),
+    FOREIGN KEY (recipe_id, recipe_revision)
+        REFERENCES copy_recipe_v3(recipe_id, revision) ON DELETE RESTRICT,
+    FOREIGN KEY (angle_id, angle_revision)
+        REFERENCES angle_v3(angle_id, revision) ON DELETE RESTRICT,
+    FOREIGN KEY (storyline_family_id, storyline_family_revision)
+        REFERENCES storyline_family_v3(family_id, revision) ON DELETE RESTRICT,
+    FOREIGN KEY (supersedes_master_id, supersedes_master_revision)
+        REFERENCES master_storyboard_v3(master_id, revision) ON DELETE RESTRICT,
+    CHECK(
+        (supersedes_master_id IS NULL AND supersedes_master_revision IS NULL)
+        OR (supersedes_master_id IS NOT NULL AND supersedes_master_revision IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_master_storyboard_v3_product_status
+    ON master_storyboard_v3(product_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_master_storyboard_v3_recipe
+    ON master_storyboard_v3(product_id, recipe_id, recipe_revision, status);
+CREATE INDEX IF NOT EXISTS idx_master_storyboard_v3_angle_storyline
+    ON master_storyboard_v3(product_id, angle_id, angle_revision, storyline_family_id, storyline_family_revision, status);
+CREATE INDEX IF NOT EXISTS idx_master_storyboard_v3_formula
+    ON master_storyboard_v3(product_id, formula_id, formula_version, status);
+CREATE INDEX IF NOT EXISTS idx_master_storyboard_v3_digest
+    ON master_storyboard_v3(exact_content_digest, duplicate_fingerprint);
+
+CREATE TABLE IF NOT EXISTS duration_projection_v3 (
+    projection_id                  TEXT NOT NULL,
+    revision                       INTEGER NOT NULL CHECK(revision >= 1),
+    master_id                      TEXT NOT NULL,
+    master_revision                INTEGER NOT NULL CHECK(master_revision >= 1),
+    product_id                     TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    product_truth_snapshot_id      TEXT NOT NULL
+                                   REFERENCES product_intelligence_snapshot(snapshot_id) ON DELETE RESTRICT,
+    product_truth_snapshot_version INTEGER NOT NULL CHECK(product_truth_snapshot_version >= 1),
+    product_truth_snapshot_digest  TEXT NOT NULL CHECK(length(product_truth_snapshot_digest) = 64),
+    target_duration_seconds        INTEGER NOT NULL CHECK(target_duration_seconds > 0),
+    engine                         TEXT NOT NULL DEFAULT 'GOOGLE_FLOW',
+    language_profile               TEXT NOT NULL,
+    wps_mode                       TEXT NOT NULL DEFAULT 'SAFE'
+                                   CHECK(wps_mode IN ('SAFE','SWEET')),
+    wps_authority_version          TEXT NOT NULL,
+    wps_authority_digest           TEXT NOT NULL CHECK(length(wps_authority_digest) = 64),
+    block_plan_json                TEXT NOT NULL DEFAULT '[]',
+    exact_resolved_dialogue        TEXT NOT NULL,
+    per_block_slices_json          TEXT NOT NULL DEFAULT '[]',
+    per_block_word_counts_json     TEXT NOT NULL DEFAULT '[]',
+    per_block_word_budgets_json    TEXT NOT NULL DEFAULT '[]',
+    cta_placement_json              TEXT NOT NULL DEFAULT '{}',
+    seam_states_json                TEXT NOT NULL DEFAULT '[]',
+    continuity_receipt_json         TEXT NOT NULL DEFAULT '{}',
+    formula_arc_receipt_json        TEXT NOT NULL DEFAULT '{}',
+    master_stage_keys_json          TEXT NOT NULL DEFAULT '[]',
+    master_stage_text_digests_json TEXT NOT NULL DEFAULT '[]',
+    master_exact_content_digest     TEXT NOT NULL CHECK(length(master_exact_content_digest) = 64),
+    exact_projection_digest         TEXT NOT NULL CHECK(length(exact_projection_digest) = 64),
+    status                         TEXT NOT NULL DEFAULT 'DRAFT'
+                                   CHECK(status IN ('DRAFT','REVIEW_REQUIRED','VALIDATED','APPROVED','FROZEN','REJECTED','ARCHIVED','SUPERSEDED','BLOCKED')),
+    source                         TEXT NOT NULL,
+    supersedes_projection_id       TEXT,
+    supersedes_projection_revision INTEGER CHECK(supersedes_projection_revision >= 1),
+    created_at                     TEXT NOT NULL,
+    created_by                     TEXT NOT NULL,
+    PRIMARY KEY (projection_id, revision),
+    FOREIGN KEY (master_id, master_revision)
+        REFERENCES master_storyboard_v3(master_id, revision) ON DELETE RESTRICT,
+    FOREIGN KEY (supersedes_projection_id, supersedes_projection_revision)
+        REFERENCES duration_projection_v3(projection_id, revision) ON DELETE RESTRICT,
+    CHECK(
+        (supersedes_projection_id IS NULL AND supersedes_projection_revision IS NULL)
+        OR (supersedes_projection_id IS NOT NULL AND supersedes_projection_revision IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_duration_projection_v3_master
+    ON duration_projection_v3(master_id, master_revision, target_duration_seconds, status);
+CREATE INDEX IF NOT EXISTS idx_duration_projection_v3_product_duration
+    ON duration_projection_v3(product_id, target_duration_seconds, language_profile, wps_mode, status);
+CREATE INDEX IF NOT EXISTS idx_duration_projection_v3_truth
+    ON duration_projection_v3(product_id, product_truth_snapshot_id, product_truth_snapshot_version);
+CREATE INDEX IF NOT EXISTS idx_duration_projection_v3_digest
+    ON duration_projection_v3(exact_projection_digest, master_exact_content_digest);
+
+CREATE TABLE IF NOT EXISTS review_event_v3 (
+    event_id                       TEXT PRIMARY KEY,
+    entity_type                    TEXT NOT NULL
+                                   CHECK(entity_type IN ('ANGLE','STORYLINE_FAMILY','STORYBOARD_COMPONENT','COPY_RECIPE','MASTER_STORYBOARD','DURATION_PROJECTION')),
+    entity_id                      TEXT NOT NULL,
+    entity_revision                INTEGER NOT NULL CHECK(entity_revision >= 1),
+    product_id                     TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    event_type                     TEXT NOT NULL
+                                   CHECK(event_type IN ('CREATED','EDITED_AS_NEW_REVISION','SUBMITTED_FOR_REVIEW','REJECTED','ARCHIVED','SUPERSEDED')),
+    from_status                    TEXT,
+    to_status                      TEXT,
+    actor_id                       TEXT NOT NULL,
+    source                         TEXT NOT NULL,
+    request_id                     TEXT,
+    reason                         TEXT,
+    payload_json                   TEXT NOT NULL DEFAULT '{}',
+    payload_digest                 TEXT NOT NULL CHECK(length(payload_digest) = 64),
+    created_at                     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_review_event_v3_entity
+    ON review_event_v3(entity_type, entity_id, entity_revision, created_at);
+CREATE INDEX IF NOT EXISTS idx_review_event_v3_product
+    ON review_event_v3(product_id, event_type, created_at);
+CREATE INDEX IF NOT EXISTS idx_review_event_v3_digest
+    ON review_event_v3(payload_digest);
+
+CREATE TRIGGER IF NOT EXISTS trg_angle_v3_frozen_immutable_update
+BEFORE UPDATE ON angle_v3
+WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+BEGIN
+    SELECT RAISE(ABORT, 'ANGLE_V3_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_angle_v3_frozen_immutable_delete
+BEFORE DELETE ON angle_v3
+WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+BEGIN
+    SELECT RAISE(ABORT, 'ANGLE_V3_IMMUTABLE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_storyline_family_v3_frozen_immutable_update
+BEFORE UPDATE ON storyline_family_v3
+WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+BEGIN
+    SELECT RAISE(ABORT, 'STORYLINE_FAMILY_V3_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_storyline_family_v3_frozen_immutable_delete
+BEFORE DELETE ON storyline_family_v3
+WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+BEGIN
+    SELECT RAISE(ABORT, 'STORYLINE_FAMILY_V3_IMMUTABLE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_storyboard_component_v3_frozen_immutable_update
+BEFORE UPDATE ON storyboard_component_v3
+WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+BEGIN
+    SELECT RAISE(ABORT, 'STORYBOARD_COMPONENT_V3_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_storyboard_component_v3_frozen_immutable_delete
+BEFORE DELETE ON storyboard_component_v3
+WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+BEGIN
+    SELECT RAISE(ABORT, 'STORYBOARD_COMPONENT_V3_IMMUTABLE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_copy_recipe_v3_frozen_immutable_update
+BEFORE UPDATE ON copy_recipe_v3
+WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+BEGIN
+    SELECT RAISE(ABORT, 'COPY_RECIPE_V3_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_copy_recipe_v3_frozen_immutable_delete
+BEFORE DELETE ON copy_recipe_v3
+WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+BEGIN
+    SELECT RAISE(ABORT, 'COPY_RECIPE_V3_IMMUTABLE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_master_storyboard_v3_frozen_immutable_update
+BEFORE UPDATE ON master_storyboard_v3
+WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+BEGIN
+    SELECT RAISE(ABORT, 'MASTER_STORYBOARD_V3_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_master_storyboard_v3_frozen_immutable_delete
+BEFORE DELETE ON master_storyboard_v3
+WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+BEGIN
+    SELECT RAISE(ABORT, 'MASTER_STORYBOARD_V3_IMMUTABLE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_duration_projection_v3_frozen_immutable_update
+BEFORE UPDATE ON duration_projection_v3
+WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+BEGIN
+    SELECT RAISE(ABORT, 'DURATION_PROJECTION_V3_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_duration_projection_v3_frozen_immutable_delete
+BEFORE DELETE ON duration_projection_v3
+WHEN OLD.status IN ('APPROVED','FROZEN','SUPERSEDED','ARCHIVED')
+BEGIN
+    SELECT RAISE(ABORT, 'DURATION_PROJECTION_V3_IMMUTABLE');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_review_event_v3_append_only_update
+BEFORE UPDATE ON review_event_v3
+BEGIN
+    SELECT RAISE(ABORT, 'REVIEW_EVENT_V3_APPEND_ONLY');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_review_event_v3_append_only_delete
+BEFORE DELETE ON review_event_v3
+BEGIN
+    SELECT RAISE(ABORT, 'REVIEW_EVENT_V3_APPEND_ONLY');
+END;
+"""
+
+
 async def init_db():
     """Initialize database with schema and run migrations."""
     async with aiosqlite.connect(str(DB_PATH)) as db:
@@ -4904,6 +5348,13 @@ BEGIN
     SELECT RAISE(ABORT, 'COPY_V2_BINDING_IMMUTABLE');
 END;
 """)
+        await db.commit()
+
+        # Formula-Driven Storyboard Landbank V3 Phase 2 core.  Keep this
+        # additive and separate from the V2 authority so no legacy table,
+        # Product Truth table, evidence table, activation pointer, provider,
+        # materialization, or P6 manifest is introduced by this phase.
+        await db.executescript(V3_CORE_SCHEMA)
         await db.commit()
 
 
