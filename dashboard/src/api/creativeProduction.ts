@@ -53,6 +53,11 @@ export interface CohortAuthority {
 	products: CohortProduct[];
 	matches_frozen_authority: boolean;
 	p6_not_started: boolean;
+	total_count?: number;
+	returned_count?: number;
+	has_pagination?: boolean;
+	limit?: number;
+	offset?: number;
 }
 
 export interface CreativePoolSelection {
@@ -350,8 +355,17 @@ function planAction(operatorId: string) {
 	};
 }
 
-export function fetchCohortAuthority(): Promise<CohortAuthority> {
-	return getAPI("/api/creative-production/cohort-authority");
+export function fetchCohortAuthority(params: {
+	q?: string;
+	limit?: number;
+	offset?: number;
+} = {}): Promise<CohortAuthority> {
+	const query = new URLSearchParams();
+	if (params.q?.trim()) query.set("q", params.q.trim());
+	if (params.limit !== undefined) query.set("limit", String(params.limit));
+	if (params.offset !== undefined) query.set("offset", String(params.offset));
+	const suffix = query.size ? `?${query.toString()}` : "";
+	return getAPI(`/api/creative-production/cohort-authority${suffix}`);
 }
 
 export function listProductionPlans(): Promise<{ plans: ProductionPlan[] }> {

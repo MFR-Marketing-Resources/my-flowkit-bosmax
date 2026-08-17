@@ -162,7 +162,11 @@ def test_product_intelligence_browser_uses_server_pagination_and_read_cache():
     assert "limit: PAGE_SIZE_PRODUCTS" in page
     assert "catalogTotal" in page
     assert 'params.set("limit", "500")' not in page
-    assert "invalidateProductCatalogCache();" not in page
+    load_start = page.index("const loadProducts")
+    reload_start = page.index("const reloadProductsAfterMutation", load_start)
+    assert "invalidateProductCatalogCache();" not in page[load_start:reload_start]
+    assert "invalidateProductCatalogCache();" in page[reload_start:]
+    assert "await reloadProductsAfterMutation();" in page[reload_start:]
 
 
 async def _empty_async_dict():

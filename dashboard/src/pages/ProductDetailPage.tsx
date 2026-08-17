@@ -8,8 +8,9 @@ import {
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { fetchAPI, patchAPI } from "../api/client";
+import { patchAPI } from "../api/client";
 import {
+	fetchProductDetail,
 	invalidateProductCatalogCache,
 	fetchProductStrategyTypeRegistry,
 	reviewProductStrategyTaxonomy,
@@ -147,9 +148,7 @@ export default function ProductDetailPage() {
 		setLoading(true);
 		setLoadError(null);
 		try {
-			const p = await fetchAPI<Product>(
-				`/api/products/${encodeURIComponent(id)}`,
-			);
+			const p = await fetchProductDetail(id);
 			setProduct(p);
 			setEditForm({
 				product_short_name: p.product_short_name || "",

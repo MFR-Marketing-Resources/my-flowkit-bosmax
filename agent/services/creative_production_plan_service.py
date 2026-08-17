@@ -371,7 +371,12 @@ def _unique(values: list[str]) -> list[str]:
     return sorted({str(value).strip() for value in values if str(value).strip()})
 
 
-async def load_p58_cohort_authority() -> P58CohortAuthorityResponse:
+async def load_p58_cohort_authority(
+    *,
+    query: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> P58CohortAuthorityResponse:
     report = await build_catalog_authority_matrix()
     product_ids = sorted(report.p6_launch_cohort_product_ids)
     cohort_sha = _sha(product_ids)
@@ -388,6 +393,21 @@ async def load_p58_cohort_authority() -> P58CohortAuthorityResponse:
         (row for row in report.products if row.product_id in set(product_ids)),
         key=lambda row: (row.product_name.casefold(), row.product_id),
     )
+    normalized_query = str(query or "").strip().casefold()
+    if normalized_query:
+        ready_rows = [
+            row
+            for row in ready_rows
+            if normalized_query in str(row.product_name or "").casefold()
+            or normalized_query in str(row.product_id or "").casefold()
+        ]
+    total_count = len(ready_rows)
+    if limit is None:
+        page_rows = ready_rows
+        page_offset = 0
+    else:
+        page_offset = max(0, offset)
+        page_rows = ready_rows[page_offset : page_offset + limit]
     return P58CohortAuthorityResponse(
         cohort_count=len(product_ids),
         cohort_sha256=cohort_sha,
@@ -410,13 +430,18 @@ async def load_p58_cohort_authority() -> P58CohortAuthorityResponse:
                 ),
                 "readiness_status": "PRODUCTION_READY",
             }
-            for row in ready_rows
+            for row in page_rows
         ],
         matches_frozen_authority=(
             len(product_ids) == P58_COHORT_COUNT
             and cohort_sha == P58_COHORT_SHA256
         ),
         p6_not_started=False,
+        total_count=total_count,
+        returned_count=len(page_rows),
+        has_pagination=(page_offset + len(page_rows)) < total_count,
+        limit=limit,
+        offset=page_offset,
     )
 
 

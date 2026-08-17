@@ -4,6 +4,7 @@ domains:
     status: IN_PROGRESS
     owned_paths:
       - docs/MODULE_STATUS.yaml
+      - docs/architecture/PRODUCT_DATA_LOADING_CONTRACT.md
       - tests/unit/test_v2_native_treatment_create.py
       - docs/dev/BRANCH_WORKTREE_HYGIENE.md
       - docs/agent-instructions/BOSMAX_AVATAR_REGISTRY_AGENT_INSTRUCTION.md
@@ -18,6 +19,7 @@ domains:
       - biome.json
       - .dependency-cruiser.cjs
       - scripts/mandor-check.ts
+      - scripts/test-product-data-loading-network.mjs
       - scripts/install-local-agent.ps1
       - scripts/local-agent-common.ps1
       - scripts/start-local-agent.ps1
@@ -90,6 +92,7 @@ domains:
       - scripts/smart_registration_catalog_audit.py
       - dashboard/src/components/prompt-tool/usePromptToolHydration.ts
       - tests/ui/test_prompt_tool_catalog_fallback_contract.py
+      - tests/ui/test_product_data_loading_governance.py
       - .ai/audits/evidence/pr-197-counter-audit-2.md
       - docs/evidence/incident-20260709-eligibility-audit-proof.md
       - agent/api/workspace_packages.py

@@ -406,6 +406,13 @@ class P58CohortAuthorityResponse(BaseModel):
     products: list[dict[str, str]]
     matches_frozen_authority: bool
     p6_not_started: bool = False
+    # The authority snapshot remains complete (cohort_count/product_ids), while
+    # browser-facing product rows are a bounded searchable page.
+    total_count: int | None = None
+    returned_count: int | None = None
+    has_pagination: bool | None = None
+    limit: int | None = None
+    offset: int | None = None
 
 
 class CapacityPreflightResponse(BaseModel):
