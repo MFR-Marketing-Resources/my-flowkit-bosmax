@@ -3,6 +3,7 @@ import { patchAPI, postAPI } from "../../api/client";
 import DraftMediaSection from "./DraftMediaSection";
 import {
 	fetchProductStrategyTypeRegistry,
+	invalidateProductCatalogCache,
 	registerProductStrategyType,
 } from "../../api/products";
 import type {
@@ -1134,6 +1135,7 @@ export default function RegistrationReviewDraftPanel({
 			);
 			setCommitResult(result);
 			if (result.commit_status === "COMMITTED") {
+				invalidateProductCatalogCache();
 				const updated = await patchAPI<RegistrationReviewDraft>(
 					`/api/product-registration/review-drafts/${draft.review_draft_id}/field-decisions`,
 					{

@@ -6,7 +6,6 @@ import {
 	buildExactSceneOnlyPrompt,
 	resolveExactGenerationGate,
 } from "../api/exactProductOutput";
-import { fetchProductCatalog } from "../api/products";
 import { usePosterRecipes } from "../api/posterRecipes";
 import {
 	createPosterPromptDraft,
@@ -21,6 +20,7 @@ import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectu
 import PosterRecipeSelector from "../components/poster/PosterRecipeSelector";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
+import { useProductCatalog } from "../hooks/useProductCatalog";
 import type { PosterPromptDraftResponse } from "../types/posterPromptDraft";
 import {
 	PRODUCT_REFERENCE_IMAGE_REQUIRED,
@@ -46,8 +46,7 @@ function message(error: unknown, fallback: string): string {
  */
 export default function PosterBuilderPage() {
 	const [searchParams, setSearchParams] = useSearchParams();
-	const [products, setProducts] = useState<Product[]>([]);
-	const [catalogError, setCatalogError] = useState("");
+	const { products, isLoadingProducts, productsError } = useProductCatalog(50);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [selectedRecipeId, setSelectedRecipeId] = useState("");
 	const [copyReady, setCopyReady] = useState(false);
@@ -68,20 +67,6 @@ export default function PosterBuilderPage() {
 	const [liveError, setLiveError] = useState("");
 	const [livePreviewUrl, setLivePreviewUrl] = useState("");
 	const { recipes, error: recipesError } = usePosterRecipes();
-
-	useEffect(() => {
-		let active = true;
-		void fetchProductCatalog(500)
-			.then((response) => {
-				if (active) setProducts(response.items ?? []);
-			})
-			.catch((error: unknown) => {
-				if (active) setCatalogError(message(error, "Failed to load product catalog."));
-			});
-		return () => {
-			active = false;
-		};
-	}, []);
 
 	useEffect(() => {
 		const productId = searchParams.get("product_id");
@@ -291,9 +276,11 @@ export default function PosterBuilderPage() {
 							products={products}
 							selectedProduct={selectedProduct}
 							onSelect={selectProduct}
+							isLoadingProducts={isLoadingProducts}
+							productsError={productsError}
 						/>
 					</div>
-					{catalogError ? <p className="mt-2 text-sm text-rose-300">{catalogError}</p> : null}
+					{productsError ? <p className="mt-2 text-sm text-rose-300">{productsError}</p> : null}
 				</section>
 
 				<CopyArchitectureV2LaneCard

@@ -27,7 +27,6 @@ import {
 	type MontageReadinessResponse,
 	type MontageRunResponse,
 } from "../api/montage";
-import { fetchProductCatalog } from "../api/products";
 import {
 	WorkflowStep,
 	type WorkflowStepStatus,
@@ -36,6 +35,7 @@ import ResultsSidebar from "../components/workspace/ResultsSidebar";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
+import { useProductCatalog } from "../hooks/useProductCatalog";
 import {
 	defaultEngine,
 	modelsForSingle,
@@ -65,7 +65,10 @@ export default function MontagePage() {
 		available: settingsAvailable,
 		reload: reloadSettings,
 	} = useCreativeLaneSettings();
-	const [products, setProducts] = useState<Product[]>([]);
+	const { products, isLoadingProducts, productsError } = useProductCatalog(
+		50,
+		"GENERATION",
+	);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [hookId, setHookId] = useState("AUTO");
 	const [backgroundId, setBackgroundId] = useState("AUTO");
@@ -96,9 +99,6 @@ export default function MontagePage() {
 	);
 
 	useEffect(() => {
-		void fetchProductCatalog(250, "GENERATION")
-			.then((r) => setProducts(r.items || []))
-			.catch(() => setProducts([]));
 		void fetchMontageVideoCapability()
 			.then((matrix) => {
 				setCapabilityMatrix(matrix);
@@ -436,6 +436,8 @@ export default function MontagePage() {
 						<SearchableProductSelect
 							products={products}
 							selectedProduct={selectedProduct}
+							isLoadingProducts={isLoadingProducts}
+							productsError={productsError}
 							onSelect={(p) => {
 								setSelectedProduct(p);
 								setPlan(null);

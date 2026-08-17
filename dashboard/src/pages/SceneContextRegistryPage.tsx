@@ -22,9 +22,9 @@ import {
 	submitScenePromotionReview,
 } from "../api/creativeIntelligence";
 import { useImageGenSettings } from "../api/imageGenSettings";
-import { fetchProductCatalog } from "../api/products";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
+import { useProductCatalog } from "../hooks/useProductCatalog";
 
 interface SceneProfile {
 	scene_code: string;
@@ -55,7 +55,11 @@ const candidateKey = (sourceTemplateId: string, candidateFingerprint: string) =>
 export default function SceneContextRegistryPage() {
 	const imgGen = useImageGenSettings();
 	const [activeView, setActiveView] = useState<SceneRegistryView>("review");
-	const [reviewProducts, setReviewProducts] = useState<Product[]>([]);
+	const {
+		products: reviewProducts,
+		isLoadingProducts,
+		productsError,
+	} = useProductCatalog(50, "GENERATION");
 	const [selectedReviewProduct, setSelectedReviewProduct] = useState<Product | null>(null);
 	const [productReview, setProductReview] = useState<ScenePromotionProductReview | null>(null);
 	const [reviewLoading, setReviewLoading] = useState(false);
@@ -146,14 +150,6 @@ export default function SceneContextRegistryPage() {
 		} finally {
 			setLoading(false);
 		}
-	}, []);
-
-	useEffect(() => {
-		void fetchProductCatalog(250, "GENERATION")
-			.then((response) => setReviewProducts(response.items ?? []))
-			.catch((err: unknown) =>
-				setReviewError(err instanceof Error ? err.message : "Failed to load products."),
-			);
 	}, []);
 
 	useEffect(() => {
@@ -662,6 +658,8 @@ export default function SceneContextRegistryPage() {
 							products={reviewProducts}
 							selectedProduct={selectedReviewProduct}
 							onSelect={selectReviewProduct}
+							isLoadingProducts={isLoadingProducts}
+							productsError={productsError}
 						/>
 					</div>
 

@@ -130,11 +130,22 @@ def test_workspace_jobs_page_normalises_response_items():
 
 def test_operator_page_does_not_silently_swallow_product_error():
     src = _read("dashboard/src/pages/OperatorPage.tsx")
-    # Product catalog catch must call setProductsError
-    assert "setProductsError(" in src
+    hook = _read("dashboard/src/hooks/useProductCatalog.ts")
+    # Product catalog errors are centralized so every consumer gets the same
+    # explicit error state instead of maintaining independent silent catches.
+    assert "useProductCatalog" in src
+    assert "setProductsError(" in hook
 
 
 def test_workspace_jobs_page_does_not_silently_swallow_product_error():
     src = _read("dashboard/src/pages/WorkspaceJobsPage.tsx")
     # The catch must set an error state, not silently swallow
     assert "setProductsError" in src
+
+
+def test_product_catalog_cache_is_parameterized_and_invalidatable():
+    src = _read("dashboard/src/api/products.ts")
+    assert "productCatalogCacheKey" in src
+    assert "purpose" in src and "limit" in src
+    assert "invalidateProductCatalogCache" in src
+    assert "revalidateProductCatalog" in src

@@ -7,7 +7,7 @@ vi.mock("../../api/products", () => ({
 }));
 
 import { searchProducts } from "../../api/products";
-import type { Product } from "../../types";
+import type { Product, ProductCatalogResponse } from "../../types";
 import SearchableProductSelect from "./SearchableProductSelect";
 
 const mockedSearch = vi.mocked(searchProducts);
@@ -29,6 +29,7 @@ const baseProduct = (over: Partial<Product> = {}): Product =>
 describe("SearchableProductSelect — server product search", () => {
 	afterEach(() => {
 		cleanup();
+		vi.unstubAllGlobals();
 	});
 
 	beforeEach(() => {
@@ -267,5 +268,123 @@ describe("SearchableProductSelect — server product search", () => {
 			"src",
 			"/api/product-visual-onboarding/prod-pending-88/cutout/preview/original",
 		);
+	});
+
+	it("does not show a false empty state while the catalog is loading", () => {
+		render(
+			<SearchableProductSelect
+				isLoadingProducts
+				products={[]}
+				selectedProduct={null}
+				onSelect={vi.fn()}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button"));
+		expect(screen.getByTestId("product-catalog-loading")).toBeInTheDocument();
+		expect(screen.queryByText("No products match your search.")).toBeNull();
+		expect(screen.queryByText(/0 visible/)).toBeNull();
+	});
+
+	it("shows an explicit catalog error instead of an empty result", () => {
+		render(
+			<SearchableProductSelect
+				products={[]}
+				productsError="Catalog unavailable"
+				selectedProduct={null}
+				onSelect={vi.fn()}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button"));
+		expect(screen.getByRole("alert")).toHaveTextContent("Catalog unavailable");
+		expect(screen.queryByText("No products match your search.")).toBeNull();
+	});
+
+	it("defers option previews until their rows become visible", async () => {
+		const observers: Array<(entries: Array<{ isIntersecting: boolean }>) => void> = [];
+		class MockIntersectionObserver {
+			constructor(callback: IntersectionObserverCallback) {
+				observers.push((entries) =>
+					callback(
+						entries as IntersectionObserverEntry[],
+						this as unknown as IntersectionObserver,
+					),
+				);
+			}
+
+			observe() {}
+			disconnect() {}
+		}
+		vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+		const products = Array.from({ length: 20 }, (_, index) =>
+			baseProduct({
+				id: `product-${index}`,
+				raw_product_title: `Product ${index}`,
+				product_display_name: `Product ${index}`,
+				image_url: `https://example.test/product-${index}.jpg`,
+			}),
+		);
+
+		render(
+			<SearchableProductSelect
+				products={products}
+				selectedProduct={null}
+				onSelect={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button"));
+
+		expect(screen.getAllByTestId("visual-asset-deferred")).toHaveLength(20);
+		expect(screen.queryAllByRole("img")).toHaveLength(0);
+		expect(observers.length).toBe(20);
+
+		observers[0]?.([{ isIntersecting: true }]);
+		await waitFor(() => {
+			expect(screen.getAllByRole("img")).toHaveLength(1);
+		});
+	});
+
+	it("does not let an older search response overwrite the newest query", async () => {
+		const pending = new Map<string, (value: ProductCatalogResponse) => void>();
+		mockedSearch.mockImplementation(
+			(query: string) =>
+				new Promise((resolve) => {
+					pending.set(query, resolve);
+				}),
+		);
+		const onSelect = vi.fn();
+		render(
+			<SearchableProductSelect
+				products={[]}
+				selectedProduct={null}
+				onSelect={onSelect}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button"));
+		const input = screen.getByPlaceholderText(/search all products by name/i);
+		fireEvent.change(input, { target: { value: "old" } });
+		await waitFor(() => expect(pending.has("old")).toBe(true), { timeout: 3000 });
+		fireEvent.change(input, { target: { value: "new" } });
+		await waitFor(() => expect(pending.has("new")).toBe(true), { timeout: 3000 });
+
+		pending.get("old")?.({
+			total_count: 1,
+			returned_count: 1,
+			has_pagination: false,
+			limit: 25,
+			offset: 0,
+			items: [baseProduct({ id: "old", raw_product_title: "Old result" })],
+		});
+		pending.get("new")?.({
+			total_count: 1,
+			returned_count: 1,
+			has_pagination: false,
+			limit: 25,
+			offset: 0,
+			items: [baseProduct({ id: "new", raw_product_title: "New result" })],
+		});
+		await waitFor(() => expect(screen.getByText("New result")).toBeInTheDocument());
+		expect(screen.queryByText("Old result")).toBeNull();
 	});
 });

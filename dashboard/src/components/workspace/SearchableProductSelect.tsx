@@ -12,6 +12,8 @@ interface SearchableProductSelectProps {
 	products: Product[];
 	selectedProduct: Product | null;
 	onSelect: (product: Product | null) => void;
+	isLoadingProducts?: boolean;
+	productsError?: string | null;
 	readinessByProductId?: Record<string, WorkspacePackageReadinessItem>;
 	isLoadingReadiness?: boolean;
 	/** Hide legacy workspace readiness when a page owns a different authority. */
@@ -46,6 +48,8 @@ export default function SearchableProductSelect({
 	products,
 	selectedProduct,
 	onSelect,
+	isLoadingProducts = false,
+	productsError = null,
 	readinessByProductId = {},
 	isLoadingReadiness = false,
 	showReadinessBadge = true,
@@ -71,14 +75,20 @@ export default function SearchableProductSelect({
 			return;
 		}
 		let isActive = true;
+		const controller = new AbortController();
 		setIsSearching(true);
 		const handle = window.setTimeout(() => {
-			void searchProducts(query, 25, "GENERATION")
+			void searchProducts(query, 25, "GENERATION", controller.signal)
 				.then((response) => {
 					if (isActive) setServerResults(response.items ?? []);
 				})
 				.catch((error: unknown) => {
-					if (isActive) {
+					const isAbortError =
+						typeof error === "object" &&
+						error !== null &&
+						"name" in error &&
+						(error as { name?: unknown }).name === "AbortError";
+					if (isActive && !isAbortError) {
 						setServerResults([]);
 						setSearchError(error instanceof Error ? error.message : "Product search failed.");
 					}
@@ -90,6 +100,7 @@ export default function SearchableProductSelect({
 		return () => {
 			isActive = false;
 			window.clearTimeout(handle);
+			controller.abort();
 		};
 	}, [search]);
 
@@ -247,6 +258,7 @@ export default function SearchableProductSelect({
 												previewUrl={previewUrl}
 												subtitle={product.id}
 												title={displayName}
+												deferUntilVisible
 											/>
 										</div>
 										<button
@@ -321,6 +333,20 @@ export default function SearchableProductSelect({
 							<div className="px-4 py-6 text-center text-xs text-slate-500 italic">
 								Searching all products…
 							</div>
+						) : isLoadingProducts ? (
+							<div
+								className="px-4 py-6 text-center text-xs text-slate-500 italic"
+								data-testid="product-catalog-loading"
+							>
+								Loading products…
+							</div>
+						) : productsError ? (
+							<div
+								className="px-4 py-6 text-center text-xs text-rose-300"
+								role="alert"
+							>
+								{productsError}
+							</div>
 						) : (
 							<div className="px-4 py-6 text-center text-xs text-slate-600 italic">
 								No products match your search.
@@ -335,7 +361,11 @@ export default function SearchableProductSelect({
 
 					<div className="p-2 border-t border-slate-800 bg-slate-950/20 text-right">
 						<span className="text-[9px] text-slate-600 uppercase tracking-widest font-bold pr-2">
-							{`${filtered.length} visible${isSearching ? " — searching…" : ""}`}
+							{isLoadingProducts && filtered.length === 0
+								? "Loading products…"
+								: productsError && filtered.length === 0
+									? "Product list unavailable"
+									: `${filtered.length} visible${isSearching ? " — searching…" : ""}`}
 						</span>
 					</div>
 				</div>

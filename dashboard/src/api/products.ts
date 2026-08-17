@@ -20,13 +20,92 @@ import type {
 } from "../types";
 import { fetchAPI } from "./client";
 
-export async function fetchProductCatalog(
-	limit = 250,
-	purpose: "GENERATION" | "REVIEW" = "GENERATION",
+export type ProductCatalogPurpose = "GENERATION" | "REVIEW";
+
+const PRODUCT_CATALOG_CACHE_TTL_MS = 30_000;
+
+type ProductCatalogCacheEntry = {
+	data?: ProductCatalogResponse;
+	expiresAt: number;
+	promise?: Promise<ProductCatalogResponse>;
+};
+
+const productCatalogCache = new Map<string, ProductCatalogCacheEntry>();
+
+function productCatalogCacheKey(
+	limit: number,
+	purpose: ProductCatalogPurpose,
+): string {
+	return `${purpose}:${limit}`;
+}
+
+/**
+ * Clear the shared selector catalog cache after a product truth mutation.
+ * Callers can clear one purpose/window or the complete cache.
+ */
+export function invalidateProductCatalogCache(options?: {
+	limit?: number;
+	purpose?: ProductCatalogPurpose;
+}): void {
+	if (options?.limit !== undefined && options.purpose) {
+		productCatalogCache.delete(
+			productCatalogCacheKey(options.limit, options.purpose),
+		);
+		return;
+	}
+	if (options?.limit !== undefined) {
+		for (const purpose of ["GENERATION", "REVIEW"] as const) {
+			productCatalogCache.delete(productCatalogCacheKey(options.limit, purpose));
+		}
+		return;
+	}
+	if (options?.purpose) {
+		for (const key of productCatalogCache.keys()) {
+			if (key.startsWith(`${options.purpose}:`)) productCatalogCache.delete(key);
+		}
+		return;
+	}
+	productCatalogCache.clear();
+}
+
+/** Force a fresh request for one catalog window, retaining the normal cache. */
+export function revalidateProductCatalog(
+	limit = 50,
+	purpose: ProductCatalogPurpose = "GENERATION",
 ): Promise<ProductCatalogResponse> {
-	return fetchAPI<ProductCatalogResponse>(
+	invalidateProductCatalogCache({ limit, purpose });
+	return fetchProductCatalog(limit, purpose);
+}
+
+export async function fetchProductCatalog(
+	limit = 50,
+	purpose: ProductCatalogPurpose = "GENERATION",
+): Promise<ProductCatalogResponse> {
+	const key = productCatalogCacheKey(limit, purpose);
+	const cached = productCatalogCache.get(key);
+	if (cached?.data && cached.expiresAt > Date.now()) return cached.data;
+	if (cached?.promise) return cached.promise;
+
+	const request = fetchAPI<ProductCatalogResponse>(
 		`/api/products?limit=${encodeURIComponent(String(limit))}&offset=0&purpose=${encodeURIComponent(purpose)}`,
 	);
+	productCatalogCache.set(key, { expiresAt: 0, promise: request });
+	try {
+		const response = await request;
+		const current = productCatalogCache.get(key);
+		if (current?.promise === request) {
+			productCatalogCache.set(key, {
+				data: response,
+				expiresAt: Date.now() + PRODUCT_CATALOG_CACHE_TTL_MS,
+			});
+		}
+		return response;
+	} catch (error) {
+		if (productCatalogCache.get(key)?.promise === request) {
+			productCatalogCache.delete(key);
+		}
+		throw error;
+	}
 }
 
 /**
@@ -182,12 +261,14 @@ export async function searchProducts(
 	query: string,
 	limit = 25,
 	purpose?: "GENERATION",
+	signal?: AbortSignal,
 ): Promise<ProductCatalogResponse> {
 	const purposeQuery = purpose ? `&purpose=${encodeURIComponent(purpose)}` : "";
 	return fetchAPI<ProductCatalogResponse>(
 		`/api/products/search?q=${encodeURIComponent(query)}&limit=${encodeURIComponent(
 			String(limit),
 		)}&offset=0${purposeQuery}`,
+		{ signal },
 	);
 }
 

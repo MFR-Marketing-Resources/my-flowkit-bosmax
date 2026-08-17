@@ -17,7 +17,6 @@ import {
 	fetchVideoModels,
 	type VideoModelInfo,
 } from "../api/productionQueue";
-import { fetchProductCatalog } from "../api/products";
 import {
 	ResolvedChip,
 	WorkflowStep,
@@ -30,6 +29,7 @@ import CanonicalReferenceBindingControls, {
 	EMPTY_BINDING,
 	type CanonicalReferenceBinding,
 } from "../components/workspace/CanonicalReferenceBindingControls";
+import { useProductCatalog } from "../hooks/useProductCatalog";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product, WorkspaceExecutionPackage } from "../types";
 import {
@@ -63,7 +63,10 @@ const selectClass =
 const labelClass = "text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500";
 
 export default function FacelessVideoPage() {
-	const [products, setProducts] = useState<Product[]>([]);
+	const { products, isLoadingProducts, productsError } = useProductCatalog(
+		50,
+		"GENERATION",
+	);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const {
 		settings,
@@ -100,12 +103,6 @@ export default function FacelessVideoPage() {
 	const [v4Open, setV4Open] = useState<Record<number, boolean>>({});
 	const executionInFlightRef = useRef(false);
 	const pollTimerRef = useRef<number | null>(null);
-
-	useEffect(() => {
-		void fetchProductCatalog(250, "GENERATION")
-			.then((res) => setProducts(res.items || []))
-			.catch(() => setProducts([]));
-	}, []);
 
 	useEffect(() => {
 		void fetch("/api/flow/video-capability-matrix")
@@ -593,6 +590,8 @@ export default function FacelessVideoPage() {
 						<SearchableProductSelect
 							products={products}
 							selectedProduct={selectedProduct}
+							isLoadingProducts={isLoadingProducts}
+							productsError={productsError}
 							onSelect={(p) => {
 								setSelectedProduct(p);
 								setWorkspacePackage(null);

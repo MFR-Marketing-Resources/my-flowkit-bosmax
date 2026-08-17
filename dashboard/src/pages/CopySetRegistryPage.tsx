@@ -17,10 +17,10 @@ import {
 	type CopyTruthProofV2,
 	type TextAssistLaneStatusV2,
 } from "../api/copyRegisterV2";
-import { fetchProductCatalog } from "../api/products";
 import { Badge, type BadgeTone, FormField, HelperText, Section } from "../components/ui";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
+import { useProductCatalog } from "../hooks/useProductCatalog";
 
 const INPUT_CLASS =
 	"mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200";
@@ -182,7 +182,7 @@ function BlueprintCard({
 
 export default function CopySetRegistryPage() {
 	const [searchParams, setSearchParams] = useSearchParams();
-	const [products, setProducts] = useState<Product[]>([]);
+	const { products, isLoadingProducts, productsError } = useProductCatalog(50);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [truth, setTruth] = useState<CopyTruthProofV2 | null>(null);
 	const [formulas, setFormulas] = useState<CopyFormulaV2[]>([]);
@@ -224,9 +224,6 @@ export default function CopySetRegistryPage() {
 	];
 
 	useEffect(() => {
-		void fetchProductCatalog(500)
-			.then((response) => setProducts(response.items ?? []))
-			.catch((reason) => setError(errorMessage(reason)));
 		void fetchCopyRegisterFormulas()
 			.then((response) => setFormulas(response.formulas ?? []))
 			.catch((reason) => setError(errorMessage(reason)));
@@ -424,6 +421,8 @@ export default function CopySetRegistryPage() {
 						products={products}
 						selectedProduct={selectedProduct}
 						onSelect={selectProduct}
+						isLoadingProducts={isLoadingProducts}
+						productsError={productsError}
 						showReadinessBadge={false}
 					/>
 				</div>

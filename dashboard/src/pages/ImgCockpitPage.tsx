@@ -28,11 +28,12 @@ import {
 	fetchGroundedPayload,
 	STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE,
 } from "../api/productVisualGrounding";
-import { fetchProductCatalog, fetchProductDetail } from "../api/products";
+import { fetchProductDetail } from "../api/products";
 import { compileWorkspacePromptPreview } from "../api/workspacePackages";
 import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
+import { useProductCatalog } from "../hooks/useProductCatalog";
 import CopywritingReadinessCard from "../components/copywriting/CopywritingReadinessCard";
 import CopyBindingGate from "../components/copywriting/CopyBindingGate";
 import {
@@ -196,7 +197,7 @@ export default function ImgCockpitPage() {
 	const [laneId, setLaneId] = useState("");
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [copyFallbackConfirmed, setCopyFallbackConfirmed] = useState(false);
-	const [products, setProducts] = useState<Product[]>([]);
+	const { products, isLoadingProducts, productsError } = useProductCatalog(50);
 	const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([]);
 	const [avatarRegistryPool, setAvatarRegistryPool] = useState<
 		AvatarRegistryPoolRow[]
@@ -264,10 +265,6 @@ export default function ImgCockpitPage() {
 		void fetchImgAssetLanes()
 			.then((r) => setLanes(r.items))
 			.catch(() => setError("Failed to load IMG lanes."));
-		// Seed the product picker with the first catalog page (same as OperatorPage).
-		void fetchProductCatalog(500)
-			.then((r) => setProducts(r.items ?? []))
-			.catch(() => setError("Failed to load product catalog."));
 		void loadReferences();
 	}, [loadReferences]);
 
@@ -686,7 +683,13 @@ export default function ImgCockpitPage() {
 
 							<WorkflowStep index={2} title="Product" status={productStatus} summary={selectedProduct?.product_display_name} helper="Bind product truth through the searchable catalog picker.">
 								<div className="space-y-2">
-									<SearchableProductSelect products={products} selectedProduct={selectedProduct} onSelect={handleSelectProduct} />
+									<SearchableProductSelect
+										products={products}
+										selectedProduct={selectedProduct}
+										onSelect={handleSelectProduct}
+										isLoadingProducts={isLoadingProducts}
+										productsError={productsError}
+									/>
 									{productMissing ? <p className="text-[11px] text-amber-300/80">This lane requires a product before the payload can be prepared.</p> : null}
 								</div>
 							</WorkflowStep>
@@ -945,6 +948,8 @@ export default function ImgCockpitPage() {
 					products={products}
 					selectedProduct={selectedProduct}
 					onSelect={handleSelectProduct}
+					isLoadingProducts={isLoadingProducts}
+					productsError={productsError}
 				/>
 				{productMissing ? (
 					<p className="text-[10px] text-amber-300/80">

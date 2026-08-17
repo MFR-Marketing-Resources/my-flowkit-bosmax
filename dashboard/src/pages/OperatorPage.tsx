@@ -12,7 +12,6 @@ import {
 	getProductRecipes,
 	type CreativeRecipe,
 } from "../api/creativeIntelligence";
-import { fetchProductCatalog } from "../api/products";
 import { fetchProductVisualReadiness } from "../api/productVisualOnboarding";
 import {
 	avatarRegistryCode,
@@ -72,6 +71,7 @@ import type {
 	WorkspacePackageReadinessItem,
 	WorkspacePromptPreviewResult,
 } from "../types";
+import { useProductCatalog } from "../hooks/useProductCatalog";
 import { resolvePromptRepresentationPresentation } from "../utils/promptRepresentationUi";
 import {
 	getEngine,
@@ -673,9 +673,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [compactPane, setCompactPane] = useState<"workspace" | "jobs">(
 		"workspace",
 	);
-	const [products, setProducts] = useState<Product[]>([]);
-	const [productsError, setProductsError] = useState<string | null>(null);
-	const [isLoadingProducts, setIsLoadingProducts] = useState(false);
+	const { products, productsError, isLoadingProducts } = useProductCatalog(50);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(
 		stateClaimSafeProduct ?? null,
 	);
@@ -1014,19 +1012,6 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	);
 	const isLoadingAnyReadiness =
 		isLoadingReadiness || isLoadingSelectedReadiness;
-
-	useEffect(() => {
-		setIsLoadingProducts(true);
-		setProductsError(null);
-		void fetchProductCatalog(500)
-			.then((response) => setProducts(response.items ?? []))
-			.catch((err: unknown) =>
-				setProductsError(
-					err instanceof Error ? err.message : "Failed to load product catalog",
-				),
-			)
-			.finally(() => setIsLoadingProducts(false));
-	}, []);
 
 	useEffect(() => {
 		void fetchPromptCompilerRuntimeConfig()
@@ -2410,6 +2395,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 									products={products}
 									selectedProduct={selectedProduct}
 									onSelect={setSelectedProduct}
+									isLoadingProducts={isLoadingProducts}
+									productsError={productsError}
 									readinessByProductId={packageReadiness}
 									isLoadingReadiness={isLoadingAnyReadiness}
 								/>
@@ -3187,6 +3174,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					products={products}
 					selectedProduct={selectedProduct}
 					onSelect={setSelectedProduct}
+					isLoadingProducts={isLoadingProducts}
+					productsError={productsError}
 					readinessByProductId={packageReadiness}
 					isLoadingReadiness={isLoadingAnyReadiness}
 				/>
