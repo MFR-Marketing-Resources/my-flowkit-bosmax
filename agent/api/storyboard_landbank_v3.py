@@ -474,6 +474,28 @@ async def execute_v3_copy_assistant(request: Request, plan_id: str, payload: dic
         raise _error(exc) from exc
 
 
+@router.post("/copy-register/assistant/projection/ai-assisted")
+async def derive_v3_ai_assisted_projection(request: Request, payload: dict[str, Any]):
+    """Governed AI-assisted natural compression of a Master's overlong stages."""
+    try:
+        actor_id, request_id, _source = _meta(request, payload)
+        mode = str(payload.get("provider_mode") or "LIVE_TEXT_ASSIST").upper()
+        if mode not in {"LIVE_TEXT_ASSIST", "FAKE_TEST"}:
+            raise V3FactoryError("PROVIDER_MODE_INVALID", "provider_mode must be LIVE_TEXT_ASSIST or FAKE_TEST.", status_code=422)
+        return await round2_service.derive_ai_assisted_projection(
+            str(payload.get("master_id") or ""),
+            master_revision=int(payload.get("master_revision") or 1),
+            duration_seconds=int(payload.get("duration_seconds") or 8),
+            provider_mode=mode,  # type: ignore[arg-type]
+            language_profile=str(payload.get("language_profile") or "Malay"),
+            wps_mode=str(payload.get("wps_mode") or "SAFE"),
+            actor_id=actor_id,
+            request_id=request_id,
+        )
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
 @router.get("/copy-register/runs/{product_id}")
 async def list_v3_copy_assistant_runs(product_id: str, limit: int = Query(default=50, ge=1, le=100), offset: int = Query(default=0, ge=0)):
     try:

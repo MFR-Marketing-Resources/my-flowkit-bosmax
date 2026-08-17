@@ -528,11 +528,20 @@ def compile_duration_projection(
     wps_mode: str = "SAFE",
     engine: str = "GOOGLE_FLOW",
     preferred_lane: str | None = None,
+    stage_text_overrides: Mapping[str, str] | None = None,
+    derivation_source: str = "DETERMINISTIC",
     created_by: str = "round1-compiler",
     source: str = ROUND1_SOURCE,
     created_at: str | None = None,
 ) -> tuple[V3DurationProjection | None, tuple[str, ...], tuple[str, ...]]:
-    """Derive one duration child from Master stage text and WPS authority."""
+    """Derive one duration child from Master stage text and WPS authority.
+
+    ``stage_text_overrides`` (keyed by Master stage_key or formula_stage_key)
+    supplies governed AI-assisted natural compressions used ONLY where a stage
+    would otherwise be mechanically compressed; each override must still fit the
+    block budget or the projection fails closed. Everything else — block plan,
+    budgets, stage order, CTA law, lineage digests — stays deterministic.
+    """
 
     try:
         language = canonical_prompt_compiler.strict_language_name(language_profile)
@@ -593,14 +602,25 @@ def compile_duration_projection(
             if full_words <= available:
                 chosen = block_index
                 break
+        override = None
+        if stage_text_overrides:
+            override = stage_text_overrides.get(stage.stage_key) or stage_text_overrides.get(stage.formula_stage_key)
         if chosen is None:
             for block_index in search_blocks:
                 available = budgets[block_index] - used[block_index]
                 if available > 0:
                     chosen = block_index
-                    compressed = _compress_ordered(full, available)
-                    if compressed is None:
-                        break
+                    if override is not None:
+                        # Governed AI-assisted natural compression replaces
+                        # mechanical truncation for this exact Master stage.
+                        candidate = normalized_text(override)
+                        if not candidate or word_count(candidate) > available:
+                            return None, ("WPS_DURATION_FIT_SHORTFALL",), (f"AI stage override overflow: {stage.formula_stage_key}",)
+                        compressed = candidate
+                    else:
+                        compressed = _compress_ordered(full, available)
+                        if compressed is None:
+                            break
                     projected_text[index] = compressed
                     transform_modes[index] = "COMPRESSED" if compressed != full else "IDENTITY"
                     used[block_index] += word_count(compressed)
@@ -714,6 +734,7 @@ def compile_duration_projection(
         master_stage_text_digests=tuple(stage.text_digest for stage in master.stages),
         master_exact_content_digest=master_content_digest(master),
         exact_projection_digest="0" * 64,
+        derivation_source=derivation_source,  # type: ignore[arg-type]
         status="VALIDATED",
         source=source,
         created_at=created_at or _now(),
@@ -2799,6 +2820,8 @@ class V3CopyFactoryService:
         language_profile: str = "Malay",
         wps_mode: str = "SAFE",
         preferred_lane: str | None = None,
+        stage_text_overrides: Mapping[str, str] | None = None,
+        derivation_source: str = "DETERMINISTIC",
         persist: bool = False,
         actor_id: str | None = None,
         request_id: str | None = None,
@@ -2811,6 +2834,7 @@ class V3CopyFactoryService:
         projection, issues, details = compile_duration_projection(
             master, duration_seconds=duration_seconds, evidence_registry=bundle.registry,
             language_profile=language_profile, wps_mode=wps_mode, preferred_lane=preferred_lane,
+            stage_text_overrides=stage_text_overrides, derivation_source=derivation_source,
             created_by=actor_id or "round1-compiler", source=source,
         )
         if projection is not None and persist:

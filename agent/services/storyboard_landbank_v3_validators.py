@@ -922,7 +922,13 @@ class DurationProjectionValidator:
                         )
                     )
             elif allocation.transform_mode == "COMPRESSED":
-                if not _ordered_token_subsequence(allocation.projected_text, stage.authored_text):
+                # DETERMINISTIC compression must be an ordered token subsequence of
+                # the Master stage (mechanical truncation).  A governed AI_ASSISTED
+                # derivative is a natural semantic rewrite bound to the SAME Master
+                # stage, so the subsequence law is relaxed for it — every other gate
+                # (WPS fit, formula order, CTA-final, evidence, lineage/digests) and
+                # mandatory human semantic review still apply.
+                if projection.derivation_source != "AI_ASSISTED" and not _ordered_token_subsequence(allocation.projected_text, stage.authored_text):
                     issues.append(
                         (
                             "PROJECTION_COMPRESSED_DERIVATION_INVALID",

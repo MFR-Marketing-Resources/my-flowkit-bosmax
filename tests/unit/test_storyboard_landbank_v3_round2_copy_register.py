@@ -678,6 +678,142 @@ async def test_round2_create_bootstraps_from_zero_supply(monkeypatch):
     assert any(item["master"]["master_id"] == master_item["master"]["master_id"] for item in review["items"])
 
 
+async def _seed_malay_master(product_id: str, formula_id: str):
+    """Build a persisted Master with an overlong Malay body (forces compression)."""
+    await _seed_product_truth(product_id)
+    fact_id = f"{product_id}-fact"
+    factory = V3CopyFactoryService()
+    required = tuple(required_formula_stage_keys(formula_id))
+    angle = await factory.create_angle(
+        product_id,
+        {"angle_id": f"{product_id}-angle", "definition": "Sudut rutin harian ringkas untuk pembeli yang layak dan sesuai", "formula_id": formula_id, "objective_id": "conversion", "objective_definition": "Drive a safe trial", "evidence_fact_ids": [fact_id]},
+        actor_id="malay", request_id=f"{product_id}:angle",
+    )
+    await factory.create_storyline_family(
+        product_id,
+        {"family_id": f"{product_id}-family", "angle_id": angle.angle_id, "formula_id": formula_id, "objective_compatibility": {"objective_ids": ["conversion"]}, "reviewed_definition": "Satu laluan rutin harian yang berterusan untuk pembeli"},
+        actor_id="malay", request_id=f"{product_id}:family",
+    )
+    recipe = await factory.create_recipe(
+        product_id,
+        {"recipe_id": f"{product_id}-recipe", "formula_id": formula_id, "objective_id": "conversion", "objective_definition": "Drive a safe trial", "target_angles": [{"entity_id": angle.angle_id, "revision": angle.revision}], "component_count_targets": {"HOOK": 1, "BODY_CORE": 1, "CTA": 1}, "supported_durations_seconds": [8, 16, 24]},
+        actor_id="malay", request_id=f"{product_id}:recipe",
+    )
+    objective = recipe.objective.model_dump(mode="json")
+
+    async def _comp(cid, semantic, segments):
+        return await factory.create_component(
+            product_id,
+            {"component_id": cid, "angle_id": angle.angle_id, "angle_revision": angle.revision, "storyline_family_id": f"{product_id}-family", "storyline_family_revision": 1, "formula_id": formula_id, "objective": objective, "semantic_class": semantic, "stage_segments": segments},
+            actor_id="malay", request_id=f"{product_id}:{cid}", source=_R2_SOURCE,
+        )
+
+    hook = await _comp(f"{product_id}-hook", "HOOK", [{"formula_stage_key": required[0], "authored_text": "Rutin terasa berat?", "entry_key": "arc:start", "exit_key": "arc:body", "evidence_fact_ids": [fact_id], "claim_bearing": True}])
+    middle = required[1:-1]
+    # Leading body stages are short (fit as identity); the FINAL body stage is
+    # deliberately overlong so it compresses with a generous, natural word budget.
+    short_body = "Rutin harian terasa membebankan."
+    long_body = "Setiap langkah tambahan dalam rutin anda menghabiskan tenaga pagi lalu anda cepat berasa penat dan letih."
+    body_segments = [
+        {"formula_stage_key": key, "authored_text": long_body if index == len(middle) - 1 else short_body, "entry_key": "arc:body" if index == 0 else f"arc:mid-{index}", "exit_key": "arc:cta" if index == len(middle) - 1 else f"arc:mid-{index + 1}", "evidence_fact_ids": [fact_id], "claim_bearing": True}
+        for index, key in enumerate(middle)
+    ]
+    body = await _comp(f"{product_id}-body", "BODY_CORE", body_segments)
+    cta = await _comp(f"{product_id}-cta", "CTA", [{"formula_stage_key": required[-1], "authored_text": "Mula rutin ringkas anda hari ini.", "entry_key": "arc:cta", "exit_key": "arc:end", "evidence_fact_ids": [], "claim_bearing": False}])
+    result = await factory.compile_master(
+        recipe.recipe_id, angle_id=angle.angle_id, angle_revision=angle.revision,
+        storyline_family_id=f"{product_id}-family", storyline_family_revision=1,
+        hook_id=hook.component_id, hook_revision=hook.revision,
+        body_core_id=body.component_id, body_core_revision=body.revision,
+        cta_id=cta.component_id, cta_revision=cta.revision,
+        persist=True, actor_id="malay", request_id=f"{product_id}:master", source=_R2_SOURCE,
+    )
+    assert result.master is not None, result.model_dump(mode="json")
+    return factory, result.master
+
+
+class _MalayCompressorProvider:
+    """Fake provider returning natural Malay clauses bounded by each stage max_words."""
+    _CLAUSES = [
+        "Rutin berat meletihkan.",
+        "Rutin harian berat memang meletihkan.",
+        "Langkah tambahan menghabiskan banyak tenaga pagi anda.",
+        "Setiap langkah tambahan menghabiskan tenaga pagi berharga anda.",
+        "Setiap langkah tambahan menghabiskan tenaga pagi berharga lalu anda cepat penat.",
+    ]
+
+    def complete_json_with_receipt(self, _system: str, user: str):
+        start = user.index("<UNTRUSTED_MASTER_STAGES>") + len("<UNTRUSTED_MASTER_STAGES>")
+        end = user.index("</UNTRUSTED_MASTER_STAGES>")
+        stages = json.loads(user[start:end].strip())
+        derivatives = []
+        for stage in stages:
+            max_words = int(stage["max_words"])
+            choice = ""
+            for clause in self._CLAUSES:
+                if len(clause.split()) <= max_words:
+                    choice = clause
+            if not choice:
+                choice = " ".join(self._CLAUSES[0].split()[: max(1, max_words)])
+                if not choice.endswith("."):
+                    choice += "."
+            derivatives.append({"master_stage_key": stage["master_stage_key"], "compressed_text": choice})
+        return {"stage_derivatives": derivatives}, {"provider_id": "fake-malay", "model_id": "fixture", "response_status": "SUCCEEDED", "json_parse_status": "VALID", "usage": {}}
+
+
+@pytest.mark.parametrize("formula_id,duration", [("PAS", 16), ("AIDA", 16), ("PESTA", 24)])
+@pytest.mark.asyncio
+async def test_round2_ai_assisted_projection_malay(formula_id, duration):
+    product_id = f"round2-ai-{formula_id.lower()}"
+    factory, master = await _seed_malay_master(product_id, formula_id)
+    service = V3CopyRegisterRound2Service(factory=factory, provider=_MalayCompressorProvider())
+
+    result = await service.derive_ai_assisted_projection(
+        master.master_id, master_revision=master.revision, duration_seconds=duration,
+        provider_mode="LIVE_TEXT_ASSIST", actor_id="malay-op", request_id=f"{product_id}:{duration}",
+    )
+    # Governed AI-assisted derivative — not an independent script, not auto-approved.
+    assert result["derivation_source"] == "AI_ASSISTED"
+    assert result["automatic_approval"] is False
+    assert result["compressed_stages"]
+    assert result["provider_output_digest"]
+    projection = result["projection"]
+    assert projection["status"] == "REVIEW_REQUIRED"
+    assert projection["derivation_source"] == "AI_ASSISTED"
+    # Bound to the exact Master (same Master id + content digest + stage digests).
+    assert projection["master"]["entity_id"] == master.master_id
+    assert projection["master_exact_content_digest"] == master.exact_content_digest
+    assert tuple(projection["master_stage_text_digests"]) == tuple(stage.text_digest for stage in master.stages)
+    # Formula order + CTA-final law preserved; complete Hook+Body+CTA arc.
+    assert tuple(a["master_formula_stage_key"] for a in projection["stage_allocations"]) == tuple(s.formula_stage_key for s in master.stages)
+    assert projection["cta_block_index"] == len(projection["block_plan_seconds"]) - 1
+    # WPS fit: every block within budget (exact fit, no mid-sentence tail).
+    for count, budget in zip(projection["per_block_word_counts"], projection["per_block_word_budgets"]):
+        assert count <= budget
+    # The compressed stage carries a natural, complete Malay sentence, not truncation.
+    compressed = [a for a in projection["stage_allocations"] if a["transform_mode"] == "COMPRESSED"]
+    assert compressed
+    for alloc in compressed:
+        text = alloc["projected_text"]
+        assert text in _MalayCompressorProvider._CLAUSES  # a governed natural Malay clause
+        assert len(text.split()) >= 5  # realistic Malay sentence, not a one-word truncation
+        assert text.endswith(".")
+
+
+@pytest.mark.asyncio
+async def test_round2_ai_assisted_projection_fails_closed_when_formula_cannot_fit():
+    # PASTOR's four body stages genuinely overflow short-duration budgets; the
+    # derivation must FAIL CLOSED rather than mutilate the copy to force a fit.
+    factory, master = await _seed_malay_master("round2-ai-pastor", "PASTOR")
+    service = V3CopyRegisterRound2Service(factory=factory, provider=_MalayCompressorProvider())
+    with pytest.raises(Exception) as error:
+        await service.derive_ai_assisted_projection(
+            master.master_id, master_revision=master.revision, duration_seconds=8,
+            provider_mode="LIVE_TEXT_ASSIST", actor_id="malay-op", request_id="round2-ai-pastor:8",
+        )
+    assert error.value.code in {"PROJECTION_BLOCKED", "AI_PROJECTION_BLOCKED"}
+
+
 def _stage(role, text, claim_bearing=True, has_evidence=True):
     return {"role": role, "text": text, "claim_bearing": claim_bearing, "has_evidence": has_evidence}
 
