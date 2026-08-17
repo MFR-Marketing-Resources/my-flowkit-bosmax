@@ -430,6 +430,7 @@ async def plan_v3_copy_assistant(request: Request, payload: dict[str, Any]):
             additional_count=int(payload.get("additional_count") or 1),
             semantic_class=payload.get("semantic_class"),
             target_counts=payload.get("target_counts"),
+            evidence_fact_ids=payload.get("evidence_fact_ids"),
             max_provider_calls=int(payload.get("max_provider_calls") if payload.get("max_provider_calls") is not None else 1),
             max_output_tokens=int(payload.get("max_output_tokens") if payload.get("max_output_tokens") is not None else 20000),
             max_cost=int(payload.get("max_cost") if payload.get("max_cost") is not None else 0),

@@ -69,6 +69,9 @@ class V3AssistantPlan(BaseModel):
     product_truth: dict[str, Any] = Field(default_factory=dict)
     evidence_fact_ids: tuple[str, ...] = Field(default_factory=tuple, max_length=500)
     evidence_digest: str = Field(default="0" * 64, pattern=_SHA256)
+    # Relevance-ranked selection detail (outcome, per-fact scores, explanations)
+    # for the "Review Evidence" panel.  The provider receives only fact_ids.
+    evidence_selection: dict[str, Any] = Field(default_factory=dict)
     language_profile: str = Field(default="Malay", min_length=1)
     current_capacity: dict[str, int] = Field(default_factory=dict)
     mode: AssistantMode

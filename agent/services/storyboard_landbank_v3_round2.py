@@ -49,6 +49,7 @@ from agent.models.storyboard_landbank_v3_round2 import (
 )
 from agent.services import ai_copy_provider_adapter
 from agent.services.storyboard_landbank_v3_factory import (
+    EvidenceRelevanceService,
     MAX_PAGE_SIZE,
     ROUND1_SOURCE,
     V3CopyFactoryService,
@@ -69,6 +70,9 @@ MAX_PAGE = 100
 # only computed filters fall back to this scan, and hitting it is surfaced as
 # scan_bounded=True (never a silent truncation).
 MAX_FILTER_SCAN = 400
+# Bounded relevant-evidence pool the assistant may draw from (the governed
+# subset embedded in the prompt); per-segment citations stay <= 12.
+MAX_EVIDENCE_SELECTION = 20
 MAX_PROVIDER_CALLS = 1
 MAX_OUTPUT_TOKENS = 20_000
 MAX_COST = 0
@@ -208,6 +212,9 @@ class V3CopyRegisterRound2Service:
         bundle = await self.factory.truth_adapter.revalidate(recipe.product_truth)
         # Product Truth is serialized as a data island.  No field from this
         # object is interpolated into the instruction channel.
+        # The provider receives ONLY the plan's governed relevant-evidence
+        # subset, never the whole approved registry.
+        selected_evidence_ids = set(plan.evidence_fact_ids)
         truth_payload = {
             "product_id": bundle.product.get("id") or plan.product_id,
             "product_fields": {
@@ -227,7 +234,11 @@ class V3CopyRegisterRound2Service:
                 )
                 if bundle.snapshot.get(key) is not None
             },
-            "approved_evidence": [fact.model_dump(mode="json") for fact in bundle.registry.facts[:50]],
+            "approved_evidence": [
+                fact.model_dump(mode="json")
+                for fact in bundle.registry.facts
+                if not selected_evidence_ids or fact.fact_id in selected_evidence_ids
+            ][:50],
         }
         truth_json = _json(truth_payload)
         system = (
@@ -279,6 +290,7 @@ class V3CopyRegisterRound2Service:
         additional_count: int = 1,
         semantic_class: str | None = None,
         target_counts: Mapping[str, Any] | None = None,
+        evidence_fact_ids: Sequence[str] | None = None,
         max_provider_calls: int = MAX_PROVIDER_CALLS,
         max_output_tokens: int = MAX_OUTPUT_TOKENS,
         max_cost: int = MAX_COST,
@@ -342,7 +354,22 @@ class V3CopyRegisterRound2Service:
             ))
         durations = tuple(int(item) for item in (recipe.supported_durations_seconds or (8, 16, 24)))[:3]
         provider = self.provider_status()
-        evidence_fact_ids = _unique([fact.fact_id for fact in bundle.registry.facts])
+        # Automatic evidence relevance: the assistant receives a governed relevant
+        # subset of APPROVED facts, never the whole registry.  A manual override
+        # may only reorder/narrow among approved facts (unapproved ids fail closed).
+        selection = EvidenceRelevanceService.rank(
+            bundle,
+            objective=recipe.objective,
+            angle=angle,
+            storyline_family=family,
+            formula_id=recipe.formula.formula_id,
+            requested_fact_ids=tuple(str(item) for item in (evidence_fact_ids or ())),
+            limit=MAX_EVIDENCE_SELECTION,
+        )
+        if evidence_fact_ids and "EVIDENCE_FACT_MISSING" in selection.issue_codes:
+            raise V3FactoryError("EVIDENCE_OVERRIDE_UNAPPROVED", "Evidence override may only choose among current approved facts.", status_code=409, details=selection.model_dump(mode="json"))
+        evidence_selection = selection.model_dump(mode="json")
+        evidence_fact_ids = _unique(list(selection.fact_ids))
         language_profile = normalized_text(str((recipe.campaign_scope or {}).get("language_profile") or "Malay")) or "Malay"
         current_capacity = {
             "HOOK": current["HOOK"],
@@ -381,6 +408,7 @@ class V3CopyRegisterRound2Service:
             product_truth=recipe.product_truth.model_dump(mode="json"),
             evidence_fact_ids=evidence_fact_ids,
             evidence_digest=deterministic_digest(list(evidence_fact_ids)),
+            evidence_selection=evidence_selection,
             language_profile=language_profile,
             current_capacity=current_capacity,
             mode=mode,  # type: ignore[arg-type]

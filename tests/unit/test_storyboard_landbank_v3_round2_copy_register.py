@@ -555,6 +555,48 @@ async def test_round2_cost_budget_enforced_only_when_positive_ceiling_exceeded(m
 
 
 @pytest.mark.asyncio
+async def test_round2_plan_uses_ranked_evidence_and_rejects_unapproved_override(monkeypatch):
+    monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
+    product_id = "round2-evidence"
+    factory, recipe, _angle, _family = await _seed_round2_fixture(product_id)
+    # A second APPROVED fact that is irrelevant to the routine angle/objective.
+    db = await get_db()
+    irrelevant = "Unrelated industrial lubricant viscosity specification datasheet"
+    await db.execute(
+        "INSERT INTO copy_evidence_fact_v2 "
+        "(product_id, snapshot_id, fact_id, fact_kind, canonical_text, text_digest, snapshot_version, snapshot_status, approved, created_at) "
+        "VALUES (?, ?, ?, 'PRODUCT_ATTRIBUTE', ?, ?, 1, 'APPROVED', 1, ?)",
+        (product_id, f"{product_id}-snapshot", f"{product_id}-fact-irrelevant", irrelevant, digest_evidence_text(irrelevant), "2026-08-17T00:00:00Z"),
+    )
+    await db.commit()
+    service = V3CopyRegisterRound2Service(factory=factory)
+
+    plan = await service.plan_assistant(
+        product_id, recipe.recipe_id, mode="CREATE",
+        actor_id="round2-operator", request_id="round2:evidence-plan",
+    )
+    # Only the relevant approved fact is selected; the irrelevant one is excluded.
+    assert plan.evidence_selection["outcome"] == "ENOUGH_EVIDENCE"
+    assert plan.evidence_fact_ids == (f"{product_id}-fact",)
+    assert f"{product_id}-fact" in plan.evidence_selection["explanations"]
+    assert f"{product_id}-fact" in plan.evidence_selection["score_by_fact"]
+
+    # The prompt embeds only the governed subset, not the whole approved registry.
+    preview = await service.prompt_preview(plan.plan_id)
+    assert f"{product_id}-fact" in preview.untrusted_truth_json
+    assert "industrial lubricant viscosity" not in preview.untrusted_truth_json
+
+    # An override that names an unapproved fact fails closed (approved-only).
+    with pytest.raises(Exception) as error:
+        await service.plan_assistant(
+            product_id, recipe.recipe_id, mode="CREATE",
+            evidence_fact_ids=["not-an-approved-fact"],
+            actor_id="round2-operator", request_id="round2:evidence-override",
+        )
+    assert error.value.code == "EVIDENCE_OVERRIDE_UNAPPROVED"
+
+
+@pytest.mark.asyncio
 async def test_round2_landbank_paginates_in_db_across_pages(monkeypatch):
     monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
     product_id = "round2-page"
