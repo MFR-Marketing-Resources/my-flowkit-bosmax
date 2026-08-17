@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import StoryboardLandbankV3Page from "./StoryboardLandbankV3Page";
 
 vi.mock("../hooks/useProductCatalog", () => ({
@@ -112,6 +112,8 @@ describe("StoryboardLandbankV3Page Round 2 contract", () => {
 		mockedApprove.mockResolvedValue({ receipt: { receipt_id: "receipt-v3" }, master: { ...item.master, status: "APPROVED" }, projections: item.projections, automatic_approval: false });
 	});
 
+	afterEach(() => cleanup());
+
 	it("keeps V3 jobs separated and walks explicit plan → fake execute → full review → approval", async () => {
 		renderPage();
 		expect(await screen.findByTestId("storyboard-landbank-v3-page")).toBeInTheDocument();
@@ -136,5 +138,22 @@ describe("StoryboardLandbankV3Page Round 2 contract", () => {
 		}
 		fireEvent.click(screen.getByTestId("v3-approve-master"));
 		await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith(expect.objectContaining({ master_id: "master-v3", checklist: expect.objectContaining({ duration_reviewed: true }) })));
+	});
+
+	it("disables live Generate with AI when text_assist is not configured", async () => {
+		// Default beforeEach mock is NOT_CONFIGURED (fake test enabled).
+		renderPage();
+		fireEvent.change(await screen.findByTestId("v3-recipe-id"), { target: { value: "recipe-v3" } });
+		fireEvent.click(screen.getByTestId("v3-plan-assistant"));
+		expect(await screen.findByTestId("v3-generate-live")).toBeDisabled();
+		expect(screen.getByTestId("v3-execute-fake")).toBeEnabled();
+	});
+
+	it("enables live Generate with AI when text_assist is configured", async () => {
+		mockedStatus.mockResolvedValue({ lane: "text_assist", status: "READY", configured: true, provider_id: "qwen", model_id: "qwen-plus", execution_enabled: true, provider_calls: 0, credit_spend: 0, fake_provider_allowed: false });
+		renderPage();
+		fireEvent.change(await screen.findByTestId("v3-recipe-id"), { target: { value: "recipe-v3" } });
+		fireEvent.click(screen.getByTestId("v3-plan-assistant"));
+		expect(await screen.findByTestId("v3-generate-live")).toBeEnabled();
 	});
 });

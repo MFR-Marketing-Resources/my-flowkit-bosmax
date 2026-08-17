@@ -52,6 +52,11 @@ export interface V3AssistantPlan {
 	max_output_tokens?: number;
 	max_cost?: number;
 	cost_status?: string;
+	supply_actions?: Record<string, string>;
+	diversity_deficits?: string[];
+	marginal_plan?: Record<string, number>;
+	capacity_before?: { reviewable_capacity?: number; theoretical_capacity?: number; duration_counts?: Record<string, number> };
+	evidence_selection?: { outcome?: string; fact_ids?: string[]; explanations?: Record<string, string[]>; score_by_fact?: Record<string, number> };
 	explicit_execute_required: true;
 	created_at: string;
 	created_by: string;
@@ -76,6 +81,7 @@ export interface V3QualitySignal {
 	issue_codes: readonly string[];
 	novelty_signal: "NOVEL" | "NEAR_DUPLICATE" | "EXACT_DUPLICATE" | "UNKNOWN";
 	novelty_score: number;
+	quality_dimensions?: Record<string, number>;
 	quality_score: number;
 }
 
@@ -180,6 +186,8 @@ export async function planV3Assistant(input: {
 	mode: V3AssistantMode;
 	additional_count?: number;
 	semantic_class?: string;
+	target_capacity?: number;
+	evidence_fact_ids?: string[];
 	max_provider_calls?: number;
 	max_output_tokens?: number;
 	max_cost?: number;
@@ -241,7 +249,7 @@ export async function approveV3MasterBatch(input: {
 	approved_by: string;
 	rationale: string;
 	checklist: V3ApprovalChecklist;
-}): Promise<{ batch_id: string; approved_count: number; automatic_approval: false }> {
+}): Promise<{ batch_id: string; batch_digest?: string; approved_count: number; automatic_approval: false }> {
 	return postAPI(`/api/storyboard-landbank/v3/copy-register/approval/batch`, {
 		...input,
 		actor_id: input.approved_by,
