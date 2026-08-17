@@ -23,6 +23,7 @@ Contract highlights (retained law):
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from functools import lru_cache
@@ -57,6 +58,22 @@ _LANGUAGE_NAMES = {
     "TH": "Thai", "THAI": "Thai",
 }
 
+# V3 needs an explicit language/profile contract.  Keep the historical
+# ``language_name`` fallback unchanged for existing callers; this map is used
+# only by the additive strict helpers below and deliberately includes every
+# language profile retained by the checked-in WPS authority.
+_V3_LANGUAGE_NAMES = {
+    "BM_MS": "Malay", "MALAY": "Malay", "MS": "Malay",
+    "EN": "English", "ENGLISH": "English",
+    "ID": "Indonesian", "INDONESIAN": "Indonesian",
+    "ZH": "Mandarin", "MANDARIN": "Mandarin",
+    "HI": "Hindustani", "HINDUSTANI": "Hindustani",
+    "TA": "Tamil", "TAMIL": "Tamil",
+    "BN": "Bengali", "BENGALI": "Bengali",
+    "MY": "Burmese", "BURMESE": "Burmese",
+    "TH": "Thai", "THAI": "Thai",
+}
+
 _FORMULA_FAMILIES = ("PAS", "AIDA", "HSO", "BAB", "PESTA", "PASTOR")
 
 
@@ -76,6 +93,76 @@ def wps_profile(target_language: str | None) -> dict:
     if not profile:
         raise ValueError(f"LANGUAGE_WPS_MISSING:{target_language}")
     return profile
+
+
+def strict_language_name(target_language: str | None) -> str:
+    """Resolve a V3 language/profile explicitly, with no Malay fallback."""
+
+    token = str(target_language or "").strip().upper()
+    canonical = _V3_LANGUAGE_NAMES.get(token)
+    if canonical is None:
+        raise ValueError(f"UNSUPPORTED_LANGUAGE_PROFILE:{target_language}")
+    if canonical not in _wps_authority()["language_wps"]:
+        raise ValueError(f"LANGUAGE_WPS_MISSING:{canonical}")
+    return canonical
+
+
+def strict_wps_profile(target_language: str | None) -> dict:
+    """Return the retained WPS profile for a V3-approved language alias."""
+
+    return _wps_authority()["language_wps"][strict_language_name(target_language)]
+
+
+def wps_authority_version() -> str:
+    """Return the retained WPS authority label used by V3 lineage."""
+
+    return str(_wps_authority().get("_authority") or "")
+
+
+def wps_authority_digest() -> str:
+    """Return a deterministic digest of the complete retained WPS authority."""
+
+    payload = json.dumps(
+        _wps_authority(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def strict_dialogue_word_budget(
+    block_seconds: int,
+    target_language: str | None,
+    *,
+    wps_mode: str = "SAFE",
+) -> int:
+    """V3-only strict WPS budget; unknown profiles fail closed."""
+
+    profile = strict_wps_profile(target_language)
+    mode = str(wps_mode).upper()
+    if mode not in {"SAFE", "SWEET"}:
+        raise ValueError(f"UNSUPPORTED_WPS_MODE:{wps_mode}")
+    rate = profile["sweet_wps"] if mode == "SWEET" else profile["safe_wps"]
+    return max(4, round(int(block_seconds) * float(rate)))
+
+
+def strict_total_dialogue_word_budget(
+    duration_seconds: int,
+    target_language: str | None,
+    *,
+    wps_mode: str = "SWEET",
+    engine: str = "GOOGLE_FLOW",
+    preferred_lane: str | None = None,
+) -> int:
+    """V3-only total budget using the canonical block-plan authority."""
+
+    blocks = resolve_block_plan(
+        engine,
+        int(duration_seconds),
+        preferred_lane=preferred_lane,
+    )
+    return sum(
+        strict_dialogue_word_budget(seconds, target_language, wps_mode=wps_mode)
+        for seconds in blocks
+    )
 
 
 def dialogue_word_budget(
