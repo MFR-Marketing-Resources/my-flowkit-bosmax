@@ -220,8 +220,8 @@ def test_products_api_applies_server_facets_sort_and_pagination(monkeypatch):
     async def fake_list_products(**_kwargs):
         return rows
 
-    async def fake_enrich(product):
-        return dict(product)
+    async def fake_enrich(_product):
+        raise AssertionError("registry view must not run full page enrichment")
 
     async def fake_merge(products, **_kwargs):
         return products
@@ -256,7 +256,7 @@ def test_products_api_applies_server_facets_sort_and_pagination(monkeypatch):
     app = FastAPI()
     app.include_router(products_router, prefix="/api")
     response = TestClient(app).get(
-        "/api/products?group=beauty&sort=PRODUCT_SOLD_VERIFIED_DESC&limit=1&offset=0"
+        "/api/products?view=REGISTRY&group=beauty&sort=PRODUCT_SOLD_VERIFIED_DESC&limit=1&offset=0"
     )
 
     assert response.status_code == 200

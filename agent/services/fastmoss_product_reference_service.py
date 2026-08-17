@@ -21,6 +21,9 @@ _REFERENCE_CACHE_ITEMS: list[dict[str, Any]] = []
 # holds fewer rows than the requested limit, len(items) < limit would defeat a
 # len-based guard and re-enrich every call — this tracks the load cap instead.
 _REFERENCE_CACHE_LOADED_LIMIT: int = 0
+_REFERENCE_SEED_CACHE_SIGNATURE: str | None = None
+_REFERENCE_SEED_CACHE_ITEMS: list[dict[str, Any]] = []
+_REFERENCE_SEED_CACHE_LOADED_LIMIT: int = 0
 
 
 def is_fastmoss_reference_product_id(product_id: str | None) -> bool:
@@ -138,17 +141,40 @@ async def _load_staged_reference_items(seen_ids: set[str]) -> list[dict[str, Any
     return items
 
 
-async def list_fastmoss_reference_products(limit: int = 500) -> list[dict[str, Any]]:
+def _staged_reference_seed(record: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a staged row without running the full product enricher."""
+    seed = dict(record)
+    seed.setdefault("source", "FASTMOSS")
+    seed["source_lane"] = FASTMOSS_REFERENCE_LANE
+    seed["source_label"] = seed.get("source_label") or "Kalodata Reference"
+    seed["reference_only"] = True
+    seed["catalog_blockers"] = [FASTMOSS_REFERENCE_BLOCKER]
+    seed["catalog_visibility_reason"] = FASTMOSS_REFERENCE_REASON
+    seed.setdefault("lifecycle_status", "ACTIVE")
+    return seed
+
+
+async def list_fastmoss_reference_products(
+    limit: int = 500,
+    *,
+    enrich: bool = True,
+) -> list[dict[str, Any]]:
     global _REFERENCE_CACHE_ITEMS, _REFERENCE_CACHE_SIGNATURE, _REFERENCE_CACHE_LOADED_LIMIT
+    global _REFERENCE_SEED_CACHE_SIGNATURE, _REFERENCE_SEED_CACHE_ITEMS, _REFERENCE_SEED_CACHE_LOADED_LIMIT
     from agent.api.operator import _load_products, _pack_file
 
     workbook_path = Path(_pack_file("FASTMOSS_COMBINED_10_FILES_WORKBOOK.xlsx"))
     workbook_exists = workbook_path.exists()
     staged_signature = _staged_catalog_signature()
     if not workbook_exists and staged_signature == "0:0":
-        _REFERENCE_CACHE_SIGNATURE = None
-        _REFERENCE_CACHE_ITEMS = []
-        _REFERENCE_CACHE_LOADED_LIMIT = 0
+        if enrich:
+            _REFERENCE_CACHE_SIGNATURE = None
+            _REFERENCE_CACHE_ITEMS = []
+            _REFERENCE_CACHE_LOADED_LIMIT = 0
+        else:
+            _REFERENCE_SEED_CACHE_SIGNATURE = None
+            _REFERENCE_SEED_CACHE_ITEMS = []
+            _REFERENCE_SEED_CACHE_LOADED_LIMIT = 0
         return []
 
     workbook_signature = (
@@ -157,6 +183,35 @@ async def list_fastmoss_reference_products(limit: int = 500) -> list[dict[str, A
         else "0:0"
     )
     signature = f"{workbook_signature}|{staged_signature}"
+    if not enrich:
+        if (
+            signature == _REFERENCE_SEED_CACHE_SIGNATURE
+            and _REFERENCE_SEED_CACHE_LOADED_LIMIT >= limit
+        ):
+            return _REFERENCE_SEED_CACHE_ITEMS[:limit]
+
+        load_cap = max(limit, len(_REFERENCE_SEED_CACHE_ITEMS), 500)
+        items: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        if workbook_exists:
+            for operator_product in _load_products(limit=load_cap):
+                seed = _reference_seed(operator_product)
+                items.append(seed)
+                seen_ids.add(_clean(seed.get("id")))
+        from agent.services.kalodata_import_service import load_staged_catalog
+
+        for record in load_staged_catalog():
+            seed = _staged_reference_seed(record)
+            record_id = _clean(seed.get("id"))
+            if not record_id or record_id in seen_ids:
+                continue
+            seen_ids.add(record_id)
+            items.append(seed)
+        _REFERENCE_SEED_CACHE_SIGNATURE = signature
+        _REFERENCE_SEED_CACHE_ITEMS = items
+        _REFERENCE_SEED_CACHE_LOADED_LIMIT = load_cap
+        return items[:limit]
+
     # Hit on the load cap, not len(items): if the workbook has fewer rows than the
     # requested limit, the cache already holds ALL of them and is still complete.
     if signature == _REFERENCE_CACHE_SIGNATURE and _REFERENCE_CACHE_LOADED_LIMIT >= limit:

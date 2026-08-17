@@ -119,9 +119,9 @@ describe("product registry request cache", () => {
 		const fetchMock = vi.mocked(fetch);
 		expect(fetchMock).toHaveBeenCalledTimes(3);
 		expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
-			"/api/products?source=MANUAL&q=serum&group=beauty&limit=20&offset=0",
-			"/api/products?source=MANUAL&q=serum&group=beauty&limit=20&offset=20",
-			"/api/products?source=MANUAL&q=serum&group=food&limit=20&offset=0",
+			"/api/products?source=MANUAL&q=serum&group=beauty&view=REGISTRY&limit=20&offset=0",
+			"/api/products?source=MANUAL&q=serum&group=beauty&view=REGISTRY&limit=20&offset=20",
+			"/api/products?source=MANUAL&q=serum&group=food&view=REGISTRY&limit=20&offset=0",
 		]);
 	});
 
