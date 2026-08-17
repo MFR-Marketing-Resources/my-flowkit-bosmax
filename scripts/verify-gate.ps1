@@ -68,6 +68,7 @@ $SmokeTests = @(
     'tests/unit/test_storyboard_landbank_v3_migration.py',
     'tests/unit/test_storyboard_landbank_v3_validators.py',
     'tests/unit/test_storyboard_landbank_v3_round1_factory.py',
+    'tests/unit/test_storyboard_landbank_v3_round2_copy_register.py',
     'tests/unit/test_storyboard_landbank_v3_api.py',
     'tests/unit/test_formula_validator_service.py',
     'tests/unit/test_copy_set_service.py',
@@ -89,7 +90,8 @@ $SmokeTests = @(
 $DashboardContractTests = @(
     'src/components/product-registration/ProductVisualReadinessPanel.test.tsx',
     'src/components/product-registration/AllProductsTab.test.tsx',
-    'src/pages/ProductDetailPage.test.tsx'
+    'src/pages/ProductDetailPage.test.tsx',
+    'src/pages/StoryboardLandbankV3Page.test.tsx'
 )
 
 $results = @()

@@ -1628,3 +1628,18 @@ domains:
       - tests/api/test_faceless_f05_start_frame_transport.py
       - dashboard/src/App.tsx
       - agent/main.py
+      # FORMULA_STORYBOARD_LANDBANK_V3: provider-free Round 1 factory plus the
+      # bounded Round 2 Copy Register / AI Copy Assistant review plane.
+      - agent/api/storyboard_landbank_v3.py
+      - agent/models/storyboard_landbank_v3.py
+      - agent/models/storyboard_landbank_v3_round2.py
+      - agent/services/storyboard_landbank_v3_factory.py
+      - agent/services/storyboard_landbank_v3_round2.py
+      - dashboard/src/api/storyboardLandbankV3Round2.ts
+      - dashboard/src/pages/StoryboardLandbankV3Page.tsx
+      - dashboard/src/pages/StoryboardLandbankV3Page.test.tsx
+      - tests/unit/test_storyboard_landbank_v3_api.py
+      - tests/unit/test_storyboard_landbank_v3_migration.py
+      - tests/unit/test_storyboard_landbank_v3_round1_factory.py
+      - tests/unit/test_storyboard_landbank_v3_round2_copy_register.py
+      - tests/unit/test_storyboard_landbank_v3_validators.py

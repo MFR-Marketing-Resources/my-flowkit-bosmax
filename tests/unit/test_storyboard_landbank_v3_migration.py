@@ -22,11 +22,14 @@ V3_TABLES = {
     "review_event_v3",
 }
 DEFERRED_TABLES = {
-    "v3_human_approval_receipt",
     "materialization_link_v3",
     "production_copy_supply_manifest_v3",
     "manifest_item_v3",
     "landbank_usage_v3",
+}
+ROUND2_TABLES = {
+    "v3_ai_authoring_run",
+    "v3_human_approval_receipt",
 }
 V3_INDEXES = {
     "idx_angle_v3_product_status",
@@ -175,6 +178,7 @@ async def test_v3_core_tables_indexes_and_deferred_tables_are_exact():
     )
     tables = {row[0] for row in await table_cursor.fetchall()}
     assert V3_TABLES <= tables
+    assert ROUND2_TABLES <= tables
     assert not (DEFERRED_TABLES & tables)
 
     index_cursor = await db.execute(
@@ -193,6 +197,8 @@ async def test_v3_core_tables_indexes_and_deferred_tables_are_exact():
             "stage_allocations_json",
             "stage_allocation_digest",
             "stage_allocation_receipt_json",
+            "derivation_source",
+            "authoring_run_id",
         },
     }
     for table, required_columns in expected_columns.items():

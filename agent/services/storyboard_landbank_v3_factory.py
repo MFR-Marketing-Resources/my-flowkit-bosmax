@@ -528,11 +528,20 @@ def compile_duration_projection(
     wps_mode: str = "SAFE",
     engine: str = "GOOGLE_FLOW",
     preferred_lane: str | None = None,
+    stage_text_overrides: Mapping[str, str] | None = None,
+    derivation_source: str = "DETERMINISTIC",
     created_by: str = "round1-compiler",
     source: str = ROUND1_SOURCE,
     created_at: str | None = None,
 ) -> tuple[V3DurationProjection | None, tuple[str, ...], tuple[str, ...]]:
-    """Derive one duration child from Master stage text and WPS authority."""
+    """Derive one duration child from Master stage text and WPS authority.
+
+    ``stage_text_overrides`` (keyed by Master stage_key or formula_stage_key)
+    supplies governed AI-assisted natural compressions used ONLY where a stage
+    would otherwise be mechanically compressed; each override must still fit the
+    block budget or the projection fails closed. Everything else — block plan,
+    budgets, stage order, CTA law, lineage digests — stays deterministic.
+    """
 
     try:
         language = canonical_prompt_compiler.strict_language_name(language_profile)
@@ -593,14 +602,25 @@ def compile_duration_projection(
             if full_words <= available:
                 chosen = block_index
                 break
+        override = None
+        if stage_text_overrides:
+            override = stage_text_overrides.get(stage.stage_key) or stage_text_overrides.get(stage.formula_stage_key)
         if chosen is None:
             for block_index in search_blocks:
                 available = budgets[block_index] - used[block_index]
                 if available > 0:
                     chosen = block_index
-                    compressed = _compress_ordered(full, available)
-                    if compressed is None:
-                        break
+                    if override is not None:
+                        # Governed AI-assisted natural compression replaces
+                        # mechanical truncation for this exact Master stage.
+                        candidate = normalized_text(override)
+                        if not candidate or word_count(candidate) > available:
+                            return None, ("WPS_DURATION_FIT_SHORTFALL",), (f"AI stage override overflow: {stage.formula_stage_key}",)
+                        compressed = candidate
+                    else:
+                        compressed = _compress_ordered(full, available)
+                        if compressed is None:
+                            break
                     projected_text[index] = compressed
                     transform_modes[index] = "COMPRESSED" if compressed != full else "IDENTITY"
                     used[block_index] += word_count(compressed)
@@ -714,6 +734,7 @@ def compile_duration_projection(
         master_stage_text_digests=tuple(stage.text_digest for stage in master.stages),
         master_exact_content_digest=master_content_digest(master),
         exact_projection_digest="0" * 64,
+        derivation_source=derivation_source,  # type: ignore[arg-type]
         status="VALIDATED",
         source=source,
         created_at=created_at or _now(),
@@ -1072,7 +1093,10 @@ def _row_to_entity(entity_type: str, row: Mapping[str, Any]) -> Any:
             master_stage_keys=tuple(_loads(data.get("master_stage_keys_json"), [])),
             master_stage_text_digests=tuple(_loads(data.get("master_stage_text_digests_json"), [])),
             master_exact_content_digest=data["master_exact_content_digest"],
-            exact_projection_digest=data["exact_projection_digest"], status=data["status"], source=data["source"],
+            exact_projection_digest=data["exact_projection_digest"],
+            derivation_source=data.get("derivation_source") or "DETERMINISTIC",
+            authoring_run_id=data.get("authoring_run_id"),
+            status=data["status"], source=data["source"],
             supersedes=supersedes, created_at=data["created_at"], created_by=data["created_by"],
         )
     if entity_type == "REVIEW_EVENT":
@@ -1208,7 +1232,10 @@ def _entity_row(model: Any) -> tuple[str, dict[str, Any]]:
             "master_stage_keys_json": _json(list(model.master_stage_keys)),
             "master_stage_text_digests_json": _json(list(model.master_stage_text_digests)),
             "master_exact_content_digest": model.master_exact_content_digest,
-            "exact_projection_digest": model.exact_projection_digest, "status": model.status, "source": model.source,
+            "exact_projection_digest": model.exact_projection_digest,
+            "derivation_source": model.derivation_source,
+            "authoring_run_id": model.authoring_run_id,
+            "status": model.status, "source": model.source,
             "supersedes_projection_id": model.supersedes.entity_id if model.supersedes else None,
             "supersedes_projection_revision": model.supersedes.revision if model.supersedes else None,
             "created_at": model.created_at, "created_by": model.created_by,
@@ -1238,15 +1265,97 @@ class V3CopyFactoryRepository:
         row = await cursor.fetchone()
         return _row_to_entity(entity_type, dict(row)) if row else None
 
+    def _filter_clauses(
+        self,
+        entity_type: str,
+        *,
+        product_id: str | None = None,
+        status: str | None = None,
+        statuses: Sequence[str] | None = None,
+        formula_id: str | None = None,
+        angle_id: str | None = None,
+        storyline_family_id: str | None = None,
+        recipe_id: str | None = None,
+        source: str | None = None,
+    ) -> tuple[list[str], list[Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if product_id:
+            clauses.append("t.product_id=?")
+            params.append(product_id)
+        if status:
+            clauses.append("t.status=?")
+            params.append(status)
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            clauses.append(f"t.status IN ({placeholders})")
+            params.extend(str(item) for item in statuses)
+        if formula_id:
+            clauses.append("t.formula_id=?")
+            params.append(formula_id)
+        if angle_id and entity_type in {"STORYLINE_FAMILY", "STORYBOARD_COMPONENT", "MASTER_STORYBOARD"}:
+            clauses.append("t.angle_id=?")
+            params.append(angle_id)
+        if storyline_family_id and entity_type in {"STORYBOARD_COMPONENT", "MASTER_STORYBOARD"}:
+            clauses.append("t.storyline_family_id=?")
+            params.append(storyline_family_id)
+        if recipe_id and entity_type == "MASTER_STORYBOARD":
+            clauses.append("t.recipe_id=?")
+            params.append(recipe_id)
+        if source and entity_type in {"MASTER_STORYBOARD", "DURATION_PROJECTION", "STORYBOARD_COMPONENT"}:
+            clauses.append("t.source=?")
+            params.append(source)
+        return clauses, params
+
+    async def count(
+        self,
+        entity_type: str,
+        *,
+        product_id: str | None = None,
+        status: str | None = None,
+        statuses: Sequence[str] | None = None,
+        formula_id: str | None = None,
+        angle_id: str | None = None,
+        storyline_family_id: str | None = None,
+        recipe_id: str | None = None,
+        source: str | None = None,
+        latest_only: bool = True,
+    ) -> int:
+        """Bounded count of latest-revision rows matching the structural filters."""
+        entity_type = entity_type.upper()
+        table, id_column = _ENTITY_TABLES.get(entity_type, (None, None))
+        if table is None:
+            raise V3FactoryError("V3_ENTITY_UNKNOWN", entity_type, status_code=422)
+        clauses, params = self._filter_clauses(
+            entity_type, product_id=product_id, status=status, statuses=statuses,
+            formula_id=formula_id, angle_id=angle_id, storyline_family_id=storyline_family_id,
+            recipe_id=recipe_id, source=source,
+        )
+        where = " AND ".join(clauses) or "1=1"
+        if latest_only:
+            query = (
+                f"SELECT COUNT(*) AS n FROM {table} t JOIN (SELECT {id_column}, MAX(revision) AS latest_revision "
+                f"FROM {table} GROUP BY {id_column}) latest ON latest.{id_column}=t.{id_column} "
+                f"AND latest.latest_revision=t.revision WHERE {where}"
+            )
+        else:
+            query = f"SELECT COUNT(*) AS n FROM {table} t WHERE {where}"
+        db = await get_db()
+        row = await (await db.execute(query, params)).fetchone()
+        return int((row["n"] if row is not None else 0) or 0)
+
     async def list(
         self,
         entity_type: str,
         *,
         product_id: str | None = None,
         status: str | None = None,
+        statuses: Sequence[str] | None = None,
         formula_id: str | None = None,
         angle_id: str | None = None,
         storyline_family_id: str | None = None,
+        recipe_id: str | None = None,
+        source: str | None = None,
         limit: int = 100,
         offset: int = 0,
         latest_only: bool = True,
@@ -1257,24 +1366,11 @@ class V3CopyFactoryRepository:
             raise V3FactoryError("V3_ENTITY_UNKNOWN", entity_type, status_code=422)
         limit = min(MAX_PAGE_SIZE, max(1, int(limit)))
         offset = max(0, int(offset))
-        clauses: list[str] = []
-        params: list[Any] = []
-        if product_id:
-            clauses.append("t.product_id=?")
-            params.append(product_id)
-        if status:
-            clauses.append("t.status=?")
-            params.append(status)
-        if formula_id:
-            clauses.append("t.formula_id=?")
-            params.append(formula_id)
-        if angle_id and entity_type in {"STORYLINE_FAMILY", "STORYBOARD_COMPONENT", "MASTER_STORYBOARD"}:
-            clauses.append("t.angle_id=?")
-            params.append(angle_id)
-        if storyline_family_id and entity_type in {"STORYBOARD_COMPONENT", "MASTER_STORYBOARD"}:
-            column = "storyline_family_id"
-            clauses.append(f"t.{column}=?")
-            params.append(storyline_family_id)
+        clauses, params = self._filter_clauses(
+            entity_type, product_id=product_id, status=status, statuses=statuses,
+            formula_id=formula_id, angle_id=angle_id, storyline_family_id=storyline_family_id,
+            recipe_id=recipe_id, source=source,
+        )
         where = " AND ".join(clauses) or "1=1"
         if latest_only:
             query = (
@@ -1315,10 +1411,11 @@ class V3CopyFactoryRepository:
         event_type: str = "CREATED",
         reason: str | None = None,
         from_status: str | None = None,
+        approval_receipt_id: str | None = None,
     ) -> Any:
         if not actor_id or not request_id or not source:
             raise V3FactoryError("MUTATION_RECEIPT_REQUIRED", "actor_id, request_id, and source are required.", status_code=422)
-        if getattr(model, "status", None) == "APPROVED":
+        if getattr(model, "status", None) == "APPROVED" and not approval_receipt_id:
             raise V3FactoryError("ROUND1_APPROVAL_FORBIDDEN", "Macro Round 1 cannot create APPROVED V3 rows.", status_code=403)
         entity_type, row = _entity_row(model)
         table, _ = _ENTITY_TABLES[entity_type]
@@ -2723,6 +2820,8 @@ class V3CopyFactoryService:
         language_profile: str = "Malay",
         wps_mode: str = "SAFE",
         preferred_lane: str | None = None,
+        stage_text_overrides: Mapping[str, str] | None = None,
+        derivation_source: str = "DETERMINISTIC",
         persist: bool = False,
         actor_id: str | None = None,
         request_id: str | None = None,
@@ -2735,6 +2834,7 @@ class V3CopyFactoryService:
         projection, issues, details = compile_duration_projection(
             master, duration_seconds=duration_seconds, evidence_registry=bundle.registry,
             language_profile=language_profile, wps_mode=wps_mode, preferred_lane=preferred_lane,
+            stage_text_overrides=stage_text_overrides, derivation_source=derivation_source,
             created_by=actor_id or "round1-compiler", source=source,
         )
         if projection is not None and persist:

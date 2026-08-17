@@ -439,6 +439,11 @@ class V3DurationProjection(BaseModel):
     master_stage_text_digests: tuple[str, ...] = Field(min_length=1)
     master_exact_content_digest: str = Field(pattern=_SHA256_RE.pattern)
     exact_projection_digest: str = Field(pattern=_SHA256_RE.pattern)
+    # Round 2 provenance is intentionally separate from exact dialogue content.
+    # The deterministic WPS transform remains the projection authority; these
+    # fields only identify the authoring lineage that supplied the Master.
+    derivation_source: Literal["DETERMINISTIC", "AI_ASSISTED", "HUMAN_EDITED"] = "DETERMINISTIC"
+    authoring_run_id: str | None = None
     status: V3LifecycleStatus = "DRAFT"
     source: str = Field(min_length=1)
     supersedes: V3RevisionRef | None = None
