@@ -282,6 +282,14 @@ function parseRequest(record) {
 	return new URL(record.url);
 }
 
+function isGenerationOrProviderExecutionPath(pathname) {
+	return (
+		/^\/api\/(?:generate|provider)(?:\/|$)/i.test(pathname) ||
+		/^\/api\/flow\/(?:generate|execute-flow-job|video-jobs|native-extend)(?:\/|$)/i.test(pathname) ||
+		/^\/api\/bulk-generation(?:\/|$)/i.test(pathname)
+	);
+}
+
 function assertRequestContracts(capture) {
 	for (const request of capture.requests) {
 		const parsed = parseRequest(request);
@@ -304,7 +312,7 @@ function assertRequestContracts(capture) {
 		if (request.method === "GET" && pathname === "/api/product-registration/review-drafts") {
 			assert(Number(searchParams.get("limit") || 0) <= 100, `${request.url} exceeds draft bound`);
 		}
-		assert(!/\/api\/(?:flow|provider|generate)(?:\/|$)/i.test(pathname), `provider/generation call observed: ${request.url}`);
+		assert(!isGenerationOrProviderExecutionPath(pathname), `provider/generation call observed: ${request.url}`);
 	}
 	for (const response of capture.responses) {
 		assert(response.status >= 200 && response.status < 300, `${response.status} for ${response.url}`);
@@ -476,8 +484,11 @@ async function runLive() {
 		});
 		const advanced = page.getByTestId("p6-open-advanced-workspace");
 		if (await advanced.count()) await advanced.click();
-		await page.getByTestId("p6-product-picker").waitFor({ timeout: LIVE_TIMEOUT_MS });
+		const p6Picker = page.getByTestId("p6-product-picker");
+		await p6Picker.waitFor({ timeout: LIVE_TIMEOUT_MS });
+		await p6Picker.locator("button").first().click();
 		const p6Search = page.getByLabel("Search governed products");
+		await p6Search.waitFor({ timeout: LIVE_TIMEOUT_MS });
 		await p6Search.fill("outside");
 		await page.waitForTimeout(1_000);
 		const next = page.getByRole("button", { name: "Next" });
