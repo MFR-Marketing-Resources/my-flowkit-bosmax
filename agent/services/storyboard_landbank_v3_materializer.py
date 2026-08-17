@@ -38,8 +38,14 @@ from agent.models.copy_blueprint_v2 import (
     SemanticReviewProof,
 )
 from agent.models.storyboard_landbank_v3 import deterministic_id, normalized_text
-from agent.models.storyboard_landbank_v3_round3 import MATERIALIZER_VERSION
+from agent.models.storyboard_landbank_v3_round3 import (
+    MATERIALIZER_VERSION,
+    MaterializationLinkV3,
+    materialization_digest,
+    materialization_link_id,
+)
 from agent.services import copy_register_v2_service as v2svc
+from agent.services import production_supply_repository as supply_repo
 from agent.services.storyboard_landbank_v3_factory import V3CopyFactoryService
 from agent.services.storyboard_landbank_v3_round2 import V3CopyRegisterRound2Service
 
@@ -308,15 +314,27 @@ class V3ToV2Materializer:
             projection_exact_digest=projection.exact_projection_digest,
         )
 
-        # Idempotency: a prior successful materialization is returned as-is.
+        # Idempotency: a prior successful materialization is returned as-is, but
+        # the link is still ensured (repairs a blueprint-approved / link-missing
+        # partial failure without re-approving).
         existing = await self._existing_blueprint(blueprint_id)
         if existing is not None and existing.status == "PRODUCTION_VALID":
+            link = await self._ensure_link(
+                blueprint=existing,
+                master=master,
+                projection=projection,
+                receipt=receipt,
+                snapshot=snapshot,
+                actor_id=actor_id,
+                source=source,
+            )
             return self._result(
                 blueprint=existing,
                 master=master,
                 projection=projection,
                 receipt=receipt,
                 snapshot=snapshot,
+                link=link,
                 idempotent_reuse=True,
             )
 
@@ -388,12 +406,22 @@ class V3ToV2Materializer:
                 details=getattr(exc, "details", {}) or {},
             ) from exc
 
+        link = await self._ensure_link(
+            blueprint=approved,
+            master=master,
+            projection=projection,
+            receipt=receipt,
+            snapshot=snapshot,
+            actor_id=actor_id,
+            source=source,
+        )
         return self._result(
             blueprint=approved,
             master=master,
             projection=projection,
             receipt=receipt,
             snapshot=snapshot,
+            link=link,
             idempotent_reuse=False,
         )
 
@@ -513,8 +541,100 @@ class V3ToV2Materializer:
             ),
         )
 
+    async def _ensure_link(
+        self, *, blueprint, master, projection, receipt, snapshot, actor_id, source
+    ) -> MaterializationLinkV3:
+        """Idempotently persist the immutable V3<->V2 materialization link.
+
+        The link id is deterministic in the approved projection identity, so a
+        rerun (or a concurrent writer) resolves to the SAME row instead of a
+        duplicate authority record.
+        """
+
+        link_id = materialization_link_id(
+            product_id=master.product_id,
+            projection_id=projection.projection_id,
+            projection_revision=projection.revision,
+            projection_exact_digest=projection.exact_projection_digest,
+        )
+        existing = await supply_repo.get_materialization_link(link_id)
+        if existing is not None:
+            return existing
+
+        truth_digest = v2svc._truth_digest(snapshot)
+        approval_snapshot_id = (
+            blueprint.approval_snapshot.approval_snapshot_id
+            if blueprint.approval_snapshot is not None
+            else ""
+        )
+        digest_payload = {
+            "materializer_version": MATERIALIZER_VERSION,
+            "product_id": master.product_id,
+            "master": [master.master_id, master.revision, master.exact_content_digest],
+            "projection": [
+                projection.projection_id,
+                projection.revision,
+                projection.exact_projection_digest,
+                projection.derivation_source,
+            ],
+            "approval_receipt": [receipt.receipt_id, receipt.receipt_digest],
+            "v2_blueprint": [
+                blueprint.blueprint_id,
+                blueprint.revision,
+                approval_snapshot_id,
+            ],
+            "product_truth": [
+                str(snapshot["snapshot_id"]),
+                int(snapshot["version"]),
+                truth_digest,
+            ],
+            "formula": [master.formula.formula_id, master.formula.formula_version],
+            "evidence_digest": master.evidence_digest,
+            "target_duration_seconds": int(projection.target_duration_seconds),
+        }
+        link = MaterializationLinkV3(
+            link_id=link_id,
+            revision=1,
+            product_id=master.product_id,
+            master_id=master.master_id,
+            master_revision=master.revision,
+            master_exact_content_digest=master.exact_content_digest,
+            projection_id=projection.projection_id,
+            projection_revision=projection.revision,
+            projection_exact_digest=projection.exact_projection_digest,
+            derivation_source=projection.derivation_source,
+            approval_receipt_id=receipt.receipt_id,
+            approval_receipt_digest=receipt.receipt_digest,
+            v2_blueprint_id=blueprint.blueprint_id,
+            v2_blueprint_revision=blueprint.revision,
+            v2_approval_snapshot_id=approval_snapshot_id,
+            product_truth_snapshot_id=str(snapshot["snapshot_id"]),
+            product_truth_snapshot_version=int(snapshot["version"]),
+            product_truth_snapshot_digest=truth_digest,
+            formula_id=master.formula.formula_id,
+            formula_version=master.formula.formula_version,
+            evidence_digest=master.evidence_digest,
+            target_duration_seconds=int(projection.target_duration_seconds),
+            materializer_version=MATERIALIZER_VERSION,
+            materialization_digest=materialization_digest(digest_payload),
+            status="PRODUCTION_VALID",
+            source=source,
+            created_at=_now(),
+            created_by=actor_id,
+        )
+        try:
+            await supply_repo.insert_materialization_link(link)
+        except Exception:
+            # A concurrent materialization won the race for this deterministic
+            # link id; the canonical persisted row is authoritative.
+            existing = await supply_repo.get_materialization_link(link_id)
+            if existing is not None:
+                return existing
+            raise
+        return link
+
     def _result(
-        self, *, blueprint, master, projection, receipt, snapshot, idempotent_reuse
+        self, *, blueprint, master, projection, receipt, snapshot, link, idempotent_reuse
     ) -> dict[str, Any]:
         approval_snapshot_id = (
             blueprint.approval_snapshot.approval_snapshot_id
@@ -527,6 +647,10 @@ class V3ToV2Materializer:
             "revision": blueprint.revision,
             "status": blueprint.status,
             "v2_approval_snapshot_id": approval_snapshot_id,
+            "link": link,
+            "link_id": link.link_id,
+            "link_status": link.status,
+            "materialization_digest": link.materialization_digest,
             "idempotent_reuse": idempotent_reuse,
             "materializer_version": MATERIALIZER_VERSION,
             "derivation_source": projection.derivation_source,

@@ -9,11 +9,13 @@ materialization to a V2 PRODUCTION_VALID blueprint and fail-closed revalidation.
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
 from agent.db import crud
 from agent.db.schema import get_db
+from agent.services import production_supply_repository as supply_repo
 from agent.models.storyboard_landbank_v3 import normalized_text
 from agent.services import copy_register_v2_service as v2
 from agent.services import product_strategy_taxonomy_service
@@ -346,3 +348,96 @@ async def test_materialize_fails_closed_on_product_truth_drift(monkeypatch):
     with pytest.raises(MaterializationError) as excinfo:
         await mat.materialize_projection(projection_id=projection_id, receipt_id=receipt_id)
     assert excinfo.value.code == "MATERIALIZATION_TRUTH_STALE"
+
+
+# --------------------------------------------------------------------------- #
+# P2 — materialization_link_v3 (carry-forward record)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_materialization_link_created_with_full_lineage(monkeypatch):
+    svc, result, approval = await _approved_supply(monkeypatch, "link-lineage")
+    receipt_id = approval["receipt"]["receipt_id"]
+    projection_id = await _first_projection_id(result["master"]["entity_id"])
+
+    out = await V3ToV2Materializer(v3=svc).materialize_projection(
+        projection_id=projection_id, receipt_id=receipt_id
+    )
+    link = out["link"]
+    assert link.status == "PRODUCTION_VALID"
+    # Binds V3 source authority <-> exact V2 blueprint + approval snapshot.
+    assert link.approval_receipt_id == receipt_id
+    assert link.v2_blueprint_id == out["blueprint_id"]
+    assert link.v2_blueprint_revision == out["revision"]
+    assert link.v2_approval_snapshot_id == out["v2_approval_snapshot_id"]
+    assert link.projection_id == projection_id
+    assert len(link.materialization_digest) == 64
+
+    # Persisted and resolvable by blueprint.
+    fetched = await supply_repo.get_link_for_blueprint(out["blueprint_id"], out["revision"])
+    assert fetched is not None and fetched.link_id == link.link_id
+
+
+@pytest.mark.asyncio
+async def test_materialization_link_is_immutable_once_production_valid(monkeypatch):
+    svc, result, approval = await _approved_supply(monkeypatch, "link-immutable")
+    receipt_id = approval["receipt"]["receipt_id"]
+    projection_id = await _first_projection_id(result["master"]["entity_id"])
+    out = await V3ToV2Materializer(v3=svc).materialize_projection(
+        projection_id=projection_id, receipt_id=receipt_id
+    )
+    db = await get_db()
+    with pytest.raises(sqlite3.IntegrityError, match="MATERIALIZATION_LINK_V3_IMMUTABLE"):
+        await db.execute(
+            "UPDATE materialization_link_v3 SET status='BLOCKED' WHERE link_id=?",
+            (out["link_id"],),
+        )
+    await db.rollback()
+    with pytest.raises(sqlite3.IntegrityError, match="MATERIALIZATION_LINK_V3_IMMUTABLE"):
+        await db.execute(
+            "DELETE FROM materialization_link_v3 WHERE link_id=?", (out["link_id"],)
+        )
+    await db.rollback()
+
+
+@pytest.mark.asyncio
+async def test_materialization_link_is_idempotent(monkeypatch):
+    svc, result, approval = await _approved_supply(monkeypatch, "link-idem")
+    receipt_id = approval["receipt"]["receipt_id"]
+    projection_id = await _first_projection_id(result["master"]["entity_id"])
+    mat = V3ToV2Materializer(v3=svc)
+    first = await mat.materialize_projection(projection_id=projection_id, receipt_id=receipt_id)
+    second = await mat.materialize_projection(projection_id=projection_id, receipt_id=receipt_id)
+    assert first["link_id"] == second["link_id"]
+    assert first["materialization_digest"] == second["materialization_digest"]
+    db = await get_db()
+    count = await (
+        await db.execute(
+            "SELECT COUNT(*) FROM materialization_link_v3 WHERE link_id=?",
+            (first["link_id"],),
+        )
+    ).fetchone()
+    assert count[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_materialization_link_repairs_after_partial_failure(monkeypatch):
+    svc, result, approval = await _approved_supply(monkeypatch, "link-repair")
+    receipt_id = approval["receipt"]["receipt_id"]
+    projection_id = await _first_projection_id(result["master"]["entity_id"])
+    mat = V3ToV2Materializer(v3=svc)
+
+    # Simulate the blueprint approving but the link write failing (partial fail).
+    async def _boom(link):
+        raise RuntimeError("simulated link write failure")
+
+    monkeypatch.setattr(supply_repo, "insert_materialization_link", _boom)
+    with pytest.raises(RuntimeError):
+        await mat.materialize_projection(projection_id=projection_id, receipt_id=receipt_id)
+
+    # The blueprint is PRODUCTION_VALID but no link exists yet.
+    monkeypatch.undo()
+    repaired = await mat.materialize_projection(projection_id=projection_id, receipt_id=receipt_id)
+    assert repaired["idempotent_reuse"] is True  # blueprint reused, not re-approved
+    assert repaired["link_status"] == "PRODUCTION_VALID"
+    link = await supply_repo.get_link_for_blueprint(repaired["blueprint_id"], repaired["revision"])
+    assert link is not None
