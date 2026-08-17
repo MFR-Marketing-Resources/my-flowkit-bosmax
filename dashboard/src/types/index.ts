@@ -1663,6 +1663,22 @@ export interface ProductCatalogResponse {
 	limit: number;
 	offset: number;
 	items: Product[];
+	/** Available values from the full filtered catalog, before pagination. */
+	facets?: {
+		groups: string[];
+		product_families: string[];
+		copy_routes: string[];
+		claim_gates: string[];
+		intelligence_confidences: string[];
+	};
+	/** Full filtered-catalog image readiness counts, before pagination. */
+	image_readiness_summary?: {
+		READY: number;
+		CACHE_READY: number;
+		URL_MISSING: number;
+		DOWNLOAD_FAILED: number;
+		NOT_AVAILABLE: number;
+	};
 }
 
 export type ProductIntelligenceSnapshotStatus =

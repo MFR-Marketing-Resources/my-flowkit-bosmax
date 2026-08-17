@@ -3,6 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { getAPI } from "../api/client";
 import ProductRegistrationPage from "./ProductRegistrationPage";
 
 // Mock the API client so the page's on-mount draft fetch resolves harmlessly.
@@ -29,7 +30,31 @@ vi.mock("../components/product-registration/AIFormPack", () => ({
 }));
 
 describe("ProductRegistrationPage — Product Intelligence bridge", () => {
-	afterEach(() => cleanup());
+	afterEach(() => {
+		cleanup();
+		vi.mocked(getAPI).mockClear();
+	});
+
+	it("does not load the full registration draft collection on default All Products", () => {
+		render(
+			<MemoryRouter>
+				<ProductRegistrationPage />
+			</MemoryRouter>,
+		);
+
+		expect(getAPI).not.toHaveBeenCalled();
+	});
+
+	it("loads registration drafts when the intake/review workflow is opened", async () => {
+		render(
+			<MemoryRouter initialEntries={["/product-registration?tab=single"]}>
+				<ProductRegistrationPage />
+			</MemoryRouter>,
+		);
+
+		await screen.findByTestId("stub-intake-form");
+		expect(getAPI).toHaveBeenCalledWith("/api/product-registration/review-drafts");
+	});
 
 	it("shows a bridge to Product Intelligence / AI Fill Missing that links to the /products INTELLIGENCE tab", () => {
 		render(

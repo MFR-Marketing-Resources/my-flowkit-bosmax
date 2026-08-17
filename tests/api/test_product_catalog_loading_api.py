@@ -5,7 +5,10 @@ and source/filter behavior. Tests run against the live backend if reachable;
 falls back to static code audits when the agent is offline.
 """
 from pathlib import Path
+
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -150,3 +153,124 @@ def test_product_catalog_cache_is_parameterized_and_invalidatable():
     assert "purpose" in src and "limit" in src
     assert "invalidateProductCatalogCache" in src
     assert "revalidateProductCatalog" in src
+
+
+def test_product_intelligence_browser_uses_server_pagination_and_read_cache():
+    page = _read("dashboard/src/pages/ProductsSalesAnalyzerPage.tsx")
+
+    assert "fetchProductRegistry(" in page
+    assert "limit: PAGE_SIZE_PRODUCTS" in page
+    assert "catalogTotal" in page
+    assert 'params.set("limit", "500")' not in page
+    assert "invalidateProductCatalogCache();" not in page
+
+
+async def _empty_async_dict():
+    return {}
+
+
+def test_products_api_applies_server_facets_sort_and_pagination(monkeypatch):
+    from agent.api.products import router as products_router
+
+    rows = [
+        {
+            "id": "product-beauty-a",
+            "source": "MANUAL",
+            "lifecycle_status": "ACTIVE",
+            "group": "beauty",
+            "bosmax_product_family": "SERUM",
+            "copy_route": "DIRECT",
+            "claim_gate": "CLAIM_SAFE",
+            "intelligence_confidence": "HIGH",
+            "product_short_name": "Alpha Serum",
+            "product_sold_count": 200,
+            "image_readiness_status": "IMAGE_READY",
+            "updated_at": "2026-08-01T00:00:00Z",
+        },
+        {
+            "id": "product-beauty-b",
+            "source": "MANUAL",
+            "lifecycle_status": "ACTIVE",
+            "group": "beauty",
+            "bosmax_product_family": "SERUM",
+            "copy_route": "DIRECT",
+            "claim_gate": "CLAIM_SAFE",
+            "intelligence_confidence": "LOW",
+            "product_short_name": "Beta Serum",
+            "product_sold_count": 100,
+            "image_readiness_status": "IMAGE_DOWNLOAD_FAILED",
+            "updated_at": "2026-08-02T00:00:00Z",
+        },
+        {
+            "id": "product-food",
+            "source": "MANUAL",
+            "lifecycle_status": "ACTIVE",
+            "group": "food",
+            "bosmax_product_family": "SPICE",
+            "copy_route": "REVIEW_REQUIRED",
+            "claim_gate": "CLAIM_REVIEW_REQUIRED",
+            "intelligence_confidence": "MEDIUM",
+            "product_short_name": "Food Product",
+            "product_sold_count": 999,
+            "image_readiness_status": "IMAGE_CACHE_READY",
+            "updated_at": "2026-08-03T00:00:00Z",
+        },
+    ]
+
+    async def fake_list_products(**_kwargs):
+        return rows
+
+    async def fake_enrich(product):
+        return dict(product)
+
+    async def fake_merge(products, **_kwargs):
+        return products
+
+    async def fake_taxonomies(products):
+        return products
+
+    async def fake_visual_readiness(_products):
+        return None
+
+    monkeypatch.setattr("agent.api.products.crud.list_products", fake_list_products)
+    monkeypatch.setattr("agent.api.products._enrich_product_cached", fake_enrich)
+    monkeypatch.setattr("agent.api.products._merge_catalog_products", fake_merge)
+    monkeypatch.setattr("agent.api.products.attach_product_strategy_taxonomies", fake_taxonomies)
+    monkeypatch.setattr(
+        "agent.api.products.crud.count_source_media_by_products",
+        lambda _ids: _empty_async_dict(),
+    )
+    monkeypatch.setattr(
+        "agent.api.products.crud.latest_open_review_drafts_by_products",
+        lambda _ids: _empty_async_dict(),
+    )
+    monkeypatch.setattr(
+        "agent.services.product_visual_onboarding_service.annotate_products_visual_readiness",
+        fake_visual_readiness,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_catalog_read_model.derive_catalog_state",
+        lambda product: {"product_state": "APPROVED_CANONICAL", "product_id": product["id"]},
+    )
+
+    app = FastAPI()
+    app.include_router(products_router, prefix="/api")
+    response = TestClient(app).get(
+        "/api/products?group=beauty&sort=PRODUCT_SOLD_VERIFIED_DESC&limit=1&offset=0"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 2
+    assert body["returned_count"] == 1
+    assert body["has_pagination"] is True
+    assert body["items"][0]["id"] == "product-beauty-a"
+    assert body["facets"]["groups"] == ["beauty", "food"]
+    assert body["facets"]["product_families"] == ["SERUM", "SPICE"]
+    assert body["image_readiness_summary"] == {
+        "READY": 1,
+        "CACHE_READY": 0,
+        "URL_MISSING": 0,
+        "DOWNLOAD_FAILED": 1,
+        "NOT_AVAILABLE": 0,
+    }

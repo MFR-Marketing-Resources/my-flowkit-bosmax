@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	fetchProductRegistry,
 	fetchProductStrategyTypeRegistry,
@@ -64,6 +64,70 @@ const resolveThumb = (product: Product): string | null =>
 // The Visual column follows the canonical resolveProductPreviewUrl resolver
 const resolveVisualThumb = (product: Product): string | null =>
 	resolveProductPreviewUrl(product);
+
+/**
+ * Keep the row's layout stable while only assigning image src near the
+ * viewport. Native lazy loading remains a second browser-level guard, but the
+ * IntersectionObserver is the primary bound on the first 50-row page.
+ */
+function LazyThumbnail({
+	src,
+	alt,
+	frameClassName,
+	imageClassName,
+	emptyLabel,
+}: {
+	src: string | null;
+	alt: string;
+	frameClassName: string;
+	imageClassName: string;
+	emptyLabel?: string;
+}) {
+	const frameRef = useRef<HTMLDivElement>(null);
+	const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+	const [failedSrc, setFailedSrc] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (!src) return;
+		if (typeof IntersectionObserver === "undefined") {
+			return;
+		}
+		const frame = frameRef.current;
+		if (!frame) return;
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (!entries.some((entry) => entry.isIntersecting)) return;
+				setLoadedSrc(src);
+				observer.disconnect();
+			},
+			{ rootMargin: "160px 0px" },
+		);
+		observer.observe(frame);
+		return () => observer.disconnect();
+	}, [src]);
+
+	return (
+		<div ref={frameRef} className={frameClassName}>
+			{!src || failedSrc === src ? (
+				<span className="flex h-full w-full items-center justify-center text-[9px] text-slate-500">
+					{failedSrc === src ? "IMAGE_LOAD_FAILED" : emptyLabel || ""}
+				</span>
+			) :
+				loadedSrc !== src && typeof IntersectionObserver !== "undefined" ? (
+				<span className="block h-full w-full bg-slate-800/80" aria-hidden="true" />
+			) : (
+				<img
+					src={src}
+					alt={alt}
+					loading="lazy"
+					decoding="async"
+					className={imageClassName}
+					onError={() => setFailedSrc(src)}
+				/>
+			)}
+		</div>
+	);
+}
 
 const fmtMoney = (value: number | null | undefined): string =>
 	value == null || Number.isNaN(Number(value))
@@ -164,6 +228,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [data, setData] = useState<ProductCatalogResponse | null>(null);
+	const requestControllerRef = useRef<AbortController | null>(null);
 
 	// Cluster list + cluster → product_type_group map (dependent Product Type dropdown).
 	const [clusters, setClusters] = useState<string[]>([]);
@@ -172,11 +237,13 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	>({});
 
 	useEffect(() => {
-		let cancelled = false;
+		const controller = new AbortController();
 		void (async () => {
 			try {
-				const registry = await fetchProductStrategyTypeRegistry();
-				if (cancelled) return;
+				const registry = await fetchProductStrategyTypeRegistry(
+					controller.signal,
+				);
+				if (controller.signal.aborted) return;
 				const byCluster: Record<string, Set<string>> = {};
 				for (const entry of registry.items) {
 					(byCluster[entry.cluster] ??= new Set()).add(
@@ -197,7 +264,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 			}
 		})();
 		return () => {
-			cancelled = true;
+			controller.abort();
 		};
 	}, []);
 
@@ -232,6 +299,9 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	}, [search]);
 
 	const fetchRows = useCallback(async () => {
+		requestControllerRef.current?.abort();
+		const controller = new AbortController();
+		requestControllerRef.current = controller;
 		setLoading(true);
 		setError(null);
 		try {
@@ -252,17 +322,21 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 				lifecycleStatus: status === "ARCHIVED" ? "ARCHIVED" : undefined,
 				limit: PAGE_SIZE,
 				offset,
+				signal: controller.signal,
 			});
+			if (controller.signal.aborted) return;
 			setData(result);
 		} catch (e: unknown) {
+			if (controller.signal.aborted) return;
 			setError(getErrorMessage(e, "Failed to load products"));
 		} finally {
-			setLoading(false);
+			if (requestControllerRef.current === controller) setLoading(false);
 		}
 	}, [debouncedSearch, cluster, productType, risk, freshness, image, status, offset]);
 
 	useEffect(() => {
 		void fetchRows();
+		return () => requestControllerRef.current?.abort();
 	}, [fetchRows]);
 
 	const total = data?.total_count ?? 0;
@@ -571,21 +645,18 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 													<span className="text-[9px] text-slate-600">—</span>
 												)}
 											</td>
-											<td className="whitespace-nowrap px-3 py-3 align-top">
-												{thumb ? (
-													<img
-														src={thumb}
-														alt=""
-														className="w-8 h-8 rounded object-cover border border-slate-700"
-														onError={(e) => {
-															(e.target as HTMLImageElement).style.display =
-																"none";
-														}}
-													/>
-												) : (
-													<div className="w-8 h-8 rounded bg-slate-800 border border-slate-700" />
-												)}
-											</td>
+													<td className="whitespace-nowrap px-3 py-3 align-top">
+														{thumb ? (
+															<LazyThumbnail
+																src={thumb}
+																alt=""
+																frameClassName="h-8 w-8 overflow-hidden rounded border border-slate-700"
+																imageClassName="h-full w-full rounded object-cover"
+															/>
+														) : (
+															<div className="h-8 w-8 rounded border border-slate-700 bg-slate-800" />
+														)}
+													</td>
 											<td className="whitespace-nowrap px-3 py-3 text-right tabular-nums text-slate-300">
 												{fmtCount(sold)}
 											</td>
@@ -623,17 +694,15 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 													className="flex min-w-0 items-center gap-2"
 													data-testid="table-visual-summary"
 												>
-													<div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-slate-700 bg-white">
-														{visualThumb ? (
-															<img
-																src={visualThumb}
-																alt=""
-																className="h-full w-full object-contain"
-																onError={(event) => {
-																	(event.target as HTMLImageElement).style.display =
-																		"none";
-																}}
-															/>
+														<div className="h-10 w-10 shrink-0 overflow-hidden rounded border border-slate-700 bg-white">
+															{visualThumb ? (
+																<LazyThumbnail
+																	src={visualThumb}
+																	alt=""
+																	frameClassName="h-full w-full"
+																	imageClassName="h-full w-full object-contain"
+																	emptyLabel="—"
+																/>
 														) : (
 															<span className="flex h-full items-center justify-center text-[10px] text-slate-500">
 																—
