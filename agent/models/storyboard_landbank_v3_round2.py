@@ -7,7 +7,7 @@ provenance envelopes, never executable V2/P6 payloads.
 """
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -201,6 +201,35 @@ class V3ApprovalChecklist(BaseModel):
         return all(self.model_dump(mode="json").values())
 
 
+class V3BatchTargetItem(BaseModel):
+    """Per-candidate cryptographic binding carried by a batch approval receipt.
+
+    A single parent batch receipt binds every candidate individually: each item
+    records that target's own Master + Projection digests, Product Truth
+    snapshot digest, formula id/version, evidence digest, WPS authority digests
+    and machine hard-gate result.  ``item_digest`` is the deterministic digest of
+    every other field, so the receipt's ``batch_digest`` (built from the ordered
+    ``item_digest`` values) changes if ANY target's copy, projection, truth,
+    formula, evidence or WPS authority changes.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    master_ref: V3RevisionRef
+    exact_content_fingerprint: str = Field(pattern=_SHA256)
+    projection_refs: tuple[V3RevisionRef, ...] = Field(default_factory=tuple, max_length=3)
+    projection_fingerprints: tuple[str, ...] = Field(default_factory=tuple, max_length=3)
+    product_truth_snapshot_id: str = Field(min_length=1)
+    product_truth_snapshot_version: int = Field(ge=1)
+    product_truth_snapshot_digest: str = Field(pattern=_SHA256)
+    formula_id: str = Field(min_length=1)
+    formula_version: str = Field(min_length=1)
+    evidence_digest: str = Field(pattern=_SHA256)
+    wps_authority_digests: tuple[str, ...] = Field(default_factory=tuple, max_length=3)
+    quality_hard_pass: bool = True
+    item_digest: str = Field(pattern=_SHA256)
+
+
 class V3HumanApprovalReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -214,6 +243,8 @@ class V3HumanApprovalReceipt(BaseModel):
     master_ref: V3RevisionRef
     projection_refs: tuple[V3RevisionRef, ...] = Field(default_factory=tuple, max_length=3)
     batch_target_refs: tuple[V3RevisionRef, ...] = Field(default_factory=tuple, max_length=24)
+    # Per-candidate binding for a BATCH receipt.  Empty for INDIVIDUAL approval.
+    batch_target_items: tuple[V3BatchTargetItem, ...] = Field(default_factory=tuple, max_length=24)
     exact_content_fingerprint: str = Field(pattern=_SHA256)
     projection_fingerprints: tuple[str, ...] = Field(default_factory=tuple, max_length=3)
     product_truth_snapshot_id: str = Field(min_length=1)
@@ -228,6 +259,8 @@ class V3HumanApprovalReceipt(BaseModel):
     rationale: str = Field(min_length=8, max_length=1200)
     automatic_approval: Literal[False] = False
     batch_id: str | None = None
+    # Digest over the ordered per-candidate item digests; None for INDIVIDUAL.
+    batch_digest: str | None = Field(default=None, pattern=_SHA256)
     receipt_digest: str = Field(pattern=_SHA256)
     created_at: str = Field(min_length=1)
 
@@ -249,6 +282,30 @@ def approval_receipt_digest(receipt: V3HumanApprovalReceipt) -> str:
     payload = receipt.model_dump(mode="json")
     payload.pop("receipt_digest", None)
     return deterministic_digest(payload)
+
+
+def batch_target_item_digest(item: V3BatchTargetItem) -> str:
+    payload = item.model_dump(mode="json")
+    payload.pop("item_digest", None)
+    return deterministic_digest(payload)
+
+
+def batch_receipt_digest(
+    *, batch_id: str | None, product_id: str, items: Sequence[V3BatchTargetItem]
+) -> str:
+    """Digest binding an entire same-product batch.
+
+    Built from the ordered per-candidate ``item_digest`` values plus the batch
+    identity and product scope, so it changes if any target is added, removed,
+    reordered, or altered in any bound dimension.
+    """
+
+    return deterministic_digest({
+        "batch_id": batch_id,
+        "product_id": product_id,
+        "scope": "BATCH",
+        "item_digests": [item.item_digest for item in items],
+    })
 
 
 def proposal_text_digest(proposal: V3AICopyProposal) -> str:
@@ -277,8 +334,11 @@ __all__ = [
     "V3QualitySignal",
     "V3AssistantRunReceipt",
     "V3ApprovalChecklist",
+    "V3BatchTargetItem",
     "V3HumanApprovalReceipt",
     "V3PromptPreview",
     "approval_receipt_digest",
+    "batch_target_item_digest",
+    "batch_receipt_digest",
     "proposal_text_digest",
 ]

@@ -1772,6 +1772,8 @@ CREATE TABLE IF NOT EXISTS v3_human_approval_receipt (
     master_ref_json               TEXT NOT NULL,
     projection_refs_json          TEXT NOT NULL DEFAULT '[]',
     batch_target_refs_json        TEXT NOT NULL DEFAULT '[]',
+    batch_target_items_json       TEXT NOT NULL DEFAULT '[]',
+    batch_digest                  TEXT CHECK(batch_digest IS NULL OR length(batch_digest) = 64),
     exact_content_fingerprint     TEXT NOT NULL CHECK(length(exact_content_fingerprint) = 64),
     projection_fingerprints_json  TEXT NOT NULL DEFAULT '[]',
     product_truth_snapshot_id     TEXT NOT NULL,
@@ -5605,6 +5607,18 @@ END;
             await db.execute(
                 "ALTER TABLE v3_human_approval_receipt "
                 "ADD COLUMN batch_target_refs_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        # Per-candidate cryptographic binding for batch approval receipts.  Each
+        # batch target now carries its own complete digest set plus a batch
+        # digest over the ordered per-candidate item digests.
+        if "batch_target_items_json" not in receipt_columns:
+            await db.execute(
+                "ALTER TABLE v3_human_approval_receipt "
+                "ADD COLUMN batch_target_items_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "batch_digest" not in receipt_columns:
+            await db.execute(
+                "ALTER TABLE v3_human_approval_receipt ADD COLUMN batch_digest TEXT"
             )
         await db.commit()
 

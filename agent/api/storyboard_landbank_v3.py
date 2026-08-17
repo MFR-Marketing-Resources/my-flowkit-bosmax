@@ -566,6 +566,15 @@ async def approve_v3_master_batch(request: Request, payload: dict[str, Any]):
         raise _error(exc) from exc
 
 
+@router.get("/copy-register/approval/receipt/{receipt_id}/verify")
+async def verify_v3_approval_receipt(receipt_id: str):
+    """Recompute a stored receipt's per-candidate + batch digests (tamper check)."""
+    try:
+        return await round2_service.verify_receipt(receipt_id)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
 @router.get("/landbank/components")
 async def get_component_landbank(product_id: str, limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0), formula_id: str | None = None, semantic_class: str | None = None, status: str | None = None):
     try:

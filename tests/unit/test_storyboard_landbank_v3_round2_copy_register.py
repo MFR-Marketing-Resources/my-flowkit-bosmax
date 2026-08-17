@@ -278,25 +278,73 @@ async def test_round2_modes_are_explicit_and_capacity_bounded(monkeypatch):
     assert fill.explicit_execute_required is True
 
 
+async def _second_same_product_route(factory, product_id: str):
+    """Author a second distinct PAS route (angle B + family B + recipe B) under
+    the same product so a same-product batch can bind two distinct Masters."""
+    fact_id = f"{product_id}-fact"
+    angle_b = await factory.create_angle(
+        product_id,
+        {
+            "angle_id": f"{product_id}-angle-b",
+            "definition": "A second distinct lightweight routine angle for qualified buyers",
+            "formula_id": "PAS",
+            "objective_id": "conversion",
+            "objective_definition": "Drive a safe trial",
+            "evidence_fact_ids": [fact_id],
+        },
+        actor_id="round2-fixture",
+        request_id=f"{product_id}:angle-b",
+    )
+    await factory.create_storyline_family(
+        product_id,
+        {
+            "family_id": f"{product_id}-family-b",
+            "angle_id": angle_b.angle_id,
+            "formula_id": "PAS",
+            "objective_compatibility": {"objective_ids": ["conversion"]},
+            "reviewed_definition": "A second continuous daily routine route for the buyer",
+        },
+        actor_id="round2-fixture",
+        request_id=f"{product_id}:family-b",
+    )
+    recipe_b = await factory.create_recipe(
+        product_id,
+        {
+            "recipe_id": f"{product_id}-recipe-b",
+            "formula_id": "PAS",
+            "objective_id": "conversion",
+            "objective_definition": "Drive a safe trial",
+            "target_angles": [{"entity_id": angle_b.angle_id, "revision": angle_b.revision}],
+            "component_count_targets": {"HOOK": 1, "BODY_CORE": 1, "CTA": 1},
+            "supported_durations_seconds": [8, 16, 24],
+        },
+        actor_id="round2-fixture",
+        request_id=f"{product_id}:recipe-b",
+    )
+    return recipe_b
+
+
 @pytest.mark.asyncio
 async def test_round2_batch_approval_is_explicit_and_receipt_bound(monkeypatch):
     monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
-    factory = V3CopyFactoryService()
+    product_id = "round2-batch"
+    factory, recipe_a, _angle_a, _family_a = await _seed_round2_fixture(product_id)
     service = V3CopyRegisterRound2Service(factory=factory)
+    recipe_b = await _second_same_product_route(factory, product_id)
+
     runs = []
-    for product_id in ("round2-batch-a", "round2-batch-b"):
-        _factory, recipe, _angle, _family = await _seed_round2_fixture(product_id)
+    for recipe in (recipe_a, recipe_b):
         plan = await service.plan_assistant(
             product_id,
             recipe.recipe_id,
             mode="CREATE",
             actor_id="round2-operator",
-            request_id=f"{product_id}:plan",
+            request_id=f"{recipe.recipe_id}:plan",
         )
         runs.append(await service.execute_assistant(
             plan.plan_id,
             actor_id="round2-operator",
-            request_id=f"{product_id}:execute",
+            request_id=f"{recipe.recipe_id}:execute",
             provider_mode="FAKE_TEST",
         ))
 
@@ -322,9 +370,78 @@ async def test_round2_batch_approval_is_explicit_and_receipt_bound(monkeypatch):
     )
     assert result["automatic_approval"] is False
     assert result["approved_count"] == 2
-    assert result["receipt"]["approval_scope"] == "BATCH"
-    assert len(result["receipt"]["batch_target_refs"]) == 2
+    receipt = result["receipt"]
+    assert receipt["approval_scope"] == "BATCH"
+    assert len(receipt["batch_target_refs"]) == 2
+    # Every batch target is cryptographically bound with its own digest set.
+    assert len(receipt["batch_target_items"]) == 2
+    fingerprints = {item["exact_content_fingerprint"] for item in receipt["batch_target_items"]}
+    assert len(fingerprints) == 2  # two DISTINCT masters, each individually bound
+    assert receipt["batch_digest"] and receipt["batch_digest"] != "0" * 64
     assert all(item["master"]["status"] == "APPROVED" for item in result["items"])
+
+    # A clean batch receipt validates.
+    verify = await service.verify_receipt(receipt["receipt_id"])
+    assert verify["valid"] is True
+    assert verify["target_count"] == 2
+
+    # Tamper: forge a receipt whose one candidate fingerprint is altered while the
+    # sealed digests are carried over unchanged.  Validation MUST fail.
+    db = await get_db()
+    row = dict(await (await db.execute(
+        "SELECT * FROM v3_human_approval_receipt WHERE receipt_id=?",
+        (receipt["receipt_id"],),
+    )).fetchone())
+    items = json.loads(row["batch_target_items_json"])
+    items[1]["exact_content_fingerprint"] = "f" * 64
+    forged = dict(row)
+    forged["receipt_id"] = row["receipt_id"] + "-forged"
+    forged["batch_target_items_json"] = json.dumps(items)
+    columns = list(forged.keys())
+    await db.execute(
+        "INSERT INTO v3_human_approval_receipt (" + ",".join(columns) + ") VALUES (" + ",".join("?" for _ in columns) + ")",
+        [forged[column] for column in columns],
+    )
+    await db.commit()
+    tampered = await service.verify_receipt(forged["receipt_id"])
+    assert tampered["valid"] is False
+    assert any(code.startswith("V3_APPROVAL_TEXT_DIGEST_MISMATCH") for code in tampered["failures"])
+    assert "V3_APPROVAL_RECEIPT_DIGEST_MISMATCH" in tampered["failures"]
+
+
+@pytest.mark.asyncio
+async def test_round2_batch_approval_rejects_cross_product(monkeypatch):
+    monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
+    factory = V3CopyFactoryService()
+    service = V3CopyRegisterRound2Service(factory=factory)
+    runs = []
+    for product_id in ("round2-xprod-a", "round2-xprod-b"):
+        _factory, recipe, _angle, _family = await _seed_round2_fixture(product_id)
+        plan = await service.plan_assistant(
+            product_id, recipe.recipe_id, mode="CREATE",
+            actor_id="round2-operator", request_id=f"{product_id}:plan",
+        )
+        runs.append(await service.execute_assistant(
+            plan.plan_id, actor_id="round2-operator",
+            request_id=f"{product_id}:execute", provider_mode="FAKE_TEST",
+        ))
+    checklist = {key: True for key in (
+        "semantic_reviewed", "product_truth_reviewed", "formula_reviewed",
+        "evidence_reviewed", "bridge_reviewed", "safety_reviewed", "duration_reviewed",
+    )}
+    with pytest.raises(Exception) as error:
+        await service.human_approve_batch(
+            targets=[
+                {"master_id": run["master"]["entity_id"], "projection_ids": run["projections"]}
+                for run in runs
+            ],
+            checklist=checklist,
+            approved_by="round2-owner",
+            rationale="Attempted cross-product batch must be rejected before any receipt persists.",
+            actor_id="round2-owner",
+            request_id="round2:xprod-batch",
+        )
+    assert error.value.code == "APPROVAL_BATCH_CROSS_PRODUCT"
 
 
 @pytest.mark.asyncio

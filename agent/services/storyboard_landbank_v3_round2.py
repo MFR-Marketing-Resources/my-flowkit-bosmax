@@ -38,11 +38,14 @@ from agent.models.storyboard_landbank_v3_round2 import (
     V3AssistantGap,
     V3AssistantPlan,
     V3AssistantRunReceipt,
+    V3BatchTargetItem,
     V3HumanApprovalReceipt,
     V3PromptPreview,
     V3ProviderSummary,
     V3QualitySignal,
     approval_receipt_digest,
+    batch_receipt_digest,
+    batch_target_item_digest,
 )
 from agent.services import ai_copy_provider_adapter
 from agent.services.storyboard_landbank_v3_factory import (
@@ -1011,6 +1014,8 @@ class V3CopyRegisterRound2Service:
             "master_ref_json": _json(receipt.master_ref.model_dump(mode="json")),
             "projection_refs_json": _json([item.model_dump(mode="json") for item in receipt.projection_refs]),
             "batch_target_refs_json": _json([item.model_dump(mode="json") for item in receipt.batch_target_refs]),
+            "batch_target_items_json": _json([item.model_dump(mode="json") for item in receipt.batch_target_items]),
+            "batch_digest": receipt.batch_digest,
             "exact_content_fingerprint": receipt.exact_content_fingerprint,
             "projection_fingerprints_json": _json(list(receipt.projection_fingerprints)),
             "product_truth_snapshot_id": receipt.product_truth_snapshot_id,
@@ -1066,6 +1071,32 @@ class V3CopyRegisterRound2Service:
             "v2_materialization": "NOT_IN_ROUND2",
             "p6_status": "NOT_IN_ROUND2",
         }
+
+    def _batch_target_item(
+        self,
+        master: V3MasterStoryboard,
+        projections: Sequence[V3DurationProjection],
+        quality: V3QualitySignal,
+    ) -> V3BatchTargetItem:
+        """Bind one candidate's complete digest set for a batch receipt."""
+        item = V3BatchTargetItem(
+            master_ref=V3RevisionRef(entity_id=master.master_id, revision=master.revision),
+            exact_content_fingerprint=master.exact_content_digest,
+            projection_refs=tuple(
+                V3RevisionRef(entity_id=p.projection_id, revision=p.revision) for p in projections
+            ),
+            projection_fingerprints=tuple(p.exact_projection_digest for p in projections),
+            product_truth_snapshot_id=master.product_truth.snapshot_id,
+            product_truth_snapshot_version=master.product_truth.snapshot_version,
+            product_truth_snapshot_digest=master.product_truth.snapshot_digest,
+            formula_id=master.formula.formula_id,
+            formula_version=master.formula.formula_version,
+            evidence_digest=master.evidence_digest,
+            wps_authority_digests=tuple(p.wps_authority_digest for p in projections),
+            quality_hard_pass=quality.hard_pass,
+            item_digest="0" * 64,
+        )
+        return item.model_copy(update={"item_digest": batch_target_item_digest(item)})
 
     async def human_approve(
         self,
@@ -1146,41 +1177,156 @@ class V3CopyRegisterRound2Service:
     ) -> dict[str, Any]:
         if not targets or len(targets) > 24:
             raise V3FactoryError("APPROVAL_BATCH_BOUNDED", "A V3 approval batch must contain 1 to 24 candidates.", status_code=422)
+        if not approved_by or len(normalized_text(rationale)) < 8:
+            raise V3FactoryError("APPROVAL_RECEIPT_FIELDS_REQUIRED", "approved_by and a substantive rationale are required.", status_code=422)
         checks = V3ApprovalChecklist.model_validate(checklist)
         if not checks.all_passed():
             raise V3FactoryError("APPROVAL_CHECKLIST_INCOMPLETE", "Every batch approval checklist item must be explicitly true.", status_code=409)
         validated: list[tuple[V3MasterStoryboard, list[V3DurationProjection], V3QualitySignal]] = []
         refs: list[V3RevisionRef] = []
+        items: list[V3BatchTargetItem] = []
+        product_id: str | None = None
         for target in targets:
             master_id = str(target.get("master_id") or target.get("id") or "")
             master, projections, quality = await self._validate_approval_target(master_id, target.get("projection_ids") or [])
+            # Same-product scope: a batch receipt binds one product's candidates.
+            if product_id is None:
+                product_id = master.product_id
+            elif master.product_id != product_id:
+                raise V3FactoryError(
+                    "APPROVAL_BATCH_CROSS_PRODUCT",
+                    "A V3 approval batch is same-product scoped; every candidate must belong to one product.",
+                    status_code=409,
+                )
             validated.append((master, projections, quality))
             refs.append(V3RevisionRef(entity_id=master.master_id, revision=master.revision))
-        batch_id = deterministic_id("v3_approval_batch", {"refs": [ref.model_dump(mode="json") for ref in refs], "request_id": request_id})
-        first, first_projections, _ = validated[0]
-        receipt = await self.human_approve(
-            first.master_id,
-            projection_ids=[item.model_dump(mode="json") for item in first_projections],
-            checklist=checklist,
-            approved_by=approved_by,
-            rationale=rationale,
-            actor_id=actor_id,
-            request_id=f"{request_id}:receipt",
-            batch_id=batch_id,
-            batch_target_refs=refs,
+            items.append(self._batch_target_item(master, projections, quality))
+        # product_id is set because ``targets`` is non-empty (guarded above).
+        product_id = product_id or validated[0][0].product_id
+        batch_id = deterministic_id("v3_approval_batch", {"items": [item.item_digest for item in items], "request_id": request_id})
+        digest = batch_receipt_digest(batch_id=batch_id, product_id=product_id, items=items)
+        # The parent receipt carries every candidate's individual digest; the
+        # primary target only populates the single-target columns for the shared
+        # schema.  Cryptographic scope is the ``batch_target_items`` + batch digest.
+        primary, primary_projections, _ = validated[0]
+        receipt_id = deterministic_id("v3_approval_batch_receipt", {
+            "batch_digest": digest,
+            "approved_by": approved_by,
+            "rationale": normalized_text(rationale),
+            "request_id": request_id,
+        })
+        receipt = V3HumanApprovalReceipt(
+            receipt_id=receipt_id,
             approval_scope="BATCH",
+            target_type="MASTER_STORYBOARD",
+            target_id=primary.master_id,
+            target_revision=primary.revision,
+            product_id=product_id,
+            master_ref=V3RevisionRef(entity_id=primary.master_id, revision=primary.revision),
+            projection_refs=tuple(V3RevisionRef(entity_id=item.projection_id, revision=item.revision) for item in primary_projections),
+            batch_target_refs=tuple(refs),
+            batch_target_items=tuple(items),
+            exact_content_fingerprint=primary.exact_content_digest,
+            projection_fingerprints=tuple(item.exact_projection_digest for item in primary_projections),
+            product_truth_snapshot_id=primary.product_truth.snapshot_id,
+            product_truth_snapshot_version=primary.product_truth.snapshot_version,
+            product_truth_snapshot_digest=primary.product_truth.snapshot_digest,
+            formula_id=primary.formula.formula_id,
+            formula_version=primary.formula.formula_version,
+            evidence_digest=primary.evidence_digest,
+            wps_authority_digests=tuple(item.wps_authority_digest for item in primary_projections),
+            checklist=checks,
+            approved_by=approved_by,
+            rationale=normalized_text(rationale),
+            batch_id=batch_id,
+            batch_digest=digest,
+            receipt_digest="0" * 64,
+            created_at=_now(),
         )
-        approved = [receipt]
-        for index, (master, projections, _quality) in enumerate(validated[1:], start=1):
-            approved.append(await self._approve_with_receipt(master, projections, receipt_id=receipt["receipt"]["receipt_id"], actor_id=actor_id, request_id=f"{request_id}:target:{index}"))
+        receipt = receipt.model_copy(update={"receipt_digest": approval_receipt_digest(receipt)})
+        await self._insert_receipt(receipt)
+        # Nothing becomes APPROVED before the batch receipt is persisted.
+        approved: list[dict[str, Any]] = []
+        for index, (master, projections, _quality) in enumerate(validated):
+            approved.append(await self._approve_with_receipt(
+                master, projections,
+                receipt_id=receipt.receipt_id, actor_id=actor_id,
+                request_id=f"{request_id}:target:{index}",
+            ))
         return {
             "batch_id": batch_id,
-            "receipt": receipt["receipt"],
+            "batch_digest": digest,
+            "receipt": receipt.model_dump(mode="json"),
             "approved_count": len(validated),
             "items": approved,
             "automatic_approval": False,
             "provider_calls": 0,
             "credit_spend": 0,
+        }
+
+    def _receipt_from_row(self, data: Mapping[str, Any]) -> V3HumanApprovalReceipt:
+        return V3HumanApprovalReceipt(
+            receipt_id=data["receipt_id"],
+            approval_scope=data["approval_scope"],
+            target_type=data["target_type"],
+            target_id=data["target_id"],
+            target_revision=int(data["target_revision"]),
+            product_id=data["product_id"],
+            master_ref=V3RevisionRef.model_validate(_loads(data["master_ref_json"], {})),
+            projection_refs=tuple(V3RevisionRef.model_validate(item) for item in _loads(data["projection_refs_json"], [])),
+            batch_target_refs=tuple(V3RevisionRef.model_validate(item) for item in _loads(data["batch_target_refs_json"], [])),
+            batch_target_items=tuple(V3BatchTargetItem.model_validate(item) for item in _loads(data.get("batch_target_items_json"), [])),
+            exact_content_fingerprint=data["exact_content_fingerprint"],
+            projection_fingerprints=tuple(_loads(data["projection_fingerprints_json"], [])),
+            product_truth_snapshot_id=data["product_truth_snapshot_id"],
+            product_truth_snapshot_version=int(data["product_truth_snapshot_version"]),
+            product_truth_snapshot_digest=data["product_truth_snapshot_digest"],
+            formula_id=data["formula_id"],
+            formula_version=data["formula_version"],
+            evidence_digest=data["evidence_digest"],
+            wps_authority_digests=tuple(_loads(data["wps_authority_digests_json"], [])),
+            checklist=V3ApprovalChecklist.model_validate(_loads(data["checklist_json"], {})),
+            approved_by=data["approved_by"],
+            rationale=data["rationale"],
+            batch_id=data.get("batch_id"),
+            batch_digest=data.get("batch_digest"),
+            receipt_digest=data["receipt_digest"],
+            created_at=data["created_at"],
+        )
+
+    async def verify_receipt(self, receipt_id: str) -> dict[str, Any]:
+        """Recompute a stored approval receipt's digests and report tamper.
+
+        A batch receipt binds every candidate individually, so this recomputes
+        each per-candidate ``item_digest`` and the batch digest and compares them
+        to the sealed values.  Any altered bound digest (copy text, projection,
+        truth, formula, evidence or WPS authority) fails validation with an
+        authority failure code.
+        """
+        db = await get_db()
+        row = await (await db.execute("SELECT * FROM v3_human_approval_receipt WHERE receipt_id=?", (receipt_id,))).fetchone()
+        if not row:
+            raise V3FactoryError("V3_APPROVAL_RECEIPT_NOT_FOUND", "Approval receipt was not found.", status_code=404)
+        receipt = self._receipt_from_row(dict(row))
+        failures: list[str] = []
+        if approval_receipt_digest(receipt) != receipt.receipt_digest:
+            failures.append("V3_APPROVAL_RECEIPT_DIGEST_MISMATCH")
+        for item in receipt.batch_target_items:
+            if batch_target_item_digest(item) != item.item_digest:
+                failures.append(f"V3_APPROVAL_TEXT_DIGEST_MISMATCH:{item.master_ref.entity_id}")
+        if receipt.approval_scope == "BATCH":
+            expected = batch_receipt_digest(batch_id=receipt.batch_id, product_id=receipt.product_id, items=receipt.batch_target_items)
+            if expected != (receipt.batch_digest or ""):
+                failures.append("V3_APPROVAL_RECEIPT_SCOPE_MISMATCH")
+        return {
+            "receipt_id": receipt.receipt_id,
+            "approval_scope": receipt.approval_scope,
+            "product_id": receipt.product_id,
+            "batch_id": receipt.batch_id,
+            "batch_digest": receipt.batch_digest,
+            "target_count": len(receipt.batch_target_items) or 1,
+            "valid": not failures,
+            "failures": failures,
         }
 
     async def list_runs(self, product_id: str, *, limit: int = 50, offset: int = 0) -> dict[str, Any]:
