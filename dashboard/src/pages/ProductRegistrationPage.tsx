@@ -55,8 +55,9 @@ export default function ProductRegistrationPage() {
 	}, []);
 
 	useEffect(() => {
+		if (activeTab !== "single") return;
 		void fetchDrafts();
-	}, [fetchDrafts]);
+	}, [activeTab, fetchDrafts]);
 
 	const handleComplete = (data: ProductKnowledgeCompleteResponse) => {
 		setResult(data);

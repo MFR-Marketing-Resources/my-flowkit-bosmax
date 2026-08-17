@@ -21,8 +21,14 @@ import type {
 import { fetchAPI } from "./client";
 
 export type ProductCatalogPurpose = "GENERATION" | "REVIEW";
+export type ProductRegistrySort =
+	| "PRODUCT_NAME_ASC"
+	| "PRODUCT_SOLD_VERIFIED_DESC"
+	| "SHOP_TOTAL_SOLD_DESC";
 
 const PRODUCT_CATALOG_CACHE_TTL_MS = 30_000;
+const PRODUCT_REGISTRY_CACHE_TTL_MS = 30_000;
+const PRODUCT_STRATEGY_REGISTRY_CACHE_TTL_MS = 30_000;
 
 type ProductCatalogCacheEntry = {
 	data?: ProductCatalogResponse;
@@ -31,6 +37,23 @@ type ProductCatalogCacheEntry = {
 };
 
 const productCatalogCache = new Map<string, ProductCatalogCacheEntry>();
+
+type ProductRegistryCacheEntry = {
+	data?: ProductCatalogResponse;
+	expiresAt: number;
+	promise?: Promise<ProductCatalogResponse>;
+};
+
+const productRegistryCache = new Map<string, ProductRegistryCacheEntry>();
+
+type ProductStrategyRegistryCacheEntry = {
+	data?: ProductStrategyTypeRegistryResponse;
+	expiresAt: number;
+	promise?: Promise<ProductStrategyTypeRegistryResponse>;
+};
+
+const productStrategyRegistryCache =
+	new Map<string, ProductStrategyRegistryCacheEntry>();
 
 function productCatalogCacheKey(
 	limit: number,
@@ -66,6 +89,20 @@ export function invalidateProductCatalogCache(options?: {
 		return;
 	}
 	productCatalogCache.clear();
+	// A no-argument invalidation is used at real product mutation boundaries. The
+	// registry cache is separate because its key includes filters and pages, but
+	// it must not survive a mutation that changes catalog-visible state.
+	productRegistryCache.clear();
+}
+
+/** Clear all cached registry pages after a catalog-visible mutation. */
+export function invalidateProductRegistryCache(): void {
+	productRegistryCache.clear();
+}
+
+/** Clear the stable taxonomy metadata cache after a registry mutation. */
+export function invalidateProductStrategyTypeRegistryCache(): void {
+	productStrategyRegistryCache.clear();
 }
 
 /** Force a fresh request for one catalog window, retaining the normal cache. */
@@ -116,8 +153,16 @@ export async function fetchProductCatalog(
  * generation-eligible subset. Omit `source` to include all sources.
  */
 export async function fetchProductRegistry(params: {
-	source?: "MANUAL" | "TIKTOKSHOP" | "FASTMOSS" | "IMPORTED";
+	source?:
+		| "MANUAL"
+		| "TIKTOKSHOP"
+		| "FASTMOSS"
+		| "IMPORTED"
+		| "TEST"
+		| "ALL";
+	sourceLane?: string;
 	q?: string;
+	readiness?: string;
 	includeArchived?: boolean;
 	/** Exact taxonomy cluster (e.g. "food_cooking"). */
 	cluster?: string;
@@ -135,12 +180,22 @@ export async function fetchProductRegistry(params: {
 	lifecycleStatus?: string;
 	/** Drop read-only FastMoss reference rows (no product record) from the result. */
 	excludeReference?: boolean;
+	/** Product Intelligence browser filters not represented by the generic catalog. */
+	group?: string;
+	productFamily?: string;
+	copyRoute?: string;
+	claimGate?: string;
+	intelligenceConfidence?: string;
+	sort?: ProductRegistrySort;
 	limit?: number;
 	offset?: number;
+	signal?: AbortSignal;
 }): Promise<ProductCatalogResponse> {
 	const query = new URLSearchParams();
 	if (params.source) query.set("source", params.source);
+	if (params.sourceLane) query.set("source_lane", params.sourceLane);
 	if (params.q) query.set("q", params.q);
+	if (params.readiness) query.set("readiness", params.readiness);
 	if (params.includeArchived) query.set("include_archived", "true");
 	if (params.excludeReference) query.set("exclude_reference", "true");
 	if (params.cluster) query.set("cluster", params.cluster);
@@ -154,9 +209,41 @@ export async function fetchProductRegistry(params: {
 	if (params.image) query.set("image", params.image);
 	if (params.lifecycleStatus)
 		query.set("lifecycle_status", params.lifecycleStatus);
+	if (params.group) query.set("group", params.group);
+	if (params.productFamily) query.set("product_family", params.productFamily);
+	if (params.copyRoute) query.set("copy_route", params.copyRoute);
+	if (params.claimGate) query.set("claim_gate", params.claimGate);
+	if (params.intelligenceConfidence)
+		query.set("intelligence_confidence", params.intelligenceConfidence);
+	if (params.sort) query.set("sort", params.sort);
 	query.set("limit", String(params.limit ?? 50));
 	query.set("offset", String(params.offset ?? 0));
-	return fetchAPI<ProductCatalogResponse>(`/api/products?${query.toString()}`);
+	const key = query.toString();
+	const cached = productRegistryCache.get(key);
+	if (cached?.data && cached.expiresAt > Date.now()) return cached.data;
+	if (cached?.promise) return cached.promise;
+
+	const request = fetchAPI<ProductCatalogResponse>(
+		`/api/products?${key}`,
+		{ signal: params.signal },
+	);
+	productRegistryCache.set(key, { expiresAt: 0, promise: request });
+	try {
+		const response = await request;
+		const current = productRegistryCache.get(key);
+		if (current?.promise === request) {
+			productRegistryCache.set(key, {
+				data: response,
+				expiresAt: Date.now() + PRODUCT_REGISTRY_CACHE_TTL_MS,
+			});
+		}
+		return response;
+	} catch (error) {
+		if (productRegistryCache.get(key)?.promise === request) {
+			productRegistryCache.delete(key);
+		}
+		throw error;
+	}
 }
 
 /**
@@ -169,10 +256,35 @@ export async function fetchProductDetail(productId: string): Promise<Product> {
 	return fetchAPI<Product>(`/api/products/${encodeURIComponent(productId)}`);
 }
 
-export async function fetchProductStrategyTypeRegistry(): Promise<ProductStrategyTypeRegistryResponse> {
-	return fetchAPI<ProductStrategyTypeRegistryResponse>(
+export async function fetchProductStrategyTypeRegistry(
+	signal?: AbortSignal,
+): Promise<ProductStrategyTypeRegistryResponse> {
+	const key = "product-strategy-type-registry";
+	const cached = productStrategyRegistryCache.get(key);
+	if (cached?.data && cached.expiresAt > Date.now()) return cached.data;
+	if (cached?.promise) return cached.promise;
+
+	const request = fetchAPI<ProductStrategyTypeRegistryResponse>(
 		"/api/creative-intelligence/product-strategy-type-registry",
+		{ signal },
 	);
+	productStrategyRegistryCache.set(key, { expiresAt: 0, promise: request });
+	try {
+		const response = await request;
+		const current = productStrategyRegistryCache.get(key);
+		if (current?.promise === request) {
+			productStrategyRegistryCache.set(key, {
+				data: response,
+				expiresAt: Date.now() + PRODUCT_STRATEGY_REGISTRY_CACHE_TTL_MS,
+			});
+		}
+		return response;
+	} catch (error) {
+		if (productStrategyRegistryCache.get(key)?.promise === request) {
+			productStrategyRegistryCache.delete(key);
+		}
+		throw error;
+	}
 }
 
 export async function fetchProductTypeCopyEligibleReport(
@@ -193,7 +305,7 @@ export async function fetchCatalogAuthorityReport(): Promise<CatalogAuthorityRep
 export async function registerProductStrategyType(
 	input: ProductStrategyTypeRegistrationRequest,
 ): Promise<ProductStrategyTypeRegistryEntry> {
-	return fetchAPI<ProductStrategyTypeRegistryEntry>(
+	const response = await fetchAPI<ProductStrategyTypeRegistryEntry>(
 		"/api/creative-intelligence/product-strategy-type-registry",
 		{
 			method: "POST",
@@ -201,6 +313,9 @@ export async function registerProductStrategyType(
 			body: JSON.stringify(input),
 		},
 	);
+	invalidateProductStrategyTypeRegistryCache();
+	invalidateProductRegistryCache();
+	return response;
 }
 
 export async function updateProductStrategyType(
@@ -208,7 +323,7 @@ export async function updateProductStrategyType(
 	productTypeGroup: string,
 	input: ProductStrategyTypeUpdateRequest,
 ): Promise<ProductStrategyTypeRegistryEntry> {
-	return fetchAPI<ProductStrategyTypeRegistryEntry>(
+	const response = await fetchAPI<ProductStrategyTypeRegistryEntry>(
 		`/api/creative-intelligence/product-strategy-type-registry/${encodeURIComponent(cluster)}/${encodeURIComponent(productTypeGroup)}`,
 		{
 			method: "PATCH",
@@ -216,16 +331,22 @@ export async function updateProductStrategyType(
 			body: JSON.stringify(input),
 		},
 	);
+	invalidateProductStrategyTypeRegistryCache();
+	invalidateProductRegistryCache();
+	return response;
 }
 
 export async function deleteProductStrategyType(
 	cluster: string,
 	productTypeGroup: string,
 ): Promise<ProductStrategyTypeRegistryEntry> {
-	return fetchAPI<ProductStrategyTypeRegistryEntry>(
+	const response = await fetchAPI<ProductStrategyTypeRegistryEntry>(
 		`/api/creative-intelligence/product-strategy-type-registry/${encodeURIComponent(cluster)}/${encodeURIComponent(productTypeGroup)}`,
 		{ method: "DELETE" },
 	);
+	invalidateProductStrategyTypeRegistryCache();
+	invalidateProductRegistryCache();
+	return response;
 }
 
 export async function reviewProductStrategyTaxonomy(
@@ -241,7 +362,7 @@ export async function reviewProductStrategyTaxonomy(
 		reviewer_note: string;
 	},
 ): Promise<ProductStrategyTaxonomy> {
-	return fetchAPI<ProductStrategyTaxonomy>(
+	const response = await fetchAPI<ProductStrategyTaxonomy>(
 		`/api/products/strategy-taxonomy/${encodeURIComponent(productId)}/review`,
 		{
 			method: "POST",
@@ -249,6 +370,8 @@ export async function reviewProductStrategyTaxonomy(
 			body: JSON.stringify(input),
 		},
 	);
+	invalidateProductRegistryCache();
+	return response;
 }
 
 /**

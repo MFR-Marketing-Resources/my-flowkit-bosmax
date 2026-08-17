@@ -5,6 +5,7 @@ import io
 import json
 import re
 import subprocess
+from functools import cmp_to_key
 from pathlib import Path
 from typing import Any
 
@@ -611,6 +612,12 @@ async def _list_products_response(
     claim_risk_level: str | None = None,
     freshness: str | None = None,
     image: str | None = None,
+    group: str | None = None,
+    product_family: str | None = None,
+    copy_route: str | None = None,
+    claim_gate: str | None = None,
+    intelligence_confidence: str | None = None,
+    sort: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ):
@@ -665,6 +672,80 @@ async def _list_products_response(
             freshness=freshness,
             image=image,
         )
+
+    # Product Intelligence's browser has a second set of governed display
+    # facets. Apply them before total_count/pagination so a 20-row page never
+    # pretends that its local subset is the full catalog.
+    facet_source = filtered_all
+
+    def _normalized(value: Any) -> str:
+        return str(value or "").strip().lower()
+
+    if group:
+        filtered_all = [
+            product
+            for product in filtered_all
+            if _normalized(product.get("group")) == _normalized(group)
+        ]
+    if product_family:
+        filtered_all = [
+            product
+            for product in filtered_all
+            if _normalized(product.get("bosmax_product_family"))
+            == _normalized(product_family)
+        ]
+    if copy_route:
+        filtered_all = [
+            product
+            for product in filtered_all
+            if _normalized(product.get("copy_route")) == _normalized(copy_route)
+        ]
+    if claim_gate:
+        filtered_all = [
+            product
+            for product in filtered_all
+            if _normalized(product.get("claim_gate")) == _normalized(claim_gate)
+        ]
+    if intelligence_confidence:
+        filtered_all = [
+            product
+            for product in filtered_all
+            if _normalized(product.get("intelligence_confidence"))
+            == _normalized(intelligence_confidence)
+        ]
+
+    if sort:
+        filtered_all = sorted(
+            filtered_all,
+            key=cmp_to_key(lambda left, right: _compare_product_registry_rows(left, right, sort)),
+        )
+
+    facets = {
+        "groups": sorted(
+            {str(product.get("group")).strip() for product in facet_source if str(product.get("group") or "").strip()}
+        ),
+        "product_families": sorted(
+            {
+                str(product.get("bosmax_product_family")).strip()
+                for product in facet_source
+                if str(product.get("bosmax_product_family") or "").strip()
+            }
+        ),
+        "copy_routes": sorted(
+            {str(product.get("copy_route")).strip() for product in facet_source if str(product.get("copy_route") or "").strip()}
+        ),
+        "claim_gates": sorted(
+            {str(product.get("claim_gate")).strip() for product in facet_source if str(product.get("claim_gate") or "").strip()}
+        ),
+        "intelligence_confidences": sorted(
+            {
+                str(product.get("intelligence_confidence")).strip()
+                for product in facet_source
+                if str(product.get("intelligence_confidence") or "").strip()
+            }
+        ),
+    }
+    image_readiness_summary = _catalog_image_readiness_summary(filtered_all)
     total = len(filtered_all)
     enriched = []
     for product in filtered_all[offset:offset + limit]:
@@ -718,7 +799,79 @@ async def _list_products_response(
         "limit": limit,
         "offset": offset,
         "items": enriched,
+        "facets": facets,
+        "image_readiness_summary": image_readiness_summary,
     }
+
+
+def _product_sales_metric(product: dict[str, Any], field: str) -> float | None:
+    value = product.get(field)
+    if value is None and isinstance(product.get("sales_metrics"), dict):
+        value = product["sales_metrics"].get(field)
+    try:
+        return None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _product_registry_name(product: dict[str, Any]) -> str:
+    return str(
+        product.get("product_short_name")
+        or product.get("raw_product_title")
+        or product.get("product_display_name")
+        or ""
+    ).strip().casefold()
+
+
+def _compare_product_registry_rows(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    sort: str,
+) -> int:
+    if sort == "PRODUCT_NAME_ASC":
+        return (_product_registry_name(left) > _product_registry_name(right)) - (
+            _product_registry_name(left) < _product_registry_name(right)
+        )
+
+    field = {
+        "PRODUCT_SOLD_VERIFIED_DESC": "product_sold_count",
+        "SHOP_TOTAL_SOLD_DESC": "shop_total_sold_count",
+    }.get(sort)
+    if field:
+        left_value = _product_sales_metric(left, field)
+        right_value = _product_sales_metric(right, field)
+        if left_value is not None and right_value is not None and left_value != right_value:
+            return -1 if left_value > right_value else 1
+        if left_value is not None and right_value is None:
+            return -1
+        if left_value is None and right_value is not None:
+            return 1
+        if left_value is None and right_value is None:
+            return _compare_product_registry_rows(left, right, "PRODUCT_NAME_ASC")
+    return 0
+
+
+def _catalog_image_readiness_summary(products: list[dict[str, Any]]) -> dict[str, int]:
+    summary = {
+        "READY": 0,
+        "CACHE_READY": 0,
+        "URL_MISSING": 0,
+        "DOWNLOAD_FAILED": 0,
+        "NOT_AVAILABLE": 0,
+    }
+    for product in products:
+        status = str(product.get("image_readiness_status") or "").strip().upper()
+        if status == "IMAGE_READY":
+            summary["READY"] += 1
+        elif status == "IMAGE_CACHE_READY":
+            summary["CACHE_READY"] += 1
+        elif status == "IMAGE_DOWNLOAD_FAILED":
+            summary["DOWNLOAD_FAILED"] += 1
+        elif status == "IMAGE_NOT_AVAILABLE":
+            summary["NOT_AVAILABLE"] += 1
+        else:
+            summary["URL_MISSING"] += 1
+    return summary
 
 
 def _catalog_priority(product: dict[str, Any]) -> tuple[int, int, int, int, int]:
@@ -957,6 +1110,12 @@ async def list_products(
     claim_risk_level: str | None = Query(default=None),
     freshness: str | None = Query(default=None),
     image: str | None = Query(default=None),
+    group: str | None = Query(default=None),
+    product_family: str | None = Query(default=None),
+    copy_route: str | None = Query(default=None),
+    claim_gate: str | None = Query(default=None),
+    intelligence_confidence: str | None = Query(default=None),
+    sort: str | None = Query(default=None),
     limit: int = Query(default=50),
     offset: int = Query(default=0),
 ):
@@ -975,6 +1134,12 @@ async def list_products(
         claim_risk_level=claim_risk_level,
         freshness=freshness,
         image=image,
+        group=group,
+        product_family=product_family,
+        copy_route=copy_route,
+        claim_gate=claim_gate,
+        intelligence_confidence=intelligence_confidence,
+        sort=sort,
         limit=limit,
         offset=offset,
     )

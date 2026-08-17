@@ -276,6 +276,87 @@ async def test_manual_replacement_recovers_missing_truth_lock_bytes_from_bound_m
 
 
 @pytest.mark.asyncio
+async def test_manual_replacement_recovers_missing_truth_lock_bytes_from_local_store(tmp_path, monkeypatch):
+	runtime_root = tmp_path / "runtime"
+	current_source = runtime_root / "data" / "products" / "current.jpg"
+	current_source.parent.mkdir(parents=True, exist_ok=True)
+	current_source.write_bytes(_image_bytes(color=(30, 80, 140)))
+	monkeypatch.setattr(service, "BASE_DIR", runtime_root)
+	monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", runtime_root)
+
+	product = await crud.create_product(
+		raw_product_title="Recoverable Local Truth Store",
+		source="MANUAL",
+		local_image_path=str(current_source),
+		image_asset_status="READY",
+		asset_status="DOWNLOADED",
+	)
+	product_id = str(product["id"])
+	old_source_bytes = _image_bytes(color=(30, 80, 140))
+	old_cutout_bytes = _manual_cutout_bytes(color=(30, 80, 140), inset=200)
+	truth_directory = product_truth_lock_service._truth_lock_directory(product_id)
+	seed_directory = truth_directory / "history" / "seed"
+	seed_directory.mkdir(parents=True, exist_ok=True)
+	seed_source = seed_directory / "canonical_source.jpg"
+	seed_cutout = seed_directory / "canonical_cutout.png"
+	seed_source.write_bytes(old_source_bytes)
+	seed_cutout.write_bytes(old_cutout_bytes)
+	active_source = truth_directory / "versions" / "active" / "canonical_source.jpg"
+	active_cutout = truth_directory / "versions" / "active" / "canonical_cutout.png"
+	await crud.upsert_product_truth_lock(
+		product_id,
+		canonical_media_id="missing-old-media",
+		canonical_sha256=hashlib.sha256(old_source_bytes).hexdigest(),
+		source_width=96,
+		source_height=128,
+		canonical_source_path=str(active_source.relative_to(runtime_root)).replace("\\", "/"),
+		canonical_cutout_media_id="missing-old-cutout-media",
+		canonical_cutout_sha256=hashlib.sha256(old_cutout_bytes).hexdigest(),
+		canonical_cutout_path=str(active_cutout.relative_to(runtime_root)).replace("\\", "/"),
+		alpha_mask_json="{}",
+		anchor_point_json="{}",
+		min_scale=0.5,
+		max_scale=2.0,
+		allowed_bbox_json=json.dumps({"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8}),
+		allowed_rotation=0.0,
+		allowed_perspective=0.0,
+		review_status="REJECTED",
+		failure_state="FALLBACK_SELECTED",
+		provenance_json=json.dumps({
+			"source_kind": "USER_UPLOAD",
+			"active_selection": "SAME_PRODUCT_TRUSTED_SOURCE",
+		}),
+		schema_version="1.0",
+	)
+
+	result = await service.upload_manual_product_cutout(
+		product_id,
+		filename="replacement-manual.png",
+		content_type="image/png",
+		raw_bytes=_manual_cutout_bytes(color=(180, 40, 90), inset=240),
+		uploaded_by="registration-operator",
+	)
+
+	history = await crud.list_product_truth_lock_history(product_id)
+	assert len(history) == 1
+	archived_source = Path(str(history[0]["canonical_source_path"]))
+	archived_cutout = Path(str(history[0]["canonical_cutout_path"]))
+	if not archived_source.is_absolute():
+		archived_source = runtime_root / archived_source
+	if not archived_cutout.is_absolute():
+		archived_cutout = runtime_root / archived_cutout
+	assert hashlib.sha256(archived_source.read_bytes()).hexdigest() == hashlib.sha256(old_source_bytes).hexdigest()
+	assert hashlib.sha256(archived_cutout.read_bytes()).hexdigest() == hashlib.sha256(old_cutout_bytes).hexdigest()
+	assert (
+		json.loads(history[0]["provenance_json"])["history_byte_recovery"]
+		== "TRUTH_LOCK_STORE_SHA256_VERIFIED"
+	)
+	assert active_source.read_bytes() == old_source_bytes
+	assert active_cutout.read_bytes() == old_cutout_bytes
+	assert result["manual_cutout_status"] == "PENDING_REVIEW"
+
+
+@pytest.mark.asyncio
 async def test_reauthorization_rejects_a_candidate_bound_to_another_product(tmp_path, monkeypatch):
 	runtime_root = tmp_path / "runtime"
 	current_source = runtime_root / "data" / "products" / "current.jpg"

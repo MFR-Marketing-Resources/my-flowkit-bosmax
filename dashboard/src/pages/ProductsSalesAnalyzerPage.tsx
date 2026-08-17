@@ -7,10 +7,11 @@ import {
 	fetchProductIntelligence,
 	fetchProductIntelligenceProvenance,
 	fetchProductIntelligenceSnapshots,
+	fetchProductRegistry,
 	fetchProductStrategyTypeRegistry,
-	invalidateProductCatalogCache,
 	registerProductStrategyType,
 	reviewProductStrategyTaxonomy,
+	type ProductRegistrySort,
 } from "../api/products";
 import CreativeHandoffPreview from "../components/product-intelligence/CreativeHandoffPreview";
 import CreativeSetupPanel from "../components/product-intelligence/CreativeSetupPanel";
@@ -22,6 +23,7 @@ import { HelperText } from "../components/ui";
 import type {
 	FastMossImportBatchReport,
 	Product,
+	ProductCatalogResponse,
 	ProductCreativeBrief,
 	ProductIntelligenceFieldProvenance,
 	ProductIntelligenceLatestSnapshotResponse,
@@ -358,12 +360,6 @@ function salesMetricWarnings(product: Product) {
 	);
 }
 
-function hasTextValue<T extends string>(
-	value: T | null | undefined,
-): value is T {
-	return typeof value === "string" && value.trim().length > 0;
-}
-
 function lifecycleStatus(product: Product | null) {
 	return product?.lifecycle_status || "ACTIVE";
 }
@@ -605,6 +601,26 @@ function ImageFallback({
 
 const PAGE_SIZE_PRODUCTS = 20;
 
+const EMPTY_PRODUCT_REGISTRY_FACETS: NonNullable<
+	ProductCatalogResponse["facets"]
+> = {
+	groups: [],
+	product_families: [],
+	copy_routes: [],
+	claim_gates: [],
+	intelligence_confidences: [],
+};
+
+const EMPTY_IMAGE_READINESS_SUMMARY: NonNullable<
+	ProductCatalogResponse["image_readiness_summary"]
+> = {
+	READY: 0,
+	CACHE_READY: 0,
+	URL_MISSING: 0,
+	DOWNLOAD_FAILED: 0,
+	NOT_AVAILABLE: 0,
+};
+
 // Demo-safe initial source filter. Normal `/products` keeps the FASTMOSS default,
 // but when arriving via the Smart Registration bridge (?tab=INTELLIGENCE) or a
 // deep-link that names a product, default to ALL so manually-registered products
@@ -657,8 +673,7 @@ export default function ProductsSalesAnalyzerPage() {
 	const guidedClaimSafe = searchParams.get("claimSafeFix") === "1";
 	// A deep-link that names a product must LOAD + SELECT it so its editable
 	// Product Intelligence opens — even when the product sorts beyond the initial
-	// catalog window (MANUAL / imported rows tail-sort after FastMoss, past
-	// limit=500). This covers BOTH the claim-safe fix link AND the Smart
+	// server page. This covers BOTH the claim-safe fix link AND the Smart
 	// Registration "Buka PI" deep-link (?product=<id> with no claimSafeFix); the
 	// claim-safe-only UI stays gated on `guidedClaimSafe` above.
 	const guidedProductId = searchParams.get("product")?.trim() || null;
@@ -701,6 +716,7 @@ export default function ProductsSalesAnalyzerPage() {
 	const [activeTab, setActiveTab] = useState<
 		"DETAILS" | "INTELLIGENCE" | "BRIEF" | "VARIATIONS" | "PREVIEW" | "EDIT"
 	>("DETAILS");
+	const [showReviewDrafts, setShowReviewDrafts] = useState(false);
 	const [editForm, setEditForm] = useState<Record<string, string>>({});
 	const [editSaving, setEditSaving] = useState(false);
 	const [editSuccess, setEditSuccess] = useState<string | null>(null);
@@ -734,6 +750,14 @@ export default function ProductsSalesAnalyzerPage() {
 		errorMessage?: string;
 	} | null>(null);
 	const [currentPageProducts, setCurrentPageProducts] = useState(1);
+	const [catalogTotal, setCatalogTotal] = useState(0);
+	const [catalogFacets, setCatalogFacets] = useState(
+		EMPTY_PRODUCT_REGISTRY_FACETS,
+	);
+	const [catalogImageSummary, setCatalogImageSummary] = useState(
+		EMPTY_IMAGE_READINESS_SUMMARY,
+	);
+	const productRequestControllerRef = useRef<AbortController | null>(null);
 	const [taxonomyRegistry, setTaxonomyRegistry] =
 		useState<ProductStrategyTypeRegistryResponse>({
 			items: [],
@@ -757,117 +781,20 @@ export default function ProductsSalesAnalyzerPage() {
 		"ACTIVE" | "REVIEW_REQUIRED"
 	>("REVIEW_REQUIRED");
 
-	const filterOptions = useMemo(() => {
-		const values = {
-			groups: Array.from(
-				new Set(products.map((product) => product.group).filter(hasTextValue)),
-			).sort(),
-			families: Array.from(
-				new Set(
-					products
-						.map((product) => product.bosmax_product_family)
-						.filter(hasTextValue),
-				),
-			).sort(),
-			copyRoutes: Array.from(
-				new Set(
-					products.map((product) => product.copy_route).filter(hasTextValue),
-				),
-			).sort(),
-			claimGates: Array.from(
-				new Set(
-					products.map((product) => product.claim_gate).filter(hasTextValue),
-				),
-			).sort(),
-			confidences: Array.from(
-				new Set(
-					products
-						.map((product) => product.intelligence_confidence)
-						.filter(hasTextValue),
-				),
-			).sort(),
-		};
-		return values;
-	}, [products]);
-	const filteredProducts = useMemo(() => {
-		const filtered = products.filter((product) => {
-			if (groupFilter !== "ALL" && product.group !== groupFilter) return false;
-			if (
-				familyFilter !== "ALL" &&
-				product.bosmax_product_family !== familyFilter
-			)
-				return false;
-			if (copyRouteFilter !== "ALL" && product.copy_route !== copyRouteFilter)
-				return false;
-			if (claimGateFilter !== "ALL" && product.claim_gate !== claimGateFilter)
-				return false;
-			if (
-				confidenceFilter !== "ALL" &&
-				product.intelligence_confidence !== confidenceFilter
-			)
-				return false;
-			return true;
-		});
-		return filtered.sort((left, right) => {
-			if (sortMode === "PRODUCT_NAME_ASC") {
-				const leftName = (
-					left.product_short_name ||
-					left.raw_product_title ||
-					""
-				).toLowerCase();
-				const rightName = (
-					right.product_short_name ||
-					right.raw_product_title ||
-					""
-				).toLowerCase();
-				return leftName.localeCompare(rightName);
-			}
-			if (sortMode === "PRODUCT_SOLD_VERIFIED_DESC") {
-				const leftSold = productSoldCount(left);
-				const rightSold = productSoldCount(right);
-				if (leftSold !== null && rightSold !== null)
-					return rightSold - leftSold;
-				if (leftSold !== null) return -1;
-				if (rightSold !== null) return 1;
-				const leftName = (
-					left.product_short_name ||
-					left.raw_product_title ||
-					""
-				).toLowerCase();
-				const rightName = (
-					right.product_short_name ||
-					right.raw_product_title ||
-					""
-				).toLowerCase();
-				return leftName.localeCompare(rightName);
-			}
-			const leftShopTotal = shopTotalSoldCount(left);
-			const rightShopTotal = shopTotalSoldCount(right);
-			if (leftShopTotal !== null && rightShopTotal !== null)
-				return rightShopTotal - leftShopTotal;
-			if (leftShopTotal !== null) return -1;
-			if (rightShopTotal !== null) return 1;
-			const leftName = (
-				left.product_short_name ||
-				left.raw_product_title ||
-				""
-			).toLowerCase();
-			const rightName = (
-				right.product_short_name ||
-				right.raw_product_title ||
-				""
-			).toLowerCase();
-			return leftName.localeCompare(rightName);
-		});
-	}, [
-		products,
-		groupFilter,
-		familyFilter,
-		copyRouteFilter,
-		claimGateFilter,
-		confidenceFilter,
-		sortMode,
-	]);
+	const filterOptions = useMemo(
+		() => ({
+			groups: catalogFacets.groups,
+			families: catalogFacets.product_families,
+			copyRoutes: catalogFacets.copy_routes,
+			claimGates: catalogFacets.claim_gates,
+			confidences: catalogFacets.intelligence_confidences,
+		}),
+		[catalogFacets],
+	);
+	// Filtering and sorting happen in the API before pagination. Keeping this
+	// alias preserves the existing detail/render flow while preventing the UI
+	// from treating one downloaded page as the full catalog.
+	const filteredProducts = products;
 	const selectedProduct = useMemo(
 		() => filteredProducts.find((product) => product.id === selectedId) || null,
 		[filteredProducts, selectedId],
@@ -913,35 +840,7 @@ export default function ProductsSalesAnalyzerPage() {
 			left.localeCompare(right),
 		);
 	}, [snapshotProvenance]);
-	const imageReadinessSummary = useMemo(() => {
-		const summary = {
-			READY: 0,
-			CACHE_READY: 0,
-			URL_MISSING: 0,
-			DOWNLOAD_FAILED: 0,
-			NOT_AVAILABLE: 0,
-		};
-
-		for (const product of filteredProducts) {
-			switch (product.image_readiness_status) {
-				case "IMAGE_READY":
-					summary.READY += 1;
-					break;
-				case "IMAGE_CACHE_READY":
-					summary.CACHE_READY += 1;
-					break;
-				case "IMAGE_DOWNLOAD_FAILED":
-					summary.DOWNLOAD_FAILED += 1;
-					break;
-				case "IMAGE_NOT_AVAILABLE":
-					summary.NOT_AVAILABLE += 1;
-					break;
-				default:
-					summary.URL_MISSING += 1;
-			}
-		}
-		return summary;
-	}, [filteredProducts]);
+	const imageReadinessSummary = catalogImageSummary;
 
 	const reloadProductIntelligence = useCallback(
 		async (preferredSnapshotId?: string | null) => {
@@ -1055,6 +954,7 @@ export default function ProductsSalesAnalyzerPage() {
 		setSelectedSnapshotId(null);
 		setSnapshotProvenance([]);
 		setProvenanceError(null);
+		setShowReviewDrafts(false);
 		setEditSuccess(null);
 		setEditError(null);
 		setTaxonomyMessage(null);
@@ -1170,56 +1070,94 @@ export default function ProductsSalesAnalyzerPage() {
 	const loadSequenceRef = useRef(0);
 
 	const loadProducts = useCallback(async () => {
-		// The full-catalog screen owns product create/update/archive flows. Treat
-		// its authoritative refresh boundary as a selector-cache invalidation.
-		invalidateProductCatalogCache();
+		productRequestControllerRef.current?.abort();
+		const controller = new AbortController();
+		productRequestControllerRef.current = controller;
 		const requestSeq = ++loadSequenceRef.current;
 		setLoading(true);
 		setError(null);
 		try {
-			const params = new URLSearchParams();
-			if (search.trim()) params.set("q", search.trim());
-			if (sourceFilter === "FASTMOSS_REFERENCE") {
-				params.set("source_lane", "FASTMOSS_REFERENCE");
-			} else if (sourceFilter !== "ALL") {
-				params.set("source", sourceFilter);
-			}
-			if (readinessFilter !== "ALL") params.set("readiness", readinessFilter);
-			if (lifecycleFilter === "INCLUDE_ARCHIVED")
-				params.set("include_archived", "true");
-			if (lifecycleFilter === "ARCHIVED_ONLY") {
-				params.set("include_archived", "true");
-				params.set("lifecycle_status", "ARCHIVED");
-			}
-			params.set("limit", "500");
-			const query = params.toString();
-			const res = await fetchAPI<{ items: Product[]; total_count: number }>(
-				`/api/products${query ? `?${query}` : ""}`,
-			);
+			const res = await fetchProductRegistry({
+				q: search.trim() || undefined,
+				source:
+					sourceFilter !== "ALL" && sourceFilter !== "FASTMOSS_REFERENCE"
+						? (sourceFilter as
+								| "MANUAL"
+								| "TIKTOKSHOP"
+								| "FASTMOSS"
+								| "IMPORTED"
+								| "TEST")
+						: undefined,
+				sourceLane:
+					sourceFilter === "FASTMOSS_REFERENCE"
+						? "FASTMOSS_REFERENCE"
+						: undefined,
+				readiness: readinessFilter !== "ALL" ? readinessFilter : undefined,
+				includeArchived: lifecycleFilter !== "ACTIVE_ONLY",
+				lifecycleStatus:
+					lifecycleFilter === "ARCHIVED_ONLY" ? "ARCHIVED" : undefined,
+				group: groupFilter !== "ALL" ? groupFilter : undefined,
+				productFamily: familyFilter !== "ALL" ? familyFilter : undefined,
+				copyRoute: copyRouteFilter !== "ALL" ? copyRouteFilter : undefined,
+				claimGate: claimGateFilter !== "ALL" ? claimGateFilter : undefined,
+				intelligenceConfidence:
+					confidenceFilter !== "ALL" ? confidenceFilter : undefined,
+				sort: sortMode as ProductRegistrySort,
+				limit: PAGE_SIZE_PRODUCTS,
+				offset: (currentPageProducts - 1) * PAGE_SIZE_PRODUCTS,
+				signal: controller.signal,
+			});
+			if (controller.signal.aborted) return;
 			if (requestSeq !== loadSequenceRef.current) return; // stale response — discard
-			// No more slice logic, it natively returns exactly what matches.
 			const rows = await resolveGuidedClaimSafeProducts(
 				res.items || [],
 				guidedProductId,
 				(productId) =>
-					fetchAPI<Product>(`/api/products/${encodeURIComponent(productId)}`),
+					fetchAPI<Product>(
+						`/api/products/${encodeURIComponent(productId)}`,
+						{ signal: controller.signal },
+					),
 			);
+			if (controller.signal.aborted) return;
 			if (requestSeq !== loadSequenceRef.current) return;
 			setProducts(rows);
+			setCatalogTotal(res.total_count ?? 0);
+			setCatalogFacets(res.facets ?? EMPTY_PRODUCT_REGISTRY_FACETS);
+			setCatalogImageSummary(
+				res.image_readiness_summary ?? EMPTY_IMAGE_READINESS_SUMMARY,
+			);
 			setSelectedId((current) =>
 				guidedProductId && rows.some((row) => row.id === guidedProductId)
 					? guidedProductId
 					: current && rows.some((row) => row.id === current)
 						? current
-						: rows[0]?.id || null,
+					: rows[0]?.id || null,
 			);
 		} catch (err) {
+			if (controller.signal.aborted) return;
 			if (requestSeq !== loadSequenceRef.current) return;
 			setError(err instanceof Error ? err.message : "Failed to load products");
 		} finally {
-			if (requestSeq === loadSequenceRef.current) setLoading(false);
+			if (
+				requestSeq === loadSequenceRef.current &&
+				productRequestControllerRef.current === controller
+			)
+				setLoading(false);
 		}
-	}, [guidedProductId, lifecycleFilter, readinessFilter, search, sourceFilter]);
+	}, [
+		currentPageProducts,
+		familyFilter,
+		groupFilter,
+		claimGateFilter,
+		confidenceFilter,
+		copyRouteFilter,
+		guidedProductId,
+		lifecycleFilter,
+		readinessFilter,
+		search,
+		sortMode,
+		sourceFilter,
+	]);
 
 	useEffect(() => {
 		// Debounce: wait for typing to settle before fetching (search changes),
@@ -1227,7 +1165,10 @@ export default function ProductsSalesAnalyzerPage() {
 		const timer = setTimeout(() => {
 			void loadProducts();
 		}, 300);
-		return () => clearTimeout(timer);
+		return () => {
+			clearTimeout(timer);
+			productRequestControllerRef.current?.abort();
+		};
 	}, [loadProducts]);
 
 	useEffect(() => {
@@ -1384,7 +1325,7 @@ export default function ProductsSalesAnalyzerPage() {
 				image_base64: base64,
 				image_filename: file.name,
 			}));
-		} catch (_err) {
+		} catch {
 			alert("Failed to read image file");
 		}
 	}
@@ -1781,16 +1722,13 @@ export default function ProductsSalesAnalyzerPage() {
 		: false;
 
 	const totalPagesProducts = Math.ceil(
-		filteredProducts.length / PAGE_SIZE_PRODUCTS,
+		catalogTotal / PAGE_SIZE_PRODUCTS,
 	);
 	const safePageProducts = Math.min(
 		Math.max(1, currentPageProducts),
 		totalPagesProducts || 1,
 	);
-	const paginatedProducts = filteredProducts.slice(
-		(safePageProducts - 1) * PAGE_SIZE_PRODUCTS,
-		safePageProducts * PAGE_SIZE_PRODUCTS,
-	);
+	const paginatedProducts = filteredProducts;
 
 	return (
 		<div className="grid min-h-full min-w-0 gap-4 p-4 md:p-6 lg:min-h-0 lg:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.45fr)] lg:overflow-hidden">
@@ -1816,7 +1754,7 @@ export default function ProductsSalesAnalyzerPage() {
 						</div>
 						<div className="bosmax-wrap-safe rounded border border-slate-500/20 bg-slate-500/10 p-2 text-slate-200">
 							NOT_AVAILABLE: {imageReadinessSummary.NOT_AVAILABLE} | TOTAL:{" "}
-							{filteredProducts.length}
+							{catalogTotal}
 						</div>
 					</div>
 					<div className="space-y-2">
@@ -1899,7 +1837,10 @@ export default function ProductsSalesAnalyzerPage() {
 							</select>
 							<select
 								value={familyFilter}
-								onChange={(e) => setFamilyFilter(e.target.value)}
+								onChange={(e) => {
+									setFamilyFilter(e.target.value);
+									setCurrentPageProducts(1);
+								}}
 								aria-label="Filter products by family"
 								className="bg-slate-900 border text-xs px-2 py-1.5 rounded"
 								style={{ borderColor: "var(--border)", color: "var(--text)" }}
@@ -1913,7 +1854,10 @@ export default function ProductsSalesAnalyzerPage() {
 							</select>
 							<select
 								value={copyRouteFilter}
-								onChange={(e) => setCopyRouteFilter(e.target.value)}
+								onChange={(e) => {
+									setCopyRouteFilter(e.target.value);
+									setCurrentPageProducts(1);
+								}}
 								aria-label="Filter products by copy route"
 								className="bg-slate-900 border text-xs px-2 py-1.5 rounded"
 								style={{ borderColor: "var(--border)", color: "var(--text)" }}
@@ -1927,7 +1871,10 @@ export default function ProductsSalesAnalyzerPage() {
 							</select>
 							<select
 								value={claimGateFilter}
-								onChange={(e) => setClaimGateFilter(e.target.value)}
+								onChange={(e) => {
+									setClaimGateFilter(e.target.value);
+									setCurrentPageProducts(1);
+								}}
 								aria-label="Filter products by claim gate"
 								className="bg-slate-900 border text-xs px-2 py-1.5 rounded"
 								style={{ borderColor: "var(--border)", color: "var(--text)" }}
@@ -1941,7 +1888,10 @@ export default function ProductsSalesAnalyzerPage() {
 							</select>
 							<select
 								value={confidenceFilter}
-								onChange={(e) => setConfidenceFilter(e.target.value)}
+								onChange={(e) => {
+									setConfidenceFilter(e.target.value);
+									setCurrentPageProducts(1);
+								}}
 								aria-label="Filter products by intelligence confidence"
 								className="col-span-2 bg-slate-900 border text-xs px-2 py-1.5 rounded"
 								style={{ borderColor: "var(--border)", color: "var(--text)" }}
@@ -1955,9 +1905,10 @@ export default function ProductsSalesAnalyzerPage() {
 							</select>
 							<select
 								value={lifecycleFilter}
-								onChange={(e) =>
-									setLifecycleFilter(e.target.value as LifecycleFilterMode)
-								}
+								onChange={(e) => {
+									setLifecycleFilter(e.target.value as LifecycleFilterMode);
+									setCurrentPageProducts(1);
+								}}
 								aria-label="Filter products by lifecycle status"
 								className="col-span-2 bg-slate-900 border text-xs px-2 py-1.5 rounded"
 								style={{ borderColor: "var(--border)", color: "var(--text)" }}
@@ -2171,9 +2122,9 @@ export default function ProductsSalesAnalyzerPage() {
 								{(safePageProducts - 1) * PAGE_SIZE_PRODUCTS + 1}–
 								{Math.min(
 									safePageProducts * PAGE_SIZE_PRODUCTS,
-									filteredProducts.length,
+									catalogTotal,
 								)}{" "}
-								of {filteredProducts.length}
+								of {catalogTotal}
 							</span>
 							<div className="flex items-center gap-1">
 								<button
@@ -3248,22 +3199,43 @@ export default function ProductsSalesAnalyzerPage() {
 											<CreativeHandoffPreview productId={selectedProduct.id} />
 										) : null}
 										{selectedProduct ? (
-											<ProductIntelligenceReviewDraftPanel
-												productId={selectedProduct.id}
-												onApproved={async (snapshotId) => {
-													await reloadProductIntelligence(snapshotId);
-												}}
-												guidedClaimSafe={guidedClaimSafe}
-												onClaimSafeApproved={async () => {
-													await reloadProductIntelligence();
-													if (claimSafeReturnPath) {
-														navigate(claimSafeReturnPath, {
-															replace: true,
-															state: { claimSafeProduct: selectedProduct },
-														});
-													}
-												}}
-											/>
+											<details
+												data-testid="product-intelligence-review-drafts-lazy"
+												className="rounded border border-slate-800 bg-slate-900/50"
+												onToggle={(event) =>
+													setShowReviewDrafts(event.currentTarget.open)
+												}
+											>
+												<summary className="cursor-pointer list-none px-3 py-3 text-[11px] font-semibold text-slate-200">
+													Review drafts / AI Fill Missing
+													<span className="ml-2 font-normal text-slate-500">
+														open to load review-only draft history
+													</span>
+												</summary>
+												{showReviewDrafts ? (
+													<ProductIntelligenceReviewDraftPanel
+														key={selectedProduct.id}
+														productId={selectedProduct.id}
+														onApproved={async (snapshotId) => {
+															await reloadProductIntelligence(snapshotId);
+														}}
+														guidedClaimSafe={guidedClaimSafe}
+														onClaimSafeApproved={async () => {
+															await reloadProductIntelligence();
+															if (claimSafeReturnPath) {
+																navigate(claimSafeReturnPath, {
+																	replace: true,
+																	state: { claimSafeProduct: selectedProduct },
+																});
+															}
+														}}
+													/>
+												) : (
+													<div className="border-t border-slate-800 px-3 py-4 text-[11px] text-slate-500">
+														Review drafts are loaded only when this review workflow is opened.
+													</div>
+												)}
+											</details>
 										) : null}
 										<Panel
 											title="Product Intelligence Snapshot Review"
