@@ -63,8 +63,33 @@ Current implementation truth:
   DNA fields for compatibility. That projection is an adapter, not permission
   for V3 to author flat H/B/C copy.
 
-Status: architecture review ready. Implementation is intentionally blocked
-until the owner decisions in this document are resolved.
+Status: owner rulings applied. Phase 1 implementation remains intentionally
+blocked until the documentation-only closure is approved and merged.
+
+## ARCHITECTURE AMENDMENT — OWNER RULINGS APPLIED
+
+The following rulings close the remaining architecture gaps without changing
+the current V2 production authority:
+
+| Ruling | Closure |
+|---|---|
+| Authoring order | Formula/Recipe is locked before Angle, Storyline Family, and component authoring for every run. A strategic Angle may exist independently as supply metadata. |
+| Physical storage | New versioned additive V3 records in the same canonical database. The legacy atomic copy_component table remains historical/maintenance evidence. |
+| Angle identity | Angle is a stable strategic persuasion identity. Audience/persona and objective are compatibility/context dimensions. |
+| Storyline Family | Product Intelligence, governed AI suggestion, and operator authoring may propose families; canonical approval requires stable identity, version, reviewed definition, formula compatibility, route bridges, and immutable revision. Cross-storyline composition is blocked by default. |
+| Formula authority | Only current CANONICAL Formula Registry definitions can reach production. Review-only formulas are excluded. |
+| Semantic approval | Components may have reusable component review. The final production-bound human semantic decision is over the resolved full storyboard/duration projection and creates an immutable V3 Human Approval Receipt. |
+| Approval carry-forward | V2 deterministically revalidates the exact approved V3 text and lineage, then records the genuine V3 receipt in its immutable production approval snapshot. No semantic-review booleans are fabricated. |
+| Bulk approval | One explicit human batch confirmation may approve machine-clean candidates whose individual digests are bound to the batch receipt. Exceptions remain explicit review items. |
+| Reuse/fatigue | V3 does not inherit REUSE_CAP=15. Exact projection reuse is blocked within a P6 plan unless controlled reuse is enabled; cross-plan reuse is recipe-policy governed; usage is recorded in LandbankUsage. |
+| P6 multi-copy supply | A bounded Production Copy Supply Manifest selects many V2 PRODUCTION_VALID blueprints for one P6 plan without mutating the product-global active pointer. |
+| Scene coupling | Recipes express semantic/visual compatibility constraints; Production Studio selects among approved compatible choreography, treatments, and visual variants. |
+| Provider policy | Provider/model/budget choice is deferred to a separate configuration decision. Authoring calls remain explicit, budgeted, receipted, measured, media-credit-free, and never background-controlled. |
+| Duration law | Every 8/16/24 projection preserves a complete Hook + Body/Core + CTA arc from the same Master Storyboard under the Formula and canonical WPS contracts. |
+
+These are architecture rulings, not implementation proof. No Phase 1 work,
+provider call, database migration, or production mutation is authorized by this
+document.
 
 ## EXECUTIVE ARCHITECTURE DECISION
 
@@ -73,9 +98,9 @@ and below the existing V2 production authority:
 
 Product Truth and Evidence
 → Objective
+→ Formula / Recipe (Formula Definition snapshot)
 → Angle
 → Storyline Family
-→ Formula Definition
 → Formula Stage Plan
 → stage-native components
 → one coherent Master Storyboard
@@ -112,8 +137,10 @@ V2 remains the last-mile authority:
   materialization.
 - V2 materialization creates a formula-native V2 draft with ordered stages and
   V3 lineage.
-- V2 semantic review, readiness proof, Product Truth revalidation, approval,
-  and execution binding remain mandatory.
+- V2 performs deterministic revalidation, persists its immutable production
+  approval snapshot, and carries forward the genuine V3 Human Approval
+  Receipt. A second semantic review of identical immutable text is not
+  required; changed text or authority requires new human review.
 - No V3 artifact bypasses V2 or activates itself in creator or production
   lanes.
 
@@ -142,7 +169,7 @@ legacy tables are preserved according to ADR-011 and migration receipts.
 | Scene Choreography V2 | Versioned physical interaction variants, state chains, final locks, character-presence compatibility and SHA lineage | Generic fallback, placeholders, state breaks, incompatible presence, and stale hashes fail closed. | SceneProjection references this authority; it does not duplicate or weaken choreography. |
 | Creative Treatment/P6 | Immutable treatment and P6 plan/item/attempt control plane; product, treatment, visual, scene, model, duration, DNA, queue and QA are governed | Treatment is not copy or provider permission. P6 compile and queue revalidate V2 binding and treatment lineage. | Production Studio consumes approved V3-selected/V2-bound supply only. |
 | P6 capacity | Product dimension rows currently combine approved copy authority, visual rows, scene variants, layouts, model keys and durations; exact DNA history is excluded; video uses approved treatments and no controlled video reuse. | Capacity is objective evidence, not a provider SLA. Enumeration is capped at MAX_ENUMERATED_COMBINATIONS = 250,000. | V3 must calculate storyboard/projection capacity before P6 and pass bounded selections downstream. |
-| Copy usage/reuse | Legacy copy rotation is deterministic, LRU-first and uses owner decision REUSE_CAP = 15. Copy usage increment exists but is not fully wired into the compiler path. | The 15 cap is not a universal V3 law. Content combination is script × visual identity × scene. | V3 needs a separate usage/novelty policy with explicit owner approval and durable event lineage. |
+| Copy usage/reuse | Legacy copy rotation is deterministic, LRU-first and uses the legacy REUSE_CAP = 15. Copy usage increment exists but is not fully wired into the compiler path. | The 15 cap is not a V3 law. Content combination is script × visual identity × scene. | V3 uses a versioned Recipe Policy, separate exact-reuse/semantic-fatigue signals and durable LandbankUsage lineage; the legacy cap remains historical only. |
 | CopywritingSourceSelector | Reads V2 blueprints, derives a display Hook/Body/CTA summary, blocks drafts, and activates a production-valid blueprint | It is a last-mile selector, not a multi-candidate storyboard queue. | Replace/extend the UX later with recipe, landbank, projection and review-queue concepts without changing V2 authority. |
 | CopyIntelligencePage | Workbook upload/dry-run and seed ledger review; explicitly does not seed or send material to generation | Review-only intelligence ingest; not the V3 landbank. | Workbook data can enter a future governed ingestion path only through Product Truth and review gates. |
 
@@ -214,14 +241,23 @@ label attached after generation. It is the compiler contract that determines:
 - CTA closure and final-block rules;
 - the formula validator and version that produced the result.
 
-The canonical assembly order is mandatory:
+The canonical operator authoring order is mandatory:
 
-Product Truth → Product Knowledge/Intelligence → Objective → Angle →
-Formula → Storyline Family → Formula Stage Plan → stage-native components →
-Compatibility → Full Master Storyboard → formula validation → narrative
-continuity → evidence/claim validation → duplicate/novelty → duration/WPS
-compiler → 8/16/24 projections → scenes/beats → review/approval →
-Storyboard Landbank → V2 materialization → production.
+Product Truth → Product Knowledge/Intelligence → Objective → Formula / Recipe
+→ Angle → Storyline Family → Formula Stage Plan → stage-native components →
+Master Storyboard → Duration Projection → Review → Storyboard Landbank.
+
+Strategic Angle records may exist independently as reviewed supply metadata.
+That exception does not authorize an authoring or generation run to create a
+Storyline Family or Hook/Body/Core/CTA components before Formula/Recipe is
+locked. Formula selection is upstream of the narrative route so every family,
+stage plan, and component is formula-aware.
+
+The complete validation and production order then applies:
+
+Compatibility → formula validation → narrative continuity →
+evidence/claim validation → duplicate/novelty → duration/WPS compiler →
+8/16/24 projections → scenes/beats → V2 materialization → production.
 
 The following are invalid:
 
@@ -295,16 +331,17 @@ FORMULA_STAGE_CONTRACT_INVALID.
 
 ## ANGLE MODEL
 
-An Angle is the strategic promise and audience/objective lens for a product.
-It is not a hook sentence, not a formula, and not a Storyline Family.
+An Angle is the stable strategic persuasion promise for a product. It is not a
+hook sentence, not a formula, not a Storyline Family, and not an identity that
+must multiply for every audience/persona or objective variation.
 
 Recommended logical fields:
 
 - angle_id and angle_revision;
 - product_id;
 - product truth snapshot ID/version/digest;
-- objective_id and objective definition;
 - angle definition/core promise;
+- objective_id and objective definition as a compatibility/context dimension;
 - intended audience or buyer-persona reference;
 - problem/pain context;
 - mechanism or reason-to-believe;
@@ -319,7 +356,9 @@ Recommended logical fields:
 
 Angle identity should be stable across component and storyboard revisions. A
 wording revision that changes the promise is a new angle revision or new angle
-ID, not a mutation of an approved angle.
+ID, not a mutation of an approved angle. Audience/persona and objective must
+still be captured and validated, but they do not explode Angle identity unless
+the strategic promise itself changes.
 
 The current Product Intelligence snapshot remains the source for acquired facts,
 buyer persona, allowed claims, blocked claims and angle signals. V3 may rank
@@ -327,28 +366,33 @@ those signals and ask an operator to choose or refine an angle, but it may not
 promote an unverified workbook line into Product Truth.
 
 The default compatibility boundary is one product + one current Product Truth
-snapshot + one objective + one angle. A component can be reusable across
-storyboards only when its angle identity and evidence lineage remain valid.
-Cross-angle use is blocked by default, including when the text sounds generic.
+snapshot + one objective/context + one Angle. A component can be reusable
+across storyboards only when its Angle identity and evidence lineage remain
+valid. Cross-angle use is blocked by default, including when the text sounds
+generic.
 
 ## STORYLINE FAMILY MODEL
 
-Storyline Family is the narrative route within one Angle. It answers “how does
-this promise unfold?” rather than “what promise is made?”
+Storyline Family is the formula-aware narrative route within one Angle. It
+answers “how does this promise unfold under the locked Formula/Recipe?” rather
+than “what promise is made?”
 
 A family is a versioned contract containing:
 
 - storyline_family_id and revision;
-- product, Product Truth, objective and angle lineage;
+- product, Product Truth, objective/context and angle lineage;
 - family definition and route summary;
 - ordered semantic beats;
 - permitted formula stage coverage;
 - required transitions and bridge keys;
+- entry and exit keys for compatibility with the locked Formula Stage Plan;
 - emotional/argument progression;
 - proof placement;
 - CTA handoff rule;
 - compatible scene/visual intent labels;
-- source and review receipt;
+- source: Product Intelligence, governed AI suggestion, or operator authoring;
+- reviewed definition and review receipt;
+- immutable approved revision;
 - digest and lifecycle state.
 
 Examples such as problem-led, proof-led, routine-led, demo-led, or
@@ -570,6 +614,17 @@ A 16-second projection may expose two 8-second execution blocks; a 24-second
 projection may expose three. These blocks are delivery allocations, not three
 independent authored stories.
 
+Every supported 8-second, 16-second, and 24-second copy projection must still
+contain a complete persuasion arc:
+
+HOOK + BODY/CORE + CTA.
+
+The projection compresses or expands the same Master Storyboard according to
+the selected Formula contract and canonical WPS authority. It never creates an
+unrelated new script. Formula remains the persuasion skeleton, Master
+Storyboard remains the narrative quality unit, and Duration Projection remains
+the production dialogue unit.
+
 A projection is not automatically a V2 blueprint. It is a validated V3 child
 that becomes a V2 draft only through explicit materialization.
 
@@ -577,7 +632,10 @@ that becomes a V2 draft only through explicit materialization.
 
 SceneProjection maps copy beats and duration blocks to visual execution
 references. It is a bridge object, not a replacement for Scene Choreography V2
-or Creative Treatment.
+or Creative Treatment. A recipe normally does not lock one scene. The Master
+and Duration Projection carry semantic/visual intent constraints; Production
+Studio selects among approved compatible Scene Choreography, Creative
+Treatment and visual variants under their separate authorities.
 
 Recommended fields:
 
@@ -586,6 +644,8 @@ Recommended fields:
 - scene strategy ID and selected choreography ID;
 - choreography SHA and catalog/library SHA;
 - scene context, camera route and character-presence compatibility;
+- semantic/visual intent constraints resolved from the Master and Duration
+  Projection;
 - ordered visual beat references;
 - product state and copy-intent mapping;
 - treatment/segment plan reference when already materialized;
@@ -627,15 +687,16 @@ Recommended fields:
 - recipe_id/version and name;
 - product or campaign scope;
 - objective;
-- allowed formula IDs/versions;
+- locked formula ID/version before Angle, Storyline Family, or component
+  generation;
 - angle selection policy;
 - storyline family selection policy;
 - component counts by class and stage;
 - target master/storyboard count;
 - target duration projections;
 - coverage requirements;
-- novelty/reuse policy;
-- scene/treatment policy;
+- versioned novelty/reuse policy;
+- semantic/visual compatibility constraints, not a normally fixed scene;
 - review policy;
 - capacity objective and shortfall behavior;
 - recipe digest and owner.
@@ -675,16 +736,18 @@ FAST54 candidate construction:
 
 1. Resolve current Product Truth.
 2. Select one explicit objective.
-3. Select one angle and one storyline family.
-4. Select one canonical formula/version.
-5. Select one of six Hook variants.
-6. Select one of three Body/Core routes.
-7. Select one of three CTA variants.
-8. Expand the selections into the formula's ordered stage plan.
-9. Compile one Master Storyboard.
-10. Run compatibility, bridge, evidence, safety, continuity, novelty and
+3. Lock one canonical Formula/Recipe.
+4. Select one strategic Angle compatible with that formula/recipe.
+5. Select or author one formula-compatible Storyline Family.
+6. Select one of six Hook variants.
+7. Select one of three Body/Core routes.
+8. Select one of three CTA variants.
+9. Expand the selections into the formula's ordered stage plan.
+10. Compile one Master Storyboard.
+11. Derive the requested Duration Projection(s).
+12. Run compatibility, bridge, evidence, safety, continuity, novelty and
     duration checks.
-11. Persist only a reviewable candidate/landbank artifact; never auto-approve.
+13. Persist only a reviewable candidate/landbank artifact; never auto-approve.
 
 The number 54 is a recipe target, not a guarantee. A candidate is removed from
 valid capacity if any required formula stage is missing, if the bridge fails,
@@ -884,9 +947,24 @@ The current copy coverage service correctly reports concentration and breadth
 relative to available angles. V3 extends the same principle to storyline family
 and formula-stage route. “Unique” must never be displayed as “diverse.”
 
-The existing REUSE_CAP = 15 is a legacy owner decision for CopySet rotation and
-must not silently become V3 policy. V3 usage is recorded by artifact and
-projection, with a recipe/production policy deciding whether reuse is allowed.
+The existing REUSE_CAP = 15 is a legacy CopySet-rotation rule only. V3 does
+not inherit it, and no V3 capacity or fatigue result may use that number by
+default.
+
+V3 reuse is controlled by a versioned Recipe Policy, with exact reuse and
+semantic fatigue treated as separate dimensions:
+
+| Policy dimension | Default and proof |
+|---|---|
+| Exact Duration Projection reuse within one P6 plan | Blocked. A controlled reuse policy must be explicitly enabled for the plan, with scope, reason, and reviewer/owner receipt. |
+| Exact projection reuse across P6 plans | Governed by the selected Recipe Policy and current Product Truth/evidence/formula validity; it is never implied by the existence of an approved row. |
+| Semantic fatigue | A separate concentration/fatigue signal over hooks, Body/Core mechanisms, CTAs, evidence and routes. It is not satisfied merely because exact text differs. |
+| Usage evidence | Every selected, materialized, bound, queued, started, reversed or reconciled use writes an append-only LandbankUsage event with the exact artifact/projection digest and scope. |
+
+The policy version, exact-reuse decision, semantic-fatigue thresholds and
+exception reason are part of the candidate, manifest and review receipts. A
+reuse decision cannot mutate an approved storyboard or silently change the
+active V2 pointer.
 
 ## COMPONENT LANDBANK
 
@@ -977,7 +1055,9 @@ Review Queue operations:
 - inspect scene mapping separately from copy;
 - edit/save DRAFT text or metadata;
 - regenerate a stage as a new revision;
-- approve an individual component, master, or selected projection;
+- approve a reusable component independently; for production-bound copy,
+  create one final V3 Human Approval Receipt over the resolved Master
+  Storyboard/selected Duration Projection;
 - reject with reason;
 - archive an approved artifact;
 - delete an unused, unreferenced DRAFT only;
@@ -1017,9 +1097,10 @@ Modes:
 
 ### CREATE
 
-Given product, objective, angle, storyline family and formula, create missing
-stage-native component drafts and compile one or more Master Storyboard
-candidates. Validate the full graph before submitting REVIEW_REQUIRED.
+Given product and objective, lock the Formula/Recipe, then resolve a compatible
+Angle and Storyline Family before creating missing stage-native component
+drafts and compiling one or more Master Storyboard candidates. Validate the
+full graph before submitting REVIEW_REQUIRED.
 
 ### EXPAND
 
@@ -1042,8 +1123,9 @@ Assistant contract:
 - uses an approved or reviewable angle and storyline family;
 - cites evidence per claim-bearing stage;
 - generates DRAFT or REVIEW_REQUIRED only;
-- stores provider receipt and prompt/version provenance if a future text-assist
-  implementation is authorized;
+- stores provider/model receipt, prompt/version provenance, run-level budget,
+  call count and cost/provider metrics if a future text-assist implementation
+  is authorized;
 - runs deterministic local formula, bridge, safety, continuity, WPS and novelty
   validation;
 - never auto-approves, activates, binds, queues, clicks Generate, or spends
@@ -1055,6 +1137,13 @@ The current V2 text-assist lane is explicit and reports zero media credit
 spend. That does not authorize calling it during this architecture task or
 authorize provider token use in a future implementation without the owner's
 separate policy.
+
+Any future authoring run must declare its provider/model configuration and
+run-level budget before execution, persist call and cost/provider receipts,
+and fail closed at the budget boundary. Authoring is explicit and
+operator-triggered; no uncontrolled background generation is permitted. Media
+provider credits remain zero by contract and are measured separately from any
+text-assist provider cost.
 
 ## COPY CAPACITY SERVICE
 
@@ -1143,18 +1232,84 @@ Current forensic path:
 
 Target V3 integration:
 
-1. Production Studio selects an APPROVED Storyboard Landbank projection, not a
-   raw component, legacy CopySet, or free-text override.
-2. The selection resolves to a V3 master/projection digest and current Product
-   Truth.
-3. An explicit materializer creates or retrieves the corresponding V2 DRAFT.
-4. The existing V2 approval, binding and activation gates run.
-5. P6 receives the V2 binding, approved execution text, projection lineage and
-   selected visual/treatment context.
-6. P6 builds the bounded content matrix and applies its existing DNA,
-   historical-combination, treatment, queue and credit controls.
-7. Queue/start revalidates Product Truth, V2 binding, projection/materialization
-   link, treatment hashes and lane readiness.
+1. Production Studio selects one or more APPROVED Storyboard Landbank
+   projections, not raw components, legacy CopySet rows, or free-text
+   overrides.
+2. For a multi-copy P6 plan, the selection is persisted as a governed
+   Production Copy Supply Manifest. The manifest is a bounded selection set,
+   not a new copy authority: each item points to a distinct V2
+   PRODUCTION_VALID blueprint/binding and its originating approved V3
+   projection.
+3. Each item must resolve to an approved V3 projection, valid V2
+   materialization, V2 PRODUCTION_VALID state, immutable V2 production approval
+   snapshot, current Product Truth/evidence/formula/WPS receipts, and a
+   successful compile/queue revalidation.
+4. The existing V2 approval, binding and product-global activation gates run.
+   The manifest does not mutate or replace the product-global active pointer;
+   the current interactive activation contract remains the default authority.
+5. P6 receives the manifest's bounded V2 supply, approved execution text,
+   projection lineage and selected visual/treatment context.
+6. P6 builds only the bounded content matrix and applies its existing DNA,
+   historical-combination, treatment, queue and credit controls. Exact
+   projection reuse within the plan is excluded unless the versioned Recipe
+   Policy explicitly permits it.
+7. Queue/start revalidates the manifest digest, every item and its V2 binding,
+   projection/materialization link, approval/truth/evidence/formula/WPS
+   digests, treatment hashes, duplicate exclusions, usage reservations and
+   lane readiness.
+
+### PRODUCTION COPY SUPPLY MANIFEST
+
+The manifest solves P6's multi-copy supply requirement without turning a
+product-global activation pointer into a repeated mutation loop. It is a
+governed selection and reservation record over existing authorities, not a
+replacement for V3, V2, Creative Treatment, Scene Choreography or P6.
+
+Manifest relationship:
+
+P6 Plan
+→ Production Copy Supply Manifest revision
+→ one or more immutable Manifest Items
+→ V2 PRODUCTION_VALID blueprint/binding
+→ originating approved V3 Duration Projection
+→ Product Truth/evidence/formula/WPS and approval receipts.
+
+Required manifest fields:
+
+| Field | Contract |
+|---|---|
+| manifest_id / revision / status | Stable identity and immutable revision. Statuses include DRAFT, VALIDATED, RESERVED, QUEUED, STARTED, ROLLED_BACK, RECONCILIATION_REQUIRED and CLOSED. |
+| p6_plan_id / product_id / plan scope | The manifest belongs to exactly one P6 plan, product and declared lane/campaign scope. |
+| item list and order | Bounded item IDs, deterministic order and a declared requested count. Each item references one V2 PRODUCTION_VALID blueprint/binding and one originating V3 projection revision. |
+| lineage refs | V3 master/projection IDs and digests; V2 blueprint, approval snapshot and binding IDs/digests; Product Truth, evidence, formula and WPS receipts; compile/queue validation receipt. |
+| duration and execution dimensions | Per-item duration, language, model/engine key as already selected by the downstream authority, visual/treatment/scene refs and resolved execution-text digest. |
+| immutable manifest_digest | Digest of the manifest revision, ordered items, all lineage digests, policy version, duplicate-exclusion snapshot and declared reservations. Any change creates a new revision. |
+| usage/capacity reservations | Requested and reserved capacity, exact-reuse decisions, semantic-fatigue snapshot, reservation token/expiry and append-only LandbankUsage event IDs. |
+| reviewer/actor/audit | Actor, request ID, timestamps, explicit scope, validation policy versions, exception set and rollback/reconciliation events. |
+
+Manifest rules:
+
+- A manifest may select only bounded V2 PRODUCTION_VALID A/B/C supply that
+  independently satisfies the V2 and V3 lineage requirements above.
+- A manifest is not approval. It cannot promote a V3 candidate, make a V2
+  draft valid, alter the product-global pointer, or bypass compile/queue
+  revalidation.
+- Exact duplicate projection digests, duplicate V2 binding identities and
+  already-consumed combinations are excluded unless the versioned Recipe
+  Policy contains an explicit controlled-reuse decision.
+- Reservations are provisional until queue/start. Queue/start revalidates
+  every item against current truth, evidence, formula, WPS, claim, safety,
+  treatment, binding and duplicate state; any mismatch fails closed and
+  releases or marks the reservation for reconciliation.
+- Rollback does not delete history. It appends reversal/reconciliation events,
+  marks affected items and usage events, and leaves already-started external
+  work to the existing P6 recovery contract.
+- Exact selection, materialization, binding, queue, start, reversal and
+  reconciliation each write LandbankUsage with the item/projection digest and
+  P6 plan scope. A count cannot be inferred from the manifest alone.
+- The manifest may contain multiple copies for one plan, but it does not
+  create one V2 blueprint per visual output or replace downstream
+  visual/scene-combination ledgers.
 
 For copy-required video and poster lanes, no raw V3 text may reach the engine.
 For explicitly copy-free image lanes, the existing COPY_NOT_REQUIRED policy
@@ -1163,38 +1318,93 @@ copy reuse policy silently.
 
 ## V2 MATERIALIZATION
 
-V2 materialization is an explicit adapter:
+V2 materialization is an explicit adapter with approval carry-forward:
 
-V3 Master Storyboard + selected Duration Projection
-→ V2 CopyBlueprintV2 DRAFT
-→ V2 validation
-→ human semantic review and readiness proof
-→ V2 PRODUCTION_VALID
-→ CopyExecutionBindingV2
-→ explicit activation/selection.
+Approved V3 Duration Projection
++ immutable V3 Human Approval Receipt
+        ↓
+V2 Materializer
+        ↓
+V2 deterministic revalidation
+        ↓
+V2 immutable production approval snapshot referencing the genuine V3 receipt
+        ↓
+PRODUCTION_VALID
+        ↓
+CopyExecutionBindingV2 and explicit lane selection.
 
-Materialization rules:
+The final human semantic approval for production-bound V3 copy occurs over the
+resolved full storyboard/duration projection that the operator can actually
+read. The review surface must show Product, Objective, Formula, Angle,
+Storyline Family, ordered formula stages, resolved Hook, resolved Body/Core,
+resolved CTA, evidence/claim lineage, exact resolved dialogue, target duration,
+WPS validation, duplicate/novelty result, and safety/result status.
 
-- Lazy materialization is the default. Do not create a V2 blueprint for every
-  theoretical combination.
-- Materialize only a selected approved projection or an explicitly selected
-  review batch.
-- Preserve V3 master ID/revision, projection ID/revision, recipe ID/revision,
-  component revisions, storyline family, and digests in structured provenance.
-- Map every V3 FormulaStagePlan node to an ordered V2 FormulaStage.
-- Preserve V3 evidence references as current V2 evidence references.
-- Set target duration/WPS only from canonical V2/compiler authority.
-- Resolve derived Hook/Body/CTA only as V2 projections.
-- Do not rewrite or flatten a multi-stage formula into three text slots.
-- Run V2 Product Truth/evidence/current-authority validation again at
-  materialization time.
-- Materialization creates a V2 DRAFT. It never creates an approved V2 row.
-- V2 approval and activation remain human and explicit.
+The immutable V3 Human Approval Receipt contains at minimum:
 
-One V2 blueprint may be bound to the required lanes according to the current
-V2 activation contract. V3 must not create one V2 blueprint per visual output
-or per P6 item. Output-level uniqueness belongs to P6's dialogue/visual/
-scene combination ledger.
+- receipt ID and schema/policy version;
+- storyboard ID/revision and projection ID/revision;
+- batch ID/digest when approval is a batch approval;
+- candidate IDs and individual resolved-content digests;
+- exact resolved text digest;
+- Product Truth snapshot digest;
+- formula ID/version and evidence digest;
+- WPS profile/block-plan digest;
+- validator versions and complete machine-gate result;
+- reviewer identity, timestamp, rationale and approval scope.
+
+Carry-forward rules:
+
+1. The V3 materializer resolves the exact approved projection text and stage
+   plan; it does not regenerate or normalize text.
+2. The materializer creates a formula-native V2 DRAFT carrying structured V3
+   storyboard/projection/receipt lineage.
+3. V2 revalidates the exact text digest, Product Truth currentness, evidence
+   currentness, formula ID/version, WPS/block plan, claim/safety gates and
+   complete lineage.
+4. If every deterministic check passes, V2 persists its immutable production
+   approval snapshot with semantic approval source
+   V3_HUMAN_APPROVAL_RECEIPT and the receipt ID/digest.
+5. This is propagation of an actual human decision over identical immutable
+   text. It is not automatic approval.
+6. If any text, digest, Product Truth, evidence, formula, WPS, safety, or
+   lineage value changes, V2 fails closed and a new human semantic review is
+   required.
+
+The current V2 service/API contract therefore needs a future, additive
+carry-forward variant:
+
+- Extend the typed V2 approval input with an explicit approval mode:
+  DIRECT_V2_HUMAN or V3_RECEIPT_CARRY_FORWARD.
+- Add a typed V3 receipt reference containing receipt ID, receipt digest,
+  storyboard/projection revisions and exact text digest. Do not encode this
+  only as an unvalidated note.
+- Extend CopyBlueprintV2 approval snapshot and CopyExecutionBindingV2
+  lineage to retain the genuine V3 receipt reference and source.
+- Add a materialization/approval service path that loads the receipt and
+  projection, reconstructs the exact V2 ordered stages, and performs the
+  deterministic revalidation before persisting PRODUCTION_VALID.
+- Teach the V2 validator to consume a valid V3 receipt as semantic approval
+  evidence. It must not populate the existing SemanticReviewProof as if a
+  second V2 reviewer performed the same semantic review, and it must not
+  fabricate semantic-review booleans.
+- Keep direct V2 authoring on the existing human semantic-review path.
+- Return explicit failure codes such as
+  V3_APPROVAL_RECEIPT_NOT_FOUND, V3_APPROVAL_RECEIPT_SCOPE_MISMATCH,
+  V3_APPROVAL_TEXT_DIGEST_MISMATCH, V3_APPROVAL_TRUTH_STALE,
+  V3_APPROVAL_EVIDENCE_STALE, V3_APPROVAL_FORMULA_STALE,
+  V3_APPROVAL_WPS_STALE, and V3_APPROVAL_LINEAGE_INCOMPLETE.
+
+No API or service change is implemented by this document. The V2 service
+remains the production authority and must never accept a carry-forward receipt
+without exact deterministic revalidation.
+
+Lazy materialization remains the default. Do not create a V2 blueprint for
+every theoretical combination; materialize only a selected approved projection
+or an explicitly selected review batch. One V2 blueprint may be bound to the
+required lanes according to the current V2 activation contract. V3 must not
+create one V2 blueprint per visual output or per P6 item. Output-level
+uniqueness belongs to P6's dialogue/visual/scene combination ledger.
 
 Approved V2 text is immutable. If an operator changes a V3 source after
 materialization, the correct result is a new V3 revision and a new V2 draft;
@@ -1202,15 +1412,35 @@ there is no in-place synchronization of approved text.
 
 ## APPROVAL / IMMUTABILITY
 
-There are three distinct governance layers:
+There are two human-governance points and one deterministic production
+revalidation boundary:
 
-1. Component approval: the reusable component is safe and correctly
+1. Optional component review: the reusable component is safe and correctly
    evidence-bound for its declared stage/identity.
-2. Storyboard approval: the complete master and selected projection are
-   coherent, novel enough for the recipe, and ready for V2 materialization.
-3. V2 production approval: the materialized ordered-stage blueprint passes
-   current V2 validation, semantic review, readiness proof and immutable
-   approval snapshot.
+2. V3 Human Approval Receipt: the resolved full Master
+   Storyboard/Duration Projection is readable and receives the final human
+   semantic decision for production-bound copy.
+3. V2 production revalidation: the materialized ordered-stage blueprint is
+   checked against the immutable V3 receipt and current authorities. V2 then
+   persists its immutable production approval snapshot and remains the
+   production authority. This is not a second semantic review.
+
+The V3 receipt must bind the exact storyboard revision, projection revision,
+resolved text digest, Product Truth digest, formula version, evidence digest,
+WPS digest, validator versions, reviewer, timestamp and policy/version. For a
+batch, it additionally binds the batch digest, candidate IDs and each
+candidate's individual content digest.
+
+Bulk approval is explicit and exception-first:
+
+- 54 candidates may compile;
+- 52 machine-clean candidates may be shown with samples and approved by one
+  explicit human batch confirmation;
+- 2 exceptions remain outside the batch and require individual or explicit
+  group review;
+- no candidate becomes APPROVED before the batch receipt is persisted;
+- the receipt's policy/version and exact candidate digests make the action
+  auditable and idempotent.
 
 Approval invariants:
 
@@ -1222,8 +1452,12 @@ Approval invariants:
 - Current Product Truth drift marks artifacts stale/blocked; it never rewrites
   their historical content.
 - Approval records actor, timestamp, rationale, input snapshot/digest and
-  validator versions.
-- Bulk review cannot become invisible bulk approval.
+  validator versions. The final V3 semantic approval record is the immutable
+  receipt described above.
+- Bulk review cannot become invisible bulk approval, and machine-clean status
+  cannot be treated as human approval without the explicit batch receipt.
+- V2 carry-forward cannot proceed if any receipt, text, truth, evidence,
+  formula, WPS, safety or lineage digest changes.
 - Activation changes a pointer/selection, not an immutable artifact.
 - Production binding is a receipt over approved inputs, not a permission to
   mutate those inputs.
@@ -1291,6 +1525,12 @@ Identity/revision, campaign scope, dimensions, formulas, angles, storyline
 policy, count targets, duration targets, novelty/reuse policy, review policy,
 capacity snapshot and owner.
 
+The recipe's reuse/novelty policy is versioned and must explicitly distinguish
+exact projection reuse from semantic fatigue. It carries the default block on
+exact reuse within one P6 plan, any controlled-reuse exception, cross-plan
+scope, thresholds, and the policy digest used by candidate, review and
+manifest receipts.
+
 ### storyboard_candidate_v3 or equivalent review envelope
 
 A generated candidate should have a stable ID, master/projection references,
@@ -1298,11 +1538,36 @@ recipe/run ID, full gate receipt, exception list, digest, status and actor
 events. This may be a physical table or a review read model over the master and
 projection tables; it must not duplicate the entire text payload.
 
+### v3_human_approval_receipt
+
+An append-only immutable receipt for the final human semantic decision over a
+resolved full Master Storyboard/Duration Projection. It references exact
+storyboard/projection revisions and binds the resolved text, Product Truth,
+formula, evidence, WPS/block plan, validator versions, policy version,
+reviewer, timestamp, rationale and batch/candidate digests. A receipt is
+invalid outside its exact scope; any digest mismatch requires a new human
+review.
+
+### production_copy_supply_manifest_v3 and manifest_item_v3
+
+An immutable, revisioned P6 selection set in the same canonical database. The
+manifest belongs to one P6 plan and contains bounded items, each referencing a
+V2 PRODUCTION_VALID blueprint/binding and its approved V3 projection lineage.
+Fields include deterministic order, duration/language/execution dimensions,
+approval/truth/evidence/formula/WPS/compile/queue digests, duplicate exclusion
+snapshot, Recipe Policy version, usage/capacity reservations, manifest digest,
+status, actor and rollback/reconciliation events. It is a selection/reservation
+record, not a new approval or production authority.
+
 ### landbank_usage_v3
 
-Append-only usage events for component, master, projection, V2 materialization,
-P6 selection and downstream combination. Include actor, lane, campaign,
-request ID, input digest, outcome and reversal/dead-state evidence.
+Append-only exact-use events for component, master, projection, V2
+materialization, manifest selection, reservation, queue, start, reversal and
+downstream combination. Include actor, lane, campaign, P6 plan/item, request
+ID, input/output digest, Recipe Policy version, outcome and
+reversal/reconciliation/dead-state evidence. This ledger is the usage authority
+for exact reuse accounting; semantic fatigue remains a separate derived
+signal.
 
 ### review_event_v3 and materialization_link_v3
 
@@ -1317,6 +1582,8 @@ Keys and indexes:
 - evidence fact and truth snapshot indexes;
 - digest indexes for exact dedupe;
 - parent/child indexes for master → projection → materialization;
+- approval receipt indexes by exact storyboard/projection/batch digest;
+- manifest/item indexes by P6 plan, product, status, reservation and V2 binding;
 - append-only event indexes by request ID and actor;
 - no uniqueness rule that treats a formula label as a new text combination when
   the resolved stage text is identical.
@@ -1328,6 +1595,9 @@ Storage rules:
 - Store references and digests instead of copying visual/choreography payloads.
 - Use one canonical database. Do not create a parallel V3 database.
 - Use transactions for candidate batch creation and review status transitions.
+- Do not retrofit V3 stage semantics or BODY/CORE authority into legacy
+  `copy_component`; new V3 records carry their own versioned contract and
+  lineage.
 - Preserve legacy rows and their migration receipts; do not mutate them to look
   like V3.
 
@@ -1347,6 +1617,8 @@ Read contracts:
 - GET /api/storyboard-landbank/v3/storyboards/{id}
 - GET /api/storyboard-landbank/v3/storyboards/{id}/projections
 - GET /api/storyboard-landbank/v3/capacity/{run_id}
+- GET /api/storyboard-landbank/v3/approval-receipts/{id}
+- GET /api/storyboard-landbank/v3/production-supply-manifests/{id}
 
 Authoring/compile contracts:
 
@@ -1365,14 +1637,37 @@ Review contracts:
 - POST /api/storyboard-landbank/v3/review/{id}/archive
 - DELETE /api/storyboard-landbank/v3/drafts/{id}
 - POST /api/storyboard-landbank/v3/review/bulk-validate
-- POST /api/storyboard-landbank/v3/review/bulk-approve
+- POST /api/storyboard-landbank/v3/review/{id}/human-semantic-approve
+- POST /api/storyboard-landbank/v3/review/bulk-confirm-machine-clean
 
 Materialization/selection contracts:
 
 - POST /api/storyboard-landbank/v3/projections/{id}/materialize-v2
 - GET /api/storyboard-landbank/v3/materializations/{id}
 - POST /api/storyboard-landbank/v3/production-selections
+- POST /api/storyboard-landbank/v3/production-supply-manifests
+- POST /api/storyboard-landbank/v3/production-supply-manifests/{id}/validate
+- POST /api/storyboard-landbank/v3/production-supply-manifests/{id}/reserve
+- POST /api/storyboard-landbank/v3/production-supply-manifests/{id}/rollback
 - POST /api/storyboard-landbank/v3/capacity/refresh
+
+Contract semantics:
+
+- `human-semantic-approve` resolves and displays the full storyboard/projection
+  review surface, then persists one immutable V3 Human Approval Receipt. It is
+  the semantic approval boundary; it is not a machine-only promotion route.
+- `bulk-confirm-machine-clean` accepts an explicit human confirmation payload
+  containing the batch digest, clean candidate IDs, individual candidate
+  digests, reviewer, timestamp, policy version and exception set. It cannot
+  include an exception candidate and cannot activate V2.
+- `materialize-v2` requires a genuine receipt reference and exact scope. The
+  V2 service performs deterministic carry-forward revalidation and persists
+  its own immutable production approval snapshot; the V3 route cannot write
+  V2 approval state directly.
+- Manifest creation accepts only bounded V2 PRODUCTION_VALID items with the
+  lineage and reservation fields defined above. Validate/reserve/rollback are
+  idempotent state transitions and never promote copy or mutate the
+  product-global activation pointer.
 
 Every mutating contract requires:
 
@@ -1437,6 +1732,13 @@ Provide:
 - exact/near duplicate and coverage warnings;
 - edit draft, regenerate stage, approve, reject, archive and safe delete;
 - bulk validation and exception-first review;
+- final human semantic review of the resolved Product/Objective/Formula/Angle/
+  Storyline/stage/Hook/Body-Core/CTA/evidence/dialogue/duration/WPS/safety
+  surface before receipt creation;
+- immutable V3 Human Approval Receipt details, exact digests and validator
+  versions;
+- explicit machine-clean batch confirmation with clean candidates and
+  exceptions shown separately;
 - explicit reviewer identity and rationale.
 
 ### 4. Storyboard Landbank
@@ -1447,7 +1749,11 @@ Provide:
 - current/stale/blocked status against Product Truth;
 - usage/fatigue and novelty distribution;
 - materialization state into V2;
-- “Select for Production” action that opens V2 materialization/review;
+- V3 receipt and V2 carry-forward status;
+- “Select for Production” action that opens V2 materialization/review or a
+  governed multi-copy Production Copy Supply Manifest;
+- manifest items, reservations, duplicate exclusions, queue/start status and
+  rollback/reconciliation state;
 - no direct Generate action.
 
 ### AI Assistant surface
@@ -1478,8 +1784,10 @@ Rules:
 - Store only candidates that pass minimum machine gates or are explicitly
   needed for review; keep rejected/excluded receipts compact.
 - Materialize V2 lazily for selected projections.
-- Reuse one V2 blueprint across compatible visual outputs; output-level
-  uniqueness remains downstream.
+- Reuse one V2 blueprint across compatible visual outputs only when the
+  versioned Recipe Policy and manifest scope permit it; exact projection reuse
+  within one P6 plan is blocked by default and output-level uniqueness remains
+  downstream.
 - Cache Product Truth/evidence/formula snapshots by digest.
 - Cache compatibility and capacity by recipe/input digest.
 - Use exact fingerprint indexes for fast exclusion.
@@ -1512,13 +1820,15 @@ Performance metrics:
 
 ## MIGRATION STRATEGY
 
-### Phase 0 — owner review and contract freeze
+### Phase 0 — owner ruling closure and contract freeze
 
-Approve the decisions in this document. Freeze the FormulaDefinition shape,
-Angle/Storyline identity rule, projection approval rule, usage policy and V2
-materialization boundary.
+Approve and merge this documentation amendment. Freeze the FormulaDefinition
+shape, Formula-first authoring order, Angle/Storyline identity rule, final V3
+receipt and V2 carry-forward boundary, Recipe Policy reuse rule, P6 manifest
+contract and scene/provider separation.
 
-Exit gate: architecture approval recorded; no runtime changes.
+Exit gate: architecture owner approval and documentation PR merge recorded; no
+runtime changes.
 
 ### Phase 1 — read-only forensic adapters
 
@@ -1646,6 +1956,7 @@ calls:
 ### Duration/WPS
 
 - 8, 16 and 24 projections derive from one master;
+- every supported projection contains a complete Hook + Body/Core + CTA arc;
 - 16 uses the canonical two-block plan and 24 the canonical three-block plan
   where the authority says so;
 - unsupported duration/language/WPS fails closed;
@@ -1661,6 +1972,12 @@ calls:
   fail closed;
 - Creative Treatment remains separate and immutable;
 - P6 accepts only approved V2-backed selected projections;
+- a multi-copy manifest selects bounded V2 PRODUCTION_VALID A/B/C items,
+  preserves each V3/V2 receipt lineage and does not mutate the product-global
+  activation pointer;
+- duplicate exclusion, exact-reuse policy, capacity reservations,
+  queue/start revalidation and rollback/reconciliation are deterministic;
+- each exact selection/materialization/queue/start/reversal writes LandbankUsage;
 - exact DNA, historical exclusions, treatment hashes and lane capacity are
   preserved;
 - no live start or credit spend occurs in tests.
@@ -1669,7 +1986,13 @@ calls:
 
 - approved artifacts cannot be edited or deleted;
 - revisions preserve parents and supersession;
-- bulk approval is explicit and auditable;
+- final semantic approval creates one immutable V3 receipt over the resolved
+  full storyboard/projection;
+- V2 carry-forward revalidates exact text/truth/evidence/formula/WPS/claim/
+  safety/lineage and retains the genuine receipt without fabricated review
+  booleans;
+- bulk approval is explicit, binds clean candidates and individual digests,
+  and leaves exceptions outside the receipt;
 - stale Product Truth blocks use without mutating history;
 - materialization is idempotent and records V3 → V2 lineage;
 - no parallel database or untracked table is introduced.
@@ -1694,57 +2017,55 @@ calls:
 | Product Truth changes after approval | Claims become stale | Snapshot/digest lineage and revalidation at every boundary. |
 | WPS values drift | Dialogue overruns or CTA disappears | Use the retained WPS/block authority and canonical compiler only. |
 | Scene copy is confused with choreography | Visual action contradicts product/scene law | SceneProjection references current Scene Choreography/Treatment; no duplicate authority. |
-| AI assistant auto-approves or routes to production | Governance and credit risk | DRAFT/REVIEW_REQUIRED only, human V2 approval remains required. |
-| V2 activation is global while V3 is campaign-scoped | One campaign changes another's active V2 pointer | Keep current V2 scope until owner approves a scoped activation model. |
-| Reuse cap is inherited silently | Capacity and fatigue are misreported | Make V3 usage policy explicit in recipe and owner decisions. |
+| AI assistant auto-approves or routes to production | Governance and credit risk | DRAFT/REVIEW_REQUIRED only; the V3 human receipt and deterministic V2 carry-forward remain mandatory. |
+| V2 activation is global while V3 is campaign-scoped | One campaign changes another's active V2 pointer | Keep product-global activation as the default interactive V2 authority; use the bounded P6 manifest for multi-copy supply without pointer mutation. |
+| Reuse cap is inherited silently | Capacity and fatigue are misreported | Do not inherit REUSE_CAP=15; use the versioned Recipe Policy, separate exact/semantic signals and append-only LandbankUsage. |
 | Candidate storage explodes | Slow review and database growth | Lazy projections/materialization, bounded candidate runs, indexed digests. |
 | Near-duplicate detector overblocks | Valid variety is lost | Keep exact duplicate hard; near duplicate a configurable review signal unless policy says otherwise. |
 | Legacy import appears approved | Historical unsafe copy enters supply | Import as DRAFT, rebind to current truth, require review. |
-| P6 matrix remains Cartesian | V3 improvements are lost downstream | Select bounded V2-backed projections before P6 materialization. |
+| P6 matrix remains Cartesian | V3 improvements are lost downstream | Select a bounded multi-copy V2-backed manifest before P6 materialization; revalidate and reserve each item. |
 | Workbook is mistaken for truth | Unverified sample claims reach production | Workbook remains reference only; Product Truth gate is authoritative. |
 
 ## OWNER DECISIONS
 
-Only the following decisions remain because they change product behavior or
-governance:
+All owner rulings requested by the amendment are resolved in this document and
+in the `ARCHITECTURE AMENDMENT — OWNER RULINGS APPLIED` table above:
 
-1. V3 physical storage shape: extend the current atomic component table with
-   explicit versioned stage semantics, or add new V3 tables in the same
-   canonical database. Recommendation: new versioned V3 records, preserving
-   the current legacy vocabulary and rows.
-2. Angle identity granularity: promise/pain only, or promise/pain × audience.
-   Recommendation: make audience/objective part of compatibility while keeping
-   the strategic Angle identity stable enough to support breadth reporting.
-3. Storyline Family authority: Product Intelligence-derived, operator-authored,
-   or both with a registration workflow. Recommendation: both, but every
-   family needs an immutable reviewed definition and compatibility contract.
-4. Canonical family taxonomy: which family labels and transitions are initially
-   allowed. The repository currently supplies no final V3 taxonomy.
-5. Formula promotion: whether any current operator-review formula may become
-   production canonical, and what proof is required. Recommendation: none
-   until the registry and compiler contract are explicitly promoted.
-6. Projection approval: whether Master approval plus mechanical projection
-   validation is sufficient, or whether each selected 8/16/24 projection
-   needs independent human approval. Recommendation: require an explicit
-   projection confirmation before V2 materialization because duration changes
-   resolved text and WPS allocation.
-7. Cross-storyline policy: whether any cross-family composition is permitted.
-   Recommendation: blocked by default; require explicit compatibility proof.
-8. V3 reuse/fatigue policy: whether a new cap, per-recipe cap, or no exact
-   reuse is allowed. Recommendation: do not inherit the legacy 15 cap without
-   a V3 owner decision.
-9. Activation scope: retain current product-global all-required-lane V2
-   activation, or introduce campaign/lane-scoped authority. Recommendation:
-   retain current V2 scope during initial V3 adoption.
-10. Bulk approval policy: one human confirmation for a fully validated batch,
-    or human confirmation per exception group/projection. Recommendation:
-    batch approval may cover machine-clean rows only; exceptions require
-    explicit review.
-11. Scene coupling: whether a recipe selects a fixed scene/treatment family or
-    lets Production Studio choose among approved compatible variants.
-12. Future text-assist budget and provider policy: whether V3 authoring may use
-    the existing text-assist lane, with what token budget, receipts and
-    operator confirmation. This is separate from Google Flow media credits.
+- Formula/Recipe locks before Angle, Storyline Family and components for every
+  authoring/generation run.
+- V3 uses additive versioned records in the same canonical database; legacy
+  `copy_component` remains historical/maintenance evidence.
+- Angle identity is stable strategic persuasion; audience/persona/objective are
+  compatibility/context dimensions.
+- Storyline Families may be proposed by Product Intelligence, governed AI or
+  operators, but require reviewed, immutable, formula-compatible revisions;
+  cross-storyline composition is blocked by default.
+- Only CANONICAL formula registry definitions can reach production.
+- One final human semantic decision covers the resolved full storyboard and
+  projection and creates the immutable V3 Human Approval Receipt.
+- V2 remains production authority and carries that genuine receipt through
+  deterministic exact-text/truth/evidence/formula/WPS/claim/safety/lineage
+  revalidation; no second semantic-review boolean is fabricated.
+- Machine-clean bulk candidates require one explicit batch receipt; exceptions
+  remain explicit.
+- V3 does not inherit `REUSE_CAP=15`; exact and semantic reuse are governed
+  separately by a versioned Recipe Policy and LandbankUsage.
+- P6 multi-copy supply uses a bounded Production Copy Supply Manifest over
+  existing V2 `PRODUCTION_VALID` supply without mutating the product-global
+  activation pointer.
+- Recipes constrain semantic/visual compatibility; Production Studio owns
+  selection among approved Scene Choreography, Creative Treatments and visual
+  variants.
+- Provider/model/budget choice is intentionally not selected here. Any future
+  authoring call must be explicit, run-budgeted, receipted, measured,
+  media-credit-free and never uncontrolled background work.
+- Every supported 8/16/24 projection preserves a complete Hook + Body/Core +
+  CTA arc from the same Master Storyboard.
+
+No unresolved owner decisions remain for this architecture amendment. A future
+change to these rulings or to an existing production authority requires a new
+owner-reviewed amendment/ADR; formula taxonomy and provider configuration are
+implementation-time inputs, not permission to alter this contract.
 
 Resolved by current repository authority and therefore not owner decisions here:
 
@@ -1764,7 +2085,7 @@ The implementation sequence is intentionally gated:
 
 | Phase | Deliverable | Non-negotiable exit gate |
 |---|---|---|
-| 0 | Owner decisions and contract amendment | No unresolved authority conflict. |
+| 0 | Documentation amendment and architecture-owner approval | Owner approves/merges the documentation PR; no runtime changes. |
 | 1 | Read-only forensic adapters and supply gap report | Existing V2/P6 behavior unchanged; zero provider/media calls. |
 | 2 | Same-DB V3 logical schema, digests, statuses and pure validators | Formula, truth, evidence, bridge, continuity and immutability tests pass. |
 | 3 | Angle/Storyline/Component Landbank | No ungrounded or auto-approved component; current truth lineage present. |
@@ -1778,6 +2099,11 @@ The implementation sequence is intentionally gated:
 No phase may skip the current repository contracts to reach a visual demo.
 Generation, live UAT and media credit spend remain separate authorization
 events after the architecture and local gates are complete.
+
+Phase 1 has not started. It may begin only after this architecture amendment
+is owner-approved and merged; this document authorizes no implementation,
+provider configuration, migration, materialization, manifest mutation or
+production dispatch.
 
 STATUS:
 ARCHITECTURE_REVIEW_READY
