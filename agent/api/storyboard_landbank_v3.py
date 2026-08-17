@@ -1,8 +1,8 @@
-"""Macro Round 1 V3 Copy Factory API.
+"""V3 Copy Factory + Macro Round 2 Copy Register API.
 
-The router is deliberately limited to authority, supply, authoring DRAFTs,
-deterministic compile/preview, capacity, and read models.  Approval, V2
-materialization, P6, media, and provider endpoints do not exist here.
+Round 2 adds only explicit assistant planning/execution, bounded review reads,
+and immutable human approval receipts.  V2 materialization, P6, media, and
+activation endpoints remain deliberately absent.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from agent.services.storyboard_landbank_v3_factory import (
     V3CopyFactoryService,
     V3FactoryError,
 )
+from agent.services.storyboard_landbank_v3_round2 import round2_service
 
 
 router = APIRouter(prefix="/storyboard-landbank/v3", tags=["storyboard-landbank-v3"])
@@ -404,6 +405,163 @@ async def get_capacity(recipe_id: str, evaluation_limit: int = Query(default=250
 async def preview_capacity(payload: dict[str, Any]):
     try:
         return _dump(await service.capacity(str(payload.get("recipe_id") or ""), revision=payload.get("revision"), evaluation_limit=int(payload.get("evaluation_limit") or 250)))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/copy-register/provider-status")
+async def get_v3_copy_register_provider_status():
+    """Secret-free status for the reused text_assist lane; never calls it."""
+
+    return {**_dump(round2_service.provider_status()), "provider_calls": 0, "credit_spend": 0}
+
+
+@router.post("/copy-register/assistant/plan")
+async def plan_v3_copy_assistant(request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, _source = _meta(request, payload)
+        plan = await round2_service.plan_assistant(
+            str(payload.get("product_id") or ""),
+            str(payload.get("recipe_id") or ""),
+            mode=str(payload.get("mode") or "CREATE").upper(),
+            actor_id=actor_id,
+            request_id=request_id,
+            revision=payload.get("revision"),
+            additional_count=int(payload.get("additional_count") or 1),
+            semantic_class=payload.get("semantic_class"),
+            target_counts=payload.get("target_counts"),
+            max_provider_calls=int(payload.get("max_provider_calls") if payload.get("max_provider_calls") is not None else 1),
+            max_output_tokens=int(payload.get("max_output_tokens") if payload.get("max_output_tokens") is not None else 20000),
+            max_cost=int(payload.get("max_cost") if payload.get("max_cost") is not None else 0),
+        )
+        return {"plan": _dump(plan), "provider_calls": 0, "credit_spend": 0}
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/copy-register/assistant/plans/{plan_id}")
+async def get_v3_copy_assistant_plan(plan_id: str):
+    try:
+        return {"plan": _dump(await round2_service._load_plan(plan_id)), "provider_calls": 0}
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/copy-register/assistant/plans/{plan_id}/prompt-preview")
+async def preview_v3_copy_assistant_prompt(plan_id: str):
+    try:
+        return {"preview": _dump(await round2_service.prompt_preview(plan_id)), "provider_calls": 0, "credit_spend": 0}
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/copy-register/assistant/plans/{plan_id}/execute")
+async def execute_v3_copy_assistant(request: Request, plan_id: str, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, _source = _meta(request, payload)
+        mode = str(payload.get("provider_mode") or "LIVE_TEXT_ASSIST").upper()
+        if mode not in {"LIVE_TEXT_ASSIST", "FAKE_TEST"}:
+            raise V3FactoryError("PROVIDER_MODE_INVALID", "provider_mode must be LIVE_TEXT_ASSIST or FAKE_TEST.", status_code=422)
+        return await round2_service.execute_assistant(
+            plan_id,
+            actor_id=actor_id,
+            request_id=request_id,
+            provider_mode=mode,  # type: ignore[arg-type]
+        )
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/copy-register/runs/{product_id}")
+async def list_v3_copy_assistant_runs(product_id: str, limit: int = Query(default=50, ge=1, le=100), offset: int = Query(default=0, ge=0)):
+    try:
+        return await round2_service.list_runs(product_id, limit=limit, offset=offset)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/copy-register/landbank")
+async def get_v3_copy_register_landbank(
+    product_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    status: str | None = None,
+    formula_id: str | None = None,
+    angle_id: str | None = None,
+    storyline_family_id: str | None = None,
+    duration_seconds: int | None = Query(default=None, ge=1),
+    source: str | None = None,
+    quality: str | None = None,
+    blocker: str | None = None,
+    recipe_id: str | None = None,
+    search: str | None = None,
+):
+    try:
+        return await round2_service.copy_register_landbank(
+            product_id, limit=limit, offset=offset, status=status, formula_id=formula_id,
+            angle_id=angle_id, storyline_family_id=storyline_family_id, duration_seconds=duration_seconds,
+            source=source, quality=quality, blocker=blocker, recipe_id=recipe_id, search=search,
+        )
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/copy-register/review-queue")
+async def get_v3_copy_register_review_queue(
+    product_id: str,
+    status: list[str] | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    formula_id: str | None = None,
+    angle_id: str | None = None,
+    storyline_family_id: str | None = None,
+    duration_seconds: int | None = Query(default=None, ge=1),
+    source: str | None = None,
+    quality: str | None = None,
+    blocker: str | None = None,
+    recipe_id: str | None = None,
+    search: str | None = None,
+):
+    try:
+        return await round2_service.review_queue(
+            product_id, statuses=tuple(status or ("DRAFT", "REVIEW_REQUIRED", "VALIDATED", "BLOCKED")),
+            limit=limit, offset=offset, formula_id=formula_id, angle_id=angle_id,
+            storyline_family_id=storyline_family_id, duration_seconds=duration_seconds,
+            source=source, quality=quality, blocker=blocker, recipe_id=recipe_id, search=search,
+        )
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/copy-register/approval/master/{master_id}")
+async def approve_v3_master_storyboard(request: Request, master_id: str, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, _source = _meta(request, payload)
+        return await round2_service.human_approve(
+            master_id,
+            projection_ids=payload.get("projection_ids") or [],
+            checklist=payload.get("checklist") or {},
+            approved_by=str(payload.get("approved_by") or actor_id),
+            rationale=str(payload.get("rationale") or ""),
+            actor_id=actor_id,
+            request_id=request_id,
+        )
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/copy-register/approval/batch")
+async def approve_v3_master_batch(request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, _source = _meta(request, payload)
+        return await round2_service.human_approve_batch(
+            targets=payload.get("targets") or [],
+            checklist=payload.get("checklist") or {},
+            approved_by=str(payload.get("approved_by") or actor_id),
+            rationale=str(payload.get("rationale") or ""),
+            actor_id=actor_id,
+            request_id=request_id,
+        )
     except V3FactoryError as exc:
         raise _error(exc) from exc
 

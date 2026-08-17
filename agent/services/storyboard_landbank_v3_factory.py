@@ -1072,7 +1072,10 @@ def _row_to_entity(entity_type: str, row: Mapping[str, Any]) -> Any:
             master_stage_keys=tuple(_loads(data.get("master_stage_keys_json"), [])),
             master_stage_text_digests=tuple(_loads(data.get("master_stage_text_digests_json"), [])),
             master_exact_content_digest=data["master_exact_content_digest"],
-            exact_projection_digest=data["exact_projection_digest"], status=data["status"], source=data["source"],
+            exact_projection_digest=data["exact_projection_digest"],
+            derivation_source=data.get("derivation_source") or "DETERMINISTIC",
+            authoring_run_id=data.get("authoring_run_id"),
+            status=data["status"], source=data["source"],
             supersedes=supersedes, created_at=data["created_at"], created_by=data["created_by"],
         )
     if entity_type == "REVIEW_EVENT":
@@ -1208,7 +1211,10 @@ def _entity_row(model: Any) -> tuple[str, dict[str, Any]]:
             "master_stage_keys_json": _json(list(model.master_stage_keys)),
             "master_stage_text_digests_json": _json(list(model.master_stage_text_digests)),
             "master_exact_content_digest": model.master_exact_content_digest,
-            "exact_projection_digest": model.exact_projection_digest, "status": model.status, "source": model.source,
+            "exact_projection_digest": model.exact_projection_digest,
+            "derivation_source": model.derivation_source,
+            "authoring_run_id": model.authoring_run_id,
+            "status": model.status, "source": model.source,
             "supersedes_projection_id": model.supersedes.entity_id if model.supersedes else None,
             "supersedes_projection_revision": model.supersedes.revision if model.supersedes else None,
             "created_at": model.created_at, "created_by": model.created_by,
@@ -1315,10 +1321,11 @@ class V3CopyFactoryRepository:
         event_type: str = "CREATED",
         reason: str | None = None,
         from_status: str | None = None,
+        approval_receipt_id: str | None = None,
     ) -> Any:
         if not actor_id or not request_id or not source:
             raise V3FactoryError("MUTATION_RECEIPT_REQUIRED", "actor_id, request_id, and source are required.", status_code=422)
-        if getattr(model, "status", None) == "APPROVED":
+        if getattr(model, "status", None) == "APPROVED" and not approval_receipt_id:
             raise V3FactoryError("ROUND1_APPROVAL_FORBIDDEN", "Macro Round 1 cannot create APPROVED V3 rows.", status_code=403)
         entity_type, row = _entity_row(model)
         table, _ = _ENTITY_TABLES[entity_type]

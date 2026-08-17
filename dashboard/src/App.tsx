@@ -49,6 +49,7 @@ import CreativeLibraryWorkspacePage from "./pages/CreativeLibraryWorkspacePage";
 import CockpitSettingsPage from "./pages/CockpitSettingsPage";
 import CopyIntelligencePage from "./pages/CopyIntelligencePage";
 import CopySetRegistryPage from "./pages/CopySetRegistryPage";
+import StoryboardLandbankV3Page from "./pages/StoryboardLandbankV3Page";
 import DashboardPage from "./pages/DashboardPage";
 import ReportingExecutivePage from "./pages/ReportingExecutivePage";
 import ReportingOperationsPage from "./pages/ReportingOperationsPage";
@@ -174,6 +175,7 @@ const ALL_NAV_GROUPS = [
 				label: "Product Type Registry",
 			},
 			{ to: "/creative/copy-registry", icon: PenLine, label: "Copy Registry" },
+			{ to: "/creative/storyboard-landbank-v3", icon: Sparkles, label: "Storyboard Landbank V3" },
 			{
 				to: "/creative/copy-intelligence",
 				icon: Users,
@@ -651,6 +653,10 @@ function Layout() {
 						<Route
 							path="/creative/copy-registry"
 							element={<CopySetRegistryPage />}
+						/>
+						<Route
+							path="/creative/storyboard-landbank-v3"
+							element={<StoryboardLandbankV3Page />}
 						/>
 						<Route
 							path="/creative/copy-intelligence"

@@ -1701,6 +1701,125 @@ END;
 """
 
 
+V3_ROUND2_SCHEMA = """
+-- Macro Round 2 provenance and approval records.  These tables are additive
+-- V3 supply-plane records; they never bind, materialize, activate, or mutate
+-- Copy Register V2/P6 production authority.
+CREATE TABLE IF NOT EXISTS v3_ai_authoring_run (
+    run_id                    TEXT PRIMARY KEY,
+    plan_id                   TEXT NOT NULL,
+    product_id                TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    recipe_id                 TEXT NOT NULL,
+    recipe_revision           INTEGER NOT NULL CHECK(recipe_revision >= 1),
+    mode                      TEXT NOT NULL CHECK(mode IN ('CREATE','EXPAND','FILL_CAPACITY')),
+    status                    TEXT NOT NULL CHECK(status IN ('PLANNED','EXECUTED','FAILED')),
+    objective_json             TEXT NOT NULL DEFAULT '{}',
+    formula_id                 TEXT NOT NULL DEFAULT '',
+    formula_version            TEXT NOT NULL DEFAULT '',
+    angle_ref_json             TEXT NOT NULL DEFAULT '{}',
+    storyline_family_ref_json  TEXT NOT NULL DEFAULT '{}',
+    product_truth_snapshot_id  TEXT,
+    product_truth_snapshot_version INTEGER,
+    product_truth_snapshot_digest TEXT,
+    evidence_fact_ids_json     TEXT NOT NULL DEFAULT '[]',
+    evidence_digest            TEXT,
+    target_durations_json      TEXT NOT NULL DEFAULT '[]',
+    language_profile           TEXT NOT NULL DEFAULT 'Malay',
+    wps_mode                   TEXT NOT NULL DEFAULT 'SAFE',
+    current_capacity_json      TEXT NOT NULL DEFAULT '{}',
+    max_provider_calls         INTEGER NOT NULL DEFAULT 1 CHECK(max_provider_calls >= 0),
+    max_proposals              INTEGER NOT NULL DEFAULT 24 CHECK(max_proposals >= 1),
+    max_output_tokens          INTEGER NOT NULL DEFAULT 20000 CHECK(max_output_tokens >= 1),
+    max_cost                   INTEGER NOT NULL DEFAULT 0 CHECK(max_cost >= 0),
+    cost_status                TEXT NOT NULL DEFAULT 'NOT_REPORTED',
+    provider_mode             TEXT NOT NULL CHECK(provider_mode IN ('LIVE_TEXT_ASSIST','FAKE_TEST')),
+    provider_lane             TEXT NOT NULL DEFAULT 'text_assist' CHECK(provider_lane = 'text_assist'),
+    provider_id               TEXT,
+    model_id                  TEXT,
+    prompt_version            TEXT NOT NULL,
+    prompt_digest             TEXT NOT NULL CHECK(length(prompt_digest) = 64),
+    output_digest             TEXT CHECK(output_digest IS NULL OR length(output_digest) = 64),
+    proposal_ids_json         TEXT NOT NULL DEFAULT '[]',
+    component_refs_json       TEXT NOT NULL DEFAULT '[]',
+    master_ref_json           TEXT,
+    projection_refs_json      TEXT NOT NULL DEFAULT '[]',
+    provider_receipt_json     TEXT,
+    token_usage_json          TEXT NOT NULL DEFAULT '{}',
+    provider_calls            INTEGER NOT NULL DEFAULT 0 CHECK(provider_calls >= 0),
+    credit_spend              INTEGER NOT NULL DEFAULT 0 CHECK(credit_spend >= 0),
+    quality_json              TEXT,
+    plan_json                 TEXT NOT NULL,
+    result_json               TEXT,
+    error_code                TEXT,
+    created_by                TEXT NOT NULL,
+    created_at                TEXT NOT NULL,
+    updated_at                TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_v3_ai_authoring_run_product
+    ON v3_ai_authoring_run(product_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_v3_ai_authoring_run_recipe
+    ON v3_ai_authoring_run(recipe_id, recipe_revision, mode, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_v3_ai_authoring_run_plan
+    ON v3_ai_authoring_run(plan_id);
+
+CREATE TABLE IF NOT EXISTS v3_human_approval_receipt (
+    receipt_id                    TEXT PRIMARY KEY,
+    approval_scope                TEXT NOT NULL CHECK(approval_scope IN ('INDIVIDUAL','BATCH')),
+    target_type                   TEXT NOT NULL CHECK(target_type IN ('MASTER_STORYBOARD','DURATION_PROJECTION')),
+    target_id                     TEXT NOT NULL,
+    target_revision               INTEGER NOT NULL CHECK(target_revision >= 1),
+    product_id                    TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    master_ref_json               TEXT NOT NULL,
+    projection_refs_json          TEXT NOT NULL DEFAULT '[]',
+    batch_target_refs_json        TEXT NOT NULL DEFAULT '[]',
+    exact_content_fingerprint     TEXT NOT NULL CHECK(length(exact_content_fingerprint) = 64),
+    projection_fingerprints_json  TEXT NOT NULL DEFAULT '[]',
+    product_truth_snapshot_id     TEXT NOT NULL,
+    product_truth_snapshot_version INTEGER NOT NULL CHECK(product_truth_snapshot_version >= 1),
+    product_truth_snapshot_digest TEXT NOT NULL CHECK(length(product_truth_snapshot_digest) = 64),
+    formula_id                    TEXT NOT NULL,
+    formula_version               TEXT NOT NULL,
+    evidence_digest               TEXT NOT NULL CHECK(length(evidence_digest) = 64),
+    wps_authority_digests_json    TEXT NOT NULL DEFAULT '[]',
+    checklist_json                TEXT NOT NULL,
+    approved_by                   TEXT NOT NULL,
+    rationale                     TEXT NOT NULL,
+    automatic_approval            INTEGER NOT NULL DEFAULT 0 CHECK(automatic_approval = 0),
+    batch_id                      TEXT,
+    receipt_digest                TEXT NOT NULL CHECK(length(receipt_digest) = 64),
+    created_at                    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_v3_human_approval_product
+    ON v3_human_approval_receipt(product_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_v3_human_approval_target
+    ON v3_human_approval_receipt(target_type, target_id, target_revision);
+CREATE INDEX IF NOT EXISTS idx_v3_human_approval_batch
+    ON v3_human_approval_receipt(batch_id, created_at DESC);
+
+CREATE TRIGGER IF NOT EXISTS trg_v3_ai_authoring_run_terminal_immutable
+BEFORE UPDATE ON v3_ai_authoring_run
+WHEN OLD.status IN ('EXECUTED','FAILED')
+BEGIN
+    SELECT RAISE(ABORT, 'V3_AI_AUTHORING_RUN_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_v3_ai_authoring_run_no_delete
+BEFORE DELETE ON v3_ai_authoring_run
+BEGIN
+    SELECT RAISE(ABORT, 'V3_AI_AUTHORING_RUN_APPEND_ONLY');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_v3_human_approval_receipt_append_only_update
+BEFORE UPDATE ON v3_human_approval_receipt
+BEGIN
+    SELECT RAISE(ABORT, 'V3_HUMAN_APPROVAL_RECEIPT_APPEND_ONLY');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_v3_human_approval_receipt_append_only_delete
+BEFORE DELETE ON v3_human_approval_receipt
+BEGIN
+    SELECT RAISE(ABORT, 'V3_HUMAN_APPROVAL_RECEIPT_APPEND_ONLY');
+END;
+"""
+
+
 async def init_db():
     """Initialize database with schema and run migrations."""
     async with aiosqlite.connect(str(DB_PATH)) as db:
@@ -5420,6 +5539,74 @@ END;
                 "ADD COLUMN stage_segments_json TEXT NOT NULL DEFAULT '[]'"
             )
             await db.commit()
+
+        # Macro Round 2 projection lineage is additive.  The exact projection
+        # digest intentionally remains content-only; these columns identify the
+        # authoring run without changing the deterministic WPS content identity.
+        projection_columns_cursor = await db.execute(
+            "PRAGMA table_info(duration_projection_v3)"
+        )
+        projection_columns = {
+            row[1] for row in await projection_columns_cursor.fetchall()
+        }
+        for column_name, definition in (
+            ("derivation_source", "TEXT NOT NULL DEFAULT 'DETERMINISTIC' CHECK(derivation_source IN ('DETERMINISTIC','AI_ASSISTED','HUMAN_EDITED'))"),
+            ("authoring_run_id", "TEXT"),
+        ):
+            if column_name not in projection_columns:
+                await db.execute(
+                    f"ALTER TABLE duration_projection_v3 ADD COLUMN {column_name} {definition}"
+                )
+        await db.executescript(V3_ROUND2_SCHEMA)
+        # Additive migration for early Round 2 databases.  The explicit
+        # authoring contract is duplicated in durable columns as well as the
+        # typed plan JSON so provenance remains queryable after a process or
+        # API restart.
+        run_columns_cursor = await db.execute(
+            "PRAGMA table_info(v3_ai_authoring_run)"
+        )
+        run_columns = {row[1] for row in await run_columns_cursor.fetchall()}
+        v3_run_columns = (
+            ("objective_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("formula_id", "TEXT NOT NULL DEFAULT ''"),
+            ("formula_version", "TEXT NOT NULL DEFAULT ''"),
+            ("angle_ref_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("storyline_family_ref_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("product_truth_snapshot_id", "TEXT"),
+            ("product_truth_snapshot_version", "INTEGER"),
+            ("product_truth_snapshot_digest", "TEXT"),
+            ("evidence_fact_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("evidence_digest", "TEXT"),
+            ("target_durations_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("language_profile", "TEXT NOT NULL DEFAULT 'Malay'"),
+            ("wps_mode", "TEXT NOT NULL DEFAULT 'SAFE'"),
+            ("current_capacity_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("max_provider_calls", "INTEGER NOT NULL DEFAULT 1"),
+            ("max_proposals", "INTEGER NOT NULL DEFAULT 24"),
+            ("max_output_tokens", "INTEGER NOT NULL DEFAULT 20000"),
+            ("max_cost", "INTEGER NOT NULL DEFAULT 0"),
+            ("cost_status", "TEXT NOT NULL DEFAULT 'NOT_REPORTED'"),
+        )
+        for column_name, definition in v3_run_columns:
+            if column_name not in run_columns:
+                await db.execute(
+                    f"ALTER TABLE v3_ai_authoring_run ADD COLUMN {column_name} {definition}"
+                )
+        # Additive migration for disposable databases initialized by an early
+        # Round 2 cut.  The approval receipt is append-only, so adding the
+        # batch reference column is safe and preserves all historical rows.
+        receipt_columns_cursor = await db.execute(
+            "PRAGMA table_info(v3_human_approval_receipt)"
+        )
+        receipt_columns = {
+            row[1] for row in await receipt_columns_cursor.fetchall()
+        }
+        if "batch_target_refs_json" not in receipt_columns:
+            await db.execute(
+                "ALTER TABLE v3_human_approval_receipt "
+                "ADD COLUMN batch_target_refs_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        await db.commit()
 
 
         # V2-native treatment authority: optional copy_execution_binding_id_v2,
