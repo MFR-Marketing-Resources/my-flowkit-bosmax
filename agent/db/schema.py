@@ -2074,6 +2074,17 @@ WHEN (
 BEGIN
     SELECT RAISE(ABORT, 'MANIFEST_ITEM_V3_IMMUTABLE');
 END;
+-- A frozen manifest can never gain a new item either (items are inserted while
+-- the manifest is still DRAFT, then frozen atomically).
+CREATE TRIGGER IF NOT EXISTS trg_manifest_item_v3_frozen_no_insert
+BEFORE INSERT ON manifest_item_v3
+WHEN (
+    SELECT status FROM production_copy_supply_manifest_v3
+    WHERE manifest_id = NEW.manifest_id AND revision = NEW.manifest_revision
+) IN ('FROZEN','SUPERSEDED','BLOCKED')
+BEGIN
+    SELECT RAISE(ABORT, 'MANIFEST_ITEM_V3_IMMUTABLE');
+END;
 
 -- The usage ledger is strictly append-only.
 CREATE TRIGGER IF NOT EXISTS trg_landbank_usage_v3_append_only_update
