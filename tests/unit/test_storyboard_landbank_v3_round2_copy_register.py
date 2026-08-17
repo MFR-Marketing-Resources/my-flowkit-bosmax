@@ -15,7 +15,8 @@ from agent.services.storyboard_landbank_v3_round2 import (
 from agent.models.storyboard_landbank_v3_round2 import V3ProviderSummary
 
 
-async def _seed_round2_fixture(product_id: str = "round2-product"):
+async def _seed_product_truth(product_id: str):
+    """Seed an ACTIVE product with an APPROVED truth snapshot and one approved fact."""
     snapshot_id = f"{product_id}-snapshot"
     fact_id = f"{product_id}-fact"
     db = await get_db()
@@ -51,6 +52,10 @@ async def _seed_round2_fixture(product_id: str = "round2-product"):
     )
     await db.commit()
 
+
+async def _seed_round2_fixture(product_id: str = "round2-product"):
+    await _seed_product_truth(product_id)
+    fact_id = f"{product_id}-fact"
     factory = V3CopyFactoryService()
     angle = await factory.create_angle(
         product_id,
@@ -552,6 +557,68 @@ async def test_round2_cost_budget_enforced_only_when_positive_ceiling_exceeded(m
         (plan.run_id,),
     )).fetchone()
     assert tuple(row) == ("FAILED", "BUDGET_EXCEEDED")
+
+
+@pytest.mark.asyncio
+async def test_round2_create_bootstraps_from_zero_supply(monkeypatch):
+    monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
+    product_id = "round2-zero"
+    await _seed_product_truth(product_id)
+    factory = V3CopyFactoryService()
+    service = V3CopyRegisterRound2Service(factory=factory)
+    # Recipe with NO target angle: the product has 0 Angle / 0 Storyline /
+    # 0 Component / 0 Master.
+    recipe = await factory.create_recipe(
+        product_id,
+        {
+            "recipe_id": f"{product_id}-recipe",
+            "formula_id": "PAS",
+            "objective_id": "conversion",
+            "objective_definition": "Drive a safe trial",
+            "component_count_targets": {"HOOK": 1, "BODY_CORE": 1, "CTA": 1},
+            "supported_durations_seconds": [8, 16, 24],
+        },
+        actor_id="round2-fixture",
+        request_id=f"{product_id}:recipe",
+    )
+    assert await factory.repository.count("ANGLE", product_id=product_id) == 0
+    assert await factory.repository.count("STORYLINE_FAMILY", product_id=product_id) == 0
+    assert await factory.repository.count("MASTER_STORYBOARD", product_id=product_id) == 0
+
+    # CREATE plan declares the missing supply explicitly (no _route requirement).
+    plan = await service.plan_assistant(
+        product_id, recipe.recipe_id, mode="CREATE",
+        actor_id="round2-operator", request_id="round2:zero-plan",
+    )
+    assert plan.angle is None
+    assert plan.storyline_family is None
+    assert plan.supply_actions == {"angle": "CREATE_DRAFT", "storyline_family": "CREATE_DRAFT"}
+    assert sum(gap.gap_count for gap in plan.gaps) == 3
+
+    # Fake execute authors: Angle DRAFT -> Storyline DRAFT -> Components -> Master
+    # -> 8/16/24 projections, all landing for review (no auto-approval).
+    result = await service.execute_assistant(
+        plan.plan_id, actor_id="round2-operator",
+        request_id="round2:zero-exec", provider_mode="FAKE_TEST",
+    )
+    assert result["status"] == "EXECUTED"
+    assert len(result["projections"]) == 3
+
+    angles = await factory.repository.list("ANGLE", product_id=product_id)
+    families = await factory.repository.list("STORYLINE_FAMILY", product_id=product_id)
+    assert len(angles) == 1 and angles[0].status == "DRAFT"
+    assert len(families) == 1 and families[0].status == "DRAFT"
+
+    landbank = await service.copy_register_landbank(product_id)
+    assert len(landbank["items"]) == 1
+    master_item = landbank["items"][0]
+    # No auto-approval: the Master lands in the review queue, never APPROVED.
+    assert master_item["master"]["status"] in {"DRAFT", "REVIEW_REQUIRED", "VALIDATED"}
+    assert master_item["master"]["status"] != "APPROVED"
+    assert master_item["approval_receipt"] is None
+    assert {p["target_duration_seconds"] for p in master_item["projections"]} == {8, 16, 24}
+    review = await service.review_queue(product_id)
+    assert any(item["master"]["master_id"] == master_item["master"]["master_id"] for item in review["items"])
 
 
 @pytest.mark.asyncio

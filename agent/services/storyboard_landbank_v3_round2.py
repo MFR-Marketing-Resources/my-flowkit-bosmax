@@ -162,7 +162,13 @@ class V3CopyRegisterRound2Service:
             raise V3FactoryError("RECIPE_NOT_FOUND", "Copy Recipe was not found.", status_code=404)
         return recipe
 
-    async def _route(self, recipe: Any):
+    async def _resolve_route(self, recipe: Any, *, allow_missing: bool = False):
+        """Resolve a compatible non-terminal Angle + Storyline Family.
+
+        With ``allow_missing`` (CREATE), returns ``None`` for absent supply
+        instead of raising, so the assistant can bootstrap from zero supply.
+        EXPAND/FILL_CAPACITY keep the strict behavior via :meth:`_route`.
+        """
         angles = []
         if recipe.target_angles:
             for ref in recipe.target_angles:
@@ -175,6 +181,8 @@ class V3CopyRegisterRound2Service:
             )
             angles = [item for item in angles if item.status not in _TERMINAL_STATUSES]
         if not angles:
+            if allow_missing:
+                return None, None
             raise V3FactoryError("ANGLE_REQUIRED", "Round 2 requires a non-terminal V3 Angle before authoring.", status_code=409)
         angle = sorted(angles, key=lambda item: (item.created_at, item.angle_id))[0]
         families = await self.factory.repository.list(
@@ -191,10 +199,18 @@ class V3CopyRegisterRound2Service:
             and item.status not in _TERMINAL_STATUSES
         ]
         if not families:
+            if allow_missing:
+                return angle, None
             raise V3FactoryError("STORYLINE_FAMILY_REQUIRED", "Round 2 requires a non-terminal Storyline Family before authoring.", status_code=409)
         return angle, sorted(families, key=lambda item: (item.created_at, item.family_id))[0]
 
+    async def _route(self, recipe: Any):
+        return await self._resolve_route(recipe, allow_missing=False)
+
     async def _component_counts(self, recipe: Any, angle: Any) -> dict[str, int]:
+        counts = {"HOOK": 0, "BODY_CORE": 0, "CTA": 0}
+        if angle is None:
+            return counts
         rows = await self.factory.repository.list(
             "STORYBOARD_COMPONENT",
             product_id=recipe.product_id,
@@ -202,7 +218,6 @@ class V3CopyRegisterRound2Service:
             angle_id=angle.angle_id,
             limit=MAX_PAGE_SIZE,
         )
-        counts = {"HOOK": 0, "BODY_CORE": 0, "CTA": 0}
         for row in rows:
             if row.status not in _TERMINAL_STATUSES and row.semantic_class in counts:
                 counts[row.semantic_class] += 1
@@ -251,7 +266,10 @@ class V3CopyRegisterRound2Service:
         )
         contract = {
             "schema_version": "v3-copy-assistant-1",
-            "proposals": "array of strict V3 proposals",
+            "proposals": "array of strict V3 component proposals",
+            "supply_actions": plan.supply_actions,
+            "angle_proposal": "required object when supply_actions.angle == CREATE_DRAFT, else omit",
+            "storyline_family_proposal": "required object when supply_actions.storyline_family == CREATE_DRAFT, else omit",
             "objective": plan.objective,
             "required_formula": recipe.formula.model_dump(mode="json"),
             "angle": plan.angle.model_dump(mode="json") if plan.angle else None,
@@ -306,7 +324,14 @@ class V3CopyRegisterRound2Service:
         if recipe.product_truth is None:
             raise V3FactoryError("TRUTH_LINEAGE_REQUIRED", "Assistant planning requires current Product Truth lineage.", status_code=409)
         bundle = await self.factory.truth_adapter.revalidate(recipe.product_truth)
-        angle, family = await self._route(recipe)
+        # CREATE may bootstrap from zero supply (resolve-or-declare-missing);
+        # EXPAND/FILL_CAPACITY require existing Angle + Storyline Family supply.
+        allow_missing = mode == "CREATE"
+        angle, family = await self._resolve_route(recipe, allow_missing=allow_missing)
+        supply_actions = {
+            "angle": "REUSE_EXISTING" if angle is not None else "CREATE_DRAFT",
+            "storyline_family": "REUSE_EXISTING" if family is not None else "CREATE_DRAFT",
+        }
         max_provider_calls = int(max_provider_calls)
         max_output_tokens = int(max_output_tokens)
         max_cost = int(max_cost)
@@ -370,6 +395,12 @@ class V3CopyRegisterRound2Service:
             raise V3FactoryError("EVIDENCE_OVERRIDE_UNAPPROVED", "Evidence override may only choose among current approved facts.", status_code=409, details=selection.model_dump(mode="json"))
         evidence_selection = selection.model_dump(mode="json")
         evidence_fact_ids = _unique(list(selection.fact_ids))
+        # Zero-supply bootstrap has no Angle/Storyline context to rank against yet;
+        # if relevance selected nothing, ground the bootstrap on the approved
+        # registry (bounded).  Human review still governs the DRAFTs.
+        if not evidence_fact_ids and (angle is None or family is None):
+            evidence_fact_ids = _unique([fact.fact_id for fact in bundle.registry.facts])[:MAX_EVIDENCE_SELECTION]
+            evidence_selection = {**evidence_selection, "bootstrap_fallback": "ZERO_SUPPLY_APPROVED_REGISTRY"}
         language_profile = normalized_text(str((recipe.campaign_scope or {}).get("language_profile") or "Malay")) or "Malay"
         current_capacity = {
             "HOOK": current["HOOK"],
@@ -386,8 +417,9 @@ class V3CopyRegisterRound2Service:
             "gaps": [gap.model_dump(mode="json") for gap in gaps],
             "durations": durations,
             "wps": recipe.wps_mode,
-            "angle": [angle.angle_id, angle.revision],
-            "storyline_family": [family.family_id, family.revision],
+            "angle": [angle.angle_id, angle.revision] if angle else None,
+            "storyline_family": [family.family_id, family.revision] if family else None,
+            "supply_actions": supply_actions,
             "truth": recipe.product_truth.model_dump(mode="json"),
             "evidence": evidence_fact_ids,
             "language_profile": language_profile,
@@ -403,8 +435,9 @@ class V3CopyRegisterRound2Service:
             recipe=V3RevisionRef(entity_id=recipe.recipe_id, revision=recipe.revision),
             objective=recipe.objective.model_dump(mode="json"),
             formula=recipe.formula.model_dump(mode="json"),
-            angle=V3RevisionRef(entity_id=angle.angle_id, revision=angle.revision),
-            storyline_family=V3RevisionRef(entity_id=family.family_id, revision=family.revision),
+            angle=V3RevisionRef(entity_id=angle.angle_id, revision=angle.revision) if angle else None,
+            storyline_family=V3RevisionRef(entity_id=family.family_id, revision=family.revision) if family else None,
+            supply_actions=supply_actions,
             product_truth=recipe.product_truth.model_dump(mode="json"),
             evidence_fact_ids=evidence_fact_ids,
             evidence_digest=deterministic_digest(list(evidence_fact_ids)),
@@ -582,7 +615,23 @@ class V3CopyRegisterRound2Service:
                     "rationale": "Disposable fake provider fixture for browser and integration UAT; human review remains required.",
                     "risk_notes": ["FAKE_TEST_PROVIDER", "HUMAN_REVIEW_REQUIRED"],
                 })
-        return {"schema_version": "v3-copy-assistant-1", "proposals": proposals}
+        envelope: dict[str, Any] = {"schema_version": "v3-copy-assistant-1", "proposals": proposals}
+        # Zero-supply CREATE: distinct Angle/Storyline DRAFT proposals live at the
+        # envelope level, not buried inside each component.
+        if plan.supply_actions.get("angle") == "CREATE_DRAFT":
+            envelope["angle_proposal"] = {
+                "definition": f"A grounded {recipe.formula.formula_id} daily-routine angle for {product_name} from approved evidence",
+                "objective_id": recipe.objective.objective_id,
+                "objective_definition": recipe.objective.definition,
+                "rationale": "Disposable fake provider Angle DRAFT for zero-supply CREATE UAT; human review required.",
+            }
+        if plan.supply_actions.get("storyline_family") == "CREATE_DRAFT":
+            envelope["storyline_family_proposal"] = {
+                "reviewed_definition": f"One continuous {recipe.formula.formula_id} route from problem to a safe next step for {product_name}",
+                "narrative_route": {"stage_keys": list(required), "order_locked": True},
+                "rationale": "Disposable fake provider Storyline Family DRAFT for zero-supply CREATE UAT; human review required.",
+            }
+        return envelope
 
     async def _call_provider(self, system: str, user: str, *, mode: ProviderMode, plan: V3AssistantPlan, recipe: Any, bundle: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         if mode == "FAKE_TEST":
@@ -620,6 +669,10 @@ class V3CopyRegisterRound2Service:
             envelope = V3AIProviderEnvelope.model_validate(raw)
         except Exception as exc:
             raise V3FactoryError("AI_COPY_ASSIST_RESPONSE_INVALID", "Provider output failed the strict V3 proposal schema.", status_code=502, details=str(exc)) from exc
+        if plan.supply_actions.get("angle") == "CREATE_DRAFT" and envelope.angle_proposal is None:
+            raise V3FactoryError("AI_COPY_ASSIST_ANGLE_PROPOSAL_REQUIRED", "Zero-supply CREATE requires a distinct Angle DRAFT proposal.", status_code=502)
+        if plan.supply_actions.get("storyline_family") == "CREATE_DRAFT" and envelope.storyline_family_proposal is None:
+            raise V3FactoryError("AI_COPY_ASSIST_STORYLINE_PROPOSAL_REQUIRED", "Zero-supply CREATE requires a distinct Storyline Family DRAFT proposal.", status_code=502)
         required = tuple(required_formula_stage_keys(recipe.formula.formula_id))
         expected = {
             "HOOK": (required[0],),
@@ -728,9 +781,44 @@ class V3CopyRegisterRound2Service:
         cost_status = "NOT_REPORTED" if not cost_reported else "WITHIN_BUDGET"
         if usage_tokens:
             provider_usage["total_tokens"] = usage_tokens
-        angle, family = await self._route(recipe)
         created_components: list[V3StoryboardComponent] = []
         try:
+            angle, family = await self._resolve_route(recipe, allow_missing=plan.mode == "CREATE")
+            # Zero-supply CREATE authors the Angle DRAFT then the Storyline Family
+            # DRAFT before any component/master. Everything stays DRAFT — no approval.
+            if angle is None:
+                if envelope.angle_proposal is None:
+                    raise V3FactoryError("AI_COPY_ASSIST_ANGLE_PROPOSAL_REQUIRED", "Zero-supply CREATE requires a distinct Angle DRAFT proposal.", status_code=409)
+                angle = await self.factory.create_angle(
+                    recipe.product_id,
+                    {
+                        "angle_id": deterministic_id("ai_angle", {"run": plan.run_id}),
+                        "definition": envelope.angle_proposal.definition,
+                        "formula_id": recipe.formula.formula_id,
+                        "objective_compatibility": {"objective_ids": [recipe.objective.objective_id]},
+                        "evidence_fact_ids": list(plan.evidence_fact_ids),
+                    },
+                    actor_id=actor_id,
+                    request_id=f"{request_id}:angle",
+                    source=ROUND2_SOURCE,
+                )
+            if family is None:
+                if envelope.storyline_family_proposal is None:
+                    raise V3FactoryError("AI_COPY_ASSIST_STORYLINE_PROPOSAL_REQUIRED", "Zero-supply CREATE requires a distinct Storyline Family DRAFT proposal.", status_code=409)
+                family = await self.factory.create_storyline_family(
+                    recipe.product_id,
+                    {
+                        "family_id": deterministic_id("ai_family", {"run": plan.run_id, "angle": angle.angle_id}),
+                        "angle_id": angle.angle_id,
+                        "formula_id": recipe.formula.formula_id,
+                        "objective_compatibility": {"objective_ids": [recipe.objective.objective_id]},
+                        "reviewed_definition": envelope.storyline_family_proposal.reviewed_definition,
+                        "narrative_route": envelope.storyline_family_proposal.narrative_route,
+                    },
+                    actor_id=actor_id,
+                    request_id=f"{request_id}:family",
+                    source=ROUND2_SOURCE,
+                )
             for proposal in envelope.proposals:
                 component = await self.factory.create_component(
                     recipe.product_id,

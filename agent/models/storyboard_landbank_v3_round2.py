@@ -66,6 +66,9 @@ class V3AssistantPlan(BaseModel):
     formula: dict[str, Any] = Field(default_factory=dict)
     angle: V3RevisionRef | None = None
     storyline_family: V3RevisionRef | None = None
+    # For each of "angle"/"storyline_family": "REUSE_EXISTING" or "CREATE_DRAFT".
+    # CREATE may bootstrap from zero supply; EXPAND/FILL_CAPACITY always REUSE.
+    supply_actions: dict[str, str] = Field(default_factory=dict)
     product_truth: dict[str, Any] = Field(default_factory=dict)
     evidence_fact_ids: tuple[str, ...] = Field(default_factory=tuple, max_length=500)
     evidence_digest: str = Field(default="0" * 64, pattern=_SHA256)
@@ -120,17 +123,43 @@ class V3AICopyProposal(BaseModel):
 
     proposal_id: str = Field(min_length=1, max_length=120)
     semantic_class: Literal["HOOK", "BODY_CORE", "CTA"]
-    angle_definition: str = Field(min_length=8, max_length=500)
-    storyline_definition: str = Field(min_length=8, max_length=500)
+    # Angle/Storyline definitions live at the envelope level (V3AngleProposal /
+    # V3StorylineFamilyProposal), not buried redundantly inside every component.
+    angle_definition: str = Field(default="", max_length=500)
+    storyline_definition: str = Field(default="", max_length=500)
     segments: tuple[V3AICopySegment, ...] = Field(min_length=1, max_length=8)
     rationale: str = Field(min_length=8, max_length=800)
     risk_notes: tuple[str, ...] = Field(default_factory=tuple, max_length=12)
+
+
+class V3AngleProposal(BaseModel):
+    """Distinct Angle DRAFT proposal for zero-supply CREATE bootstrap."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    definition: str = Field(min_length=8, max_length=500)
+    objective_id: str = Field(default="", max_length=120)
+    objective_definition: str = Field(default="", max_length=500)
+    rationale: str = Field(default="", max_length=800)
+
+
+class V3StorylineFamilyProposal(BaseModel):
+    """Distinct Storyline Family DRAFT proposal for zero-supply CREATE bootstrap."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    reviewed_definition: str = Field(min_length=8, max_length=500)
+    narrative_route: dict[str, Any] = Field(default_factory=dict)
+    rationale: str = Field(default="", max_length=800)
 
 
 class V3AIProviderEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal["v3-copy-assistant-1"] = "v3-copy-assistant-1"
+    # Present only when CREATE must bootstrap missing Angle/Storyline supply.
+    angle_proposal: V3AngleProposal | None = None
+    storyline_family_proposal: V3StorylineFamilyProposal | None = None
     proposals: tuple[V3AICopyProposal, ...] = Field(min_length=1, max_length=24)
 
 
@@ -332,6 +361,8 @@ __all__ = [
     "V3AssistantPlan",
     "V3AICopySegment",
     "V3AICopyProposal",
+    "V3AngleProposal",
+    "V3StorylineFamilyProposal",
     "V3AIProviderEnvelope",
     "V3AIProviderReceipt",
     "V3QualitySignal",
