@@ -21,7 +21,8 @@ V3_TABLES = {
     "duration_projection_v3",
     "review_event_v3",
 }
-DEFERRED_TABLES = {
+# Macro Round 3 production-integration tables — previously DEFERRED, now present.
+ROUND3_TABLES = {
     "materialization_link_v3",
     "production_copy_supply_manifest_v3",
     "manifest_item_v3",
@@ -179,7 +180,7 @@ async def test_v3_core_tables_indexes_and_deferred_tables_are_exact():
     tables = {row[0] for row in await table_cursor.fetchall()}
     assert V3_TABLES <= tables
     assert ROUND2_TABLES <= tables
-    assert not (DEFERRED_TABLES & tables)
+    assert ROUND3_TABLES <= tables
 
     index_cursor = await db.execute(
         "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE '%_v3_%'"
@@ -353,3 +354,70 @@ async def test_disposable_clone_can_be_checked_and_discarded_without_touching_te
         "SELECT COUNT(*) FROM angle_v3 WHERE angle_id='angle-v3-clone'"
     )).fetchone()
     assert tuple(count) == (1,)
+
+
+@pytest.mark.asyncio
+async def test_round3_ledger_append_only_and_manifest_freeze_immutability():
+    """Round 3 production-integration tables enforce append-only usage and
+    freeze-immutable manifests, matching the V3 core immutability contract."""
+    await _seed_truth("r3")
+    db = await get_db()
+    product_id = "v3-product-r3"
+
+    # landbank_usage_v3 is strictly append-only.
+    await db.execute(
+        "INSERT INTO landbank_usage_v3 (usage_id, product_id, usage_type, created_at, created_by) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("usage-r3-1", product_id, "MANIFEST_SELECT", "2026-08-18T00:00:00Z", "v3-test"),
+    )
+    await db.commit()
+    with pytest.raises(sqlite3.IntegrityError, match="LANDBANK_USAGE_V3_APPEND_ONLY"):
+        await db.execute("UPDATE landbank_usage_v3 SET outcome='x' WHERE usage_id='usage-r3-1'")
+    await db.rollback()
+    with pytest.raises(sqlite3.IntegrityError, match="LANDBANK_USAGE_V3_APPEND_ONLY"):
+        await db.execute("DELETE FROM landbank_usage_v3 WHERE usage_id='usage-r3-1'")
+    await db.rollback()
+    with pytest.raises(sqlite3.IntegrityError):  # usage_type CHECK enum
+        await db.execute(
+            "INSERT INTO landbank_usage_v3 (usage_id, product_id, usage_type, created_at, created_by) "
+            "VALUES ('usage-bad', ?, 'NOT_A_TYPE', 'now', 'v3-test')",
+            (product_id,),
+        )
+    await db.rollback()
+
+    # production_copy_supply_manifest_v3: DRAFT->BUILT->FROZEN allowed; frozen is
+    # immutable; delete forbidden.
+    await db.execute(
+        "INSERT INTO production_copy_supply_manifest_v3 "
+        "(manifest_id, revision, product_id, selection_policy_version, manifest_digest, created_at, created_by) "
+        "VALUES ('man-r3', 1, ?, 'copy-supply-selection-v1', ?, '2026-08-18T00:00:00Z', 'v3-test')",
+        (product_id, "a" * 64),
+    )
+    await db.commit()
+    await db.execute(
+        "UPDATE production_copy_supply_manifest_v3 SET status='BUILT' WHERE manifest_id='man-r3' AND revision=1"
+    )
+    await db.execute(
+        "UPDATE production_copy_supply_manifest_v3 SET status='FROZEN' WHERE manifest_id='man-r3' AND revision=1"
+    )
+    await db.commit()
+    with pytest.raises(sqlite3.IntegrityError, match="SUPPLY_MANIFEST_V3_FROZEN_IMMUTABLE"):
+        await db.execute(
+            "UPDATE production_copy_supply_manifest_v3 SET status='ALLOCATED' WHERE manifest_id='man-r3' AND revision=1"
+        )
+    await db.rollback()
+    with pytest.raises(sqlite3.IntegrityError, match="SUPPLY_MANIFEST_V3_APPEND_ONLY"):
+        await db.execute(
+            "DELETE FROM production_copy_supply_manifest_v3 WHERE manifest_id='man-r3' AND revision=1"
+        )
+    await db.rollback()
+
+    # digest CHECK: manifest_digest must be 64 chars.
+    with pytest.raises(sqlite3.IntegrityError):
+        await db.execute(
+            "INSERT INTO production_copy_supply_manifest_v3 "
+            "(manifest_id, revision, product_id, selection_policy_version, manifest_digest, created_at, created_by) "
+            "VALUES ('man-bad', 1, ?, 'copy-supply-selection-v1', 'short', 'now', 'v3-test')",
+            (product_id,),
+        )
+    await db.rollback()

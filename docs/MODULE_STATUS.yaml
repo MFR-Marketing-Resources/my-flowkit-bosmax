@@ -1643,3 +1643,6 @@ domains:
       - tests/unit/test_storyboard_landbank_v3_round1_factory.py
       - tests/unit/test_storyboard_landbank_v3_round2_copy_register.py
       - tests/unit/test_storyboard_landbank_v3_validators.py
+      # Macro Round 3 production-integration (V3 approved -> V2 PRODUCTION_VALID
+      # materialization, supply manifest, usage ledger). Additive to V2/P6.
+      - docs/v3-round3-production-integration-plan.md
