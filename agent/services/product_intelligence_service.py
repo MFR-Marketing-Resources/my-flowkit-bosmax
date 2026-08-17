@@ -1925,6 +1925,119 @@ def resolve_product_intelligence_profile(product: dict[str, Any]) -> dict[str, A
     ).model_dump()
 
 
+def resolve_product_intelligence_catalog_projection(
+    product: dict[str, Any],
+    *,
+    include_reconciliation: bool = False,
+    include_sales_metrics: bool = False,
+) -> dict[str, Any]:
+    """Build the cheap, read-only fields needed to browse the product registry.
+
+    The full profile intentionally performs Product Truth reconciliation, image
+    analysis, and sales-workbook matching.  Those operations are correct for a
+    detail row, but they are not necessary for deciding which rows belong on a
+    paginated catalog page.  Keep this projection deterministic and provider-free;
+    the API still calls ``resolve_product_intelligence_profile`` through the normal
+    detail enricher when a non-registry response needs the complete row.
+
+    ``include_reconciliation`` is reserved for registry filters that need the
+    final confidence/status label.  It is deliberately opt-in so the default
+    catalog request does not perform a full-catalog Product Truth pass.
+    ``include_sales_metrics`` is likewise opt-in for the two sales sorts.
+    """
+    payload = dict(product)
+    family, family_reason, taxonomy_conflict, taxonomy_conflict_reason = _resolve_family(payload)
+    family_profile = _profile_for_family(family)
+    copy_route = family_profile["copy_route"]
+    claim_gate, claim_tokens, _claim_warnings = _resolve_claim_gate(
+        payload,
+        family,
+        copy_route,
+    )
+    source = _coerce_source(payload.get("source"))
+    source_taxonomy = {
+        "category": _first_non_empty(payload.get("category")),
+        "subcategory": _first_non_empty(payload.get("subcategory")),
+        "type": _first_non_empty(payload.get("type")),
+    }
+    confidence = _resolve_confidence(
+        family_reason,
+        taxonomy_conflict,
+        family,
+        source_taxonomy,
+    )
+
+    if include_reconciliation:
+        if source == "MANUAL":
+            # ProductTruthService intentionally treats the manual lane as
+            # SOURCE_ANCHOR_UNVERIFIED, which caps its reconciliation label at
+            # LOW.  Avoid rebuilding the full profile for every manual row.
+            confidence = "LOW"
+        else:
+            from agent.services.product_truth_service import ProductTruthService
+
+            truth_profile = ProductTruthService.build_computed_profile(payload)
+            reconciliation = truth_profile.reconciliation
+            if (
+                reconciliation.confidence_label == "NEEDS_REVIEW"
+                or "FLAG_CATEGORY_BOUNDARY_LOCK_VIOLATION"
+                in reconciliation.contradiction_flags
+            ):
+                confidence = "LOW"
+            elif reconciliation.confidence_label == "LOW":
+                confidence = "LOW"
+            elif reconciliation.confidence_label == "MEDIUM" and confidence == "HIGH":
+                confidence = "MEDIUM"
+
+    result: dict[str, Any] = {
+        "source": source,
+        "group": family_profile["group"],
+        "sub_group": family_profile["sub_group"],
+        "type_of_product": family_profile["type_of_product"],
+        "bosmax_product_family": family,
+        "package_form": family_profile["package_form"],
+        "physical_state": family_profile["physical_state"],
+        "product_scale_class": family_profile["product_scale_class"],
+        "handling_profile": family_profile["handling_profile"],
+        "scene_profile": family_profile["scene_profile"],
+        "camera_profile": family_profile["camera_profile"],
+        "copy_route": copy_route,
+        "claim_gate": claim_gate,
+        "claim_tokens": claim_tokens,
+        "copy_formula": family_profile["copy_formula"],
+        "destination_readiness": {},
+        "intelligence_confidence": confidence,
+        "intelligence_status": (
+            "READY"
+            if confidence in {"HIGH", "MEDIUM"}
+            and family != "UNKNOWN_REVIEW_REQUIRED"
+            else "NEEDS_REVIEW"
+        ),
+        "taxonomy_conflict": taxonomy_conflict,
+        "taxonomy_conflict_reason": taxonomy_conflict_reason,
+        "bosmax_source_taxonomy_conflict": taxonomy_conflict,
+        "bosmax_source_taxonomy_conflict_reason": taxonomy_conflict_reason,
+        "bosmax_product_family_reason": family_reason,
+    }
+
+    if include_sales_metrics:
+        result.update(resolve_product_sales_metrics_catalog_projection(payload))
+
+    return result
+
+
+def resolve_product_sales_metrics_catalog_projection(
+    product: dict[str, Any],
+) -> dict[str, Any]:
+    """Return sales fields for a bounded page row without full enrichment."""
+    sales_metrics, _sales_provenance = _resolve_sales_metrics(dict(product))
+    return {
+        "sales_metrics": sales_metrics.model_dump(),
+        "product_sold_count": sales_metrics.product_sold_count,
+        "shop_total_sold_count": sales_metrics.shop_total_sold_count,
+    }
+
+
 def inject_product_intelligence_fields(product: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
     payload = dict(product)
     payload["product_intelligence"] = profile

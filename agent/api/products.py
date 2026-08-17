@@ -38,6 +38,7 @@ from agent.services.product_intelligence import (
     generate_product_prompt,
     resolve_cached_image_path,
     is_test_product as _is_test_product,
+    resolve_image_readiness as _resolve_image_readiness,
 )
 from agent.services.product_catalog_audit import build_mapping_summary
 from agent.services.product_lifecycle_service import (
@@ -49,7 +50,11 @@ from agent.services.product_lifecycle_service import (
     lifecycle_status as resolve_lifecycle_status,
     unarchive_product as unarchive_product_row,
 )
-from agent.services.product_preflight import build_product_preflight
+from agent.services.product_preflight import (
+    build_product_preflight,
+    evaluate_mapping_status,
+    resolve_creative_profile,
+)
 from agent.services.product_mapping import resolve_product_mapping
 from agent.services.product_physics import resolve_product_physics, evaluate_prompt_readiness
 from agent.services.prompt_pipeline_readiness_service import PromptPipelineReadinessService
@@ -78,6 +83,10 @@ from agent.services.product_intelligence_snapshot_service import (
     get_latest_snapshot_response,
     get_snapshot_list_response,
 )
+from agent.services.product_intelligence_service import (
+    resolve_product_intelligence_catalog_projection,
+    resolve_product_sales_metrics_catalog_projection,
+)
 from agent.services.product_intelligence_review_draft_service import (
     create_review_draft,
     create_revision_draft,
@@ -92,6 +101,7 @@ from agent.services.product_strategy_taxonomy_service import (
 )
 from agent.services.copywriting_taxonomy_service import (
     CopywritingTaxonomySelectionError,
+    resolve_product_copywriting_taxonomy,
     validate_taxonomy_selection,
 )
 from agent.utils.paths import product_image_path
@@ -422,6 +432,90 @@ async def _enrich_product_cached(product: dict[str, Any]) -> dict[str, Any]:
     return dict(enriched)
 
 
+_CATALOG_PROJECTION_FIELDS = (
+    "group",
+    "bosmax_product_family",
+    "copy_route",
+    "claim_gate",
+    "intelligence_confidence",
+    "image_readiness_status",
+)
+
+
+def _has_catalog_projection(product: dict[str, Any]) -> bool:
+    """Allow already-enriched test/adapter rows to pass through unchanged."""
+    return all(field in product for field in _CATALOG_PROJECTION_FIELDS)
+
+
+def _build_catalog_projection(
+    product: dict[str, Any],
+    *,
+    include_reconciliation: bool,
+    include_sales_metrics: bool,
+) -> dict[str, Any]:
+    """Build only the fields needed to select a catalog page.
+
+    This is intentionally synchronous and provider-free.  Legacy list responses
+    may still run full enrichment for their bounded page rows, while the explicit
+    registry view returns this projection directly.  Either way, a cold request
+    no longer enriches every active product before the first page can be selected.
+    """
+    if _has_catalog_projection(product):
+        return dict(product)
+
+    payload = dict(product)
+    payload["source"] = _normalize_source(payload.get("source"))
+    payload["lifecycle_status"] = resolve_lifecycle_status(payload)
+    payload["source_url"] = payload.get("source_url") or payload.get("tiktok_product_url")
+
+    mapping = resolve_product_mapping(
+        product=payload,
+        source_hint=payload.get("source"),
+    )
+    payload.update(mapping)
+
+    stored_taxonomy = resolve_product_copywriting_taxonomy(payload)
+    if stored_taxonomy:
+        payload.update(
+            {
+                "category": stored_taxonomy["category"],
+                "subcategory": stored_taxonomy["subcategory"],
+                "type": stored_taxonomy["type"],
+                "copywriting_product_type_code": stored_taxonomy["product_type_code"],
+                "copywriting_angle": stored_taxonomy["copywriting_angle"],
+            }
+        )
+
+    payload.update(
+        resolve_product_intelligence_catalog_projection(
+            payload,
+            include_reconciliation=include_reconciliation,
+            include_sales_metrics=include_sales_metrics,
+        )
+    )
+
+    physics = resolve_product_physics(product=payload)
+    payload.update(physics)
+    creative_profile = resolve_creative_profile(payload)
+    payload.update(creative_profile)
+    payload["product_display_name"] = (
+        creative_profile.get("display_name") or payload.get("product_display_name")
+    )
+    payload.update(evaluate_mapping_status(payload))
+    payload.update(evaluate_prompt_readiness(payload, physics))
+    if payload.get("mapping_status") == "BLOCKED":
+        payload["prompt_readiness_status"] = "MISSING_FIELDS"
+    elif (
+        payload.get("mapping_status") == "NEEDS_REVIEW"
+        and payload.get("prompt_readiness_status") == "READY"
+    ):
+        payload["prompt_readiness_status"] = "NEEDS_REVIEW"
+
+    payload.update(_resolve_image_readiness(payload))
+    payload["is_test_product"] = _is_test_product(payload)
+    return payload
+
+
 async def _refresh_claim_safe_product_row_if_needed(product: dict[str, Any]) -> dict[str, Any]:
     product_id = str(product.get("id") or "").strip()
     if not product_id or not product.get("claim_safe_copy_payload"):
@@ -618,6 +712,7 @@ async def _list_products_response(
     claim_gate: str | None = None,
     intelligence_confidence: str | None = None,
     sort: str | None = None,
+    catalog_view: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ):
@@ -631,12 +726,54 @@ async def _list_products_response(
         include_archived=db_include_archived,
         lifecycle_status=requested_lifecycle,
     )
-    enriched_all = [await _enrich_product_cached(product) for product in db_products]
-    merged_products = await _merge_catalog_products(
-        enriched_all,
-        requested_source=requested_source,
-        requested_source_lane=requested_source_lane,
+    # The old path fully enriched every active product before applying the
+    # requested page.  That made the first request after a process restart pay
+    # Product Truth, image, and sales-workbook costs for the whole catalog.  The
+    # projection keeps catalog selection bounded and leaves full enrichment to
+    # the page rows below.
+    registry_projection = (catalog_view or "").strip().upper() == "REGISTRY"
+    projection_needs_reconciliation = registry_projection or bool(
+        intelligence_status or freshness or intelligence_confidence
     )
+    projection_needs_sales = sort in {
+        "PRODUCT_SOLD_VERIFIED_DESC",
+        "SHOP_TOTAL_SOLD_DESC",
+    }
+    projected_products = [
+        _build_catalog_projection(
+            product,
+            include_reconciliation=projection_needs_reconciliation,
+            include_sales_metrics=projection_needs_sales,
+        )
+        for product in db_products
+    ]
+    if exclude_reference or (purpose or "").strip().upper() == "GENERATION":
+        # The caller explicitly asked for canonical products only; do not load
+        # and then discard the read-only workbook reference catalog.
+        merged_products = projected_products
+    else:
+        merged_products = await _merge_catalog_products(
+            projected_products,
+            requested_source=requested_source,
+            requested_source_lane=requested_source_lane,
+            enrich_references=not registry_projection,
+        )
+    if registry_projection:
+        # FastMoss reference rows are review-only.  They need the same cheap
+        # browsing projection, but they must not pay the full enricher cost that
+        # canonical detail rows use.
+        merged_products = [
+            (
+                _build_catalog_projection(
+                    product,
+                    include_reconciliation=False,
+                    include_sales_metrics=False,
+                )
+                if product.get("reference_only")
+                else product
+            )
+            for product in merged_products
+        ]
     if exclude_reference or (purpose or "").strip().upper() == "GENERATION":
         # Drop read-only FastMoss reference rows. They have no `product` record, so
         # opening one only 404s the detail/intelligence surfaces — they belong in
@@ -747,18 +884,28 @@ async def _list_products_response(
     }
     image_readiness_summary = _catalog_image_readiness_summary(filtered_all)
     total = len(filtered_all)
-    enriched = []
-    for product in filtered_all[offset:offset + limit]:
-        refreshed_product = await _refresh_claim_safe_product_row_if_needed(product)
-        if refreshed_product is product:
-            enriched.append(product)
-            continue
-        # The claim-safe check returns a fresh DB row for EVERY row that has a
-        # payload (even when nothing changed), so this branch fires for the whole
-        # page. Use the cached enricher: unchanged rows keep the same mutation-key
-        # and hit the cache; genuinely refreshed rows bump claim_safe_copy_updated_at
-        # and re-enrich correctly.
-        enriched.append(await _enrich_product_cached(refreshed_product))
+    page_products = filtered_all[offset:offset + limit]
+    if registry_projection:
+        # Registry consumers only need the bounded read model.  Full enrichment
+        # remains available from the product detail endpoints and is intentionally
+        # not paid for by every catalog page.
+        if not projection_needs_sales:
+            for product in page_products:
+                product.update(resolve_product_sales_metrics_catalog_projection(product))
+        enriched = [dict(product) for product in page_products]
+    else:
+        enriched = []
+        for product in page_products:
+            refreshed_product = await _refresh_claim_safe_product_row_if_needed(product)
+            if refreshed_product is product:
+                enriched.append(product)
+                continue
+            # The claim-safe check returns a fresh DB row for EVERY row that has a
+            # payload (even when nothing changed), so this branch fires for the whole
+            # page. Use the cached enricher: unchanged rows keep the same mutation-key
+            # and hit the cache; genuinely refreshed rows bump claim_safe_copy_updated_at
+            # and re-enrich correctly.
+            enriched.append(await _enrich_product_cached(refreshed_product))
 
     # Annotate every row with the shared Product Truth Gateway lifecycle state so
     # the catalog surface cannot silently disagree with the read model / preview.
@@ -973,6 +1120,7 @@ async def _merge_catalog_products(
     *,
     requested_source: str | None,
     requested_source_lane: str | None,
+    enrich_references: bool = True,
 ) -> list[dict[str, Any]]:
     include_fastmoss_reference = (
         requested_source in {None, "ALL", "FASTMOSS"}
@@ -981,7 +1129,15 @@ async def _merge_catalog_products(
     if not include_fastmoss_reference:
         return persisted_products
 
-    reference_products = await list_fastmoss_reference_products(limit=500)
+    if enrich_references:
+        # Keep the established call shape for adapters/tests that provide the
+        # legacy enriched reference service.
+        reference_products = await list_fastmoss_reference_products(limit=500)
+    else:
+        reference_products = await list_fastmoss_reference_products(
+            limit=500,
+            enrich=False,
+        )
     seen_keys = {
         identity_key
         for product in persisted_products
@@ -1116,6 +1272,7 @@ async def list_products(
     claim_gate: str | None = Query(default=None),
     intelligence_confidence: str | None = Query(default=None),
     sort: str | None = Query(default=None),
+    view: str | None = Query(default=None),
     limit: int = Query(default=50),
     offset: int = Query(default=0),
 ):
@@ -1140,6 +1297,7 @@ async def list_products(
         claim_gate=claim_gate,
         intelligence_confidence=intelligence_confidence,
         sort=sort,
+        catalog_view=view,
         limit=limit,
         offset=offset,
     )

@@ -216,6 +216,7 @@ export async function fetchProductRegistry(params: {
 	if (params.intelligenceConfidence)
 		query.set("intelligence_confidence", params.intelligenceConfidence);
 	if (params.sort) query.set("sort", params.sort);
+	query.set("view", "REGISTRY");
 	query.set("limit", String(params.limit ?? 50));
 	query.set("offset", String(params.offset ?? 0));
 	const key = query.toString();
