@@ -253,8 +253,14 @@ export async function fetchProductRegistry(params: {
  * so it must not rely on a picker projection when binding the generation
  * product.
  */
-export async function fetchProductDetail(productId: string): Promise<Product> {
-	return fetchAPI<Product>(`/api/products/${encodeURIComponent(productId)}`);
+export async function fetchProductDetail(
+	productId: string,
+	signal?: AbortSignal,
+): Promise<Product> {
+	const path = `/api/products/${encodeURIComponent(productId)}`;
+	return signal
+		? fetchAPI<Product>(path, { signal })
+		: fetchAPI<Product>(path);
 }
 
 export async function fetchProductStrategyTypeRegistry(

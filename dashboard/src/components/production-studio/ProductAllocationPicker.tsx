@@ -8,8 +8,16 @@ import { resolveProductVisualPresentation } from "../../utils/productVisualPrese
 
 interface ProductAllocationPickerProps {
 	products: CohortProduct[];
+	knownProducts?: CohortProduct[];
 	allocations: ProductVideoAllocation[];
 	onChange: (allocations: ProductVideoAllocation[]) => void;
+	onSearchChange?: (search: string) => void;
+	onPageChange?: (offset: number) => void;
+	page?: {
+		offset: number;
+		limit: number;
+		total: number;
+	};
 	blockersByProduct?: Record<string, string>;
 	loading?: boolean;
 	error?: string;
@@ -56,8 +64,12 @@ function ProductThumbnail({ product }: { product: CohortProduct }) {
 
 export default function ProductAllocationPicker({
 	products,
+	knownProducts = [],
 	allocations,
 	onChange,
+	onSearchChange,
+	onPageChange,
+	page,
 	blockersByProduct = {},
 	loading = false,
 	error = "",
@@ -78,8 +90,12 @@ export default function ProductAllocationPicker({
 		[allocations],
 	);
 	const productById = useMemo(
-		() => new Map(products.map((product) => [product.product_id, product])),
-		[products],
+		() =>
+			new Map([
+				...knownProducts.map((product) => [product.product_id, product] as const),
+				...products.map((product) => [product.product_id, product] as const),
+			]),
+		[knownProducts, products],
 	);
 	const selectedProducts = allocations
 		.map((allocation) => ({
@@ -239,7 +255,9 @@ export default function ProductAllocationPicker({
 								}
 								value={search}
 								onChange={(event) => {
-									setSearch(event.target.value);
+									const nextSearch = event.target.value;
+									setSearch(nextSearch);
+									onSearchChange?.(nextSearch);
 									setActiveIndex(0);
 								}}
 								onKeyDown={handleSearchKeyDown}
@@ -252,6 +270,7 @@ export default function ProductAllocationPicker({
 									aria-label="Clear product search"
 									onClick={() => {
 										setSearch("");
+										onSearchChange?.("");
 										setActiveIndex(0);
 									}}
 									className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-white"
@@ -325,7 +344,36 @@ export default function ProductAllocationPicker({
 								})
 							)}
 						</div>
-						{products.length > MAX_VISIBLE_RESULTS ? (
+						{page ? (
+							<div
+								className="flex items-center justify-between gap-2 border-t border-slate-800 px-3 py-2 text-[10px] text-slate-500"
+								data-testid="p6-product-pagination"
+							>
+								<span>
+									{page.total === 0
+										? "0 products"
+										: `${page.offset + 1}–${Math.min(page.offset + page.limit, page.total)} of ${page.total}`}
+								</span>
+								<span className="flex gap-1">
+									<button
+										type="button"
+										disabled={loading || page.offset <= 0}
+										onClick={() => onPageChange?.(Math.max(0, page.offset - page.limit))}
+										className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40"
+									>
+										Prev
+									</button>
+									<button
+										type="button"
+										disabled={loading || page.offset + page.limit >= page.total}
+										onClick={() => onPageChange?.(page.offset + page.limit)}
+										className="rounded border border-slate-700 px-2 py-1 disabled:opacity-40"
+									>
+										Next
+									</button>
+								</span>
+							</div>
+						) : products.length > MAX_VISIBLE_RESULTS ? (
 							<div className="border-t border-slate-800 px-3 py-2 text-[10px] text-slate-500">
 								Showing up to {MAX_VISIBLE_RESULTS} results. Refine the search
 								to find another product.

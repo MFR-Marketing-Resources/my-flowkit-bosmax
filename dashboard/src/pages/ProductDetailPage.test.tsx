@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fetchAPI, patchAPI } from "../api/client";
 import {
+	fetchProductDetail,
 	fetchProductStrategyTypeRegistry,
 	reviewProductStrategyTaxonomy,
 } from "../api/products";
@@ -30,6 +31,7 @@ vi.mock("../api/client", () => ({
 }));
 
 vi.mock("../api/products", () => ({
+	fetchProductDetail: vi.fn(),
 	fetchProductStrategyTypeRegistry: vi.fn(),
 	invalidateProductCatalogCache: vi.fn(),
 	reviewProductStrategyTaxonomy: vi.fn(),
@@ -168,10 +170,8 @@ function renderProductDetail() {
 
 describe("ProductDetailPage tab contract", () => {
 	beforeEach(() => {
-		vi.mocked(fetchAPI).mockImplementation(async (path: string) => {
-			if (path === "/api/products/p1") return productFixture as never;
-			throw new Error(`Unexpected ProductDetailPage fetch: ${path}`);
-		});
+		vi.mocked(fetchAPI).mockReset();
+		vi.mocked(fetchProductDetail).mockResolvedValue(productFixture);
 		vi.mocked(patchAPI).mockResolvedValue({} as never);
 		vi.mocked(fetchProductStrategyTypeRegistry).mockResolvedValue(registryFixture);
 		vi.mocked(reviewProductStrategyTaxonomy).mockResolvedValue({} as never);

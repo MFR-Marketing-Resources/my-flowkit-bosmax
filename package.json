@@ -9,6 +9,7 @@
     "test:f2v-playwright-persistent-context": "node scripts/test-f2v-playwright-persistent-context.js",
     "test:copy-register-v2-browser": "node scripts/validate-copy-register-v2-browser.mjs",
     "test:copy-register-v2-lanes-browser": "node scripts/validate-copy-register-v2-lanes-browser.mjs",
+    "test:product-data-network": "node scripts/test-product-data-loading-network.mjs",
     "test:selector-registry": "node scripts/test-flow-selector-registry.js",
     "stamp:extension": "node scripts/stamp-extension-build.mjs"
   },

@@ -46,6 +46,10 @@ jobs:
         shell: pwsh
         run: npm ci
 
+      - name: Install Playwright Chromium
+        shell: pwsh
+        run: npx playwright install chromium
+
       - name: Install dashboard dependencies
         shell: pwsh
         working-directory: dashboard
