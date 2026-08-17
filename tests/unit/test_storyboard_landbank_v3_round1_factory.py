@@ -88,7 +88,7 @@ async def _create_supply(service: V3CopyFactoryService, product_id: str = PRODUC
             "evidence_fact_ids": [fact_id],
         },
         actor_id="round1-test",
-        request_id="round1-angle",
+        request_id=f"{product_id}:angle",
     )
     family = await service.create_storyline_family(
         product_id,
@@ -99,7 +99,7 @@ async def _create_supply(service: V3CopyFactoryService, product_id: str = PRODUC
             "reviewed_definition": "One continuous daily routine route",
         },
         actor_id="round1-test",
-        request_id="round1-family",
+        request_id=f"{product_id}:family",
     )
 
     def component_data(semantic_class: str, segments: list[dict], component_id: str):
@@ -131,7 +131,7 @@ async def _create_supply(service: V3CopyFactoryService, product_id: str = PRODUC
                     f"round1-hook-{index}",
                 ),
                 actor_id="round1-test",
-                request_id=f"round1-hook-request-{index}",
+                request_id=f"{product_id}:hook:{index}",
             )
         )
     bodies = []
@@ -160,7 +160,7 @@ async def _create_supply(service: V3CopyFactoryService, product_id: str = PRODUC
                     f"round1-body-{index}",
                 ),
                 actor_id="round1-test",
-                request_id=f"round1-body-request-{index}",
+                request_id=f"{product_id}:body:{index}",
             )
         )
     ctas = []
@@ -180,7 +180,7 @@ async def _create_supply(service: V3CopyFactoryService, product_id: str = PRODUC
                     f"round1-cta-{index}",
                 ),
                 actor_id="round1-test",
-                request_id=f"round1-cta-request-{index}",
+                request_id=f"{product_id}:cta:{index}",
             )
         )
     recipe = await service.create_recipe(
@@ -193,7 +193,7 @@ async def _create_supply(service: V3CopyFactoryService, product_id: str = PRODUC
             "target_angles": [{"entity_id": angle.angle_id, "revision": angle.revision}],
         },
         actor_id="round1-test",
-        request_id="round1-recipe",
+        request_id=f"{product_id}:recipe",
     )
     return recipe, angle, family, hooks, bodies, ctas
 

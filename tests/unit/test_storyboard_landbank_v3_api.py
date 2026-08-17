@@ -4,7 +4,9 @@ from agent.main import app
 
 
 def test_round1_v3_api_matrix_is_registered_without_future_round_routes():
-    paths = {route.path for route in app.routes}
+    # Newer FastAPI releases expose included-router sentinels alongside the
+    # concrete routes; only concrete routes carry a path.
+    paths = {route.path for route in app.routes if hasattr(route, "path")}
     assert "/api/storyboard-landbank/v3/authority/formulas" in paths
     assert "/api/storyboard-landbank/v3/angles" in paths
     assert "/api/storyboard-landbank/v3/storyline-families" in paths
