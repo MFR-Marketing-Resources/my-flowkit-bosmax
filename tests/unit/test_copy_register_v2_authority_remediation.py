@@ -425,3 +425,64 @@ async def test_mapping_get_is_pure_read_and_does_not_advance_product_timestamp()
         if statement.strip().upper().startswith(("UPDATE ", "INSERT ", "DELETE ", "REPLACE "))
     ]
     assert writes == []
+
+
+def test_current_authority_projection_gates_activation_not_historical_status():
+    """The read-projection the creator UI consumes MUST gate activation on CURRENT
+    authority. A historical PRODUCTION_VALID row whose Product Truth advanced after
+    approval must report ``activation_allowed=False`` so the shared
+    CopywritingSourceSelector never turns stale copy into a usable ``Use This Copy``
+    affordance (the reported activation-409 incident)."""
+    authored_lineage = _lineage().model_copy(
+        update={
+            "taxonomy_authority_version": "copy-register-product-truth-authority-v1",
+            "taxonomy_authority_fingerprint": "a" * 64,
+        }
+    )
+    approved = approve_copy_blueprint_v2(
+        _blueprint().model_copy(update={"product_truth_lineage": authored_lineage}),
+        approved_by="authority-activation-test",
+        current_product_truth=authored_lineage,
+        evidence_registry=_registry(),
+    ).model_copy(update={"status": "PRODUCTION_VALID"})
+
+    def _truth(lineage, *, ready=True, blockers=None):
+        return {
+            "ready_for_copy": ready,
+            "blockers": blockers or [],
+            "product_truth": {"lineage": lineage.model_dump(mode="json")},
+        }
+
+    # CURRENT authority -> activatable.
+    current = copy_service.get_blueprint_current_authority_validation(
+        approved, _truth(authored_lineage)
+    )
+    assert current["activation_allowed"] is True
+    assert current["valid"] is True
+    assert current["status"] == "CURRENT · PRODUCTION_VALID"
+
+    # Authority advanced after approval -> historical PRODUCTION_VALID is NOT activatable.
+    stale_lineage = authored_lineage.model_copy(
+        update={"taxonomy_authority_fingerprint": "b" * 64}
+    )
+    stale = copy_service.get_blueprint_current_authority_validation(
+        approved, _truth(stale_lineage)
+    )
+    assert stale["activation_allowed"] is False
+    assert stale["valid"] is False
+    assert stale["status"] == "STALE_AUTHORITY_LINEAGE"
+
+    # Current Product Truth blocked -> not activatable even though status is PRODUCTION_VALID.
+    blocked = copy_service.get_blueprint_current_authority_validation(
+        approved,
+        _truth(authored_lineage, ready=False, blockers=["V2_PRODUCT_TRUTH_TAXONOMY_DRIFT"]),
+    )
+    assert blocked["activation_allowed"] is False
+
+    # DRAFT is never activatable, even on fully current authority.
+    draft = _blueprint().model_copy(update={"product_truth_lineage": authored_lineage})
+    draft_state = copy_service.get_blueprint_current_authority_validation(
+        draft, _truth(authored_lineage)
+    )
+    assert draft_state["activation_allowed"] is False
+    assert draft_state["status"] == "DRAFT"
