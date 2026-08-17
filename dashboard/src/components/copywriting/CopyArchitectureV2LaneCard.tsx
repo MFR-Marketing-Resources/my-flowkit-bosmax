@@ -265,7 +265,9 @@ export default function CopyArchitectureV2LaneCard({
 			{/* Blocker alert if blocked */}
 			{blockers.length && !ready && !copyFree ? (
 				<div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
-					<span className="flex-1">{blockers[0]}</span>
+					<span className="flex-1" data-testid="copy-v2-human-blocker">
+						Copywriting needs attention. Open Copy Register to select or approve copy.
+					</span>
 					{productId ? (
 						<a
 							href={`/creative/copy-registry?product_id=${encodeURIComponent(productId)}`}

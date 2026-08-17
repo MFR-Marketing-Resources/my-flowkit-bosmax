@@ -296,4 +296,58 @@ describe("CopyArchitectureV2LaneCard", () => {
 			"N/A — copy-free lane",
 		);
 	});
+
+	it("renders a human-actionable message on the default surface and keeps technical codes inside TechnicalDetails", async () => {
+		stubV2Fetch({
+			resolution: {
+				status: "BLOCKED",
+				blockers: ["APPROVED_COPY_CAPACITY_SHORTFALL"],
+			},
+		});
+		render(<CopyArchitectureV2LaneCard lane="T2V" productId="synthetic-product" />);
+		await waitFor(() =>
+			expect(screen.getByTestId("copy-v2-readiness")).toHaveTextContent("BLOCKED"),
+		);
+
+		// Default surface displays human-actionable message, NOT raw technical blocker code
+		const humanBlocker = screen.getByTestId("copy-v2-human-blocker");
+		expect(humanBlocker).toHaveTextContent("Copywriting needs attention. Open Copy Register to select or approve copy.");
+		expect(humanBlocker).not.toHaveTextContent("APPROVED_COPY_CAPACITY_SHORTFALL");
+
+		// Open Copy Register action button is present on default surface
+		const openLink = screen.getByTestId("p6-open-copy-register");
+		expect(openLink).toBeInTheDocument();
+		expect(openLink).toHaveAttribute("href", expect.stringContaining("product_id=synthetic-product"));
+
+		// Technical blocker remains preserved in diagnostics
+		expect(screen.getByTestId("copy-v2-blockers")).toHaveTextContent("APPROVED_COPY_CAPACITY_SHORTFALL");
+	});
+
+	it("does not leak structured JSON or internal error codes to default UI", async () => {
+		stubV2Fetch({
+			resolutionFailure: {
+				status: 409,
+				body: {
+					detail: {
+						error_code: "INTERNAL_V2_ERROR",
+						message: "Some internal details",
+					},
+				},
+			},
+		});
+		render(<CopyArchitectureV2LaneCard lane="T2V" productId="synthetic-product" />);
+		await waitFor(() =>
+			expect(screen.getByTestId("copy-v2-readiness")).toHaveTextContent(
+				"UNAVAILABLE — persisted V2 resolution failed",
+			),
+		);
+
+		// Default surface is human-readable
+		const humanBlocker = screen.getByTestId("copy-v2-human-blocker");
+		expect(humanBlocker).toHaveTextContent("Copywriting needs attention. Open Copy Register to select or approve copy.");
+		expect(humanBlocker).not.toHaveTextContent("INTERNAL_V2_ERROR");
+
+		// Diagnostic container retains raw error
+		expect(screen.getByTestId("copy-v2-blockers")).toHaveTextContent("INTERNAL_V2_ERROR");
+	});
 });
