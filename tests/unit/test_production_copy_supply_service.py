@@ -110,3 +110,36 @@ async def test_materialize_bulk_rejects_over_limit():
     with pytest.raises(MaterializationError) as excinfo:
         await supply.materialize_bulk(requests)
     assert excinfo.value.code == "MATERIALIZATION_BULK_LIMIT_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_production_capacity_reports_four_tiers(monkeypatch):
+    svc, result, approval = await _approved_supply(monkeypatch, "cap-4tier")
+    receipt_id = approval["receipt"]["receipt_id"]
+
+    before = await supply.production_capacity("cap-4tier")
+    assert before["semantic_capacity"] >= 1           # approved master(s)
+    assert before["projection_capacity"] == 3          # 8/16/24s approved projections
+    assert before["executable_copy_capacity"] == 0     # nothing materialized yet
+    assert before["production_capacity"] == 0
+
+    projection_id = await _first_projection_id(result["master"]["entity_id"])
+    await supply.materialize(projection_id=projection_id, receipt_id=receipt_id)
+    after = await supply.production_capacity("cap-4tier")
+    assert after["executable_copy_capacity"] == 1
+    assert after["production_capacity"] == 1            # NOT a Cartesian blow-up
+
+    db = await get_db()
+    await db.execute(
+        "INSERT INTO product_intelligence_snapshot "
+        "(snapshot_id, product_id, version, status, product_description, benefits_json, usp_json, "
+        "target_customer_text, allowed_claims_json, buyer_persona_snapshot_json, copy_strategy_summary_json, "
+        "claim_gate, claim_risk_level, created_at, updated_at) "
+        "VALUES ('cap-4tier-snap2','cap-4tier',2,'APPROVED','Newer.', "
+        "'[\"nb\"]','[\"nu\"]','nc','[\"ncl\"]','{\"a\":1}','{\"f\":\"PAS\"}','CLAIM_SAFE','LOW', "
+        "'2026-08-18T00:00:00Z','2026-08-18T00:00:00Z')",
+    )
+    await db.commit()
+    stale = await supply.production_capacity("cap-4tier")
+    assert stale["executable_copy_capacity"] == 0      # materialization went stale
+    assert stale["stale_copy_count"] == 1

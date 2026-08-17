@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent.authority.copy_blueprint_v2_authority import formula_version as v2_formula_version
+from agent.db.schema import get_db
 from agent.models.storyboard_landbank_v3_round3 import materialization_link_id
 from agent.services import copy_register_v2_service as v2svc
 from agent.services import production_supply_repository as supply_repo
@@ -219,4 +220,82 @@ async def materialize_bulk(
         "blocked_count": len(blocked),
         "materialized": materialized,
         "blocked": blocked,
+    }
+
+
+async def _link_is_executable(link, current_truth) -> bool:
+    """A materialization link is EXECUTABLE iff its V2 blueprint is still
+    PRODUCTION_VALID and bound to CURRENT Product Truth + formula authority."""
+
+    try:
+        blueprint = await v2svc.get_blueprint(link.v2_blueprint_id, link.v2_blueprint_revision)
+    except v2svc.CopyRegisterV2Error:
+        return False
+    if blueprint.status != "PRODUCTION_VALID" or link.status != "PRODUCTION_VALID":
+        return False
+    if current_truth is None:
+        return False
+    if (
+        link.product_truth_snapshot_version != current_truth["version"]
+        or link.product_truth_snapshot_digest != current_truth["digest"]
+    ):
+        return False
+    if link.formula_version != v2_formula_version(link.formula_id):
+        return False
+    return True
+
+
+async def production_capacity(product_id: str) -> dict[str, Any]:
+    """4-tier production capacity for a product.
+
+    Deliberately NOT a naive Cartesian product of creative dimensions: PRODUCTION
+    capacity is bounded by deployable executable copy and is further gated by
+    approved visual/treatment/choreography supply and P6 constraints at plan time.
+    """
+
+    db = await get_db()
+    semantic = (
+        await (
+            await db.execute(
+                "SELECT COUNT(DISTINCT master_id) FROM master_storyboard_v3 "
+                "WHERE product_id=? AND status='APPROVED'",
+                (product_id,),
+            )
+        ).fetchone()
+    )[0]
+    projection = (
+        await (
+            await db.execute(
+                "SELECT COUNT(DISTINCT projection_id) FROM duration_projection_v3 "
+                "WHERE product_id=? AND status='APPROVED'",
+                (product_id,),
+            )
+        ).fetchone()
+    )[0]
+
+    current_truth = await _current_truth(product_id)
+    links = await supply_repo.list_links_for_product(product_id, limit=4096)
+    executable = 0
+    stale = 0
+    for link in links:
+        if await _link_is_executable(link, current_truth):
+            executable += 1
+        else:
+            stale += 1
+
+    return {
+        "product_id": product_id,
+        "semantic_capacity": int(semantic),
+        "projection_capacity": int(projection),
+        "executable_copy_capacity": executable,
+        "stale_copy_count": stale,
+        # Deployable executable copy; real output is further bounded by approved
+        # visual/treatment/choreography supply + P6 constraints (never Cartesian).
+        "production_capacity": executable,
+        "production_capacity_note": (
+            "PRODUCTION_CAPACITY is deployable executable copy. Real production "
+            "output is additionally bounded by approved visual/treatment/"
+            "choreography supply and P6 production constraints, and is never the "
+            "naive product of independent creative dimensions."
+        ),
     }
