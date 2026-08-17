@@ -183,7 +183,7 @@ async def test_v3_core_tables_indexes_and_deferred_tables_are_exact():
     indexes = {row[0] for row in await index_cursor.fetchall()}
     assert V3_INDEXES <= indexes
     expected_columns = {
-        "storyboard_component_v3": {"objective_id", "formula_stage_keys_json", "content_digest"},
+        "storyboard_component_v3": {"objective_id", "formula_stage_keys_json", "stage_segments_json", "content_digest"},
         "copy_recipe_v3": {"campaign_key", "objective_id", "deterministic_seed", "config_digest"},
         "master_storyboard_v3": {"objective_id", "exact_stage_texts_json", "duplicate_fingerprint"},
         "duration_projection_v3": {

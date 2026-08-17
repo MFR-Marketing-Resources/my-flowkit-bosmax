@@ -1,0 +1,505 @@
+"""Macro Round 1 V3 Copy Factory API.
+
+The router is deliberately limited to authority, supply, authoring DRAFTs,
+deterministic compile/preview, capacity, and read models.  Approval, V2
+materialization, P6, media, and provider endpoints do not exist here.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query, Request
+
+from agent.services.storyboard_landbank_v3_factory import (
+    ROUND1_SOURCE,
+    V3CopyFactoryService,
+    V3FactoryError,
+)
+
+
+router = APIRouter(prefix="/storyboard-landbank/v3", tags=["storyboard-landbank-v3"])
+service = V3CopyFactoryService()
+
+
+def _error(exc: V3FactoryError) -> HTTPException:
+    detail: dict[str, Any] = {"code": exc.code, "message": str(exc)}
+    if exc.details is not None:
+        detail["details"] = exc.details
+    return HTTPException(status_code=exc.status_code, detail=detail)
+
+
+def _meta(request: Request, payload: dict[str, Any]) -> tuple[str, str, str]:
+    actor_id = str(request.headers.get("X-Actor-Id") or payload.get("actor_id") or "").strip()
+    request_id = str(
+        request.headers.get("X-Request-Id")
+        or request.headers.get("Idempotency-Key")
+        or payload.get("request_id")
+        or ""
+    ).strip()
+    source = str(request.headers.get("X-Source") or payload.get("source") or ROUND1_SOURCE).strip()
+    if not actor_id or not request_id:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "MUTATION_RECEIPT_REQUIRED", "message": "actor_id and request_id are required for V3 mutations."},
+        )
+    return actor_id, request_id, source
+
+
+def _dump(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, (tuple, list)):
+        return [_dump(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _dump(item) for key, item in value.items()}
+    return value
+
+
+@router.get("/authority/formulas")
+async def get_formula_authority(production_only: bool = Query(default=False)):
+    return {"formulas": [_dump(item) for item in await service.formulas(production_only=production_only)], "provider_calls": 0}
+
+
+@router.get("/products/{product_id}/truth")
+async def get_product_truth(product_id: str):
+    try:
+        return await service.product_supply(product_id)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/products/{product_id}/supply")
+async def get_product_supply(product_id: str):
+    return await get_product_truth(product_id)
+
+
+@router.get("/products/{product_id}/evidence/rank")
+async def rank_product_evidence(
+    product_id: str,
+    formula_id: str | None = None,
+    fact_id: list[str] | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    try:
+        result = await service.rank_evidence(product_id, formula_id=formula_id, requested_fact_ids=tuple(fact_id or ()), limit=limit)
+        return _dump(result)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/angles")
+async def list_angles(
+    product_id: str | None = None,
+    status: str | None = None,
+    formula_id: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    try:
+        rows = await service.repository.list("ANGLE", product_id=product_id, status=status, formula_id=formula_id, limit=limit, offset=offset)
+        return {"items": [_dump(row) for row in rows[:limit]], "limit": limit, "offset": offset, "provider_calls": 0}
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/angles/{angle_id}")
+async def get_angle(angle_id: str, revision: int | None = Query(default=None, ge=1)):
+    try:
+        row = await service.get_entity("ANGLE", angle_id, revision)
+        if row is None:
+            raise V3FactoryError("ANGLE_NOT_FOUND", "Angle was not found.", status_code=404)
+        return _dump(row)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/angles", status_code=201)
+async def create_angle(request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, source = _meta(request, payload)
+        return _dump(await service.create_angle(str(payload.get("product_id") or ""), payload, actor_id=actor_id, request_id=request_id, source=source))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/angles/{angle_id}/revisions", status_code=201)
+async def revise_angle(angle_id: str, request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, source = _meta(request, payload)
+        revision = int(payload.get("revision") or 1)
+        updates = dict(payload.get("updates") or {})
+        return _dump(await service.create_revision("ANGLE", angle_id, revision, updates, actor_id=actor_id, request_id=request_id, source=source))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/storyline-families")
+async def list_storyline_families(
+    product_id: str | None = None,
+    status: str | None = None,
+    formula_id: str | None = None,
+    angle_id: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    try:
+        rows = await service.repository.list("STORYLINE_FAMILY", product_id=product_id, status=status, formula_id=formula_id, angle_id=angle_id, limit=limit, offset=offset)
+        return {"items": [_dump(row) for row in rows[:limit]], "limit": limit, "offset": offset, "provider_calls": 0}
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/storyline-families/{family_id}")
+async def get_storyline_family(family_id: str, revision: int | None = Query(default=None, ge=1)):
+    try:
+        row = await service.get_entity("STORYLINE_FAMILY", family_id, revision)
+        if row is None:
+            raise V3FactoryError("STORYLINE_FAMILY_NOT_FOUND", "Storyline Family was not found.", status_code=404)
+        return _dump(row)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/storyline-families", status_code=201)
+async def create_storyline_family(request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, source = _meta(request, payload)
+        return _dump(await service.create_storyline_family(str(payload.get("product_id") or ""), payload, actor_id=actor_id, request_id=request_id, source=source))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/storyline-families/{family_id}/revisions", status_code=201)
+async def revise_storyline_family(family_id: str, request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, source = _meta(request, payload)
+        return _dump(
+            await service.create_revision(
+                "STORYLINE_FAMILY",
+                family_id,
+                int(payload.get("revision") or 1),
+                dict(payload.get("updates") or {}),
+                actor_id=actor_id,
+                request_id=request_id,
+                source=source,
+            )
+        )
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/components")
+async def list_components(
+    product_id: str | None = None,
+    status: str | None = None,
+    formula_id: str | None = None,
+    storyline_family_id: str | None = None,
+    semantic_class: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    try:
+        rows = await service.repository.list("STORYBOARD_COMPONENT", product_id=product_id, status=status, formula_id=formula_id, storyline_family_id=storyline_family_id, limit=limit, offset=offset)
+        if semantic_class:
+            rows = [row for row in rows if row.semantic_class == semantic_class.upper()]
+        return {"items": [_dump(row) for row in rows[:limit]], "limit": limit, "offset": offset, "provider_calls": 0}
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/components/{component_id}")
+async def get_component(component_id: str, revision: int | None = Query(default=None, ge=1)):
+    try:
+        row = await service.get_entity("STORYBOARD_COMPONENT", component_id, revision)
+        if row is None:
+            raise V3FactoryError("COMPONENT_NOT_FOUND", "Component was not found.", status_code=404)
+        return _dump(row)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/components", status_code=201)
+async def create_component(request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, source = _meta(request, payload)
+        return _dump(await service.create_component(str(payload.get("product_id") or ""), payload, actor_id=actor_id, request_id=request_id, source=source))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/components/{component_id}/revisions", status_code=201)
+async def revise_component(component_id: str, request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, source = _meta(request, payload)
+        return _dump(
+            await service.create_revision(
+                "STORYBOARD_COMPONENT",
+                component_id,
+                int(payload.get("revision") or 1),
+                dict(payload.get("updates") or {}),
+                actor_id=actor_id,
+                request_id=request_id,
+                source=source,
+            )
+        )
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/recipes")
+async def list_recipes(product_id: str | None = None, status: str | None = None, limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0)):
+    try:
+        rows = await service.repository.list("COPY_RECIPE", product_id=product_id, status=status, limit=limit, offset=offset)
+        return {"items": [_dump(row) for row in rows[:limit]], "limit": limit, "offset": offset, "provider_calls": 0}
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/recipes", status_code=201)
+async def create_recipe(request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, source = _meta(request, payload)
+        return _dump(await service.create_recipe(str(payload.get("product_id") or ""), payload, actor_id=actor_id, request_id=request_id, source=source))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/recipes/{recipe_id}")
+async def get_recipe(recipe_id: str, revision: int | None = Query(default=None, ge=1)):
+    try:
+        row = await service.get_entity("COPY_RECIPE", recipe_id, revision)
+        if row is None:
+            raise V3FactoryError("RECIPE_NOT_FOUND", "Copy Recipe was not found.", status_code=404)
+        return _dump(row)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/recipes/{recipe_id}/revisions", status_code=201)
+async def revise_recipe(recipe_id: str, request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, source = _meta(request, payload)
+        return _dump(
+            await service.create_revision(
+                "COPY_RECIPE",
+                recipe_id,
+                int(payload.get("revision") or 1),
+                dict(payload.get("updates") or {}),
+                actor_id=actor_id,
+                request_id=request_id,
+                source=source,
+            )
+        )
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/recipes/preview")
+async def preview_recipe(payload: dict[str, Any]):
+    try:
+        formula_id = str(payload.get("formula_id") or "")
+        formula = next(item for item in await service.formulas(production_only=True) if item.formula_id == formula_id or item.formula_id.casefold() == formula_id.casefold())
+        preset = str(payload.get("preset") or "CUSTOM").upper()
+        targets = payload.get("component_count_targets") or ({"HOOK": 6, "BODY_CORE": 3, "CTA": 3} if preset == "FAST54" else {})
+        theoretical = int(targets.get("HOOK", 0)) * int(targets.get("BODY_CORE", 0)) * int(targets.get("CTA", 0))
+        return {"preset": preset, "formula": _dump(formula), "component_count_targets": targets, "requested_capacity": payload.get("requested_capacity", theoretical), "theoretical_capacity": theoretical, "approved_capacity": 0, "executable_capacity": 0, "provider_calls": 0, "mutations": 0}
+    except (StopIteration, V3FactoryError) as exc:
+        if isinstance(exc, V3FactoryError):
+            raise _error(exc) from exc
+        raise HTTPException(status_code=422, detail={"code": "FORMULA_UNKNOWN", "message": "Formula is not canonical."}) from exc
+
+
+@router.post("/candidates/preview")
+async def preview_candidates(payload: dict[str, Any]):
+    try:
+        return _dump(await service.enumerate_candidates(str(payload.get("recipe_id") or ""), revision=payload.get("revision"), limit=int(payload.get("limit") or 50), cursor=payload.get("cursor"), durations=payload.get("durations"), compile=True, existing_fingerprints=payload.get("existing_fingerprints") or ()))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/candidates/compile")
+async def compile_candidates(payload: dict[str, Any]):
+    return await preview_candidates(payload)
+
+
+@router.post("/masters/compile")
+async def compile_master(request: Request, payload: dict[str, Any]):
+    try:
+        persist = bool(payload.get("persist", False))
+        actor_id = request.headers.get("X-Actor-Id") or payload.get("actor_id")
+        request_id = request.headers.get("X-Request-Id") or request.headers.get("Idempotency-Key") or payload.get("request_id")
+        source = request.headers.get("X-Source") or payload.get("source") or ROUND1_SOURCE
+        result = await service.compile_master(
+            str(payload.get("recipe_id") or ""), angle_id=str(payload.get("angle_id") or ""), angle_revision=int(payload.get("angle_revision") or 1),
+            storyline_family_id=str(payload.get("storyline_family_id") or ""), storyline_family_revision=int(payload.get("storyline_family_revision") or 1),
+            hook_id=str(payload.get("hook_id") or ""), hook_revision=int(payload.get("hook_revision") or 1),
+            body_core_id=str(payload.get("body_core_id") or ""), body_core_revision=int(payload.get("body_core_revision") or 1),
+            cta_id=str(payload.get("cta_id") or ""), cta_revision=int(payload.get("cta_revision") or 1),
+            persist=persist, actor_id=str(actor_id or "") if persist else None, request_id=str(request_id or "") if persist else None, source=str(source),
+        )
+        return _dump(result)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/masters/{master_id}")
+async def get_master(master_id: str, revision: int | None = Query(default=None, ge=1)):
+    try:
+        row = await service.get_entity("MASTER_STORYBOARD", master_id, revision)
+        if row is None:
+            raise V3FactoryError("MASTER_NOT_FOUND", "Master Storyboard was not found.", status_code=404)
+        return _dump(row)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/masters/{master_id}/projections")
+async def get_master_projections(master_id: str, revision: int = Query(default=1, ge=1), limit: int = Query(default=100, ge=1, le=500)):
+    try:
+        master = await service.get_entity("MASTER_STORYBOARD", master_id, revision)
+        if master is None:
+            raise V3FactoryError("MASTER_NOT_FOUND", "Master Storyboard was not found.", status_code=404)
+        rows = await service.repository.list("DURATION_PROJECTION", product_id=master.product_id, limit=limit, latest_only=True)
+        return {"master": _dump(master), "projections": [_dump(row) for row in rows if row.master.entity_id == master_id and row.master.revision == revision][:limit], "provider_calls": 0}
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/projections/{projection_id}")
+async def get_projection(projection_id: str, revision: int | None = Query(default=None, ge=1)):
+    try:
+        row = await service.get_entity("DURATION_PROJECTION", projection_id, revision)
+        if row is None:
+            raise V3FactoryError("PROJECTION_NOT_FOUND", "Duration Projection was not found.", status_code=404)
+        return _dump(row)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/projections/compile")
+async def compile_projection(request: Request, payload: dict[str, Any]):
+    try:
+        persist = bool(payload.get("persist", False))
+        actor_id = request.headers.get("X-Actor-Id") or payload.get("actor_id")
+        request_id = request.headers.get("X-Request-Id") or request.headers.get("Idempotency-Key") or payload.get("request_id")
+        projection, issues, details = await service.project_duration(
+            str(payload.get("master_id") or ""), master_revision=int(payload.get("master_revision") or 1), duration_seconds=int(payload.get("duration_seconds") or payload.get("target_duration_seconds") or 0),
+            language_profile=str(payload.get("language_profile") or "Malay"), wps_mode=str(payload.get("wps_mode") or "SAFE"), preferred_lane=payload.get("preferred_lane"),
+            persist=persist, actor_id=str(actor_id or "") if persist else None, request_id=str(request_id or "") if persist else None, source=str(payload.get("source") or ROUND1_SOURCE),
+        )
+        return {"projection": _dump(projection), "valid": projection is not None and not issues, "issue_codes": issues, "details": details, "provider_calls": 0}
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/capacity/{recipe_id}")
+async def get_capacity(recipe_id: str, evaluation_limit: int = Query(default=250, ge=1, le=250)):
+    try:
+        return _dump(await service.capacity(recipe_id, evaluation_limit=evaluation_limit))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/capacity/preview")
+async def preview_capacity(payload: dict[str, Any]):
+    try:
+        return _dump(await service.capacity(str(payload.get("recipe_id") or ""), revision=payload.get("revision"), evaluation_limit=int(payload.get("evaluation_limit") or 250)))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/landbank/components")
+async def get_component_landbank(product_id: str, limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0), formula_id: str | None = None, semantic_class: str | None = None, status: str | None = None):
+    try:
+        return _dump(await service.component_landbank(product_id, limit=limit, offset=offset, formula_id=formula_id, semantic_class=semantic_class, status=status))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/landbank/storyboards")
+async def get_storyboard_landbank(product_id: str, limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0), status: str | None = None):
+    try:
+        return _dump(await service.storyboard_landbank(product_id, limit=limit, offset=offset, status=status))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/review-queue")
+async def get_review_queue(product_id: str | None = None, status: list[str] | None = Query(default=None), limit: int = Query(default=100, ge=1, le=500), offset: int = Query(default=0, ge=0)):
+    try:
+        return _dump(await service.review_queue(product_id, statuses=tuple(status or ("DRAFT", "REVIEW_REQUIRED", "VALIDATED", "BLOCKED", "REJECTED")), limit=limit, offset=offset))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/review/{entity_type}/{entity_id}/validate")
+async def validate_v3_entity(entity_type: str, entity_id: str, revision: int | None = None):
+    try:
+        return await service.validate_entity(entity_type, entity_id, revision)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/review/{entity_type}/{entity_id}/submit")
+async def submit_v3_entity(entity_type: str, entity_id: str, request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, source = _meta(request, payload)
+        return _dump(await service.transition(entity_type, entity_id, int(payload.get("revision") or 1), "REVIEW_REQUIRED", actor_id=actor_id, request_id=request_id, source=source, reason=payload.get("reason")))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/review/{entity_type}/{entity_id}/reject")
+async def reject_v3_entity(entity_type: str, entity_id: str, request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, source = _meta(request, payload)
+        return _dump(await service.transition(entity_type, entity_id, int(payload.get("revision") or 1), "REJECTED", actor_id=actor_id, request_id=request_id, source=source, reason=payload.get("reason")))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/review/{entity_type}/{entity_id}/archive")
+async def archive_v3_entity(entity_type: str, entity_id: str, request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, source = _meta(request, payload)
+        return _dump(await service.transition(entity_type, entity_id, int(payload.get("revision") or 1), "ARCHIVED", actor_id=actor_id, request_id=request_id, source=source, reason=payload.get("reason")))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.delete("/drafts/{entity_type}/{entity_id}/{revision}")
+async def delete_v3_draft(entity_type: str, entity_id: str, revision: int, request: Request):
+    try:
+        actor_id, request_id, source = _meta(request, {})
+        return {"deleted": await service.delete_draft(entity_type, entity_id, revision, actor_id=actor_id, request_id=request_id, source=source), "provider_calls": 0}
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/seeds/v2/preview")
+async def preview_v2_seed(product_id: str, blueprint_id: str | None = None, angle_id: str | None = None):
+    try:
+        return await service.v2_seed_preview(product_id, blueprint_id=blueprint_id, angle_id=angle_id)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/seeds/v2/blueprints/{blueprint_id}/import-draft", status_code=201)
+async def import_v2_seed(blueprint_id: str, request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, source = _meta(request, payload)
+        return await service.import_v2_blueprint_draft(str(payload.get("product_id") or ""), blueprint_id, int(payload.get("revision") or 1), actor_id=actor_id, request_id=request_id, source=source)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/seeds/v2/angles/{angle_id}/import-draft", status_code=201)
+async def import_v2_angle_seed(angle_id: str, request: Request, payload: dict[str, Any]):
+    try:
+        actor_id, request_id, source = _meta(request, payload)
+        return _dump(await service.import_v2_angle_draft(str(payload.get("product_id") or ""), angle_id, actor_id=actor_id, request_id=request_id, source=source))
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+__all__ = ["router"]
