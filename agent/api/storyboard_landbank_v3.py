@@ -416,6 +416,29 @@ async def get_v3_copy_register_provider_status():
     return {**_dump(round2_service.provider_status()), "provider_calls": 0, "credit_spend": 0}
 
 
+@router.post("/copy-register/setup-campaign")
+async def setup_v3_campaign(request: Request, payload: dict[str, Any]):
+    """Normal Setup Campaign: build/reuse a V3 CopyRecipe from a human preset."""
+    try:
+        actor_id, request_id, _source = _meta(request, payload)
+        return await round2_service.create_campaign_recipe(
+            str(payload.get("product_id") or ""),
+            objective_id=str(payload.get("objective_id") or ""),
+            objective_definition=str(payload.get("objective_definition") or payload.get("objective_id") or ""),
+            formula_id=str(payload.get("formula_id") or ""),
+            preset=str(payload.get("preset") or "CUSTOM"),
+            supported_durations_seconds=payload.get("supported_durations_seconds"),
+            target_capacity=payload.get("target_capacity"),
+            language_profile=str(payload.get("language_profile") or "Malay"),
+            wps_mode=str(payload.get("wps_mode") or "SAFE"),
+            component_count_targets=payload.get("component_count_targets"),
+            actor_id=actor_id,
+            request_id=request_id,
+        )
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
 @router.post("/copy-register/assistant/plan")
 async def plan_v3_copy_assistant(request: Request, payload: dict[str, Any]):
     try:

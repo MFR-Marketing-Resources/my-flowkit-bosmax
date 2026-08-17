@@ -678,6 +678,38 @@ async def test_round2_create_bootstraps_from_zero_supply(monkeypatch):
     assert any(item["master"]["master_id"] == master_item["master"]["master_id"] for item in review["items"])
 
 
+@pytest.mark.asyncio
+async def test_round2_setup_campaign_preset_needs_no_raw_recipe_id(monkeypatch):
+    monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
+    product_id = "round2-setup"
+    await _seed_product_truth(product_id)
+    factory = V3CopyFactoryService()
+    service = V3CopyRegisterRound2Service(factory=factory)
+    setup = await service.create_campaign_recipe(
+        product_id, objective_id="conversion", objective_definition="Drive a safe trial",
+        formula_id="PAS", preset="FAST54", supported_durations_seconds=[8, 16, 24],
+        target_capacity=54, language_profile="Malay", wps_mode="SWEET",
+        actor_id="op", request_id="setup:1",
+    )
+    assert setup["preset"] == "FAST54"
+    recipe = setup["recipe"]
+    assert recipe["component_count_targets"] == {"HOOK": 6, "BODY_CORE": 3, "CTA": 3}
+    assert recipe["wps_mode"] == "SWEET"
+    assert set(recipe["supported_durations_seconds"]) == {8, 16, 24}
+    # The created recipe id drives planning directly (operator never typed an ID).
+    plan = await service.plan_assistant(product_id, setup["recipe_id"], mode="CREATE", actor_id="op", request_id="setup:plan")
+    assert plan.wps_mode == "SWEET"
+    assert plan.supply_actions == {"angle": "CREATE_DRAFT", "storyline_family": "CREATE_DRAFT"}
+    # Idempotent: the same preset campaign returns the existing recipe, not a 409.
+    again = await service.create_campaign_recipe(
+        product_id, objective_id="conversion", objective_definition="Drive a safe trial",
+        formula_id="PAS", preset="FAST54", supported_durations_seconds=[8, 16, 24],
+        target_capacity=54, language_profile="Malay", wps_mode="SWEET",
+        actor_id="op", request_id="setup:2",
+    )
+    assert again["reused"] is True and again["recipe_id"] == setup["recipe_id"]
+
+
 async def _seed_malay_master(product_id: str, formula_id: str):
     """Build a persisted Master with an overlong Malay body (forces compression)."""
     await _seed_product_truth(product_id)

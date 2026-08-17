@@ -1819,6 +1819,70 @@ class V3CopyRegisterRound2Service:
             "failures": failures,
         }
 
+    async def create_campaign_recipe(
+        self,
+        product_id: str,
+        *,
+        objective_id: str,
+        objective_definition: str,
+        formula_id: str,
+        preset: str = "CUSTOM",
+        supported_durations_seconds: Sequence[int] | None = None,
+        target_capacity: int | None = None,
+        language_profile: str = "Malay",
+        wps_mode: str = "SAFE",
+        component_count_targets: Mapping[str, Any] | None = None,
+        actor_id: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Normal Setup Campaign: create/reuse a V3 CopyRecipe from a human preset.
+
+        The operator picks Product/Objective/Formula/Recipe preset/Durations/
+        Capacity/Language/WPS — never a raw recipe ID.  Presets map to the
+        existing V3 CopyRecipe authority (QUICK TEST, FAST54, MULTI-ANGLE, SCALE,
+        CUSTOM); it never creates a second recipe engine.
+        """
+        if not actor_id or not request_id:
+            raise V3FactoryError("MUTATION_RECEIPT_REQUIRED", "actor_id and request_id are required.", status_code=422)
+        normalized_preset = str(preset or "CUSTOM").upper().replace(" ", "_").replace("-", "_")
+        if normalized_preset not in {"QUICK_TEST", "FAST54", "MULTI_ANGLE", "SCALE", "CUSTOM"}:
+            raise V3FactoryError("RECIPE_PRESET_INVALID", "Preset must be QUICK TEST, FAST54, MULTI-ANGLE, SCALE, or CUSTOM.", status_code=422)
+        data: dict[str, Any] = {
+            "formula_id": formula_id,
+            "objective_id": objective_id,
+            "objective_definition": objective_definition,
+            "preset": normalized_preset,
+            "wps_mode": str(wps_mode or "SAFE").upper(),
+            "campaign_scope": {"language_profile": language_profile},
+        }
+        if supported_durations_seconds:
+            data["supported_durations_seconds"] = [int(item) for item in supported_durations_seconds]
+        if target_capacity is not None:
+            data["target_capacity"] = {"requested_capacity": int(target_capacity)}
+        if component_count_targets:
+            data["component_count_targets"] = {str(key).upper(): int(value) for key, value in component_count_targets.items()}
+        try:
+            recipe = await self.factory.create_recipe(product_id, data, actor_id=actor_id, request_id=request_id, source=ROUND2_SOURCE)
+            reused = False
+        except V3FactoryError as exc:
+            if exc.code != "DUPLICATE_RECIPE":
+                raise
+            # Idempotent Setup: an identical campaign recipe already exists.
+            existing = await self.factory.repository.list("COPY_RECIPE", product_id=product_id, formula_id=formula_id, limit=MAX_PAGE)
+            recipe = existing[0] if existing else None
+            if recipe is None:
+                raise
+            reused = True
+        return {
+            "recipe": recipe.model_dump(mode="json"),
+            "recipe_id": recipe.recipe_id,
+            "recipe_revision": recipe.revision,
+            "preset": normalized_preset,
+            "reused": reused,
+            "provider_calls": 0,
+            "credit_spend": 0,
+        }
+
     async def list_runs(self, product_id: str, *, limit: int = 50, offset: int = 0) -> dict[str, Any]:
         limit = min(MAX_PAGE, max(1, int(limit)))
         db = await get_db()
