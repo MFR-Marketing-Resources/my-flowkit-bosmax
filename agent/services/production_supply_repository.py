@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from agent.db.schema import _db_lock, get_db
 from agent.models.storyboard_landbank_v3_round3 import (
+    LandbankUsageV3,
     ManifestItemV3,
     MaterializationLinkV3,
     ProductionCopySupplyManifestV3,
@@ -258,3 +259,73 @@ async def set_manifest_frozen(
             (frozen_at, manifest_id, revision),
         )
         await db.commit()
+
+
+# --------------------------------------------------------------------------- #
+# landbank_usage_v3 — append-only production usage ledger (P5)
+# --------------------------------------------------------------------------- #
+_USAGE_COLUMNS = (
+    "usage_id",
+    "product_id",
+    "master_id",
+    "master_revision",
+    "projection_id",
+    "projection_revision",
+    "v2_blueprint_id",
+    "v2_blueprint_revision",
+    "v2_approval_snapshot_id",
+    "materialization_link_id",
+    "materialization_link_revision",
+    "manifest_id",
+    "manifest_revision",
+    "manifest_item_id",
+    "p6_plan_id",
+    "p6_item_id",
+    "duration_seconds",
+    "campaign_key",
+    "usage_type",
+    "outcome_status",
+    "reason_code",
+    "authority_digest",
+    "event_digest",
+    "created_at",
+    "created_by",
+)
+
+
+def _usage_from_row(row: dict) -> LandbankUsageV3:
+    return LandbankUsageV3(**{column: row[column] for column in _USAGE_COLUMNS})
+
+
+async def insert_usage_event(event: LandbankUsageV3) -> None:
+    db = await get_db()
+    data = event.model_dump(mode="python")
+    placeholders = ", ".join("?" for _ in _USAGE_COLUMNS)
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO landbank_usage_v3 ({', '.join(_USAGE_COLUMNS)}) "
+            f"VALUES ({placeholders})",
+            tuple(data[column] for column in _USAGE_COLUMNS),
+        )
+        await db.commit()
+
+
+async def list_usage_for_plan(p6_plan_id: str) -> list[LandbankUsageV3]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM landbank_usage_v3 WHERE p6_plan_id=? ORDER BY created_at ASC, usage_id ASC",
+        (p6_plan_id,),
+    )
+    rows = await cursor.fetchall()
+    return [_usage_from_row(dict(row)) for row in rows]
+
+
+async def list_usage_for_manifest_item(manifest_item_id: str) -> list[LandbankUsageV3]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM landbank_usage_v3 WHERE manifest_item_id=? "
+        "ORDER BY created_at ASC, usage_id ASC",
+        (manifest_item_id,),
+    )
+    rows = await cursor.fetchall()
+    return [_usage_from_row(dict(row)) for row in rows]

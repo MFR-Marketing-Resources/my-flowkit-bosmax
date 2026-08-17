@@ -280,31 +280,50 @@ async def _build_item_payload(
 
     validation_context = dict(plan_v2_context or {})
     persisted_binding = v2_handoff.get("binding")
-    validation_lane = (
-        "POSTER_BUILDER"
-        if media_type == "POSTER"
-        else "IMAGE_GEN"
-        if media_type == "IMAGE"
-        else "PRODUCTION_STUDIO_P6"
-    )
-    try:
-        validation = await resolve_persisted_copy_execution_binding(
-            str(item.get("product_id") or plan.get("product_id") or ""),
-            validation_lane,
-            validation_context,
-        )
-    except CopyExecutionResolutionError as exc:
-        v2_blockers.append(exc.code)
+    # Round 3 P6 multi-copy selection: when an item carries an EXPLICIT per-item
+    # manifest selection, revalidate the exact selected V2 blueprint directly and
+    # NEVER touch the product-global activation pointer (copy_execution_authority_v2).
+    # Items without a round3 selection (all creator lanes, legacy P6) keep the
+    # existing product-global resolution path unchanged.
+    round3_selection = dimensions.get("round3_manifest_item")
+    if isinstance(round3_selection, dict) and round3_selection.get("v2_blueprint_id"):
+        from agent.services.production_allocation_service import revalidate_item_selection
+
+        item_validation = await revalidate_item_selection(round3_selection)
+        if not item_validation.get("valid"):
+            v2_blockers.append(
+                "COPY_V2_MANIFEST_ITEM_STALE:"
+                + str(item_validation.get("reason") or "UNKNOWN")
+            )
     else:
-        if validation.v2_enabled:
-            if not v2_handoff:
-                v2_blockers.append("COPY_V2_BINDING_REQUIRED")
-            elif validation.binding is not None and validation.binding.model_dump(
-                mode="json"
-            ) != persisted_binding:
-                v2_blockers.append("COPY_V2_BINDING_MISMATCH")
+        validation_lane = (
+            "POSTER_BUILDER"
+            if media_type == "POSTER"
+            else "IMAGE_GEN"
+            if media_type == "IMAGE"
+            else "PRODUCTION_STUDIO_P6"
+        )
+        try:
+            validation = await resolve_persisted_copy_execution_binding(
+                str(item.get("product_id") or plan.get("product_id") or ""),
+                validation_lane,
+                validation_context,
+            )
+        except CopyExecutionResolutionError as exc:
+            v2_blockers.append(exc.code)
+        else:
+            if validation.v2_enabled:
+                if not v2_handoff:
+                    v2_blockers.append("COPY_V2_BINDING_REQUIRED")
+                elif validation.binding is not None and validation.binding.model_dump(
+                    mode="json"
+                ) != persisted_binding:
+                    v2_blockers.append("COPY_V2_BINDING_MISMATCH")
 
     def _with_v2(payload: dict[str, Any]) -> dict[str, Any]:
+        if isinstance(round3_selection, dict) and round3_selection.get("v2_blueprint_id"):
+            # The P6 item carries its exact production-copy selection explicitly.
+            payload["round3_copy_selection"] = round3_selection
         if v2_handoff.get("v2_enabled"):
             payload["copy_architecture_v2"] = v2_handoff
             if v2_handoff.get("binding"):
