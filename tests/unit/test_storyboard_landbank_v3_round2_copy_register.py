@@ -485,3 +485,66 @@ async def test_round2_provider_output_budget_stops_before_v3_mutation(monkeypatc
         (plan.run_id,),
     )).fetchone()
     assert tuple(row) == ("FAILED", "AI_COPY_ASSIST_TOKEN_BUDGET_EXCEEDED", 1)
+
+
+class _CostReportingProvider:
+    def __init__(self, credit_spend: int):
+        self.payload: dict = {}
+        self.credit_spend = credit_spend
+
+    def complete_json_with_receipt(self, _system: str, _user: str):
+        return self.payload, {
+            "provider_id": "cost-test",
+            "model_id": "cost-test",
+            "response_status": "SUCCEEDED",
+            "json_parse_status": "VALID",
+            "usage": {"total_tokens": 12, "credit_spend": self.credit_spend},
+        }
+
+
+@pytest.mark.asyncio
+async def test_round2_cost_budget_does_not_auto_fail_a_paid_call(monkeypatch):
+    # max_cost defaults to 0 == "cost is not the gating control".  A real paid
+    # provider that reports a positive cost must NOT auto-fail; bounded
+    # calls/tokens/proposals remain the hard controls.
+    provider = _CostReportingProvider(5)
+    factory, recipe, _angle, _family = await _seed_round2_fixture("round2-cost-ok")
+    service = V3CopyRegisterRound2Service(factory=factory, provider=provider)
+    plan = await service.plan_assistant(
+        recipe.product_id, recipe.recipe_id, mode="CREATE",
+        actor_id="round2-operator", request_id="round2:cost-ok-plan",
+    )
+    assert plan.max_cost == 0
+    assert plan.cost_status == "NOT_REPORTED"
+    bundle = await factory.truth_adapter.current(recipe.product_id)
+    provider.payload = service._fake_envelope(plan, recipe, bundle)
+    result = await service.execute_assistant(
+        plan.plan_id, actor_id="round2-operator", request_id="round2:cost-ok-exec",
+    )
+    assert result["status"] == "EXECUTED"
+    assert result["cost_status"] == "WITHIN_BUDGET"
+    assert result["credit_spend"] == 5
+
+
+@pytest.mark.asyncio
+async def test_round2_cost_budget_enforced_only_when_positive_ceiling_exceeded(monkeypatch):
+    provider = _CostReportingProvider(5)
+    factory, recipe, _angle, _family = await _seed_round2_fixture("round2-cost-over")
+    service = V3CopyRegisterRound2Service(factory=factory, provider=provider)
+    plan = await service.plan_assistant(
+        recipe.product_id, recipe.recipe_id, mode="CREATE", max_cost=3,
+        actor_id="round2-operator", request_id="round2:cost-over-plan",
+    )
+    bundle = await factory.truth_adapter.current(recipe.product_id)
+    provider.payload = service._fake_envelope(plan, recipe, bundle)
+    with pytest.raises(Exception) as error:
+        await service.execute_assistant(
+            plan.plan_id, actor_id="round2-operator", request_id="round2:cost-over-exec",
+        )
+    assert error.value.code == "AI_COPY_ASSIST_COST_BUDGET_EXCEEDED"
+    db = await get_db()
+    row = await (await db.execute(
+        "SELECT status, cost_status FROM v3_ai_authoring_run WHERE run_id=?",
+        (plan.run_id,),
+    )).fetchone()
+    assert tuple(row) == ("FAILED", "BUDGET_EXCEEDED")

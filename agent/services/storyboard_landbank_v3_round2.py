@@ -610,7 +610,7 @@ class V3CopyRegisterRound2Service:
             remaining[proposal.semantic_class] -= 1
         return envelope, {"usage_tokens": int((usage or {}).get("total_tokens") or (usage or {}).get("output_tokens") or 0)}
 
-    async def _persist_run_result(self, run_id: str, *, status: str, provider_mode: str, provider_receipt: dict[str, Any] | None, result: dict[str, Any] | None, error_code: str | None = None) -> None:
+    async def _persist_run_result(self, run_id: str, *, status: str, provider_mode: str, provider_receipt: dict[str, Any] | None, result: dict[str, Any] | None, error_code: str | None = None, cost_status: str | None = None) -> None:
         provider_receipt = provider_receipt or None
         provider = provider_receipt or {}
         quality = (result or {}).get("quality") if result else None
@@ -625,7 +625,7 @@ class V3CopyRegisterRound2Service:
                     _json((result or {}).get("projections") or []), _json(provider_receipt) if provider_receipt else None,
                     _json(provider.get("usage") or {}), int((result or {}).get("provider_calls") or (0 if provider_mode == "FAKE_TEST" else 1 if provider_receipt else 0)),
                     int((result or {}).get("credit_spend") or 0),
-                    "WITHIN_BUDGET" if status == "EXECUTED" else ("BUDGET_EXCEEDED" if error_code and "BUDGET_EXCEEDED" in error_code else "NOT_REPORTED"),
+                    cost_status if cost_status is not None else ("WITHIN_BUDGET" if status == "EXECUTED" else ("BUDGET_EXCEEDED" if error_code and "BUDGET_EXCEEDED" in error_code else "NOT_REPORTED")),
                     _json(quality) if quality else None, _json(result) if result else None, error_code, _now(), run_id,
                 ),
             )
@@ -670,19 +670,28 @@ class V3CopyRegisterRound2Service:
             _usage_number(provider_usage, ("total_tokens", "output_tokens", "usage_tokens")),
         ))
         provider_calls = 0 if provider_mode == "FAKE_TEST" else 1
+        # Provider cost is never invented: it counts only if the provider
+        # actually returned a cost/credit field.  Absent that, cost is NOT_REPORTED.
+        cost_keys = ("credit_spend", "cost")
+        cost_reported = any(key in provider_receipt_raw for key in cost_keys) or any(key in provider_usage for key in cost_keys)
         reported_cost = max(
-            _usage_number(provider_receipt_raw, ("credit_spend", "cost")),
-            _usage_number(provider_usage, ("credit_spend", "cost")),
+            _usage_number(provider_receipt_raw, cost_keys),
+            _usage_number(provider_usage, cost_keys),
         )
         if provider_calls > plan.max_provider_calls:
-            await self._persist_run_result(plan.run_id, status="FAILED", provider_mode=provider_mode, provider_receipt=provider_receipt_raw, result=None, error_code="AI_COPY_ASSIST_CALL_BUDGET_EXCEEDED")
+            await self._persist_run_result(plan.run_id, status="FAILED", provider_mode=provider_mode, provider_receipt=provider_receipt_raw, result=None, error_code="AI_COPY_ASSIST_CALL_BUDGET_EXCEEDED", cost_status="NOT_REPORTED")
             raise V3FactoryError("AI_COPY_ASSIST_CALL_BUDGET_EXCEEDED", "The provider call count exceeded the explicit Round 2 plan budget.", status_code=502)
         if usage_tokens > plan.max_output_tokens:
-            await self._persist_run_result(plan.run_id, status="FAILED", provider_mode=provider_mode, provider_receipt=provider_receipt_raw, result=None, error_code="AI_COPY_ASSIST_TOKEN_BUDGET_EXCEEDED")
+            await self._persist_run_result(plan.run_id, status="FAILED", provider_mode=provider_mode, provider_receipt=provider_receipt_raw, result=None, error_code="AI_COPY_ASSIST_TOKEN_BUDGET_EXCEEDED", cost_status="NOT_REPORTED")
             raise V3FactoryError("AI_COPY_ASSIST_TOKEN_BUDGET_EXCEEDED", "The provider output exceeded the explicit Round 2 token budget.", status_code=502)
-        if reported_cost > plan.max_cost:
-            await self._persist_run_result(plan.run_id, status="FAILED", provider_mode=provider_mode, provider_receipt=provider_receipt_raw, result=None, error_code="AI_COPY_ASSIST_COST_BUDGET_EXCEEDED")
+        # A cost ceiling is enforced ONLY when an explicit positive max_cost was
+        # declared.  max_cost == 0 means cost is not the gating control (bounded
+        # calls/tokens/proposals are); it must never auto-fail a legitimate paid
+        # provider request just because no positive ceiling was configured.
+        if plan.max_cost > 0 and cost_reported and reported_cost > plan.max_cost:
+            await self._persist_run_result(plan.run_id, status="FAILED", provider_mode=provider_mode, provider_receipt=provider_receipt_raw, result=None, error_code="AI_COPY_ASSIST_COST_BUDGET_EXCEEDED", cost_status="BUDGET_EXCEEDED")
             raise V3FactoryError("AI_COPY_ASSIST_COST_BUDGET_EXCEEDED", "The provider reported cost above the explicit Round 2 budget.", status_code=502)
+        cost_status = "NOT_REPORTED" if not cost_reported else "WITHIN_BUDGET"
         if usage_tokens:
             provider_usage["total_tokens"] = usage_tokens
         angle, family = await self._route(recipe)
@@ -791,11 +800,12 @@ class V3CopyRegisterRound2Service:
                 "output_digest": output_digest,
                 "provider_calls": provider_calls,
                 "credit_spend": int(reported_cost),
+                "cost_status": cost_status,
                 "token_usage": provider_receipt.usage,
                 "quality": quality.model_dump(mode="json"),
                 "projection_derivation": "DETERMINISTIC_WPS_FROM_AI_AUTHORED_MASTER",
             }
-            await self._persist_run_result(plan.run_id, status="EXECUTED", provider_mode=provider_mode, provider_receipt=provider_receipt.model_dump(mode="json"), result=result)
+            await self._persist_run_result(plan.run_id, status="EXECUTED", provider_mode=provider_mode, provider_receipt=provider_receipt.model_dump(mode="json"), result=result, cost_status=cost_status)
             return result
         except V3FactoryError as exc:
             # If a component was already written, retain it as a reviewable V3
