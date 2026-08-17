@@ -8,6 +8,7 @@ import {
 	fetchProductIntelligenceProvenance,
 	fetchProductIntelligenceSnapshots,
 	fetchProductStrategyTypeRegistry,
+	invalidateProductCatalogCache,
 	registerProductStrategyType,
 	reviewProductStrategyTaxonomy,
 } from "../api/products";
@@ -1169,6 +1170,9 @@ export default function ProductsSalesAnalyzerPage() {
 	const loadSequenceRef = useRef(0);
 
 	const loadProducts = useCallback(async () => {
+		// The full-catalog screen owns product create/update/archive flows. Treat
+		// its authoritative refresh boundary as a selector-cache invalidation.
+		invalidateProductCatalogCache();
 		const requestSeq = ++loadSequenceRef.current;
 		setLoading(true);
 		setError(null);

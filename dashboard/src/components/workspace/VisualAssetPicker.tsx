@@ -14,6 +14,7 @@ type VisualAssetPreviewProps = {
 	subtitle?: string;
 	previewUrl?: string | null;
 	className?: string;
+	deferUntilVisible?: boolean;
 };
 
 export function VisualAssetPreview({
@@ -21,19 +22,45 @@ export function VisualAssetPreview({
 	subtitle,
 	previewUrl,
 	className = "h-12",
+	deferUntilVisible = false,
 }: VisualAssetPreviewProps) {
 	const [failed, setFailed] = useState(false);
 	const [open, setOpen] = useState(false);
+	const [isVisible, setIsVisible] = useState(!deferUntilVisible);
+	const previewRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		setFailed(false);
 		setOpen(false);
-	}, [previewUrl]);
+		setIsVisible(!deferUntilVisible);
+		if (!deferUntilVisible || !previewUrl) return;
 
-	const resolvedPreview = Boolean(previewUrl && !failed);
+		const node = previewRef.current;
+		if (!node) return;
+		if (!("IntersectionObserver" in window)) {
+			setIsVisible(true);
+			return;
+		}
+		const observer = new IntersectionObserver((entries) => {
+			if (!entries.some((entry) => entry.isIntersecting)) return;
+			setIsVisible(true);
+			observer.disconnect();
+		});
+		observer.observe(node);
+		return () => observer.disconnect();
+	}, [deferUntilVisible, previewUrl]);
+
+	const resolvedPreview = Boolean(
+		previewUrl &&
+		!failed &&
+		(!deferUntilVisible || isVisible),
+	);
+	const deferredPreview = Boolean(
+		previewUrl && deferUntilVisible && !isVisible && !failed,
+	);
 
 	return (
-		<>
+		<div className="w-full" ref={previewRef}>
 			{resolvedPreview ? (
 				<button
 					aria-label={`Preview ${title}`}
@@ -47,10 +74,18 @@ export function VisualAssetPreview({
 					<img
 						alt={`Preview of ${title}`}
 						className={`${className} w-full object-cover`}
+						decoding="async"
 						onError={() => setFailed(true)}
 						src={previewUrl ?? undefined}
 					/>
 				</button>
+			) : deferredPreview ? (
+				<div
+					className={`flex ${className} items-center justify-center rounded-lg bg-slate-900 px-1 text-center text-[9px] text-slate-500`}
+					data-testid="visual-asset-deferred"
+				>
+					Preview loads when visible
+				</div>
 			) : (
 				<div
 					className={`flex ${className} items-center justify-center rounded-lg bg-slate-800 px-1 text-center text-[9px] text-slate-400`}
@@ -88,7 +123,7 @@ export function VisualAssetPreview({
 					</div>
 				</div>
 			) : null}
-		</>
+		</div>
 	);
 }
 

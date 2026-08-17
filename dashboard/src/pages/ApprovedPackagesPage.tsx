@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchProductCatalog } from "../api/products";
 import {
 	createWorkspaceExecutionPackage,
 	fetchApprovedProductPackage,
@@ -21,6 +20,7 @@ import type {
 	WorkspaceExecutionPackage,
 	WorkspaceMode,
 } from "../types";
+import { useProductCatalog } from "../hooks/useProductCatalog";
 
 const MODES: WorkspaceMode[] = ["T2V", "F2V", "I2V", "IMG"];
 
@@ -37,7 +37,7 @@ function historySurfaceLabel(item: WorkspaceExecutionPackage): string {
 
 export default function ApprovedPackagesPage() {
 	const navigate = useNavigate();
-	const [products, setProducts] = useState<Product[]>([]);
+	const { products, isLoadingProducts, productsError } = useProductCatalog(50);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [packagesByMode, setPackagesByMode] = useState<
 		Partial<Record<WorkspaceMode, ApprovedProductPackage | null>>
@@ -49,14 +49,6 @@ export default function ApprovedPackagesPage() {
 	const [isLoading, setIsLoading] = useState(false);
 	const [activeMode, setActiveMode] = useState<WorkspaceMode>("T2V");
 	const [notice, setNotice] = useState<string>("");
-
-	useEffect(() => {
-		void fetchProductCatalog(500)
-			.then((response) => setProducts(response.items))
-			.catch((error: Error) =>
-				setNotice(error.message || "Failed to load product catalog."),
-			);
-	}, []);
 
 	useEffect(() => {
 		if (!selectedProduct) {
@@ -149,6 +141,8 @@ export default function ApprovedPackagesPage() {
 						products={products}
 						selectedProduct={selectedProduct}
 						onSelect={setSelectedProduct}
+						isLoadingProducts={isLoadingProducts}
+						productsError={productsError}
 					/>
 				</div>
 			</div>

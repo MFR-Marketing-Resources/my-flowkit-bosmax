@@ -30,7 +30,7 @@ import {
 import type { CompositionPlan } from "../../../types/posterCompositionPlan";
 import CompositionPlanSummary from "../CompositionPlanSummary";
 import { usePosterRecipes } from "../../../api/posterRecipes";
-import { fetchProductCatalog } from "../../../api/products";
+import { useProductCatalog } from "../../../hooks/useProductCatalog";
 import {
 	bucketQaFindings,
 	GUIDED_GOALS,
@@ -221,8 +221,12 @@ export default function PosterGuidedShell({ onResult }: PosterGuidedShellProps) 
 			onResult?.({ media_id: id, url: posterDeliverableOutputUrl(id), kind: "image" });
 		}
 	}, [wf.deliverable, onResult]);
-	const [products, setProducts] = useState<Product[]>([]);
-	const [catalogError, setCatalogError] = useState("");
+	const {
+		products,
+		isLoadingProducts,
+		productsError,
+	} = useProductCatalog(50);
+	const catalogError = productsError ?? "";
 	const { recipes } = usePosterRecipes();
 	const [searchParams] = useSearchParams();
 
@@ -279,14 +283,6 @@ export default function PosterGuidedShell({ onResult }: PosterGuidedShellProps) 
 				if (planFetchRef.current === fetchId) setPlanLoading(false);
 			});
 	}, [productId, wf.creativeMode, wf.recipeId, approvedCopySetId]);
-
-	useEffect(() => {
-		void fetchProductCatalog(60)
-			.then((res) => setProducts(res.items ?? []))
-			.catch((e: Error) =>
-				setCatalogError(e.message || "Failed to load products."),
-			);
-	}, []);
 
 	useEffect(() => {
 		const asset = searchParams.get("reopen_asset");
@@ -359,6 +355,7 @@ export default function PosterGuidedShell({ onResult }: PosterGuidedShellProps) 
 						<ProductStep
 							products={products}
 							catalogError={catalogError}
+							isLoadingProducts={isLoadingProducts}
 							selected={wf.product}
 							onSelect={wf.selectProduct}
 						/>
@@ -419,11 +416,13 @@ export default function PosterGuidedShell({ onResult }: PosterGuidedShellProps) 
 function ProductStep({
 	products,
 	catalogError,
+	isLoadingProducts,
 	selected,
 	onSelect,
 }: {
 	products: Product[];
 	catalogError: string;
+	isLoadingProducts: boolean;
 	selected: Product | null;
 	onSelect: (p: Product | null) => void;
 }) {
@@ -438,6 +437,8 @@ function ProductStep({
 				products={products}
 				selectedProduct={selected}
 				onSelect={onSelect}
+				isLoadingProducts={isLoadingProducts}
+				productsError={catalogError || null}
 			/>
 			{selected ? (
 				<div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-3">

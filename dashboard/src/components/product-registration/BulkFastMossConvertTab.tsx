@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getAPI, patchAPI, postAPI } from "../../api/client";
-import { fetchProductStrategyTypeRegistry } from "../../api/products";
+import {
+	fetchProductStrategyTypeRegistry,
+	invalidateProductCatalogCache,
+} from "../../api/products";
 import type {
 	BulkApproveResult,
 	BulkClaimRisk,
@@ -453,6 +456,7 @@ export default function BulkFastMossConvertTab({ onOpenDraft }: Props) {
 			setActionMessage(
 				`Approved: ${r.approved}, skipped (not ready): ${r.skipped}, failed: ${r.failed}`,
 			);
+			if (r.approved > 0) invalidateProductCatalogCache();
 			clearSelection();
 			setApprovePhrase("");
 			await fetchStats();

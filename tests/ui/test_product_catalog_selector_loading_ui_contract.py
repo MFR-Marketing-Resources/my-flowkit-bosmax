@@ -27,9 +27,10 @@ def test_operator_page_has_is_loading_products_state():
 
 def test_operator_page_catch_sets_products_error():
     src = _read("dashboard/src/pages/OperatorPage.tsx")
-    assert "setProductsError" in src
-    # Product catalog catch must set error — confirmed by setProductsError presence
-    assert "setProductsError(" in src
+    hook = _read("dashboard/src/hooks/useProductCatalog.ts")
+    assert "useProductCatalog" in src
+    assert "productsError" in src
+    assert "setProductsError(" in hook
 
 
 def test_operator_page_shows_loading_indicator():
@@ -49,8 +50,9 @@ def test_operator_page_product_fetch_uses_finally_for_loading_state():
 
 def test_operator_page_normalizes_items_with_fallback():
     src = _read("dashboard/src/pages/OperatorPage.tsx")
-    # response.items ?? [] protects against undefined
-    assert "response.items ?? []" in src or "items ?? []" in src
+    hook = _read("dashboard/src/hooks/useProductCatalog.ts")
+    # The shared hook owns response normalization for every selector consumer.
+    assert "response.items ?? []" in hook
 
 
 # ── WorkspaceJobsPage — product load error state ─────────────────────────────
@@ -132,6 +134,13 @@ def test_operator_fetches_selected_product_readiness_independently():
 def test_searchable_product_select_accepts_is_loading_readiness():
     src = _read("dashboard/src/components/workspace/SearchableProductSelect.tsx")
     assert "isLoadingReadiness" in src
+
+
+def test_searchable_product_select_distinguishes_catalog_loading_and_error():
+    src = _read("dashboard/src/components/workspace/SearchableProductSelect.tsx")
+    assert "isLoadingProducts" in src
+    assert "productsError" in src
+    assert "product-catalog-loading" in src
 
 
 # ── usePromptToolHydration — surfaces product errors ────────────────────────

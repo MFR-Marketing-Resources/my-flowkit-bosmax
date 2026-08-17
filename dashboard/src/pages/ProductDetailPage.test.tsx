@@ -31,6 +31,7 @@ vi.mock("../api/client", () => ({
 
 vi.mock("../api/products", () => ({
 	fetchProductStrategyTypeRegistry: vi.fn(),
+	invalidateProductCatalogCache: vi.fn(),
 	reviewProductStrategyTaxonomy: vi.fn(),
 }));
 

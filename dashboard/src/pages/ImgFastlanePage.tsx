@@ -33,7 +33,6 @@ import {
 	fetchGroundedPayload,
 	STRATEGY_PRODUCT_ONLY_DETERMINISTIC_EXACT_COMPOSITE,
 } from "../api/productVisualGrounding";
-import { fetchProductCatalog } from "../api/products";
 import ApproveAssetModal from "../components/creative-library/ApproveAssetModal";
 import {
 	ResolvedChip,
@@ -44,6 +43,7 @@ import ResultsSidebar, { type SessionResult } from "../components/workspace/Resu
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import VisualAssetPicker from "../components/workspace/VisualAssetPicker";
+import { useProductCatalog } from "../hooks/useProductCatalog";
 import type { CreativeAsset, Product } from "../types";
 import {
 	buildFastlaneGenerationRequest,
@@ -216,7 +216,7 @@ export default function ImgFastlanePage() {
 	const [lanes, setLanes] = useState<ImgAssetLane[]>([]);
 	const [presets, setPresets] = useState<ImgFastlanePreset[]>([]);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-	const [products, setProducts] = useState<Product[]>([]);
+	const { products, isLoadingProducts, productsError } = useProductCatalog(50);
 	const [characterAssets, setCharacterAssets] = useState<CreativeAsset[]>([]);
 	const [avatarRegistryPool, setAvatarRegistryPool] = useState<
 		AvatarRegistryPoolRow[]
@@ -364,9 +364,6 @@ export default function ImgFastlanePage() {
 		void fetchImgFastlanePresets()
 			.then((r) => setPresets(r.items))
 			.catch(() => setError("Failed to load IMG Fastlane presets."));
-		void fetchProductCatalog(500)
-			.then((r) => setProducts(r.items ?? []))
-			.catch(() => setError("Failed to load product catalog."));
 		void loadReferences();
 	}, [loadReferences]);
 
@@ -899,6 +896,8 @@ export default function ImgFastlanePage() {
 										products={products}
 										selectedProduct={selectedProduct}
 										onSelect={setSelectedProduct}
+										isLoadingProducts={isLoadingProducts}
+										productsError={productsError}
 									/>
 									{productMissing ? (
 										<p className="text-[11px] text-amber-300/80">
@@ -1393,6 +1392,8 @@ export default function ImgFastlanePage() {
 										products={products}
 										selectedProduct={selectedProduct}
 										onSelect={setSelectedProduct}
+										isLoadingProducts={isLoadingProducts}
+										productsError={productsError}
 									/>
 									{productMissing ? (
 										<p className="text-[10px] text-amber-300/80">

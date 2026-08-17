@@ -17,7 +17,6 @@ import {
 	type RegistryCoverage,
 	type RegistryReconciliation,
 } from "../api/creativeIntelligence";
-import { fetchProductCatalog } from "../api/products";
 import { DataTable } from "../components/ui";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import {
@@ -32,6 +31,7 @@ import {
 	type BulkRunSummary,
 } from "../api/bulkGeneration";
 import type { Product } from "../types";
+import { useProductCatalog } from "../hooks/useProductCatalog";
 
 // AVATAR REGISTRY — read-only view of the approved presenter pool (ADR-008
 // avatar law). The pool is TEXT authority: the canonical prompt compiler reads
@@ -195,7 +195,7 @@ export default function AvatarRegistryPage() {
 	// product, then saved as that product's review-gated creative selection.
 	// Cluster recommendations remain reusable across products; this exact
 	// selection is the auditable proof of why an avatar was created.
-	const [products, setProducts] = useState<Product[]>([]);
+	const { products, isLoadingProducts, productsError } = useProductCatalog(50);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [creativeSetup, setCreativeSetup] = useState<CreativeSetup | null>(null);
 	const [isLoadingProductContext, setIsLoadingProductContext] = useState(false);
@@ -276,12 +276,6 @@ export default function AvatarRegistryPage() {
 				}));
 			})
 			.catch(() => {});
-	}, []);
-
-	useEffect(() => {
-		void fetchProductCatalog(250)
-			.then((response) => setProducts(response.items || []))
-			.catch(() => setProducts([]));
 	}, []);
 
 	useEffect(() => {
@@ -1270,6 +1264,8 @@ export default function AvatarRegistryPage() {
 						products={products}
 						selectedProduct={selectedProduct}
 						onSelect={setSelectedProduct}
+						isLoadingProducts={isLoadingProducts}
+						productsError={productsError}
 					/>
 					{productClusterAudit ? (
 						<div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4" data-testid="product-cluster-audit">

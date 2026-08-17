@@ -10,6 +10,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { fetchAPI, patchAPI } from "../api/client";
 import {
+	invalidateProductCatalogCache,
 	fetchProductStrategyTypeRegistry,
 	reviewProductStrategyTaxonomy,
 } from "../api/products";
@@ -303,6 +304,7 @@ export default function ProductDetailPage() {
 				} else payload[key] = val;
 			}
 			await patchAPI(`/api/products/${encodeURIComponent(product.id)}`, payload);
+			invalidateProductCatalogCache();
 			await loadProduct();
 			const resolution = await fetchProductCopywritingTaxonomy(product.id);
 			setCopywritingResolution(resolution);
