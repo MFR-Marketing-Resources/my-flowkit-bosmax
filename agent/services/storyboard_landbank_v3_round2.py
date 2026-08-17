@@ -80,6 +80,12 @@ _INJECTION_RE = re.compile(
     r"(?:ignore\s+(?:all|any|the|previous)|system\s+prompt|developer\s+message|<\s*/?system\s*>)",
     re.IGNORECASE,
 )
+# Authority-consistent shortfall code per under-covered component dimension.
+_DIVERSITY_CODE = {
+    "HOOK": "MISSING_HOOK_VARIETY",
+    "BODY_CORE": "MISSING_BODY_CORE_ROUTE",
+    "CTA": "MISSING_CTA_VARIETY",
+}
 
 
 class V3Round2Provider(Protocol):
@@ -308,6 +314,7 @@ class V3CopyRegisterRound2Service:
         additional_count: int = 1,
         semantic_class: str | None = None,
         target_counts: Mapping[str, Any] | None = None,
+        target_capacity: int | None = None,
         evidence_fact_ids: Sequence[str] | None = None,
         max_provider_calls: int = MAX_PROVIDER_CALLS,
         max_output_tokens: int = MAX_OUTPUT_TOKENS,
@@ -346,14 +353,59 @@ class V3CopyRegisterRound2Service:
         requested_targets = {str(key).upper(): int(value) for key, value in (target_counts or {}).items()}
         if any(value < 0 or value > 500 for value in requested_targets.values()):
             raise V3FactoryError("ASSISTANT_TARGET_INVALID", "Assistant target counts must be bounded between 0 and 500.", status_code=422)
+        capacity_before: dict[str, Any] = {}
+        diversity_deficits: tuple[str, ...] = ()
+        marginal_plan: dict[str, int] = {}
+        if mode in {"EXPAND", "FILL_CAPACITY"} and angle is not None:
+            snapshot = await self.factory.capacity(recipe.recipe_id, revision=recipe.revision)
+            hook_count, body_count, cta_count = current["HOOK"], current["BODY_CORE"], current["CTA"]
+            # Marginal unlock (new theoretical combinations) per added component.
+            marginal_plan = {
+                "HOOK": max(1, body_count) * max(1, cta_count),
+                "BODY_CORE": max(1, hook_count) * max(1, cta_count),
+                "CTA": max(1, hook_count) * max(1, body_count),
+            }
+            capacity_before = {
+                "reviewable_capacity": snapshot.reviewable_capacity,
+                "theoretical_capacity": snapshot.theoretical_capacity,
+                "duration_counts": dict(snapshot.duration_counts),
+            }
+            diversity_deficits = snapshot.shortfall_codes
+
         if mode == "EXPAND":
             extra = max(1, min(24, int(additional_count)))
             selected = str(semantic_class or "").upper()
-            classes = [selected] if selected in current else list(current)
             target = dict(current)
-            for item in classes:
-                target[item] = min(500, current[item] + extra)
-        else:
+            if selected in current:
+                # Operator override: expand the explicitly requested class.
+                target[selected] = min(500, current[selected] + extra)
+            elif marginal_plan:
+                # Diversity-aware: expand the under-covered dimension (the highest
+                # marginal unlock) rather than more of an already-dominant class.
+                dimension = max(marginal_plan, key=lambda key: (marginal_plan[key], key))
+                target[dimension] = min(500, current[dimension] + extra)
+                diversity_deficits = tuple(dict.fromkeys((*diversity_deficits, _DIVERSITY_CODE[dimension])))
+            else:
+                for item in current:
+                    target[item] = min(500, current[item] + extra)
+        elif mode == "FILL_CAPACITY":
+            if requested_targets:
+                # Operator override: explicit component targets.
+                target = {**recipe_targets, **requested_targets}
+            elif target_capacity and marginal_plan:
+                # Capacity-driven marginal planning toward a reviewable target: add
+                # to the best-marginal dimension only enough to close the shortfall.
+                target = dict(current)
+                reviewable = int(capacity_before.get("reviewable_capacity") or 0)
+                shortfall = max(0, int(target_capacity) - reviewable)
+                if shortfall > 0:
+                    best = max(marginal_plan, key=lambda key: (marginal_plan[key], key))
+                    needed = -(-shortfall // max(1, marginal_plan[best]))
+                    target[best] = current[best] + max(1, min(MAX_RUN_PROPOSALS, needed))
+                    diversity_deficits = tuple(dict.fromkeys((*diversity_deficits, _DIVERSITY_CODE[best])))
+            else:
+                target = {**recipe_targets, **requested_targets}
+        else:  # CREATE
             target = {**recipe_targets, **requested_targets}
         if not all(key in target for key in current):
             raise V3FactoryError("ASSISTANT_TARGET_INVALID", "Targets must include HOOK, BODY_CORE, and CTA.", status_code=422)
@@ -444,6 +496,9 @@ class V3CopyRegisterRound2Service:
             evidence_selection=evidence_selection,
             language_profile=language_profile,
             current_capacity=current_capacity,
+            diversity_deficits=diversity_deficits,
+            marginal_plan=marginal_plan,
+            capacity_before=capacity_before,
             mode=mode,  # type: ignore[arg-type]
             target_counts=target,
             gaps=tuple(gaps),

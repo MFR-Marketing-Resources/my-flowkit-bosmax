@@ -77,6 +77,11 @@ class V3AssistantPlan(BaseModel):
     evidence_selection: dict[str, Any] = Field(default_factory=dict)
     language_profile: str = Field(default="Malay", min_length=1)
     current_capacity: dict[str, int] = Field(default_factory=dict)
+    # EXPAND/FILL_CAPACITY capacity-engine signals (deficits, marginal unlock per
+    # component dimension, and the reviewable/duration capacity before the run).
+    diversity_deficits: tuple[str, ...] = Field(default_factory=tuple)
+    marginal_plan: dict[str, int] = Field(default_factory=dict)
+    capacity_before: dict[str, Any] = Field(default_factory=dict)
     mode: AssistantMode
     target_counts: dict[str, int] = Field(default_factory=dict)
     gaps: tuple[V3AssistantGap, ...] = Field(default_factory=tuple)

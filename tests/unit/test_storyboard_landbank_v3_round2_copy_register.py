@@ -6,9 +6,65 @@ import json
 
 import pytest
 
+from agent.authority.copy_blueprint_v2_authority import required_formula_stage_keys
 from agent.db.schema import get_db
 from agent.models.copy_blueprint_v2 import digest_evidence_text
 from agent.services.storyboard_landbank_v3_factory import V3CopyFactoryService
+
+_R2_SOURCE = "STORYBOARD_LANDBANK_V3_ROUND2_COPY_REGISTER_AI"
+
+
+async def _add_extra_hook(factory, recipe, angle, family, index):
+    required = tuple(required_formula_stage_keys(recipe.formula.formula_id))
+    return await factory.create_component(
+        recipe.product_id,
+        {
+            "component_id": f"{recipe.product_id}-xhook-{index}",
+            "angle_id": angle.angle_id, "angle_revision": angle.revision,
+            "storyline_family_id": family.family_id, "storyline_family_revision": family.revision,
+            "formula_id": recipe.formula.formula_id,
+            "objective": recipe.objective.model_dump(mode="json"),
+            "semantic_class": "HOOK",
+            "stage_segments": [{
+                "formula_stage_key": required[0],
+                "authored_text": f"Curious about a calmer daily routine option {index}?",
+                "entry_key": "arc:start", "exit_key": "arc:body",
+                "evidence_fact_ids": [f"{recipe.product_id}-fact"], "claim_bearing": True,
+            }],
+        },
+        actor_id="round2-fixture", request_id=f"{recipe.product_id}:xhook-{index}", source=_R2_SOURCE,
+    )
+
+
+async def _add_extra_body(factory, recipe, angle, family, index):
+    required = tuple(required_formula_stage_keys(recipe.formula.formula_id))
+    middle = required[1:-1]
+    segments = []
+    for position, key in enumerate(middle):
+        segments.append({
+            "formula_stage_key": key,
+            "authored_text": (
+                f"Feel the daily friction build up in option {index}."
+                if position == 0
+                else f"Then switch to one calmer lighter step in option {index}."
+            ),
+            "entry_key": "arc:body" if position == 0 else "arc:body-mid",
+            "exit_key": "arc:cta" if position == len(middle) - 1 else "arc:body-mid",
+            "evidence_fact_ids": [f"{recipe.product_id}-fact"], "claim_bearing": True,
+        })
+    return await factory.create_component(
+        recipe.product_id,
+        {
+            "component_id": f"{recipe.product_id}-xbody-{index}",
+            "angle_id": angle.angle_id, "angle_revision": angle.revision,
+            "storyline_family_id": family.family_id, "storyline_family_revision": family.revision,
+            "formula_id": recipe.formula.formula_id,
+            "objective": recipe.objective.model_dump(mode="json"),
+            "semantic_class": "BODY_CORE",
+            "stage_segments": segments,
+        },
+        actor_id="round2-fixture", request_id=f"{recipe.product_id}:xbody-{index}", source=_R2_SOURCE,
+    )
 from agent.services.storyboard_landbank_v3_round2 import (
     V3CopyRegisterRound2Service,
 )
@@ -619,6 +675,59 @@ async def test_round2_create_bootstraps_from_zero_supply(monkeypatch):
     assert {p["target_duration_seconds"] for p in master_item["projections"]} == {8, 16, 24}
     review = await service.review_queue(product_id)
     assert any(item["master"]["master_id"] == master_item["master"]["master_id"] for item in review["items"])
+
+
+@pytest.mark.asyncio
+async def test_round2_expand_is_diversity_aware(monkeypatch):
+    monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
+    product_id = "round2-expand"
+    factory, recipe, angle, family = await _seed_round2_fixture(product_id)
+    service = V3CopyRegisterRound2Service(factory=factory)
+    plan = await service.plan_assistant(product_id, recipe.recipe_id, mode="CREATE", actor_id="op", request_id="exp:create")
+    await service.execute_assistant(plan.plan_id, actor_id="op", request_id="exp:create-x", provider_mode="FAKE_TEST")
+    # Concentrate supply: 3 HOOKs vs 1 BODY_CORE / 1 CTA.
+    await _add_extra_hook(factory, recipe, angle, family, 2)
+    await _add_extra_hook(factory, recipe, angle, family, 3)
+
+    # EXPAND with no explicit class must target the under-covered dimension, not
+    # more of the already-dominant HOOK class.
+    expand = await service.plan_assistant(product_id, recipe.recipe_id, mode="EXPAND", additional_count=2, actor_id="op", request_id="exp:diverse")
+    assert expand.marginal_plan == {"HOOK": 1, "BODY_CORE": 3, "CTA": 3}
+    gap_by_class = {gap.semantic_class: gap.gap_count for gap in expand.gaps}
+    assert gap_by_class["HOOK"] == 0
+    assert gap_by_class["CTA"] > 0  # highest marginal unlock (tie broken to CTA)
+    assert "MISSING_CTA_VARIETY" in expand.diversity_deficits
+    assert expand.capacity_before  # capacity snapshot surfaced for before/after
+
+    # An explicit class override is still honored.
+    forced = await service.plan_assistant(product_id, recipe.recipe_id, mode="EXPAND", semantic_class="HOOK", additional_count=1, actor_id="op", request_id="exp:forced")
+    assert {gap.semantic_class: gap.gap_count for gap in forced.gaps}["HOOK"] == 1
+
+
+@pytest.mark.asyncio
+async def test_round2_fill_capacity_is_marginal_supply_planned(monkeypatch):
+    monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
+    product_id = "round2-fill2"
+    factory, recipe, angle, family = await _seed_round2_fixture(product_id)
+    service = V3CopyRegisterRound2Service(factory=factory)
+    plan = await service.plan_assistant(product_id, recipe.recipe_id, mode="CREATE", actor_id="op", request_id="fill:create")
+    await service.execute_assistant(plan.plan_id, actor_id="op", request_id="fill:create-x", provider_mode="FAKE_TEST")
+    # Supply 2H / 2B / 1C so one CTA has marginal unlock 2*2 = 4.
+    await _add_extra_hook(factory, recipe, angle, family, 2)
+    await _add_extra_body(factory, recipe, angle, family, 2)
+
+    before = await factory.capacity(recipe.recipe_id)
+    fill = await service.plan_assistant(
+        product_id, recipe.recipe_id, mode="FILL_CAPACITY",
+        target_capacity=before.reviewable_capacity + 4,
+        actor_id="op", request_id="fill:plan",
+    )
+    assert fill.capacity_before["reviewable_capacity"] == before.reviewable_capacity
+    assert fill.marginal_plan["CTA"] == 4
+    total_gap = sum(gap.gap_count for gap in fill.gaps)
+    # Marginal planning: ONE new CTA closes a 4-unit shortfall (not 4 scripts).
+    assert total_gap == 1
+    assert {gap.semantic_class: gap.gap_count for gap in fill.gaps}["CTA"] == 1
 
 
 @pytest.mark.asyncio
