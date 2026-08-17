@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bot, Check, ChevronLeft, ChevronRight, FileText, RefreshCw, Sparkles } from "lucide-react";
+import { Bot, Check, ChevronLeft, ChevronRight, FileText, RefreshCw, Sparkles, ExternalLink, ShieldAlert } from "lucide-react";
 import {
 	activateFormulaBlueprint,
-	approveFormulaBlueprint,
 	fetchCopyRegisterFormulas,
 	fetchCopyRegisterProviderStatus,
 	fetchCopyRegisterTruth,
@@ -103,6 +102,7 @@ export function CopywritingSourceSelector({
 	const [selectedFactIds, setSelectedFactIds] = useState<string[]>([]);
 	const [_textAssistStatus, setTextAssistStatus] = useState<TextAssistLaneStatusV2 | null>(null);
 	const [generatingAi, setGeneratingAi] = useState(false);
+	const [generatedDraftBlueprint, setGeneratedDraftBlueprint] = useState<CopyBlueprintV2Record | null>(null);
 
 	const loadBlueprints = async (pId: string) => {
 		setLoading(true);
@@ -118,13 +118,14 @@ export function CopywritingSourceSelector({
 			} else {
 				setActiveBlueprintId((curr) => {
 					if (!curr && items.length > 0) {
-						setIsSelecting(true);
+						// Only auto-focus if already active, do not force draft
+						return null;
 					}
 					return curr;
 				});
 			}
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Failed to load copy sets.");
+			setError(e instanceof Error ? e.message : "Failed to load copy blueprints.");
 		} finally {
 			setLoading(false);
 		}
@@ -134,7 +135,8 @@ export function CopywritingSourceSelector({
 		if (!productId) {
 			setBlueprints([]);
 			setActiveBlueprintId(null);
-			setTruth(null);
+			setIsSelecting(false);
+			setGeneratedDraftBlueprint(null);
 			return;
 		}
 		void loadBlueprints(productId);
@@ -172,40 +174,27 @@ export function CopywritingSourceSelector({
 	}, [filteredBlueprints, page]);
 
 	const handleUseCopy = async (bp: CopyBlueprintV2Record) => {
+		// Strict Governance Rule: NEVER auto-approve or activate non-production-valid copy
+		const isEligible = bp.status === "PRODUCTION_VALID" || bp.status === "V2_APPROVED" || Boolean(bp.current_authority_activation_allowed);
+		if (!isEligible) {
+			setError("This copy set is in DRAFT status. Please review and approve it in the Copy Register before using.");
+			return;
+		}
+
 		setLoading(true);
 		setError(null);
 		setSuccessMsg(null);
 		try {
-			// If it's a draft, approve it first if needed, otherwise activate directly
-			if (bp.status !== "PRODUCTION_VALID") {
-				await approveFormulaBlueprint({
-					blueprint_id: bp.blueprint_id,
-					approved_by: "operator",
-					semantic_review: {
-						decision: "APPROVED",
-						reviewer: "operator",
-						rationale: "Approved for creator workflow use.",
-						reviewed_at: new Date().toISOString(),
-					},
-					readiness_proof: {
-						readiness_validated: true,
-						provenance_validated: true,
-						safety_validated: true,
-						bridge_validated: true,
-						duration_validated: true,
-					},
-				});
-			}
 			await activateFormulaBlueprint(bp.blueprint_id);
 			setActiveBlueprintId(bp.blueprint_id);
-			setSuccessMsg("Copy set selected and bound to generation workflow.");
+			setSuccessMsg("Copy set activated for this product across creator lanes.");
 			setIsSelecting(false);
 			onCopySelected?.(bp);
 			if (productId) {
 				void loadBlueprints(productId);
 			}
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Failed to bind selected copy.");
+			setError(e instanceof Error ? e.message : "Failed to activate selected copy.");
 		} finally {
 			setLoading(false);
 		}
@@ -216,6 +205,7 @@ export function CopywritingSourceSelector({
 		if (!productId || !selectedFormulaId) return;
 		setGeneratingAi(true);
 		setError(null);
+		setGeneratedDraftBlueprint(null);
 		try {
 			const res = await generateCopyRegisterAngles({
 				product_id: productId,
@@ -234,13 +224,14 @@ export function CopywritingSourceSelector({
 		}
 	};
 
-	const handleGenerateAndUseAiCopy = async () => {
+	const handleGenerateAiCopy = async () => {
 		if (!productId || !selectedFormulaId || !selectedAiAngleId) return;
 		const angleObj = aiAngles.find((a) => a.angle_id === selectedAiAngleId);
 		if (!angleObj) return;
 
 		setGeneratingAi(true);
 		setError(null);
+		setGeneratedDraftBlueprint(null);
 		try {
 			const genRes = await generateFormulaCopyBlueprint({
 				product_id: productId,
@@ -252,31 +243,11 @@ export function CopywritingSourceSelector({
 				evidence_fact_ids: selectedFactIds.length ? selectedFactIds : angleObj.evidence_fact_ids || [],
 			});
 
-			// Approve the new blueprint
-			await approveFormulaBlueprint({
-				blueprint_id: genRes.blueprint.blueprint_id,
-				approved_by: "operator",
-				semantic_review: {
-					decision: "APPROVED",
-					reviewer: "operator",
-					rationale: "Grounded AI Copy approved for creator workflow use.",
-					reviewed_at: new Date().toISOString(),
-				},
-				readiness_proof: {
-					readiness_validated: true,
-					provenance_validated: true,
-					safety_validated: true,
-					bridge_validated: true,
-					duration_validated: true,
-				},
-			});
+			// Strict Governance Rule: Generated copy remains in DRAFT state. DO NOT auto-approve. DO NOT auto-activate.
+			setGeneratedDraftBlueprint(genRes.blueprint);
+			setSuccessMsg("Draft copy generated. Review and approve it in the Copy Register before activating for production.");
 
-			// Activate it
-			await activateFormulaBlueprint(genRes.blueprint.blueprint_id);
-			setActiveBlueprintId(genRes.blueprint.blueprint_id);
-			setSuccessMsg("AI Copy generated, approved, and bound successfully.");
-			setIsSelecting(false);
-			onCopySelected?.(genRes.blueprint);
+			// Refresh blueprints list so the new draft appears in the registry
 			if (productId) {
 				void loadBlueprints(productId);
 			}
@@ -360,6 +331,7 @@ export function CopywritingSourceSelector({
 						<div>Revision: r{activeBlueprint.revision}</div>
 						<div>Formula: {activeBlueprint.formula_id} · {activeBlueprint.formula_version}</div>
 						<div>Status: {activeBlueprint.status}</div>
+						<div>Authority Scope: Product-global across all copy-required creator lanes</div>
 						{activeBlueprint.current_authority_fingerprint ? (
 							<div>Fingerprint: {activeBlueprint.current_authority_fingerprint}</div>
 						) : null}
@@ -424,12 +396,12 @@ export function CopywritingSourceSelector({
 			</div>
 
 			{error ? (
-				<div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">
+				<div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200" data-testid="copy-selector-error">
 					{error}
 				</div>
 			) : null}
 			{successMsg ? (
-				<div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
+				<div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200" data-testid="copy-selector-success">
 					{successMsg}
 				</div>
 			) : null}
@@ -531,6 +503,7 @@ export function CopywritingSourceSelector({
 									const body = extractBody(bp);
 									const cta = extractCta(bp);
 									const isCurrent = bp.blueprint_id === activeBlueprintId;
+									const isProductionValid = bp.status === "PRODUCTION_VALID" || bp.status === "V2_APPROVED" || Boolean(bp.current_authority_activation_allowed);
 
 									return (
 										<div
@@ -539,7 +512,9 @@ export function CopywritingSourceSelector({
 											className={`flex flex-col justify-between rounded-xl border p-3.5 transition-colors ${
 												isCurrent
 													? "border-emerald-500/50 bg-emerald-500/10"
-													: "border-slate-800 bg-slate-950/70 hover:border-slate-700"
+													: isProductionValid
+														? "border-slate-800 bg-slate-950/70 hover:border-slate-700"
+														: "border-amber-500/20 bg-amber-500/5"
 											}`}
 										>
 											<div className="space-y-2 text-xs">
@@ -548,10 +523,18 @@ export function CopywritingSourceSelector({
 														{bp.angle?.definition || "Angle"}
 													</span>
 													{isCurrent ? (
-														<span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400">
+														<span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400" data-testid="copy-status-active">
 															<Check size={12} /> ACTIVE
 														</span>
-													) : null}
+													) : isProductionValid ? (
+														<span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-bold text-emerald-300" data-testid="copy-status-approved">
+															APPROVED
+														</span>
+													) : (
+														<span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-300" data-testid="copy-status-needs-approval">
+															NEEDS APPROVAL
+														</span>
+													)}
 												</div>
 
 												<div>
@@ -580,25 +563,42 @@ export function CopywritingSourceSelector({
 												) : null}
 											</div>
 
-											<div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between">
+											<div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
 												<span className="text-[10px] text-slate-500">
 													{bp.estimated_word_count ? `${bp.estimated_word_count} words` : ""}
 													{bp.target_duration_seconds ? ` · ${bp.target_duration_seconds}s` : ""}
 												</span>
 
-												<button
-													type="button"
-													data-testid="use-this-copy-button"
-													disabled={loading}
-													onClick={() => void handleUseCopy(bp)}
-													className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
-														isCurrent
-															? "bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30"
-															: "bg-blue-600 text-white hover:bg-blue-500"
-													}`}
-												>
-													{isCurrent ? "Current Copy" : "Use This Copy"}
-												</button>
+												{isCurrent ? (
+													<button
+														type="button"
+														disabled
+														className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-300 cursor-default"
+													>
+														Active Copy
+													</button>
+												) : isProductionValid ? (
+													<button
+														type="button"
+														data-testid="use-this-copy-button"
+														disabled={loading}
+														onClick={() => void handleUseCopy(bp)}
+														className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-500 disabled:opacity-40"
+													>
+														Use This Copy
+													</button>
+												) : (
+													<a
+														href={`/creative/copy-registry?product_id=${encodeURIComponent(productId || "")}&blueprint_id=${encodeURIComponent(bp.blueprint_id)}`}
+														target="_blank"
+														rel="noreferrer"
+														data-testid="review-in-copy-register-link"
+														className="inline-flex items-center gap-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/20"
+													>
+														<span>Review in Copy Register</span>
+														<ExternalLink size={12} />
+													</a>
+												)}
 											</div>
 										</div>
 									);
@@ -629,6 +629,7 @@ export function CopywritingSourceSelector({
 									setSelectedFormulaId(e.target.value);
 									setAiAngles([]);
 									setSelectedAiAngleId("");
+									setGeneratedDraftBlueprint(null);
 								}}
 								className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200"
 							>
@@ -676,6 +677,7 @@ export function CopywritingSourceSelector({
 												onChange={() => {
 													setSelectedAiAngleId(ang.angle_id);
 													setSelectedFactIds(ang.evidence_fact_ids || []);
+													setGeneratedDraftBlueprint(null);
 												}}
 												className="mt-0.5"
 											/>
@@ -686,15 +688,57 @@ export function CopywritingSourceSelector({
 									))}
 								</div>
 
-								{/* Generate Copy & Bind */}
+								{/* Generate Copy Draft Button */}
 								<button
 									type="button"
 									disabled={generatingAi || !selectedAiAngleId}
-									onClick={() => void handleGenerateAndUseAiCopy()}
-									className="mt-3 w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-40"
+									onClick={() => void handleGenerateAiCopy()}
+									className="mt-3 w-full rounded-lg bg-violet-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-violet-500 disabled:opacity-40"
+									data-testid="generate-ai-copy-button"
 								>
-									{generatingAi ? "Generating & Binding Copy..." : "Generate & Use This Copy"}
+									{generatingAi ? "Generating Grounded Copy..." : "Generate AI Copy Draft"}
 								</button>
+							</div>
+						)}
+
+						{/* Display Generated Draft with Review Notice */}
+						{generatedDraftBlueprint && (
+							<div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 space-y-3" data-testid="ai-generated-draft-preview">
+								<div className="flex items-center gap-2 text-xs font-bold text-amber-200">
+									<ShieldAlert size={16} />
+									<span>Draft Copy Generated (Governance Review Required)</span>
+								</div>
+								<p className="text-[11px] text-amber-100/90">
+									Under BOSMAX V2 governance, AI-generated copy cannot be auto-approved or activated directly. Review and approve this copy in the Copy Register before activating.
+								</p>
+
+								<div className="rounded-lg border border-slate-800 bg-slate-950 p-3 text-xs space-y-1.5">
+									<div>
+										<span className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Hook:</span>
+										<p className="font-medium text-slate-100">"{extractHook(generatedDraftBlueprint)}"</p>
+									</div>
+									<div>
+										<span className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Body:</span>
+										<p className="line-clamp-2 text-slate-300">{extractBody(generatedDraftBlueprint)}</p>
+									</div>
+									<div>
+										<span className="text-[9px] font-bold uppercase tracking-wider text-slate-500">CTA:</span>
+										<p className="font-semibold text-blue-200">{extractCta(generatedDraftBlueprint)}</p>
+									</div>
+								</div>
+
+								<div className="pt-1">
+									<a
+										href={`/creative/copy-registry?product_id=${encodeURIComponent(productId || "")}&blueprint_id=${encodeURIComponent(generatedDraftBlueprint.blueprint_id)}`}
+										target="_blank"
+										rel="noreferrer"
+										data-testid="open-ai-draft-in-register"
+										className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-500"
+									>
+										<span>Open in Copy Register to Review & Approve</span>
+										<ExternalLink size={13} />
+									</a>
+								</div>
 							</div>
 						)}
 					</div>

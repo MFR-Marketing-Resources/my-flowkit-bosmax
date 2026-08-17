@@ -136,6 +136,10 @@ domains:
       - dashboard/src/api/copyArchitectureV2.ts
       - dashboard/src/components/copywriting/CopyArchitectureV2LaneCard.tsx
       - dashboard/src/components/copywriting/CopyArchitectureV2LaneCard.test.tsx
+      - dashboard/src/components/copywriting/CopywritingSourceSelector.tsx
+      - dashboard/src/components/copywriting/CopywritingSourceSelector.test.tsx
+      - dashboard/src/components/ui/TechnicalDetails.tsx
+      - .ai/architecture/UI_UX_STANDARD_AND_REMEDIATION_PLAN.md
       - tests/unit/test_copy_execution_resolver.py
       - docs/copywriting/COPY_ARCHITECTURE_V2_PHASE3_CUTOVER.md
       # Formula-native Copy Register V2 clean cutover: isolated persistence,
