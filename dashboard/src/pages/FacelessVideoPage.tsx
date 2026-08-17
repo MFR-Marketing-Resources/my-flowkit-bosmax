@@ -25,6 +25,7 @@ import {
 import ResultsSidebar, { type SessionResult } from "../components/workspace/ResultsSidebar";
 import NativeExtendPanel from "../components/NativeExtendPanel";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
+import CopywritingSourceSelector from "../components/copywriting/CopywritingSourceSelector";
 import CanonicalReferenceBindingControls, {
 	EMPTY_BINDING,
 	type CanonicalReferenceBinding,
@@ -295,6 +296,7 @@ export default function FacelessVideoPage() {
 		setV4Open((prev) => ({ ...prev, [index]: !currentOpen }));
 
 	const sProduct: WorkflowStepStatus = selectedProduct ? "done" : "active";
+	const sCopy: WorkflowStepStatus = !selectedProduct ? "upcoming" : v2CopyReady ? "done" : "active";
 	const sCreative: WorkflowStepStatus = selectedProduct
 		? settingsAvailable
 			? "done"
@@ -604,21 +606,39 @@ export default function FacelessVideoPage() {
 						</p>
 					</WorkflowStep>
 
-					<CopyArchitectureV2LaneCard
-						lane="FACELESS"
-						productId={selectedProduct?.id}
-						execution={workspacePackage?.copy_architecture_v2}
-						onReadyChange={setV2CopyReady}
-					/>
-
 					<WorkflowStep
 						index={2}
+						title="Copywriting"
+						status={sCopy}
+						open={v4IsOpen(2, sCopy)}
+						onToggleOpen={() => v4Toggle(2, v4IsOpen(2, sCopy))}
+						summary={v2CopyReady ? "Copy selected" : "Copywriting required"}
+						helper="Choose existing approved copy from Copy Register or generate with AI Copy Assistant."
+					>
+						<div className="space-y-3">
+							<CopywritingSourceSelector
+								productId={selectedProduct?.id}
+								productName={selectedProduct?.raw_product_title}
+								lane="FACELESS"
+								onCopySelected={() => setWorkspacePackage(null)}
+							/>
+							<CopyArchitectureV2LaneCard
+								lane="FACELESS"
+								productId={selectedProduct?.id}
+								execution={workspacePackage?.copy_architecture_v2}
+								onReadyChange={setV2CopyReady}
+							/>
+						</div>
+					</WorkflowStep>
+
+					<WorkflowStep
+						index={3}
 						title="Opening Strategy"
 						status={sCreative}
-						open={v4IsOpen(2, sCreative)}
-						onToggleOpen={() => v4Toggle(2, v4IsOpen(2, sCreative))}
+						open={v4IsOpen(3, sCreative)}
+						onToggleOpen={() => v4Toggle(3, v4IsOpen(3, sCreative))}
 						summary={hookLabel}
-						helper="Creative opening direction only. Approved Hook / Body / CTA remain in Copy Register V2."
+						helper="Creative opening direction only. Approved Hook / Body / CTA remain in Copy Register."
 					>
 						{!settingsAvailable ? (
 							<div
@@ -670,13 +690,13 @@ export default function FacelessVideoPage() {
 					</WorkflowStep>
 
 					<WorkflowStep
-						index={3}
+						index={4}
 						title="Background"
 						status={sCreative}
-						open={v4IsOpen(3, sCreative)}
-						onToggleOpen={() => v4Toggle(3, v4IsOpen(3, sCreative))}
+						open={v4IsOpen(4, sCreative)}
+						onToggleOpen={() => v4Toggle(4, v4IsOpen(4, sCreative))}
 						summary={backgroundLabel}
-						helper="Only backgrounds compatible with the resolved Scene Choreography V2 context are offered."
+						helper="Only backgrounds compatible with the resolved Scene Choreography context are offered."
 					>
 						<label className="space-y-1">
 							<span className={labelClass}>Background</span>
@@ -713,11 +733,11 @@ export default function FacelessVideoPage() {
 					</WorkflowStep>
 
 					<WorkflowStep
-						index={4}
+						index={5}
 						title="Video settings"
 						status={sSettings}
-						open={v4IsOpen(4, sSettings)}
-						onToggleOpen={() => v4Toggle(4, v4IsOpen(4, sSettings))}
+						open={v4IsOpen(5, sSettings)}
+						onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sSettings))}
 						summary={`${sceneMode === "EXTEND" ? "Extend" : "Single"} · ${videoModel} · ${durationLabel}`}
 						helper="Same capability / model authority as Hybrid. No hardcoded 8s table."
 					>
@@ -863,11 +883,11 @@ export default function FacelessVideoPage() {
 					</details>
 
 					<WorkflowStep
-						index={5}
+						index={6}
 						title="Review & prepare"
 						status={sPrepare}
-						open={v4IsOpen(5, sPrepare)}
-						onToggleOpen={() => v4Toggle(5, v4IsOpen(5, sPrepare))}
+						open={v4IsOpen(6, sPrepare)}
+						onToggleOpen={() => v4Toggle(6, v4IsOpen(6, sPrepare))}
 						summary={
 							workspacePackage
 								? "Package ready"
@@ -904,11 +924,11 @@ export default function FacelessVideoPage() {
 					</WorkflowStep>
 
 					<WorkflowStep
-						index={6}
+						index={7}
 						title="Generate video"
 						status={sGenerate}
-						open={v4IsOpen(6, sGenerate)}
-						onToggleOpen={() => v4Toggle(6, v4IsOpen(6, sGenerate))}
+						open={v4IsOpen(7, sGenerate)}
+						onToggleOpen={() => v4Toggle(7, v4IsOpen(7, sGenerate))}
 						summary={
 							isExecuting ? "Generating…" : completedUrl ? "Done" : "Operator gate"
 						}

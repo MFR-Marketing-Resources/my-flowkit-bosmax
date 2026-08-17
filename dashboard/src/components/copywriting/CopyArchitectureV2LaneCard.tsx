@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
+import { ExternalLink } from "lucide-react";
 import {
 	useCopyArchitectureV2Lane,
 	type CopyArchitectureV2Execution,
 	type CopyArchitectureV2Lane,
 } from "../../api/copyArchitectureV2";
 import { fetchCopyBindingResolution } from "../../api/copyRegisterV2";
+import { TechnicalDetails } from "../ui/TechnicalDetails";
 
 interface CopyArchitectureV2LaneCardProps {
 	lane: CopyArchitectureV2Lane;
@@ -12,7 +14,9 @@ interface CopyArchitectureV2LaneCardProps {
 	/** Metadata returned by a prepared package, compile, or queue boundary. */
 	execution?: CopyArchitectureV2Execution | null;
 	onReadyChange?: (ready: boolean) => void;
+	compact?: boolean;
 }
+
 function record(value: unknown): Record<string, unknown> {
 	return value && typeof value === "object" && !Array.isArray(value)
 		? (value as Record<string, unknown>)
@@ -99,6 +103,7 @@ export default function CopyArchitectureV2LaneCard({
 	productId,
 	execution,
 	onReadyChange,
+	compact: _compact = false,
 }: CopyArchitectureV2LaneCardProps) {
 	const { descriptor, status, loading, error } = useCopyArchitectureV2Lane(lane);
 	const [persistedResolution, setPersistedResolution] =
@@ -118,7 +123,7 @@ export default function CopyArchitectureV2LaneCard({
 					lane,
 					error: structuredResolutionError(reason),
 				});
-			})
+			});
 		return () => {
 			active = false;
 		};
@@ -133,9 +138,7 @@ export default function CopyArchitectureV2LaneCard({
 	const persistedExecution = selectionResolution?.execution ?? null;
 	const resolutionError = selectionResolution?.error ?? null;
 	const resolutionLoading = Boolean(productId && !selectionResolution);
-	// A selected product always resolves readiness from the persisted V2
-	// authority. A package/queue receipt remains useful for display while the
-	// authority request is pending, but it cannot make the product READY.
+
 	const canonicalExecution = productId ? persistedExecution : execution;
 	const effectiveExecution = canonicalExecution ?? execution;
 	const projection = record(effectiveExecution?.projection);
@@ -207,96 +210,142 @@ export default function CopyArchitectureV2LaneCard({
 			  ]
 			: [];
 
+	// Human friendly status label
+	const humanStatusLabel = copyFree
+		? "Copy Not Required"
+		: ready
+			? "Copy Ready"
+			: !enabled
+				? "Maintenance Mode"
+				: resolutionLoading || loading
+					? "Checking Copy..."
+					: "Copywriting Required";
+
 	return (
 		<section
-			className="rounded-xl border border-indigo-500/30 bg-indigo-500/5 p-3 text-[11px] text-slate-200"
+			className="rounded-xl border border-slate-800 bg-slate-950/50 p-3.5 text-xs text-slate-200"
 			data-testid="copy-v2-lane-card"
 			data-copy-v2-lane={lane}
 			data-copy-v2-product={productId ?? ""}
 		>
+			{/* Clean Human Surface */}
 			<div className="flex flex-wrap items-center justify-between gap-2">
-				<div>
-					<div className="font-bold uppercase tracking-[0.16em] text-indigo-200">
-						Copy Architecture V2 · {descriptor?.display_name ?? lane}
-					</div>
-					<div className="mt-1 text-[10px] text-slate-400">
-						Universal adapter: {descriptor?.adapter ?? "loading"} · Product: {productId || "not selected"}
-					</div>
+				<div className="flex items-center gap-2">
+					<span
+						className={`h-2 w-2 rounded-full ${
+							ready || copyFree ? "bg-emerald-400" : "bg-amber-400"
+						}`}
+					/>
+					<span className="font-semibold text-slate-200">
+						{descriptor?.display_name || lane} Copy Authority
+					</span>
 				</div>
+
 				<span
-					className="rounded-full border border-indigo-400/30 bg-indigo-500/10 px-2 py-1 font-bold uppercase tracking-wider text-indigo-100"
-					data-testid="copy-v2-policy"
+					className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+						ready || copyFree
+							? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+							: "border border-amber-500/30 bg-amber-500/10 text-amber-300"
+					}`}
 				>
-					{descriptor?.copy_policy === "NOT_REQUIRED"
-						? "COPY_NOT_REQUIRED"
-						: "COPY_REQUIRED"}
+					{humanStatusLabel}
 				</span>
 			</div>
 
-			<div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-				<div data-testid="copy-v2-readiness">
-					<div className="text-[9px] uppercase tracking-widest text-slate-500">Readiness</div>
-					<div className="font-semibold text-slate-100">{readiness}</div>
-				</div>
-				<div data-testid="copy-v2-production-valid">
-					<div className="text-[9px] uppercase tracking-widest text-slate-500">Production-valid</div>
-					<div className="font-semibold text-slate-100">{productionValid}</div>
-				</div>
-				<div data-testid="copy-v2-blueprint">
-					<div className="text-[9px] uppercase tracking-widest text-slate-500">Blueprint / revision</div>
-					<div className="font-semibold text-slate-100">{blueprintId} · r{revision}</div>
-				</div>
-				<div data-testid="copy-v2-formula">
-					<div className="text-[9px] uppercase tracking-widest text-slate-500">Formula</div>
-					<div className="font-semibold text-slate-100">{formula}</div>
-				</div>
-			</div>
-
-			<div
-				className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2"
-				data-testid="copy-v2-approved-hook"
-			>
-				<div className="text-[9px] font-bold uppercase tracking-widest text-emerald-300">
-					Approved Copy V2 Hook
-				</div>
-				<div className="mt-1 text-[12px] text-slate-100">
-					{approvedHook}
-				</div>
-				<div className="mt-1 text-[10px] text-slate-500">
-					Read-only projection from the production V2 binding; Faceless Opening Strategy does not edit it.
-				</div>
-			</div>
-
-			<div className="mt-3 grid gap-2 sm:grid-cols-3">
-				<div data-testid="copy-v2-revalidation">
-					<span className="text-slate-500">Revalidation:</span>{" "}
-					{text(effectiveExecution?.revalidation_action, enabled ? "REQUIRED before binding" : "Not asserted")}
-				</div>
-				<div data-testid="copy-v2-semantic-review">
-					<span className="text-slate-500">Semantic review:</span>{" "}
-					{text(effectiveExecution?.semantic_review_action, enabled ? "REQUIRED before binding" : "Not asserted")}
-				</div>
-				<div data-testid="copy-v2-action-availability">
-					<span className="text-slate-500">Action:</span>{" "}
-					{ready
-						? "Available — V2 binding proven"
-						: enabled
-						? "Blocked until V2 binding is proven"
-						: "V2 maintenance mode; production action unavailable"}
-				</div>
-			</div>
-
-			{blockers.length ? (
-				<div
-					className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-amber-100"
-					data-testid="copy-v2-blockers"
-				>
-					<div className="font-semibold">Blocker / error</div>
-					<ul className="mt-1 list-disc space-y-0.5 pl-4">
-						{blockers.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
-					</ul>
+			{/* Approved Hook preview for normal operators */}
+			{ready && !copyFree && approvedHook && approvedHook !== "Awaiting V2 binding" ? (
+				<div className="mt-2.5 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs">
+					<span className="text-[9px] font-bold uppercase tracking-wider text-emerald-400">
+						Active Hook:
+					</span>
+					<p className="mt-0.5 text-slate-200 italic">"{approvedHook}"</p>
 				</div>
 			) : null}
+
+			{/* Blocker alert if blocked */}
+			{blockers.length && !ready && !copyFree ? (
+				<div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+					<span className="flex-1" data-testid="copy-v2-human-blocker">
+						Copywriting needs attention. Open Copy Register to select or approve copy.
+					</span>
+					{productId ? (
+						<a
+							href={`/creative/copy-registry?product_id=${encodeURIComponent(productId)}`}
+							target="_blank"
+							rel="noreferrer"
+							data-testid="p6-open-copy-register"
+							className="inline-flex items-center gap-1 rounded bg-amber-600/90 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-amber-500"
+						>
+							<span>Open Copy Register</span>
+							<ExternalLink size={11} />
+						</a>
+					) : null}
+				</div>
+			) : null}
+
+			{/* Technical details collapsed drawer for developer/test diagnostics */}
+			<TechnicalDetails title="Technical details" className="mt-3">
+				<div className="space-y-2">
+					<div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+						<span className="text-slate-400">Policy</span>
+						<span data-testid="copy-v2-policy" className="font-mono text-slate-200">
+							{descriptor?.copy_policy === "NOT_REQUIRED"
+								? "COPY_NOT_REQUIRED"
+								: "COPY_REQUIRED"}
+						</span>
+					</div>
+
+					<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 font-mono text-[11px]">
+						<div data-testid="copy-v2-readiness">
+							<div className="text-slate-500 text-[10px]">Readiness</div>
+							<div className="text-slate-200">{readiness}</div>
+						</div>
+						<div data-testid="copy-v2-production-valid">
+							<div className="text-slate-500 text-[10px]">Production-valid</div>
+							<div className="text-slate-200">{productionValid}</div>
+						</div>
+						<div data-testid="copy-v2-blueprint">
+							<div className="text-slate-500 text-[10px]">Blueprint / revision</div>
+							<div className="text-slate-200">{blueprintId} · r{revision}</div>
+						</div>
+						<div data-testid="copy-v2-formula">
+							<div className="text-slate-500 text-[10px]">Formula</div>
+							<div className="text-slate-200">{formula}</div>
+						</div>
+					</div>
+
+					<div data-testid="copy-v2-approved-hook" className="border-t border-slate-800 pt-2 text-[11px]">
+						<span className="text-slate-500">Approved Hook: </span>
+						<span className="text-slate-200">{approvedHook}</span>
+					</div>
+
+					<div className="grid gap-1 sm:grid-cols-3 border-t border-slate-800 pt-2 text-[10px]">
+						<div data-testid="copy-v2-revalidation">
+							<span className="text-slate-500">Revalidation: </span>
+							<span>{text(effectiveExecution?.revalidation_action, enabled ? "REQUIRED before binding" : "Not asserted")}</span>
+						</div>
+						<div data-testid="copy-v2-semantic-review">
+							<span className="text-slate-500">Semantic review: </span>
+							<span>{text(effectiveExecution?.semantic_review_action, enabled ? "REQUIRED before binding" : "Not asserted")}</span>
+						</div>
+						<div data-testid="copy-v2-action-availability">
+							<span className="text-slate-500">Action: </span>
+							<span>{ready ? "Available — V2 binding proven" : "Blocked until V2 binding is proven"}</span>
+						</div>
+					</div>
+
+					{blockers.length ? (
+						<div data-testid="copy-v2-blockers" className="border-t border-slate-800 pt-2 text-[11px] text-amber-300">
+							<div className="font-semibold text-slate-400">Blockers:</div>
+							<ul className="list-disc pl-4 space-y-0.5">
+								{blockers.map((b, i) => (
+									<li key={i}>{b}</li>
+								))}
+							</ul>
+						</div>
+					) : null}
+				</div>
+			</TechnicalDetails>
 		</section>
 	);
 }
