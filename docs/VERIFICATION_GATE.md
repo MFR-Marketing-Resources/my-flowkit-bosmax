@@ -37,6 +37,7 @@ discipline until server-side enforcement exists.
 | `MANDOR_CHECK` | `npx tsx scripts/mandor-check.ts` | Ownership (owned_paths). Auto-**SKIP** on a clean tree (nothing to check). |
 | `DASHBOARD_BUILD` | `npm run build` (`tsc -b && vite build`) | The **real** build — load-bearing gate. |
 | `DASHBOARD_VITEST` | `npm test` (`vitest run`) | Frontend component/unit smoke. |
+| `PRODUCT_DATA_NETWORK_CONTRACT` | `npm run test:product-data-network -- --fixture` | Playwright request/response/payload contract; deterministic fixture only, no runtime or Product Truth access. |
 | `BACKEND_PYTEST_SMOKE` | `python -m pytest <curated suites>` | Stable, high-signal backend suites. |
 
 The full backend suite has known pre-existing failures (DB/fixture issues; see `AGENTS.md`)

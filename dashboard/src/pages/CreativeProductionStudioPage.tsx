@@ -23,6 +23,7 @@ import {
 	assignProductionWaves,
 	type CapacityPreflight,
 	type CohortAuthority,
+	type CohortProduct,
 	type CreativeTreatmentFormatPreference,
 	compileProductionPlan,
 	controlProductionPlan,
@@ -191,12 +192,24 @@ type StudioMode =
 	| "LOADING_PLAN"
 	| "LEGACY_INCOMPLETE_PLAN";
 
+const P6_COHORT_PAGE_SIZE = 50;
+
 export default function CreativeProductionStudioPage() {
 	const searchParams = new URLSearchParams(window.location.search);
 	// V4 cockpit is the DEFAULT (matches the T2V lane convention); `?classic=1`
 	// opts back into the legacy surface. Operators no longer need a magic `?v4=1`.
 	const useV4 = searchParams.get("classic") !== "1";
 	const [cohort, setCohort] = useState<CohortAuthority | null>(null);
+	const [knownCohortProducts, setKnownCohortProducts] = useState<
+		Record<string, CohortProduct>
+	>({});
+	const [cohortSearchInput, setCohortSearchInput] = useState("");
+	const [cohortSearch, setCohortSearch] = useState("");
+	const [cohortOffset, setCohortOffset] = useState(0);
+	const [cohortRefreshToken, setCohortRefreshToken] = useState(0);
+	const [cohortLoading, setCohortLoading] = useState(true);
+	const [cohortError, setCohortError] = useState("");
+	const cohortRequestSequence = useRef(0);
 	const [plans, setPlans] = useState<ProductionPlan[]>([]);
 	const [selectedPlanId, setSelectedPlanId] = useState("");
 	const [studioMode, setStudioMode] = useState<StudioMode>("NEW_DRAFT");
@@ -270,6 +283,59 @@ export default function CreativeProductionStudioPage() {
 		[detail],
 	);
 
+	const loadCohortPage = useCallback(async (query: string, offset: number) => {
+		const requestSequence = ++cohortRequestSequence.current;
+		setCohortLoading(true);
+		setCohortError("");
+		try {
+			const result = await fetchCohortAuthority({
+				q: query.trim() || undefined,
+				limit: P6_COHORT_PAGE_SIZE,
+				offset,
+			});
+			if (requestSequence !== cohortRequestSequence.current) return;
+			setKnownCohortProducts((current) => {
+				const next = { ...current };
+				let changed = false;
+				for (const product of result.products) {
+					if (next[product.product_id] !== product) {
+						next[product.product_id] = product;
+						changed = true;
+					}
+				}
+				return changed ? next : current;
+			});
+			setCohort(result);
+		} catch (reason) {
+			if (requestSequence !== cohortRequestSequence.current) return;
+			setCohortError(reason instanceof Error ? reason.message : String(reason));
+		} finally {
+			if (requestSequence === cohortRequestSequence.current) {
+				setCohortLoading(false);
+			}
+		}
+	}, []);
+
+	useEffect(() => {
+		const timer = window.setTimeout(() => {
+			setCohortSearch(cohortSearchInput);
+			setCohortOffset(0);
+		}, 250);
+		return () => window.clearTimeout(timer);
+	}, [cohortSearchInput]);
+
+	useEffect(() => {
+		void loadCohortPage(cohortSearch, cohortOffset);
+	}, [cohortOffset, cohortRefreshToken, cohortSearch, loadCohortPage]);
+
+	const handleCohortSearchChange = useCallback((query: string) => {
+		setCohortSearchInput(query);
+	}, []);
+
+	const handleCohortPageChange = useCallback((offset: number) => {
+		setCohortOffset(Math.max(0, offset));
+	}, []);
+
 	const loadPlan = useCallback(async (planId: string) => {
 		const requestSequence = ++planRequestSequence.current;
 		setSelectedPlanId(planId);
@@ -302,9 +368,7 @@ export default function CreativeProductionStudioPage() {
 
 	const refresh = useCallback(
 		async (preferredPlanId?: string) => {
-			void fetchCohortAuthority()
-				.then(setCohort)
-				.catch((reason) => setError((current) => current || String(reason)));
+			setCohortRefreshToken((current) => current + 1);
 			const [planList, laneList] = await Promise.all([
 				listProductionPlans(),
 				listExecutionLanes(),
@@ -1586,11 +1650,19 @@ export default function CreativeProductionStudioPage() {
 									</div>
 									<ProductAllocationPicker
 										products={cohort?.products ?? []}
+										knownProducts={Object.values(knownCohortProducts)}
 										allocations={allocations}
 										onChange={setAllocations}
+										onSearchChange={handleCohortSearchChange}
+										onPageChange={handleCohortPageChange}
+										page={{
+											offset: cohortOffset,
+											limit: P6_COHORT_PAGE_SIZE,
+											total: cohort?.total_count ?? cohort?.cohort_count ?? 0,
+										}}
 										blockersByProduct={blockersByProduct}
-										loading={!cohort}
-										error={cohort || !error ? "" : "Product list unavailable."}
+										loading={cohortLoading}
+										error={cohortError}
 									/>
 								</div>
 								<label className="text-xs text-slate-400">

@@ -7,7 +7,7 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { useState } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
 	CohortProduct,
 	ProductVideoAllocation,
@@ -208,6 +208,32 @@ describe("P6 product allocation picker", () => {
 			target: { value: "No such product" },
 		});
 		expect(screen.getByText(/No governed product matches/)).toBeInTheDocument();
+	});
+
+	it("exposes bounded server search and pagination callbacks", () => {
+		const onSearchChange = vi.fn();
+		const onPageChange = vi.fn();
+		render(
+			<ProductAllocationPicker
+				products={PRODUCTS}
+				allocations={[]}
+				onChange={vi.fn()}
+				onSearchChange={onSearchChange}
+				onPageChange={onPageChange}
+				page={{ offset: 0, limit: 1, total: 2 }}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: /Choose products/ }));
+		fireEvent.change(screen.getByLabelText("Search governed products"), {
+			target: { value: "Alpha" },
+		});
+		expect(onSearchChange).toHaveBeenCalledWith("Alpha");
+		expect(screen.getByTestId("p6-product-pagination")).toHaveTextContent(
+			"1–1 of 2",
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Next" }));
+		expect(onPageChange).toHaveBeenCalledWith(1);
 	});
 
 	it("removes a selected product with an accessible action", () => {

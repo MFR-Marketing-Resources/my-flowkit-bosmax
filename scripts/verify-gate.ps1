@@ -78,6 +78,7 @@ $SmokeTests = @(
     'tests/unit/test_product_visual_canvas_service.py',
     'tests/unit/test_product_visual_onboarding_service.py',
     'tests/integration/test_product_visual_crud_workflow.py',
+    'tests/ui/test_product_data_loading_governance.py',
     'tests/unit/test_canonical_runtime_lock.py',
     'tests/unit/test_scene_choreography_v2.py',
     'tests/unit/test_product_treatment_template_service.py',
@@ -169,6 +170,11 @@ Invoke-Gate -Name 'DASHBOARD_VITEST' -WorkingDir $DashboardDir -Command { & npm 
 # Re-run the exact Smart Registration contract files so this surface cannot
 # disappear behind a passing unrelated dashboard suite.
 Invoke-Gate -Name 'SMART_REGISTRATION_VISUAL_CONTRACT' -WorkingDir $DashboardDir -Command { & npx vitest run --config vitest.config.ts @DashboardContractTests }
+
+# Product-data loading is a cross-surface contract. The fixture browser suite
+# keeps request/payload/response assertions runnable in CI without touching the
+# canonical runtime or Product Truth.
+Invoke-Gate -Name 'PRODUCT_DATA_NETWORK_CONTRACT' -WorkingDir $RepoRoot -Command { & npm run test:product-data-network -- --fixture }
 
 # Gate 4 - Backend pytest smoke (or full with -Full).
 $pytestArgs = if ($Full) { @('-m', 'pytest', '-q') } else { @('-m', 'pytest', '-q') + $SmokeTests }

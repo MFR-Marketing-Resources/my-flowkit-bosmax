@@ -46,8 +46,16 @@ def _http(exc: plans.CreativeProductionError) -> HTTPException:
     "/cohort-authority",
     response_model=P58CohortAuthorityResponse,
 )
-async def cohort_authority() -> P58CohortAuthorityResponse:
-    return await plans.load_p58_cohort_authority()
+async def cohort_authority(
+    q: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> P58CohortAuthorityResponse:
+    return await plans.load_p58_cohort_authority(
+        query=q,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("/plans", status_code=201)

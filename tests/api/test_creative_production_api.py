@@ -12,6 +12,7 @@ from agent.api import creative_production as api
 from agent.models.creative_production import (
     CreativePoolSelection,
     DryRunRequest,
+    P58CohortAuthorityResponse,
     PlanActionRequest,
     ProductVideoAllocation,
     ProductionPlanCreateRequest,
@@ -136,6 +137,29 @@ async def test_create_plan_api_uses_typed_service_contract(monkeypatch):
     assert result["plan_id"] == "p6plan-api"
     create.assert_awaited_once()
     assert isinstance(create.await_args.args[0], ProductionPlanCreateRequest)
+
+
+@pytest.mark.asyncio
+async def test_cohort_authority_api_passes_bounded_search_and_page(monkeypatch):
+    authority = P58CohortAuthorityResponse(
+        cohort_count=581,
+        cohort_sha256="a" * 64,
+        product_ids=["product-1"],
+        products=[],
+        matches_frozen_authority=True,
+        total_count=1,
+        returned_count=0,
+        has_pagination=False,
+        limit=50,
+        offset=50,
+    )
+    loader = AsyncMock(return_value=authority)
+    monkeypatch.setattr(api.plans, "load_p58_cohort_authority", loader)
+
+    result = await api.cohort_authority(q="alpha", limit=50, offset=50)
+
+    assert result is authority
+    loader.assert_awaited_once_with(query="alpha", limit=50, offset=50)
 
 
 @pytest.mark.asyncio

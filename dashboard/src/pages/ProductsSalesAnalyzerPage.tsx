@@ -4,11 +4,13 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { fetchAPI, patchAPI, postAPI, postMultipartAPI } from "../api/client";
 import {
+	fetchProductDetail,
 	fetchProductIntelligence,
 	fetchProductIntelligenceProvenance,
 	fetchProductIntelligenceSnapshots,
 	fetchProductRegistry,
 	fetchProductStrategyTypeRegistry,
+	invalidateProductCatalogCache,
 	registerProductStrategyType,
 	reviewProductStrategyTaxonomy,
 	type ProductRegistrySort,
@@ -1112,11 +1114,7 @@ export default function ProductsSalesAnalyzerPage() {
 			const rows = await resolveGuidedClaimSafeProducts(
 				res.items || [],
 				guidedProductId,
-				(productId) =>
-					fetchAPI<Product>(
-						`/api/products/${encodeURIComponent(productId)}`,
-						{ signal: controller.signal },
-					),
+				(productId) => fetchProductDetail(productId, controller.signal),
 			);
 			if (controller.signal.aborted) return;
 			if (requestSeq !== loadSequenceRef.current) return;
@@ -1158,6 +1156,11 @@ export default function ProductsSalesAnalyzerPage() {
 		sortMode,
 		sourceFilter,
 	]);
+
+	const reloadProductsAfterMutation = useCallback(async () => {
+		invalidateProductCatalogCache();
+		await loadProducts();
+	}, [loadProducts]);
 
 	useEffect(() => {
 		// Debounce: wait for typing to settle before fetching (search changes),
@@ -1303,7 +1306,7 @@ export default function ProductsSalesAnalyzerPage() {
 			};
 			const created = await postAPI<Product>("/api/products/manual", payload);
 			setManualForm(emptyManualForm());
-			await loadProducts();
+			await reloadProductsAfterMutation();
 			setSelectedId(created.id);
 			setSaveSuccess(`Saved manually: ${created.id}`);
 		} catch (err) {
@@ -1389,7 +1392,7 @@ export default function ProductsSalesAnalyzerPage() {
 			}
 			if (response.product) {
 				setTikTokForm({ url: "", raw_product_title: "" });
-				await loadProducts();
+				await reloadProductsAfterMutation();
 				setSelectedId(response.product.id);
 				setSaveSuccess(`Imported Draft: ${response.product.id}`);
 			}
@@ -1417,7 +1420,7 @@ export default function ProductsSalesAnalyzerPage() {
 				`/api/products/${selectedProduct.id}`,
 				payload,
 			);
-			await loadProducts();
+			await reloadProductsAfterMutation();
 			setSelectedId(updated.id);
 			setSaveSuccess(successMessage);
 		} catch (err) {
@@ -1448,7 +1451,7 @@ export default function ProductsSalesAnalyzerPage() {
 					image_failure_detail: "",
 				},
 			);
-			await loadProducts();
+			await reloadProductsAfterMutation();
 			setSelectedId(updated.id);
 			setSaveSuccess(
 				"Uploaded image and cached it locally for the selected product",
@@ -1509,7 +1512,7 @@ export default function ProductsSalesAnalyzerPage() {
 				detail?: string;
 				local_image_path?: string;
 			}>(`/api/products/${selectedProduct.id}/cache-image`, {});
-			await loadProducts();
+			await reloadProductsAfterMutation();
 			setSelectedId(selectedProduct.id);
 			setSaveSuccess(
 				result.status === "success"
@@ -1564,7 +1567,7 @@ export default function ProductsSalesAnalyzerPage() {
 			if (!response.ok) {
 				throw new Error(payload.detail || "Failed to import image map");
 			}
-			await loadProducts();
+			await reloadProductsAfterMutation();
 			const warningSuffix = payload.warnings?.length
 				? ` (${payload.warnings.length} warning${payload.warnings.length === 1 ? "" : "s"})`
 				: "";
@@ -1603,7 +1606,7 @@ export default function ProductsSalesAnalyzerPage() {
 				}
 			}
 			await patchAPI(`/api/products/${selectedProduct.id}`, payload);
-			await loadProducts();
+			await reloadProductsAfterMutation();
 			setEditSuccess("Product updated successfully.");
 		} catch (err) {
 			setEditError(
@@ -1662,7 +1665,7 @@ export default function ProductsSalesAnalyzerPage() {
 				reason: lifecycleModal.reason,
 				confirmation_phrase: lifecycleModal.confirmationPhrase.trim(),
 			});
-			await loadProducts();
+			await reloadProductsAfterMutation();
 			if (
 				lifecycleModal.action === "DELETE_TEST_ROW" ||
 				lifecycleModal.action === "DELETE_PRODUCT"
