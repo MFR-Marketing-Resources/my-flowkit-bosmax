@@ -63,6 +63,11 @@ $SmokeTests = @(
     'tests/unit/test_claim_boundary.py',
     'tests/unit/test_female_health_sensitive.py',
     'tests/unit/test_canonical_prompt_compiler.py',
+    # Formula-driven Storyboard Landbank V3 Macro Round 1 provider-free core.
+    'tests/unit/test_storyboard_landbank_v3_migration.py',
+    'tests/unit/test_storyboard_landbank_v3_validators.py',
+    'tests/unit/test_storyboard_landbank_v3_round1_factory.py',
+    'tests/unit/test_storyboard_landbank_v3_api.py',
     'tests/unit/test_formula_validator_service.py',
     'tests/unit/test_copy_set_service.py',
     'tests/unit/test_copy_binding_service.py',

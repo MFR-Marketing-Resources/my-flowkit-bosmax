@@ -1357,6 +1357,7 @@ CREATE TABLE IF NOT EXISTS storyboard_component_v3 (
                                    CHECK(semantic_class IN ('HOOK','BODY_CORE','CTA','STAGE')),
     formula_stage_keys_json        TEXT NOT NULL DEFAULT '[]',
     ordered_stage_coverage_json    TEXT NOT NULL DEFAULT '[]',
+    stage_segments_json            TEXT NOT NULL DEFAULT '[]',
     authored_text                  TEXT NOT NULL,
     entry_key                      TEXT NOT NULL,
     exit_key                       TEXT NOT NULL,
@@ -5403,6 +5404,22 @@ END;
                     f"ALTER TABLE duration_projection_v3 ADD COLUMN {column_name} {definition}"
                 )
         await db.commit()
+
+        # Macro Round 1: additive, lossless component stage segmentation.  The
+        # legacy aggregate authored_text remains readable for old single-stage
+        # rows; new factory writes persist the typed ordered source segments.
+        component_columns_cursor = await db.execute(
+            "PRAGMA table_info(storyboard_component_v3)"
+        )
+        component_columns = {
+            row[1] for row in await component_columns_cursor.fetchall()
+        }
+        if "stage_segments_json" not in component_columns:
+            await db.execute(
+                "ALTER TABLE storyboard_component_v3 "
+                "ADD COLUMN stage_segments_json TEXT NOT NULL DEFAULT '[]'"
+            )
+            await db.commit()
 
 
         # V2-native treatment authority: optional copy_execution_binding_id_v2,

@@ -171,6 +171,55 @@ class V3FormulaStage(BaseModel):
         return value
 
 
+class V3ComponentStageSegment(BaseModel):
+    """Lossless, formula-native source text for one component stage.
+
+    A BODY_CORE component may cover several adjacent formula stages.  The
+    component aggregate text remains a display convenience, while these
+    ordered segments are the only authoring source used by the V3 Master
+    compiler.  Keeping the value object embedded in the component avoids a
+    second authority table and lets older Phase 2 rows migrate additively.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    formula_stage_key: str = Field(min_length=1)
+    semantic_class: V3SemanticClass
+    order: int = Field(ge=0)
+    authored_text: str = Field(min_length=1)
+    text_digest: str = Field(pattern=_SHA256_RE.pattern)
+    entry_key: str = Field(min_length=1)
+    exit_key: str = Field(min_length=1)
+    bridge_contract: V3BridgeContract
+    evidence_fact_ids: tuple[str, ...] = Field(default_factory=tuple)
+    evidence_digest: str = Field(pattern=_SHA256_RE.pattern)
+    claim_bearing: bool = False
+
+    @field_validator("authored_text")
+    @classmethod
+    def _clean_text(cls, value: str) -> str:
+        value = normalized_text(value)
+        if not value:
+            raise ValueError("V3_COMPONENT_STAGE_TEXT_REQUIRED")
+        return value
+
+    @model_validator(mode="after")
+    def _segment_receipts(self) -> "V3ComponentStageSegment":
+        if self.entry_key != self.bridge_contract.entry_key:
+            raise ValueError("V3_COMPONENT_SEGMENT_ENTRY_BRIDGE_MISMATCH")
+        if self.exit_key != self.bridge_contract.exit_key:
+            raise ValueError("V3_COMPONENT_SEGMENT_EXIT_BRIDGE_MISMATCH")
+        if self.text_digest != digest_text(self.authored_text):
+            raise ValueError("V3_COMPONENT_SEGMENT_TEXT_DIGEST_MISMATCH")
+        if self.evidence_digest != deterministic_digest(list(self.evidence_fact_ids)):
+            raise ValueError("V3_COMPONENT_SEGMENT_EVIDENCE_DIGEST_MISMATCH")
+        if len(self.evidence_fact_ids) != len(set(self.evidence_fact_ids)):
+            raise ValueError("V3_COMPONENT_SEGMENT_EVIDENCE_DUPLICATE")
+        if self.claim_bearing and not self.evidence_fact_ids:
+            raise ValueError("V3_COMPONENT_SEGMENT_CLAIM_EVIDENCE_REQUIRED")
+        return self
+
+
 class V3ProjectedStageSlice(BaseModel):
     """A deterministic, typed allocation from one Master stage into a projection."""
 
@@ -278,6 +327,9 @@ class V3StoryboardComponent(BaseModel):
     semantic_class: V3SemanticClass
     formula_stage_keys: tuple[str, ...] = Field(min_length=1)
     ordered_stage_coverage: tuple[int, ...] = Field(min_length=1)
+    # Additive Phase 2→Round 1 field.  Empty is retained only for legacy
+    # single-stage rows; all new Round 1 components must carry segments.
+    stage_segments: tuple[V3ComponentStageSegment, ...] = Field(default_factory=tuple)
     authored_text: str = Field(min_length=1)
     entry_key: str = Field(min_length=1)
     exit_key: str = Field(min_length=1)
@@ -561,6 +613,7 @@ __all__ = [
     "V3ValidationReceipt",
     "V3SeamState",
     "V3FormulaStage",
+    "V3ComponentStageSegment",
     "V3ProjectedStageSlice",
     "V3SceneProjectionRef",
     "V3Angle",

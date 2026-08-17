@@ -388,6 +388,74 @@ class ComponentStageValidator:
         if positions and tuple(positions) != tuple(range(positions[0], positions[-1] + 1)):
             issues.append(("COMPONENT_STAGE_COVERAGE_NONCONTIGUOUS", "component stage coverage must be contiguous"))
 
+        # Round 1 source-of-truth law: multi-stage components must carry one
+        # exact typed segment per formula stage.  A missing segment list is
+        # tolerated only for the old Phase 2 single-stage rows so historical
+        # validator fixtures and legacy read models remain compatible.
+        segments = tuple(component.stage_segments)
+        if not segments:
+            # Pre-existing Phase 2 validated fixtures/rows are retained as a
+            # read-compatible legacy shape.  Round 1 authoring is stricter:
+            # every new mutable component, especially DRAFT, must carry the
+            # lossless segment source of truth.
+            if len(stage_keys) > 1 and component.status in {"DRAFT", "REVIEW_REQUIRED"}:
+                issues.append(
+                    (
+                        "COMPONENT_STAGE_SEGMENTS_REQUIRED",
+                        "multi-stage components require lossless ordered stage segments",
+                    )
+                )
+        else:
+            segment_keys = tuple(segment.formula_stage_key for segment in segments)
+            segment_orders = tuple(segment.order for segment in segments)
+            if segment_keys != stage_keys:
+                issues.append(
+                    (
+                        "COMPONENT_STAGE_SEGMENT_COVERAGE_MISMATCH",
+                        "stage segments must exactly cover formula_stage_keys",
+                    )
+                )
+            if segment_orders != tuple(component.ordered_stage_coverage):
+                issues.append(
+                    (
+                        "COMPONENT_STAGE_SEGMENT_ORDER_MISMATCH",
+                        "stage segment order must match canonical formula coverage",
+                    )
+                )
+            if len(segment_keys) != len(set(segment_keys)):
+                issues.append(("COMPONENT_STAGE_SEGMENT_DUPLICATE", "stage segments must be unique"))
+            aggregate_text = " ".join(segment.authored_text for segment in segments).strip()
+            if normalized_text(component.authored_text) != aggregate_text:
+                issues.append(
+                    (
+                        "COMPONENT_HIDDEN_TEXT_OUTSIDE_SEGMENTS",
+                        "aggregate authored_text must be derived exactly from stage segments",
+                    )
+                )
+            if component.entry_key != segments[0].entry_key:
+                issues.append(("COMPONENT_SEGMENT_ENTRY_MISMATCH", "component entry differs from first segment"))
+            if component.exit_key != segments[-1].exit_key:
+                issues.append(("COMPONENT_SEGMENT_EXIT_MISMATCH", "component exit differs from last segment"))
+            flattened_evidence: list[str] = []
+            for segment in segments:
+                if segment.semantic_class != component.semantic_class:
+                    issues.append(
+                        (
+                            "COMPONENT_SEGMENT_SEMANTIC_CLASS_MISMATCH",
+                            segment.formula_stage_key,
+                        )
+                    )
+                for fact_id in segment.evidence_fact_ids:
+                    if fact_id not in flattened_evidence:
+                        flattened_evidence.append(fact_id)
+            if tuple(flattened_evidence) != tuple(component.evidence_fact_ids):
+                issues.append(
+                    (
+                        "COMPONENT_SEGMENT_EVIDENCE_MISMATCH",
+                        "component evidence must be the ordered union of segment evidence",
+                    )
+                )
+
         hook_keys = set(_mapping_keys(formula, "hook"))
         cta_keys = set(_mapping_keys(formula, "cta"))
         body_keys = set(required) - hook_keys - cta_keys
