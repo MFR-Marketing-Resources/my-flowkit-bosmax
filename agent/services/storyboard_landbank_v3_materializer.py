@@ -368,7 +368,13 @@ class V3ToV2Materializer:
         )
 
         if existing is None:
-            await v2svc._insert_blueprint(draft)
+            try:
+                await v2svc._insert_blueprint(draft)
+            except Exception:
+                # A concurrent materialization inserted this deterministic
+                # blueprint first; approve the existing DRAFT row instead of a
+                # duplicate.  (approve_blueprint fails closed if it truly is absent.)
+                pass
 
         # Carry the genuine human semantic approval forward; machine revalidation
         # (above + the V2 gate) is the ONLY thing that has run in addition.
@@ -397,14 +403,19 @@ class V3ToV2Materializer:
                 readiness_proof=readiness_proof,
             )
         except v2svc.CopyRegisterV2Error as exc:
-            # The existing V2 gate rejected the materialization: fail closed and
-            # preserve the exact V2 authority reason.
-            raise MaterializationError(
-                getattr(exc, "code", "COPY_V2_BLUEPRINT_INVALID"),
-                str(exc),
-                status_code=getattr(exc, "status_code", 409),
-                details=getattr(exc, "details", {}) or {},
-            ) from exc
+            if getattr(exc, "code", "") == "COPY_V2_APPROVED_IMMUTABLE":
+                # A concurrent materialization already approved this exact
+                # deterministic blueprint: converge on the single canonical row.
+                approved = await v2svc.get_blueprint(blueprint_id)
+            else:
+                # The existing V2 gate rejected the materialization: fail closed
+                # and preserve the exact V2 authority reason.
+                raise MaterializationError(
+                    getattr(exc, "code", "COPY_V2_BLUEPRINT_INVALID"),
+                    str(exc),
+                    status_code=getattr(exc, "status_code", 409),
+                    details=getattr(exc, "details", {}) or {},
+                ) from exc
 
         link = await self._ensure_link(
             blueprint=approved,
