@@ -1822,6 +1822,273 @@ END;
 """
 
 
+V3_ROUND3_SCHEMA = """
+-- Macro Round 3 production-integration records.  These four additive tables
+-- bind APPROVED V3 supply to Copy Register V2 production authority and to P6
+-- allocation WITHOUT introducing a parallel authority: every row points back to
+-- an existing V3 human approval receipt and forward to an existing V2 blueprint
+-- revision + V2 approval snapshot.  They NEVER mutate copy_execution_authority_v2
+-- (the product-global interactive activation pointer), never regenerate copy,
+-- and never auto-approve.  Materialization is deterministic and idempotent
+-- (link_id derives from the exact approved projection identity).
+
+-- V3 approved projection  <->  exact V2 blueprint revision + approval snapshot.
+CREATE TABLE IF NOT EXISTS materialization_link_v3 (
+    link_id                        TEXT NOT NULL,
+    revision                       INTEGER NOT NULL CHECK(revision >= 1),
+    product_id                     TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    master_id                      TEXT NOT NULL,
+    master_revision                INTEGER NOT NULL CHECK(master_revision >= 1),
+    master_exact_content_digest    TEXT NOT NULL CHECK(length(master_exact_content_digest) = 64),
+    projection_id                  TEXT NOT NULL,
+    projection_revision            INTEGER NOT NULL CHECK(projection_revision >= 1),
+    projection_exact_digest        TEXT NOT NULL CHECK(length(projection_exact_digest) = 64),
+    derivation_source              TEXT NOT NULL DEFAULT 'DETERMINISTIC'
+                                   CHECK(derivation_source IN ('DETERMINISTIC','AI_ASSISTED','HUMAN_EDITED')),
+    approval_receipt_id            TEXT NOT NULL
+                                   REFERENCES v3_human_approval_receipt(receipt_id) ON DELETE RESTRICT,
+    approval_receipt_digest        TEXT NOT NULL CHECK(length(approval_receipt_digest) = 64),
+    v2_blueprint_id                TEXT NOT NULL,
+    v2_blueprint_revision          INTEGER NOT NULL CHECK(v2_blueprint_revision >= 1),
+    v2_approval_snapshot_id        TEXT NOT NULL,
+    product_truth_snapshot_id      TEXT NOT NULL
+                                   REFERENCES product_intelligence_snapshot(snapshot_id) ON DELETE RESTRICT,
+    product_truth_snapshot_version INTEGER NOT NULL CHECK(product_truth_snapshot_version >= 1),
+    product_truth_snapshot_digest  TEXT NOT NULL CHECK(length(product_truth_snapshot_digest) = 64),
+    formula_id                     TEXT NOT NULL,
+    formula_version                TEXT NOT NULL,
+    evidence_digest                TEXT NOT NULL CHECK(length(evidence_digest) = 64),
+    target_duration_seconds        INTEGER NOT NULL CHECK(target_duration_seconds > 0),
+    materializer_version           TEXT NOT NULL,
+    materialization_digest         TEXT NOT NULL CHECK(length(materialization_digest) = 64),
+    status                         TEXT NOT NULL DEFAULT 'MATERIALIZED'
+                                   CHECK(status IN ('MATERIALIZED','PRODUCTION_VALID','SUPERSEDED','BLOCKED')),
+    source                         TEXT NOT NULL,
+    supersedes_link_id             TEXT,
+    supersedes_link_revision       INTEGER CHECK(supersedes_link_revision >= 1),
+    created_at                     TEXT NOT NULL,
+    created_by                     TEXT NOT NULL,
+    PRIMARY KEY (link_id, revision),
+    FOREIGN KEY (master_id, master_revision)
+        REFERENCES master_storyboard_v3(master_id, revision) ON DELETE RESTRICT,
+    FOREIGN KEY (projection_id, projection_revision)
+        REFERENCES duration_projection_v3(projection_id, revision) ON DELETE RESTRICT,
+    FOREIGN KEY (supersedes_link_id, supersedes_link_revision)
+        REFERENCES materialization_link_v3(link_id, revision) ON DELETE RESTRICT,
+    CHECK(
+        (supersedes_link_id IS NULL AND supersedes_link_revision IS NULL)
+        OR (supersedes_link_id IS NOT NULL AND supersedes_link_revision IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_materialization_link_v3_product_status
+    ON materialization_link_v3(product_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_materialization_link_v3_projection
+    ON materialization_link_v3(projection_id, projection_revision, status);
+CREATE INDEX IF NOT EXISTS idx_materialization_link_v3_receipt
+    ON materialization_link_v3(approval_receipt_id);
+CREATE INDEX IF NOT EXISTS idx_materialization_link_v3_digest
+    ON materialization_link_v3(materialization_digest);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_materialization_link_v3_blueprint
+    ON materialization_link_v3(v2_blueprint_id, v2_blueprint_revision);
+
+-- Frozen, validated production copy supply set for one product / plan / campaign.
+CREATE TABLE IF NOT EXISTS production_copy_supply_manifest_v3 (
+    manifest_id                    TEXT NOT NULL,
+    revision                       INTEGER NOT NULL CHECK(revision >= 1),
+    product_id                     TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    production_plan_id              TEXT,
+    campaign_key                   TEXT NOT NULL DEFAULT '',
+    recipe_policy_version          TEXT NOT NULL,
+    reuse_policy_json              TEXT NOT NULL DEFAULT '{}',
+    requested_capacity             INTEGER NOT NULL DEFAULT 0 CHECK(requested_capacity >= 0),
+    duration_mix_json              TEXT NOT NULL DEFAULT '[]',
+    language_profile               TEXT NOT NULL DEFAULT 'Malay',
+    source_authority_digest        TEXT NOT NULL CHECK(length(source_authority_digest) = 64),
+    item_count                     INTEGER NOT NULL DEFAULT 0 CHECK(item_count >= 0),
+    valid_item_count               INTEGER NOT NULL DEFAULT 0 CHECK(valid_item_count >= 0),
+    blocked_item_count             INTEGER NOT NULL DEFAULT 0 CHECK(blocked_item_count >= 0),
+    manifest_digest                TEXT NOT NULL CHECK(length(manifest_digest) = 64),
+    status                         TEXT NOT NULL DEFAULT 'DRAFT'
+                                   CHECK(status IN ('DRAFT','VALIDATED','FROZEN','SUPERSEDED','BLOCKED')),
+    source                         TEXT NOT NULL,
+    supersedes_manifest_id         TEXT,
+    supersedes_manifest_revision   INTEGER CHECK(supersedes_manifest_revision >= 1),
+    created_at                     TEXT NOT NULL,
+    created_by                     TEXT NOT NULL,
+    frozen_at                      TEXT,
+    PRIMARY KEY (manifest_id, revision),
+    FOREIGN KEY (supersedes_manifest_id, supersedes_manifest_revision)
+        REFERENCES production_copy_supply_manifest_v3(manifest_id, revision) ON DELETE RESTRICT,
+    CHECK(
+        (supersedes_manifest_id IS NULL AND supersedes_manifest_revision IS NULL)
+        OR (supersedes_manifest_id IS NOT NULL AND supersedes_manifest_revision IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_production_copy_supply_manifest_v3_product_status
+    ON production_copy_supply_manifest_v3(product_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_production_copy_supply_manifest_v3_plan
+    ON production_copy_supply_manifest_v3(production_plan_id, status);
+CREATE INDEX IF NOT EXISTS idx_production_copy_supply_manifest_v3_campaign
+    ON production_copy_supply_manifest_v3(product_id, campaign_key, status);
+CREATE INDEX IF NOT EXISTS idx_production_copy_supply_manifest_v3_digest
+    ON production_copy_supply_manifest_v3(manifest_digest);
+
+-- One immutable production copy asset inside a manifest.  Points at exactly one
+-- V2 PRODUCTION_VALID blueprint revision via its materialization link.
+CREATE TABLE IF NOT EXISTS manifest_item_v3 (
+    item_id                        TEXT PRIMARY KEY,
+    manifest_id                    TEXT NOT NULL,
+    manifest_revision              INTEGER NOT NULL CHECK(manifest_revision >= 1),
+    item_index                     INTEGER NOT NULL CHECK(item_index >= 0),
+    product_id                     TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    master_id                      TEXT NOT NULL,
+    master_revision                INTEGER NOT NULL CHECK(master_revision >= 1),
+    projection_id                  TEXT NOT NULL,
+    projection_revision            INTEGER NOT NULL CHECK(projection_revision >= 1),
+    projection_exact_digest        TEXT NOT NULL CHECK(length(projection_exact_digest) = 64),
+    approval_receipt_id            TEXT NOT NULL
+                                   REFERENCES v3_human_approval_receipt(receipt_id) ON DELETE RESTRICT,
+    materialization_link_id        TEXT NOT NULL,
+    materialization_link_revision  INTEGER NOT NULL CHECK(materialization_link_revision >= 1),
+    v2_blueprint_id                TEXT NOT NULL,
+    v2_blueprint_revision          INTEGER NOT NULL CHECK(v2_blueprint_revision >= 1),
+    v2_approval_snapshot_id        TEXT NOT NULL,
+    product_truth_snapshot_digest  TEXT NOT NULL CHECK(length(product_truth_snapshot_digest) = 64),
+    formula_id                     TEXT NOT NULL,
+    formula_version                TEXT NOT NULL,
+    duration_seconds               INTEGER NOT NULL CHECK(duration_seconds > 0),
+    item_digest                    TEXT NOT NULL CHECK(length(item_digest) = 64),
+    created_at                     TEXT NOT NULL,
+    created_by                     TEXT NOT NULL,
+    FOREIGN KEY (manifest_id, manifest_revision)
+        REFERENCES production_copy_supply_manifest_v3(manifest_id, revision) ON DELETE CASCADE,
+    FOREIGN KEY (materialization_link_id, materialization_link_revision)
+        REFERENCES materialization_link_v3(link_id, revision) ON DELETE RESTRICT,
+    UNIQUE(manifest_id, manifest_revision, item_index)
+);
+CREATE INDEX IF NOT EXISTS idx_manifest_item_v3_manifest
+    ON manifest_item_v3(manifest_id, manifest_revision, item_index);
+CREATE INDEX IF NOT EXISTS idx_manifest_item_v3_blueprint
+    ON manifest_item_v3(v2_blueprint_id, v2_blueprint_revision);
+CREATE INDEX IF NOT EXISTS idx_manifest_item_v3_projection
+    ON manifest_item_v3(projection_id, projection_revision);
+CREATE INDEX IF NOT EXISTS idx_manifest_item_v3_link
+    ON manifest_item_v3(materialization_link_id, materialization_link_revision);
+CREATE INDEX IF NOT EXISTS idx_manifest_item_v3_digest
+    ON manifest_item_v3(item_digest);
+
+-- Append-only production usage ledger.  Records ACTUAL allocation / consumption
+-- events; utilization is derived from recorded events, never by counting rows.
+CREATE TABLE IF NOT EXISTS landbank_usage_v3 (
+    usage_id                       TEXT PRIMARY KEY,
+    product_id                     TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
+    master_id                      TEXT,
+    master_revision                INTEGER CHECK(master_revision IS NULL OR master_revision >= 1),
+    projection_id                  TEXT,
+    projection_revision            INTEGER CHECK(projection_revision IS NULL OR projection_revision >= 1),
+    v2_blueprint_id                TEXT NOT NULL,
+    v2_blueprint_revision          INTEGER NOT NULL CHECK(v2_blueprint_revision >= 1),
+    v2_approval_snapshot_id        TEXT NOT NULL DEFAULT '',
+    materialization_link_id        TEXT,
+    materialization_link_revision  INTEGER CHECK(materialization_link_revision IS NULL OR materialization_link_revision >= 1),
+    manifest_id                    TEXT,
+    manifest_revision              INTEGER CHECK(manifest_revision IS NULL OR manifest_revision >= 1),
+    manifest_item_id               TEXT,
+    p6_plan_id                     TEXT,
+    p6_item_id                     TEXT,
+    duration_seconds               INTEGER CHECK(duration_seconds IS NULL OR duration_seconds > 0),
+    campaign_key                   TEXT NOT NULL DEFAULT '',
+    usage_type                     TEXT NOT NULL
+                                   CHECK(usage_type IN ('RESERVED','ALLOCATED','CONSUMED','RELEASED','BLOCKED')),
+    outcome_status                 TEXT NOT NULL DEFAULT 'OK'
+                                   CHECK(outcome_status IN ('OK','FAILED','BLOCKED','REVALIDATION_BLOCKED')),
+    reason_code                    TEXT NOT NULL DEFAULT '',
+    authority_digest               TEXT NOT NULL CHECK(length(authority_digest) = 64),
+    event_digest                   TEXT NOT NULL CHECK(length(event_digest) = 64),
+    created_at                     TEXT NOT NULL,
+    created_by                     TEXT NOT NULL,
+    FOREIGN KEY (materialization_link_id, materialization_link_revision)
+        REFERENCES materialization_link_v3(link_id, revision) ON DELETE RESTRICT,
+    FOREIGN KEY (manifest_id, manifest_revision)
+        REFERENCES production_copy_supply_manifest_v3(manifest_id, revision) ON DELETE RESTRICT,
+    FOREIGN KEY (manifest_item_id)
+        REFERENCES manifest_item_v3(item_id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_landbank_usage_v3_product
+    ON landbank_usage_v3(product_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_landbank_usage_v3_manifest
+    ON landbank_usage_v3(manifest_id, manifest_revision, usage_type);
+CREATE INDEX IF NOT EXISTS idx_landbank_usage_v3_item
+    ON landbank_usage_v3(manifest_item_id, usage_type);
+CREATE INDEX IF NOT EXISTS idx_landbank_usage_v3_plan
+    ON landbank_usage_v3(p6_plan_id, p6_item_id);
+CREATE INDEX IF NOT EXISTS idx_landbank_usage_v3_blueprint
+    ON landbank_usage_v3(v2_blueprint_id, v2_blueprint_revision, usage_type);
+
+-- Terminal-immutability: a link that has reached a terminal production status is
+-- an immutable provenance record.  MATERIALIZED is the only mutable (in-flight)
+-- state, permitting the two-phase materialize->confirm and rollback repair.
+CREATE TRIGGER IF NOT EXISTS trg_materialization_link_v3_terminal_immutable_update
+BEFORE UPDATE ON materialization_link_v3
+WHEN OLD.status IN ('PRODUCTION_VALID','SUPERSEDED','BLOCKED')
+BEGIN
+    SELECT RAISE(ABORT, 'MATERIALIZATION_LINK_V3_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_materialization_link_v3_terminal_immutable_delete
+BEFORE DELETE ON materialization_link_v3
+WHEN OLD.status IN ('PRODUCTION_VALID','SUPERSEDED','BLOCKED')
+BEGIN
+    SELECT RAISE(ABORT, 'MATERIALIZATION_LINK_V3_IMMUTABLE');
+END;
+
+-- A frozen manifest header is immutable; changed supply requires a new revision.
+CREATE TRIGGER IF NOT EXISTS trg_production_copy_supply_manifest_v3_frozen_immutable_update
+BEFORE UPDATE ON production_copy_supply_manifest_v3
+WHEN OLD.status IN ('FROZEN','SUPERSEDED','BLOCKED')
+BEGIN
+    SELECT RAISE(ABORT, 'PRODUCTION_COPY_SUPPLY_MANIFEST_V3_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_production_copy_supply_manifest_v3_frozen_immutable_delete
+BEFORE DELETE ON production_copy_supply_manifest_v3
+WHEN OLD.status IN ('FROZEN','SUPERSEDED','BLOCKED')
+BEGIN
+    SELECT RAISE(ABORT, 'PRODUCTION_COPY_SUPPLY_MANIFEST_V3_IMMUTABLE');
+END;
+
+-- Manifest items are immutable once their parent manifest is frozen.
+CREATE TRIGGER IF NOT EXISTS trg_manifest_item_v3_frozen_immutable_update
+BEFORE UPDATE ON manifest_item_v3
+WHEN (
+    SELECT status FROM production_copy_supply_manifest_v3
+    WHERE manifest_id = OLD.manifest_id AND revision = OLD.manifest_revision
+) IN ('FROZEN','SUPERSEDED','BLOCKED')
+BEGIN
+    SELECT RAISE(ABORT, 'MANIFEST_ITEM_V3_IMMUTABLE');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_manifest_item_v3_frozen_immutable_delete
+BEFORE DELETE ON manifest_item_v3
+WHEN (
+    SELECT status FROM production_copy_supply_manifest_v3
+    WHERE manifest_id = OLD.manifest_id AND revision = OLD.manifest_revision
+) IN ('FROZEN','SUPERSEDED','BLOCKED')
+BEGIN
+    SELECT RAISE(ABORT, 'MANIFEST_ITEM_V3_IMMUTABLE');
+END;
+
+-- The usage ledger is strictly append-only.
+CREATE TRIGGER IF NOT EXISTS trg_landbank_usage_v3_append_only_update
+BEFORE UPDATE ON landbank_usage_v3
+BEGIN
+    SELECT RAISE(ABORT, 'LANDBANK_USAGE_V3_APPEND_ONLY');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_landbank_usage_v3_append_only_delete
+BEFORE DELETE ON landbank_usage_v3
+BEGIN
+    SELECT RAISE(ABORT, 'LANDBANK_USAGE_V3_APPEND_ONLY');
+END;
+"""
+
+
 async def init_db():
     """Initialize database with schema and run migrations."""
     async with aiosqlite.connect(str(DB_PATH)) as db:
@@ -5620,6 +5887,13 @@ END;
             await db.execute(
                 "ALTER TABLE v3_human_approval_receipt ADD COLUMN batch_digest TEXT"
             )
+        await db.commit()
+
+        # Macro Round 3 production-integration tables (materialization link,
+        # production copy supply manifest + items, append-only usage ledger).
+        # Additive only; introduces no parallel authority and never mutates the
+        # V2 activation pointer (copy_execution_authority_v2).
+        await db.executescript(V3_ROUND3_SCHEMA)
         await db.commit()
 
 
