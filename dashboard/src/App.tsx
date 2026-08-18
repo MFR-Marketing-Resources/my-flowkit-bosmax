@@ -100,6 +100,13 @@ const ALL_NAV_GROUPS = [
 		],
 	},
 	{
+		label: "COPYWRITING",
+		items: [
+			{ to: "/creative/storyboard-landbank-v3", icon: Sparkles, label: "Copywriting Landbank" },
+			{ to: "/creative/copy-intelligence", icon: Users, label: "Copy Intelligence" },
+		],
+	},
+	{
 		label: "LIBRARY",
 		items: [
 			{ to: "/library/videos", icon: Video, label: "Video Library" },
@@ -174,13 +181,7 @@ const ALL_NAV_GROUPS = [
 				icon: Tags,
 				label: "Product Type Registry",
 			},
-			{ to: "/creative/copy-registry", icon: PenLine, label: "Copy Registry" },
-			{ to: "/creative/storyboard-landbank-v3", icon: Sparkles, label: "Copywriting Landbank" },
-			{
-				to: "/creative/copy-intelligence",
-				icon: Users,
-				label: "Copy Intelligence",
-			},
+			{ to: "/creative/copy-authority", icon: PenLine, label: "Copy Authority" },
 			{
 				to: "/creative/cockpit-settings",
 				icon: Gauge,
@@ -199,7 +200,7 @@ const ALL_NAV_GROUPS = [
 	},
 ];
 
-const NAV_GROUPS = ALL_NAV_GROUPS.map((group) => ({
+export const NAV_GROUPS = ALL_NAV_GROUPS.map((group) => ({
 	...group,
 	items: group.items.filter((item) => !isDeactivatedSurfacePath(item.to)),
 }));
@@ -217,6 +218,14 @@ function PageTitle() {
 		}
 	}
 	return <span>{label}</span>;
+}
+
+export function CopyRegistryRedirect() {
+	// Copy Register was repositioned as the advanced "Copy Authority" console.
+	// Preserve the old deep link (and its product_id / blueprint_id query) so every
+	// existing link keeps working, redirecting to the canonical Copy Authority route.
+	const location = useLocation();
+	return <Navigate to={`/creative/copy-authority${location.search}`} replace />;
 }
 
 function EmbeddedRouteReporter() {
@@ -651,8 +660,12 @@ function Layout() {
 							element={<CockpitSettingsPage />}
 						/>
 						<Route
-							path="/creative/copy-registry"
+							path="/creative/copy-authority"
 							element={<CopySetRegistryPage />}
+						/>
+						<Route
+							path="/creative/copy-registry"
+							element={<CopyRegistryRedirect />}
 						/>
 						<Route
 							path="/creative/storyboard-landbank-v3"

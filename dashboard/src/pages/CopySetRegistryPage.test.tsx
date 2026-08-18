@@ -128,9 +128,9 @@ function blueprint(status: string = "DRAFT") {
 
 function renderPage() {
 	return render(
-		<MemoryRouter initialEntries={["/creative/copy-registry?product_id=p1"]}>
+		<MemoryRouter initialEntries={["/creative/copy-authority?product_id=p1"]}>
 			<Routes>
-				<Route path="/creative/copy-registry" element={<CopySetRegistryPage />} />
+				<Route path="/creative/copy-authority" element={<CopySetRegistryPage />} />
 			</Routes>
 		</MemoryRouter>,
 	);
@@ -194,6 +194,9 @@ describe("CopySetRegistryPage V2 cutover", () => {
 	it("walks product → truth → formula → angle/evidence → new V2 blueprint → approval", async () => {
 		renderPage();
 		expect(await screen.findByTestId("copy-set-registry-page")).toBeInTheDocument();
+		// Copy Authority now defaults to the inspection Library; switch to the
+		// advanced direct-authoring tab to exercise the generator flow.
+		fireEvent.click(screen.getByTestId("tab-generator"));
 		expect(await screen.findByTestId("product-truth-proof")).toBeInTheDocument();
 
 		fireEvent.change(await screen.findByTestId("v2-formula-picker"), { target: { value: "PAS" } });
@@ -217,7 +220,10 @@ describe("CopySetRegistryPage V2 cutover", () => {
 			readiness_proof: expect.objectContaining({ safety_validated: true }),
 		})));
 		expect(await screen.findByText("CURRENT · PRODUCTION_VALID")).toBeInTheDocument();
+		// Global activation is now gated behind an explicit confirmation dialog.
 		fireEvent.click(await screen.findByTestId("activate-v2-blueprint"));
+		expect(mockedActivate).not.toHaveBeenCalled();
+		fireEvent.click(await screen.findByTestId("activation-confirm"));
 		await waitFor(() => expect(mockedActivate).toHaveBeenCalledWith("bpv2_test"));
 		expect(await screen.findByText("ACTIVE · 8 REQUIRED LANES")).toBeInTheDocument();
 	});
@@ -233,6 +239,7 @@ describe("CopySetRegistryPage V2 cutover", () => {
 			provider_calls: 0,
 		});
 		renderPage();
+		fireEvent.click(await screen.findByTestId("tab-generator"));
 		await screen.findByTestId("product-truth-proof");
 
 		expect(screen.getByTestId("generate-angle-disabled-reasons")).toHaveTextContent("formula required");
@@ -254,6 +261,7 @@ describe("CopySetRegistryPage V2 cutover", () => {
 			blockers: ["PRODUCT_TRUTH_NOT_APPROVED"],
 		});
 		renderPage();
+		fireEvent.click(await screen.findByTestId("tab-generator"));
 		await screen.findByTestId("product-truth-proof");
 
 		expect(screen.getByTestId("generate-angle-disabled-reasons")).toHaveTextContent("Product Truth not ready");
@@ -275,9 +283,106 @@ describe("CopySetRegistryPage V2 cutover", () => {
 			},
 		});
 		renderPage();
+		fireEvent.click(await screen.findByTestId("tab-generator"));
 
 		expect(await screen.findByText("ACTIVE · 8 REQUIRED LANES")).toBeInTheDocument();
 		expect(screen.getByTestId("activate-v2-blueprint")).toBeDisabled();
 		expect(mockedActivate).not.toHaveBeenCalled();
+	});
+});
+
+describe("Task B — Copy Authority surface consolidation", () => {
+	afterEach(cleanup);
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockedCatalog.mockResolvedValue({ items: [product] } as never);
+		mockedFormulas.mockResolvedValue({
+			formulas: [{
+				formula_id: "PAS",
+				formula_version: "pas.v1",
+				display_name: "Problem Agitate Solution",
+				definition_status: "CANONICAL",
+				compiler_family: "PAS",
+				slots: [],
+				best_for: [],
+				unsuitable_for: [],
+			}],
+		});
+		mockedProviderStatus.mockResolvedValue({
+			lane: "text_assist",
+			status: "READY",
+			configured: true,
+			provider_id: "synthetic-test-provider",
+			model_id: "synthetic-test-model",
+			execution_enabled: true,
+			provider_calls: 0,
+		});
+		mockedTruth.mockResolvedValue(truth);
+		mockedList.mockResolvedValue({
+			product_id: "p1",
+			items: [],
+			activation: { active_blueprint_id: null, active_revision: null, active_lane_count: 0, required_lane_count: 8, activated_at: null },
+		});
+		mockedActivate.mockResolvedValue({ blueprint_id: "bpv2_test", activated: true, bindings: [], required_lane_count: 8 });
+	});
+
+	// Test B — Copy Authority signposts itself as the ADVANCED console.
+	it("presents itself as the advanced Copy Authority console with a Landbank advisory", async () => {
+		renderPage();
+		expect(await screen.findByTestId("copy-authority-title")).toHaveTextContent("Copy Authority");
+		expect(screen.getByText(/Advanced V2 authority inspection, exception authoring and production activation/i)).toBeInTheDocument();
+		expect(screen.getByTestId("copy-authority-advisory")).toHaveTextContent(/Normal campaign copy should be created in Copywriting Landbank/i);
+	});
+
+	// Test C — defaults to inspection (Authority Library), NOT the direct generator.
+	it("defaults to the Authority Library, not the direct generator", async () => {
+		renderPage();
+		expect(await screen.findByTestId("copy-library-view")).toBeInTheDocument();
+		expect(screen.queryByTestId("product-truth-proof")).not.toBeInTheDocument();
+	});
+
+	// Test D — direct V2 authoring still works when the advanced tab is chosen.
+	it("runs direct V2 authoring only when the advanced tab is selected", async () => {
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+		fireEvent.click(screen.getByTestId("tab-generator"));
+		expect(await screen.findByTestId("product-truth-proof")).toBeInTheDocument();
+		expect(screen.getByTestId("v2-formula-picker")).toBeInTheDocument();
+	});
+
+	// Test G — the selected product is carried to Copywriting Landbank.
+	it("hands the selected product off to Copywriting Landbank", async () => {
+		renderPage();
+		// Wait until the deep-linked product is selected (the Library view requires it)
+		// so the advisory bridge has resolved the product_id into its href.
+		await screen.findByTestId("copy-library-view");
+		const link = screen.getByTestId("open-copywriting-landbank");
+		expect(link).toHaveAttribute("href", "/creative/storyboard-landbank-v3?product_id=p1");
+	});
+
+	// Test E — global activation from the Library requires explicit confirmation.
+	it("requires explicit confirmation before global activation", async () => {
+		mockedList.mockResolvedValue({
+			product_id: "p1",
+			items: [blueprint("PRODUCTION_VALID")],
+			activation: { active_blueprint_id: null, active_revision: null, active_lane_count: 0, required_lane_count: 8, activated_at: null },
+		});
+		renderPage();
+
+		fireEvent.click(await screen.findByTestId("library-activate-bpv2_test"));
+		// Dialog is shown; nothing is activated yet.
+		expect(await screen.findByTestId("activation-confirm-overlay")).toBeInTheDocument();
+		expect(mockedActivate).not.toHaveBeenCalled();
+
+		// Cancelling must not activate.
+		fireEvent.click(screen.getByTestId("activation-cancel"));
+		await waitFor(() => expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument());
+		expect(mockedActivate).not.toHaveBeenCalled();
+
+		// Re-open and confirm activates exactly once.
+		fireEvent.click(screen.getByTestId("library-activate-bpv2_test"));
+		fireEvent.click(await screen.findByTestId("activation-confirm"));
+		await waitFor(() => expect(mockedActivate).toHaveBeenCalledWith("bpv2_test"));
 	});
 });

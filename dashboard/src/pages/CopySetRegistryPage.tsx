@@ -1,4 +1,4 @@
-import { BookOpen, ChevronLeft, ChevronRight, PenLine, Search, ShieldCheck, Sparkles } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, Search, ShieldCheck, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -215,7 +215,9 @@ export default function CopySetRegistryPage() {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const { products, isLoadingProducts, productsError } = useProductCatalog(50);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-	const [activeTab, setActiveTab] = useState<"GENERATOR" | "LIBRARY">("GENERATOR");
+	// Copy Authority is an inspection-first console: default to the authority
+	// library, not the direct (advanced) generator.
+	const [activeTab, setActiveTab] = useState<"GENERATOR" | "LIBRARY">("LIBRARY");
 
 	const [truth, setTruth] = useState<CopyTruthProofV2 | null>(null);
 	const [formulas, setFormulas] = useState<CopyFormulaV2[]>([]);
@@ -232,6 +234,11 @@ export default function CopySetRegistryPage() {
 	const [reviewer, setReviewer] = useState("operator");
 	const [approvalChecks, setApprovalChecks] = useState(EMPTY_APPROVAL_CHECKS);
 	const [activatedBlueprintId, setActivatedBlueprintId] = useState("");
+	// Task B §4: global activation is an advanced, high-consequence action. Hold the
+	// target blueprint here and require explicit confirmation before calling
+	// activateFormulaBlueprint (which changes the sole V2 authority for all creator
+	// lanes). Never auto-activate.
+	const [pendingActivation, setPendingActivation] = useState<CopyBlueprintV2Record | null>(null);
 
 	// Library view search & filter & pagination
 	const [librarySearch, setLibrarySearch] = useState("");
@@ -477,12 +484,12 @@ export default function CopySetRegistryPage() {
 			<header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-5">
 				<div>
 					<div className="flex items-center gap-2 text-blue-300">
-						<PenLine size={20} />
-						<span className="text-[10px] font-bold uppercase tracking-[0.2em]">Creative Hub</span>
+						<ShieldCheck size={20} />
+						<span className="text-[10px] font-bold uppercase tracking-[0.2em]">Advanced</span>
 					</div>
-					<h1 className="mt-1 text-2xl font-bold text-slate-100">Copy Register</h1>
+					<h1 className="mt-1 text-2xl font-bold text-slate-100" data-testid="copy-authority-title">Copy Authority</h1>
 					<p className="mt-1 text-xs text-slate-400">
-						Guided copywriting generator & approved copy library for video and image production.
+						Advanced V2 authority inspection, exception authoring and production activation.
 					</p>
 				</div>
 
@@ -490,6 +497,7 @@ export default function CopySetRegistryPage() {
 				<div className="flex rounded-xl border border-slate-800 bg-slate-950 p-1">
 					<button
 						type="button"
+						data-testid="tab-generator"
 						onClick={() => setActiveTab("GENERATOR")}
 						className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-colors ${
 							activeTab === "GENERATOR"
@@ -498,11 +506,12 @@ export default function CopySetRegistryPage() {
 						}`}
 					>
 						<Sparkles size={14} />
-						<span>Copy Generator</span>
+						<span>Direct V2 Authoring (Advanced)</span>
 					</button>
 
 					<button
 						type="button"
+						data-testid="tab-library"
 						onClick={() => {
 							setActiveTab("LIBRARY");
 							setLibraryPage(1);
@@ -514,7 +523,7 @@ export default function CopySetRegistryPage() {
 						}`}
 					>
 						<BookOpen size={14} />
-						<span>Copy Library</span>
+						<span>Authority Library</span>
 						{blueprints.length ? (
 							<span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[10px] text-blue-300">
 								{blueprints.length}
@@ -523,6 +532,28 @@ export default function CopySetRegistryPage() {
 					</button>
 				</div>
 			</header>
+
+			{/* Task B §2: Copy Authority is the ADVANCED console. Normal campaign copy
+			    belongs in Copywriting Landbank. Make that explicit and give a one-click
+			    bridge that preserves the selected product. */}
+			<div
+				data-testid="copy-authority-advisory"
+				className="flex flex-col gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+			>
+				<p className="text-xs text-amber-100/90">
+					Normal campaign copy should be created in <span className="font-semibold">Copywriting Landbank</span>.
+					Use Copy Authority only for V2 authority inspection, exception authoring, revalidation, or explicit
+					production activation.
+				</p>
+				<a
+					href={`/creative/storyboard-landbank-v3${selectedProduct ? `?product_id=${encodeURIComponent(selectedProduct.id)}` : ""}`}
+					data-testid="open-copywriting-landbank"
+					className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-amber-400/40 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-100 hover:bg-amber-500/25"
+				>
+					<Sparkles size={14} />
+					Open Copywriting Landbank
+				</a>
+			</div>
 
 			{error ? <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100" data-testid="copy-registry-error">{error}</p> : null}
 			{success ? <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100" data-testid="copy-registry-success">{success}</p> : null}
@@ -659,7 +690,7 @@ export default function CopySetRegistryPage() {
 								<div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
 									<HelperText className="text-emerald-300/80">Approved copy is immutable. Activation never changes its approved text.</HelperText>
 									{latestBlueprint.current_authority_activation_allowed === false ? <HelperText className="mt-2 text-amber-200/80">Activation disabled: {latestBlueprint.current_authority_reason ?? "current authority validation is not satisfied"}.</HelperText> : null}
-									<button type="button" data-testid="activate-v2-blueprint" disabled={busy || latestBlueprint.current_authority_activation_allowed !== true || activatedBlueprintId === latestBlueprint.blueprint_id} onClick={() => void handleActivate(latestBlueprint)} className="mt-3 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{activatedBlueprintId === latestBlueprint.blueprint_id ? "ACTIVE · 8 REQUIRED LANES" : busy ? "Activating…" : "ACTIVATE FOR VIDEO + POSTER LANES"}</button>
+									<button type="button" data-testid="activate-v2-blueprint" disabled={busy || latestBlueprint.current_authority_activation_allowed !== true || activatedBlueprintId === latestBlueprint.blueprint_id} onClick={() => setPendingActivation(latestBlueprint)} className="mt-3 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{activatedBlueprintId === latestBlueprint.blueprint_id ? "ACTIVE · 8 REQUIRED LANES" : busy ? "Activating…" : "ACTIVATE FOR VIDEO + POSTER LANES"}</button>
 								</div>
 							)}
 						</Section>
@@ -784,8 +815,9 @@ export default function CopySetRegistryPage() {
 
 											<button
 												type="button"
+												data-testid={`library-activate-${bp.blueprint_id}`}
 												disabled={busy || isCurrent || bp.status !== "PRODUCTION_VALID"}
-												onClick={() => void handleActivate(bp)}
+												onClick={() => setPendingActivation(bp)}
 												className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
 													isCurrent
 														? "bg-emerald-500/20 text-emerald-300"
@@ -833,10 +865,57 @@ export default function CopySetRegistryPage() {
 			) : null}
 
 			{!selectedProduct && (
-				<Section title="Copy Register" helper="Select a product to begin.">
+				<Section title="Copy Authority" helper="Select a product to begin.">
 					<p className="text-sm text-slate-500">Select a Product Truth-approved product first.</p>
 				</Section>
 			)}
+
+			{/* Task B §4: GLOBAL COPY AUTHORITY CHANGE confirmation. Activation makes the
+			    selected V2 blueprint the sole copy authority for every creator lane. It is
+			    an advanced, high-consequence action, so require explicit confirmation and
+			    never auto-activate. It does NOT rewrite V3 Landbank copy and does NOT mutate
+			    any immutable approval. */}
+			{pendingActivation ? (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4" data-testid="activation-confirm-overlay">
+					<div className="w-full max-w-lg rounded-2xl border border-blue-500/40 bg-slate-900 p-6 shadow-2xl">
+						<div className="flex items-center gap-2 text-blue-200">
+							<ShieldCheck size={18} />
+							<span className="text-[11px] font-bold uppercase tracking-[0.18em]">Global copy authority change</span>
+						</div>
+						<h2 className="mt-2 text-lg font-bold text-slate-100">Activate this V2 blueprint as the live copy authority?</h2>
+						<ul className="mt-3 space-y-1.5 text-xs text-slate-300">
+							<li>• It becomes the <span className="font-semibold text-slate-100">active V2 authority</span> for all copy-required creator lanes (video + poster).</li>
+							<li>• It does <span className="font-semibold text-slate-100">not</span> rewrite Copywriting Landbank (V3) copy.</li>
+							<li>• It does <span className="font-semibold text-slate-100">not</span> mutate any immutable approval — approved text stays unchanged.</li>
+							<li>• This is an advanced production operation. Normal campaign copy belongs in Copywriting Landbank.</li>
+						</ul>
+						<div className="mt-5 flex items-center justify-end gap-3">
+							<button
+								type="button"
+								data-testid="activation-cancel"
+								disabled={busy}
+								onClick={() => setPendingActivation(null)}
+								className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								data-testid="activation-confirm"
+								disabled={busy}
+								onClick={() => {
+									const target = pendingActivation;
+									setPendingActivation(null);
+									if (target) void handleActivate(target);
+								}}
+								className="rounded-lg border border-blue-500/40 bg-blue-600/30 px-4 py-2 text-xs font-bold uppercase text-blue-100 hover:bg-blue-600/50 disabled:opacity-40"
+							>
+								Confirm global activation
+							</button>
+						</div>
+					</div>
+				</div>
+			) : null}
 		</div>
 	);
 }

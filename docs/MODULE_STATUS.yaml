@@ -1117,8 +1117,11 @@ domains:
       - tests/ui/test_poster_compositor_spike_contract.py
       - docs/poster/POSTER_COMPOSITOR_PHASE2A_SPIKE.md
       # COPYWRITING_SET_REGISTRY: product-scoped AI copy-set registry + CRUD
+      # (Task B: repositioned as the advanced "Copy Authority" console; Landbank is
+      # the primary copywriting door and /creative/copy-registry redirects here.)
       - dashboard/src/pages/CopySetRegistryPage.tsx
       - dashboard/src/pages/CopySetRegistryPage.test.tsx
+      - dashboard/src/App.navigation.test.tsx
       # COPY_REGISTER_V2_FORENSIC: real HTTP/SQLite and browser workflow proof.
       - tests/integration/test_copy_register_v2_workflow_http.py
       - scripts/validate-copy-register-v2-browser.mjs

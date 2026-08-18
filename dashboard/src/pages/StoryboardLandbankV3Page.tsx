@@ -860,7 +860,7 @@ export default function StoryboardLandbankV3Page() {
 							<div className="text-[11px] text-slate-500">Assistant mode is inferred from current supply: {inferAssistantMode({ existingApproved: approvedCount, target })}.</div>
 						</div>
 						<HelperText className="mt-2">Recipe ID, language, WPS mode, evidence fact IDs, and V2/V3 authority live here. Normal operators never need them.</HelperText>
-						<a href={`/creative/copy-registry${selectedProduct ? `?product_id=${encodeURIComponent(selectedProduct.id)}` : ""}`} className="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200" data-testid="v3-open-v2-register"><BookOpen size={12} /> Open V2 production Copy Register (advanced)</a>
+						<a href={`/creative/copy-authority${selectedProduct ? `?product_id=${encodeURIComponent(selectedProduct.id)}` : ""}`} className="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200" data-testid="v3-open-v2-register"><BookOpen size={12} /> Open Copy Authority (advanced)</a>
 					</TechnicalDetails>
 				</Section>
 			) : null}
