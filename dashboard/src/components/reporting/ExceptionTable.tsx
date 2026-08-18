@@ -7,9 +7,10 @@ import {
 	type IntelligenceStage,
 } from "../../api/reporting";
 
-// Drill-down table for one exception kind. Navigates to the product page on row click
-// (query-param drill target — there is no /products/:id route). No aggregation here; it
-// renders exactly the server page the service selected.
+// Drill-down table for one exception kind. Navigates to the canonical per-product
+// editor (/product/:id) on row click — the clean full-screen surface Smart Registration
+// opens via handleOpenProduct, not the legacy /products Sales Analyzer. No aggregation
+// here; it renders exactly the server page the service selected.
 
 const PRODUCT_COLS: DataTableColumn<ExceptionItem>[] = [
 	{
@@ -82,9 +83,11 @@ const PRODUCT_COLS: DataTableColumn<ExceptionItem>[] = [
 ];
 
 
-/** Deep link into the EXISTING Product Intelligence review panel. */
+/** Deep link into the canonical per-product editor's Product Intelligence tab
+ * (/product/:id — the clean full-screen surface Smart Registration opens via
+ * handleOpenProduct), not the legacy /products Sales Analyzer page. */
 export const intelligenceReviewHref = (productId: string) =>
-	`/products?product=${encodeURIComponent(productId)}&tab=INTELLIGENCE`;
+	`/product/${encodeURIComponent(productId)}?tab=INTELLIGENCE`;
 
 const STAGE_TONE: Record<IntelligenceStage, string> = {
 	NO_DRAFT: "text-slate-400",
@@ -432,7 +435,7 @@ export function ExceptionTable({
 												kind === "missing_intelligence" ||
 													kind.startsWith("pi_")
 													? intelligenceReviewHref(r.product_id)
-													: `/products?product=${encodeURIComponent(r.product_id)}`,
+													: `/product/${encodeURIComponent(r.product_id)}`,
 											);
 									}}
 									className="cursor-pointer border-t border-slate-800 text-slate-300 hover:bg-slate-800/50"
