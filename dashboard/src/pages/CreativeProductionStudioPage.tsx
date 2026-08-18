@@ -52,6 +52,11 @@ import {
 	type TreatmentAvailability,
 } from "../api/creativeProduction";
 import { fetchVideoModels, type VideoModelInfo } from "../api/productionQueue";
+import { fetchProductDetail } from "../api/products";
+import {
+	resolveProductDisplayName,
+	resolveProductPreviewUrl,
+} from "../utils/productVisualPresentation";
 import ProductAllocationPicker from "../components/production-studio/ProductAllocationPicker";
 import {
 	WorkflowStep,
@@ -202,6 +207,10 @@ export default function CreativeProductionStudioPage() {
 	// V4 cockpit is the DEFAULT (matches the T2V lane convention); `?classic=1`
 	// opts back into the legacy surface. Operators no longer need a magic `?v4=1`.
 	const useV4 = searchParams.get("classic") !== "1";
+	// Deep-link handoff: the Copywriting Landbank opens Production Studio as
+	// `/production-studio?product_id=<id>`. Captured as a stable string so the
+	// resolver effect below doesn't loop on the per-render URLSearchParams object.
+	const deepLinkProductId = searchParams.get("product_id");
 	const [cohort, setCohort] = useState<CohortAuthority | null>(null);
 	const [knownCohortProducts, setKnownCohortProducts] = useState<
 		Record<string, CohortProduct>
@@ -233,6 +242,9 @@ export default function CreativeProductionStudioPage() {
 	const [preflight, setPreflight] = useState<CapacityPreflight | null>(null);
 	const [busy, setBusy] = useState("");
 	const [error, setError] = useState("");
+	// Deep-link (product_id in the URL) resolution error — surfaced to the operator
+	// when the id can't be resolved; never silently swapped for another product.
+	const [deepLinkError, setDeepLinkError] = useState("");
 	const [lastEvidence, setLastEvidence] = useState("");
 	const [livePhrase, setLivePhrase] = useState("");
 	const [operatorId, setOperatorId] = useState("p6-production-operator");
@@ -338,6 +350,59 @@ export default function CreativeProductionStudioPage() {
 	const handleCohortPageChange = useCallback((offset: number) => {
 		setCohortOffset(Math.max(0, offset));
 	}, []);
+
+	// Consume the `?product_id=` deep link once: resolve the EXACT product by id
+	// (works even when it sorts outside the loaded P6 cohort page), preselect it
+	// (which hydrates the Copy Supply + V2 authority panels, keyed on the id), and
+	// add it to the known-product map so the picker shows it as selected. An
+	// unresolvable id surfaces an operator error and never silently selects another
+	// product.
+	const appliedDeepLinkRef = useRef(false);
+	useEffect(() => {
+		if (!deepLinkProductId || appliedDeepLinkRef.current) return;
+		appliedDeepLinkRef.current = true;
+		const controller = new AbortController();
+		let active = true;
+		void fetchProductDetail(deepLinkProductId, controller.signal)
+			.then((product) => {
+				if (!active) return;
+				setKnownCohortProducts((current) =>
+					current[product.id]
+						? current
+						: {
+								...current,
+								[product.id]: {
+									product_id: product.id,
+									product_name: resolveProductDisplayName(product),
+									product_type_group: "",
+									scene_strategy_id: "",
+									image_url: resolveProductPreviewUrl(product) ?? "",
+									image_readiness_status: "",
+									readiness_status: product.reference_only
+										? "REFERENCE_ONLY_PRODUCT"
+										: "READY",
+								},
+							},
+				);
+				setAllocations((current) =>
+					current.some((allocation) => allocation.product_id === product.id)
+						? current
+						: [{ product_id: product.id, video_count: 1 }],
+				);
+			})
+			.catch((reason) => {
+				if (!active || (reason as { name?: string })?.name === "AbortError") {
+					return;
+				}
+				setDeepLinkError(
+					`We couldn't open Production Studio for product "${deepLinkProductId}". It may have been removed. Choose a product below to continue.`,
+				);
+			});
+		return () => {
+			active = false;
+			controller.abort();
+		};
+	}, [deepLinkProductId]);
 
 	const loadPlan = useCallback(async (planId: string) => {
 		const requestSequence = ++planRequestSequence.current;
@@ -664,16 +729,18 @@ export default function CreativeProductionStudioPage() {
 		}
 		return result;
 	}, [poolAuthority, treatmentAvailability]);
-	const productNameById = useMemo(
-		() =>
-			new Map(
-				(cohort?.products ?? []).map((product) => [
-					product.product_id,
-					product.product_name,
-				]),
-			),
-		[cohort],
-	);
+	const productNameById = useMemo(() => {
+		const map = new Map<string, string>();
+		// Known products (including a deep-linked product resolved outside the
+		// current cohort page) provide names; the live cohort page wins on overlap.
+		for (const product of Object.values(knownCohortProducts)) {
+			map.set(product.product_id, product.product_name);
+		}
+		for (const product of cohort?.products ?? []) {
+			map.set(product.product_id, product.product_name);
+		}
+		return map;
+	}, [cohort, knownCohortProducts]);
 
 	// Copy Supply focuses on whatever products are in context: the draft
 	// allocations while editing, or the selected plan's products when viewing one.
@@ -1416,6 +1483,15 @@ export default function CreativeProductionStudioPage() {
 						</a>
 					</nav>
 				</header>
+			) : null}
+
+			{deepLinkError ? (
+				<div
+					data-testid="p6-deeplink-error"
+					className="rounded-xl border border-amber-500/40 bg-amber-950/40 p-3 text-sm text-amber-100"
+				>
+					{deepLinkError}
+				</div>
 			) : null}
 
 			<div className="space-y-2" data-testid="p6-v2-copy-authority-list">

@@ -23,6 +23,11 @@ vi.mock("../components/workspace/SearchableProductSelect", () => ({
 	default: () => <div data-testid="v3-product-picker">Product picker</div>,
 }));
 
+vi.mock("../api/products", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../api/products")>();
+	return { ...actual, fetchProductDetail: vi.fn() };
+});
+
 vi.mock("../api/storyboardLandbankV3Round2", () => ({
 	fetchV3CopyRegisterProviderStatus: vi.fn(),
 	planV3Assistant: vi.fn(),
@@ -56,7 +61,10 @@ import {
 	type V3LandbankItem,
 	type V3ProductionCapacity,
 } from "../api/storyboardLandbankV3Round2";
+import { fetchProductDetail } from "../api/products";
+import type { Product } from "../types";
 
+const mockedProductDetail = vi.mocked(fetchProductDetail);
 const mockedStatus = vi.mocked(fetchV3CopyRegisterProviderStatus);
 const mockedPlan = vi.mocked(planV3Assistant);
 const mockedExecute = vi.mocked(executeV3Assistant);
@@ -337,5 +345,40 @@ describe("Copywriting Landbank operator wizard", () => {
 		mockedLandbank.mockResolvedValue(landbankResponse([makeItem()]));
 		renderAt("/creative/storyboard-landbank-v3?product_id=p1");
 		expect(await screen.findByTestId("v3-review-summary")).toBeInTheDocument();
+	});
+
+	// Regression A: a deep-linked product that sorts outside the first-page catalog
+	// window (useProductCatalog(50)) is resolved deterministically by id, not skipped.
+	it("deep-links a product outside the first-page catalog window via a by-id fetch", async () => {
+		mockedProductDetail.mockResolvedValue({
+			id: "p99",
+			raw_product_title: "Deep Linked Product",
+			product_display_name: "Deep Linked Product",
+		} as unknown as Product);
+		renderAt("/creative/storyboard-landbank-v3?product_id=p99&step=SETUP");
+		await waitFor(() => expect(mockedProductDetail).toHaveBeenCalledWith("p99"));
+		// The resolved product becomes the selection (header renders its name) and its
+		// Product Truth is loaded — proving it was selected, not silently skipped.
+		await waitFor(() =>
+			expect(screen.getByTestId("v3-product-name")).toHaveTextContent("Deep Linked Product"),
+		);
+		await waitFor(() => expect(mockedTruth).toHaveBeenCalledWith("p99"));
+	});
+
+	// Regression B: an unresolvable deep-link id surfaces an operator error and never
+	// silently selects a different product (no fallback to the in-window product).
+	it("does not silently select another product when the deep-linked id is invalid", async () => {
+		mockedProductDetail.mockRejectedValue(new Error("404 Not Found"));
+		renderAt("/creative/storyboard-landbank-v3?product_id=ghost-id&step=SETUP");
+		expect(await screen.findByTestId("v3-error")).toHaveTextContent(
+			/couldn't open the copy landbank/i,
+		);
+		expect(mockedProductDetail).toHaveBeenCalledWith("ghost-id");
+		// Nothing was selected: the header keeps the empty-state prompt and the
+		// in-window product (p1) was NOT substituted, so no truth load fired.
+		expect(screen.getByTestId("v3-product-name")).toHaveTextContent(
+			"Select a product to begin.",
+		);
+		expect(mockedTruth).not.toHaveBeenCalled();
 	});
 });

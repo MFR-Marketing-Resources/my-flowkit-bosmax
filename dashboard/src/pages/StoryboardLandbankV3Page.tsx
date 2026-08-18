@@ -1,5 +1,5 @@
 import { ArrowRight, BookOpen, CheckCircle2, ChevronRight, Film, PencilLine, Sparkles, Wand2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
 	approveV3Master,
@@ -25,6 +25,7 @@ import {
 	type V3RecipePreset,
 	type V3TruthFact,
 } from "../api/storyboardLandbankV3Round2";
+import { fetchProductDetail } from "../api/products";
 import { Badge, FormField, HelperText, Section, TechnicalDetails, type BadgeTone } from "../components/ui";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import { useProductCatalog } from "../hooks/useProductCatalog";
@@ -367,12 +368,41 @@ export default function StoryboardLandbankV3Page() {
 		void fetchV3CopyRegisterProviderStatus().then(setProvider).catch((reason) => setError(toOperatorError(errorMessage(reason))));
 	}, []);
 
+	// Deep-link resolution guard: at most one by-id fetch per product_id, and the
+	// result is applied only while the URL still points at that product — so a
+	// re-render (e.g. the catalog window refreshing) can never cancel an in-flight
+	// resolve, and a stale resolve can never override a newer selection.
+	const deepLinkResolveRef = useRef<string | null>(null);
 	useEffect(() => {
 		const productId = searchParams.get("product_id");
-		if (!productId || !products.length) return;
-		const product = products.find((item) => item.id === productId);
-		if (product && product.id !== selectedProduct?.id) setSelectedProduct(product);
-	}, [products, searchParams, selectedProduct?.id]);
+		if (!productId || selectedProduct?.id === productId) return;
+		// Cheap path: the deep-linked product is already in the loaded first-page
+		// catalog window (useProductCatalog(50)).
+		const inWindow = products.find((item) => item.id === productId);
+		if (inWindow) {
+			setSelectedProduct(inWindow);
+			return;
+		}
+		// Deep-link fallback: the product sorts outside the first-page window.
+		// Resolve the EXACT product by id — a single deterministic fetch, never a
+		// full-catalog load, and never a silent substitution of another product.
+		// Wait for the window to finish loading first so the common in-window case
+		// skips the network entirely.
+		if (isLoadingProducts) return;
+		if (deepLinkResolveRef.current === productId) return;
+		deepLinkResolveRef.current = productId;
+		void fetchProductDetail(productId)
+			.then((product) => {
+				if (deepLinkResolveRef.current === product.id) setSelectedProduct(product);
+			})
+			.catch((reason) => {
+				if (deepLinkResolveRef.current !== productId) return;
+				if ((reason as { name?: string })?.name === "AbortError") return;
+				setError(
+					`We couldn't open the copy landbank for that product link (${productId}). It may have been removed — pick a product to continue.`,
+				);
+			});
+	}, [products, isLoadingProducts, searchParams, selectedProduct?.id]);
 
 	useEffect(() => {
 		if (!selectedProduct) {
