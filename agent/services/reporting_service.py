@@ -84,11 +84,22 @@ PI_QUALITY_PREDICATES: dict[str, str] = {
     ),
 }
 
+# Active V2 copy authority for a product: an activated copy_execution_authority_v2
+# pointer to a BOUND, copy-REQUIRED video-lane binding. Replaces the retired
+# copy_set existence check as the production "has copywriting" signal — legacy
+# history in the legacy_*_receipt ledgers is NOT production copy authority.
+_V2_COPY_AUTHORITY_EXISTS = (
+    "EXISTS (SELECT 1 FROM copy_execution_authority_v2 a "
+    "JOIN copy_execution_binding_v2 b ON b.binding_id = a.binding_id "
+    "WHERE a.product_id = p.id AND b.binding_status = 'BOUND' "
+    "AND b.copy_policy = 'REQUIRED' AND b.media_kind = 'VIDEO')"
+)
+
 _EXCEPTION_PREDICATES: dict[str, str] = {
     "missing_cluster": "(t.cluster IS NULL OR t.cluster = 'generic_unclassified')",
     "missing_product_type": "(t.product_type_group IS NULL OR t.product_type_group = 'unknown_product_type')",
     "mapping_blocked": "p.mapping_status = 'BLOCKED'",
-    "missing_copy": "NOT EXISTS (SELECT 1 FROM copy_set c WHERE c.product_id = p.id AND COALESCE(c.archived, 0) = 0)",
+    "missing_copy": "NOT " + _V2_COPY_AUTHORITY_EXISTS,
     "missing_intelligence": "NOT EXISTS (SELECT 1 FROM product_intelligence_snapshot s WHERE s.product_id = p.id)",
     "missing_image": "p.asset_status = 'UNRESOLVED'",
     "prompt_not_ready": "p.prompt_readiness_status = 'MISSING_FIELDS'",
@@ -318,82 +329,34 @@ async def copywriting_coverage(
     db = await get_db()
     where, params = _product_filters(lifecycle_status, cluster, product_type_group, real_only=True)
     total = await _scalar(db, f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE 1=1{where}", params)
-    with_copy = await _scalar(
+    # Production copy coverage = active V2 copy execution authority (single bulk
+    # EXISTS per product, no N+1). Legacy copy_set history is retired; receipt
+    # ledgers are historical lineage, never production coverage.
+    covered = await _scalar(
         db,
-        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE 1=1{where} "
-        "AND EXISTS (SELECT 1 FROM copy_set c WHERE c.product_id = p.id AND COALESCE(c.archived, 0) = 0)",
+        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE 1=1{where} AND {_V2_COPY_AUTHORITY_EXISTS}",
         params,
     )
-    with_approved = await _scalar(
-        db,
-        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE 1=1{where} "
-        "AND EXISTS (SELECT 1 FROM copy_set c WHERE c.product_id = p.id "
-        "AND c.status = 'COPY_APPROVED' AND COALESCE(c.archived, 0) = 0)",
-        params,
-    )
-    total_sets = await _scalar(
-        db,
-        "SELECT COUNT(*) FROM copy_set c JOIN product p ON p.id = c.product_id "
-        "LEFT JOIN product_strategy_taxonomy t ON t.product_id = p.id "
-        f"WHERE COALESCE(c.archived, 0) = 0{where}",
-        params,
-    )
-    cur = await db.execute(
-        "SELECT c.status AS status, COUNT(*) AS n "
-        "FROM copy_set c JOIN product p ON p.id = c.product_id "
-        "LEFT JOIN product_strategy_taxonomy t ON t.product_id = p.id "
-        f"WHERE COALESCE(c.archived, 0) = 0{where} GROUP BY c.status",
-        params,
-    )
-    by_status = {r["status"]: int(r["n"]) for r in await cur.fetchall()}
-    await cur.close()
-    # COPY-CORRECTIVE-B05 (defect #8): additive validity metrics via the shared
-    # authority. FAIL-CLOSED PER PRODUCT — a single evaluator error is counted as
-    # VALIDITY_EVALUATION_FAILED (never valid, never a silent whole-metric null).
-    # Raw row coverage above stays available for diagnostics; production readiness
-    # is products_with_valid_approved_copy, which strict validity governs.
-    from agent.services.copy_set_validity_service import product_copy_classification
-    valid_approved = 0
-    eval_failed = 0
-    classification_counts: dict = {}
-    cur2 = await db.execute(
-        f"SELECT p.id AS id {_PRODUCT_BASE} WHERE 1=1{where}",
-        params,
-    )
-    pids = [str(r["id"]) for r in await cur2.fetchall()]
-    await cur2.close()
-    for pid in pids:
-        try:
-            c = await product_copy_classification(pid)
-            cls = c.get("classification") or "VALIDITY_EVALUATION_FAILED"
-        except Exception:
-            cls = "VALIDITY_EVALUATION_FAILED"
-        classification_counts[cls] = classification_counts.get(cls, 0) + 1
-        if cls == "APPROVED_COPY_VALID":
-            valid_approved += 1
-        elif cls == "VALIDITY_EVALUATION_FAILED":
-            eval_failed += 1
 
     return {
         "scope": _scope(lifecycle_status, cluster, product_type_group),
         "total_products": total,
-        "products_with_copy": with_copy,
-        "products_missing_copy": total - with_copy,
-        "products_with_approved_copy": with_approved,
-        "products_with_valid_approved_copy": valid_approved,
-        "products_without_valid_approved_copy": total - valid_approved,
-        "validity_evaluation_failed": eval_failed,
-        "copy_classification_counts": classification_counts or None,
-        "coverage_pct": round(100.0 * with_copy / total, 1) if total else 0.0,
-        "valid_approved_coverage_pct": (
-            round(100.0 * valid_approved / total, 1) if total else 0.0
-        ),
-        "total_copy_sets": total_sets,
-        "avg_sets_per_covered_product": round(total_sets / with_copy, 2) if with_copy else 0.0,
-        "copy_set_by_status": by_status,
+        "products_with_copy": covered,
+        "products_missing_copy": total - covered,
+        "products_with_approved_copy": covered,
+        "products_with_valid_approved_copy": covered,
+        "products_without_valid_approved_copy": total - covered,
+        "validity_evaluation_failed": 0,
+        "copy_classification_counts": None,
+        "coverage_pct": round(100.0 * covered / total, 1) if total else 0.0,
+        "valid_approved_coverage_pct": round(100.0 * covered / total, 1) if total else 0.0,
+        "total_copy_sets": None,
+        "avg_sets_per_covered_product": None,
+        "copy_set_by_status": None,
+        "authority": "copy_execution_authority_v2",
         "notes": {
-            "products_with_copy": "raw row coverage (any non-archived copy_set) — NOT production readiness",
-            "products_with_valid_approved_copy": "shared validity authority (COPY-FINAL)",
+            "products_with_copy": "products with active V2 copy execution authority (BOUND, REQUIRED video lane) — replaces the retired copy_set metric",
+            "products_with_valid_approved_copy": "same V2 authority; activation implies an APPROVED/PRODUCTION_VALID blueprint",
         },
     }
 

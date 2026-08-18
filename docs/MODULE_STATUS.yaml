@@ -177,6 +177,12 @@ domains:
       # governed cutover migration produces (shared ledger schema; no physical drop).
       - agent/db/legacy_copy_ledger.py
       - tests/unit/test_d1_fresh_schema_receipt_native.py
+      # Task D5 — final receipt-native shape + governed physical-retirement migration
+      # (disposable-DB only; NO canonical drop). init_db drops the inert legacy shells
+      # once the retirement receipt is present; the script is the auditable cutover
+      # that writes that receipt.
+      - scripts/retire_legacy_copy_stores.py
+      - tests/unit/test_legacy_copy_physical_retirement.py
       - tests/unit/test_copy_architecture_v2_phase4_activation.py
       - docs/COPY_SELECTION_AND_COMPILER_BINDING_FOUNDATION_V1.md
       - docs/COPY_FALLBACK_EXPLICIT_CONFIRMATION_V1.md

@@ -30,6 +30,20 @@ WRITE_DENY_STORES: tuple[str, ...] = ("copy_set", "copy_component", "poster_copy
 # Stable fail-closed error contract already used at the DB layer.
 LEGACY_COPY_STORAGE_DISABLED = "LEGACY_COPY_STORAGE_DISABLED"
 
+# Task D5 — final physical retirement. The governed physical-retirement migration
+# records a receipt row with this migration_version; its presence marks a database
+# whose transitional shells are permanently retired, so init_db removes any shell
+# the (untouched) base schema transiently recreates on restart.
+PHYSICAL_RETIREMENT_MIGRATION_VERSION = "copy-register-physical-retirement-v1"
+
+
+def drop_legacy_active_store_script() -> str:
+    """Return an executescript body that removes the three retired active stores
+    (and, implicitly, their indexes and write-denial triggers). Safe to run only
+    after their historical FK owners have been repointed to the receipt ledgers."""
+
+    return "".join(f'DROP TABLE IF EXISTS "{store}";\n' for store in WRITE_DENY_STORES)
+
 # Immutable receipt ledger substrate.  Verbatim mirror of
 # migrate_copy_register_v2_only.py::_create_receipt_schema so a fresh init and a
 # governed cutover yield the exact same receipt tables.

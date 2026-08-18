@@ -1,15 +1,15 @@
-"""Fail-closed guard for archived pre-V2 copy storage surfaces."""
+"""Fail-closed tombstone guard for retired pre-V2 copy storage surfaces."""
 
 from fastapi import HTTPException
 
-from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
-
 
 def require_legacy_copy_maintenance() -> None:
-    """Allow legacy routes only during an explicit offline recovery window."""
+    """Tombstone (Task D4): legacy copy storage routes are permanently retired.
 
-    if legacy_copy_maintenance_enabled():
-        return
+    Always raises 410 LEGACY_COPY_STORAGE_DISABLED; no legacy service or DB is
+    reached. The dependency is retained so the historical legacy routers stay
+    mounted as thin 410 tombstones for backward compatibility."""
+
     raise HTTPException(
         status_code=410,
         detail={

@@ -2217,9 +2217,47 @@ async def _align_legacy_copy_storage_receipt_native(db: aiosqlite.Connection) ->
             continue
         await _repoint_historical_fk_to_receipt(db, table, table_sql)
 
-    # 3) Write-denial triggers on the inert shells (idempotent).
-    await db.executescript(legacy_copy_ledger.write_deny_trigger_script())
-    await db.commit()
+    # 3) Final state (Task D5). A database with no cut-over history was born in the
+    #    post-retirement era, and one that carries the physical-retirement receipt
+    #    has been permanently retired: in both cases the transitional shells the
+    #    (untouched) base schema transiently recreates must be removed, so the three
+    #    legacy stores stay physically absent across restarts. A database that was
+    #    cut over from real legacy rows but not yet physically retired stays
+    #    transitional — keep the empty shells inert with the write-denial triggers
+    #    until the governed physical-retirement migration runs.
+    if await _legacy_shells_are_finally_retired(db):
+        await db.executescript(legacy_copy_ledger.drop_legacy_active_store_script())
+        await db.commit()
+    else:
+        await db.executescript(legacy_copy_ledger.write_deny_trigger_script())
+        await db.commit()
+
+
+async def _legacy_shells_are_finally_retired(db: aiosqlite.Connection) -> bool:
+    """Whether the transitional legacy shells must be removed rather than kept.
+
+    True for a fresh / final-era database (no cut-over receipt history) or one that
+    already carries the governed physical-retirement receipt. False for a database
+    cut over from real legacy rows that has not yet been through the governed
+    physical-retirement migration (it stays transitional). ``legacy_copy_migration_receipt``
+    is guaranteed to exist here (created by the receipt-ledger substrate above)."""
+
+    total = (
+        await (
+            await db.execute("SELECT COUNT(*) FROM legacy_copy_migration_receipt")
+        ).fetchone()
+    )[0]
+    if total == 0:
+        return True  # fresh: no cut-over history -> post-retirement era
+    retired = (
+        await (
+            await db.execute(
+                "SELECT COUNT(*) FROM legacy_copy_migration_receipt WHERE migration_version=?",
+                (legacy_copy_ledger.PHYSICAL_RETIREMENT_MIGRATION_VERSION,),
+            )
+        ).fetchone()
+    )[0]
+    return retired > 0
 
 
 async def init_db():
