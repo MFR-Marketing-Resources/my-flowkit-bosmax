@@ -29,7 +29,7 @@ async def _add_extra_hook(factory, recipe, angle, family, index):
                 "formula_stage_key": required[0],
                 "authored_text": f"Curious about a calmer daily routine option {index}?",
                 "entry_key": "arc:start", "exit_key": "arc:body",
-                "evidence_fact_ids": [f"{recipe.product_id}-fact"], "claim_bearing": True,
+                "evidence_fact_ids": [f"fact:{recipe.product_id}:allowed_claims_json:0"], "claim_bearing": True,
             }],
         },
         actor_id="round2-fixture", request_id=f"{recipe.product_id}:xhook-{index}", source=_R2_SOURCE,
@@ -50,7 +50,7 @@ async def _add_extra_body(factory, recipe, angle, family, index):
             ),
             "entry_key": "arc:body" if position == 0 else "arc:body-mid",
             "exit_key": "arc:cta" if position == len(middle) - 1 else "arc:body-mid",
-            "evidence_fact_ids": [f"{recipe.product_id}-fact"], "claim_bearing": True,
+            "evidence_fact_ids": [f"fact:{recipe.product_id}:allowed_claims_json:0"], "claim_bearing": True,
         })
     return await factory.create_component(
         recipe.product_id,
@@ -75,7 +75,7 @@ from agent.models.storyboard_landbank_v3_round2 import V3ProviderSummary
 async def _seed_product_truth(product_id: str):
     """Seed an ACTIVE product with an APPROVED truth snapshot and one approved fact."""
     snapshot_id = f"{product_id}-snapshot"
-    fact_id = f"{product_id}-fact"
+    fact_id = f"fact:{product_id}:allowed_claims_json:0"
     db = await get_db()
     await db.execute(
         "INSERT INTO product (id, raw_product_title, product_display_name, product_short_name, lifecycle_status) VALUES (?, ?, ?, ?, 'ACTIVE')",
@@ -100,7 +100,10 @@ async def _seed_product_truth(product_id: str):
             "2026-08-17T00:00:00Z",
         ),
     )
-    fact_text = "Approved lightweight daily routine fact"
+    # Canonical evidence text MUST match the value the shared derivation produces
+    # for allowed_claims_json[0], so the (now-canonical) persisted row is integrity-
+    # consistent with the current derived fact set.
+    fact_text = "lightweight daily routine"
     await db.execute(
         "INSERT INTO copy_evidence_fact_v2 "
         "(product_id, snapshot_id, fact_id, fact_kind, canonical_text, text_digest, snapshot_version, snapshot_status, approved, created_at) "
@@ -112,7 +115,7 @@ async def _seed_product_truth(product_id: str):
 
 async def _seed_round2_fixture(product_id: str = "round2-product"):
     await _seed_product_truth(product_id)
-    fact_id = f"{product_id}-fact"
+    fact_id = f"fact:{product_id}:allowed_claims_json:0"
     factory = V3CopyFactoryService()
     angle = await factory.create_angle(
         product_id,
@@ -177,7 +180,10 @@ async def test_round2_fake_assistant_is_explicit_bounded_and_projection_aware(mo
     assert plan.angle and plan.angle.entity_id == "round2-product-angle"
     assert plan.storyline_family and plan.storyline_family.entity_id == "round2-product-family"
     assert plan.product_truth["snapshot_id"] == "round2-product-snapshot"
-    assert plan.evidence_fact_ids == ("round2-product-fact",)
+    # The plan grounds on the current approved (derived) evidence set; the claim
+    # fact is present and every grounded id is a canonical fact for this product.
+    assert "fact:round2-product:allowed_claims_json:0" in plan.evidence_fact_ids
+    assert all(fid.startswith("fact:round2-product:") for fid in plan.evidence_fact_ids)
     assert plan.max_provider_calls == 1
     assert plan.max_output_tokens == 20000
     preview = await service.prompt_preview(plan.plan_id)
@@ -240,7 +246,7 @@ async def test_round2_fake_assistant_is_explicit_bounded_and_projection_aware(mo
     assert durable_plan["formula_id"] == "PAS"
     assert json.loads(durable_plan["angle_ref_json"])["entity_id"] == "round2-product-angle"
     assert durable_plan["product_truth_snapshot_digest"] == plan.product_truth["snapshot_digest"]
-    assert json.loads(durable_plan["evidence_fact_ids_json"]) == ["round2-product-fact"]
+    assert "fact:round2-product:allowed_claims_json:0" in json.loads(durable_plan["evidence_fact_ids_json"])
     assert tuple(durable_plan)[-2:] == (1, 20000)
     with pytest.raises(Exception):
         await db.execute(
@@ -343,7 +349,7 @@ async def test_round2_modes_are_explicit_and_capacity_bounded(monkeypatch):
 async def _extra_route(factory, product_id: str, suffix: str):
     """Author an additional distinct PAS route (angle/family/recipe) under the
     same product so a product can hold several distinct Masters."""
-    fact_id = f"{product_id}-fact"
+    fact_id = f"fact:{product_id}:allowed_claims_json:0"
     angle = await factory.create_angle(
         product_id,
         {
@@ -713,7 +719,7 @@ async def test_round2_setup_campaign_preset_needs_no_raw_recipe_id(monkeypatch):
 async def _seed_malay_master(product_id: str, formula_id: str):
     """Build a persisted Master with an overlong Malay body (forces compression)."""
     await _seed_product_truth(product_id)
-    fact_id = f"{product_id}-fact"
+    fact_id = f"fact:{product_id}:allowed_claims_json:0"
     factory = V3CopyFactoryService()
     required = tuple(required_formula_stage_keys(formula_id))
     angle = await factory.create_angle(
@@ -1015,13 +1021,14 @@ async def test_round2_plan_uses_ranked_evidence_and_rejects_unapproved_override(
     )
     # Only the relevant approved fact is selected; the irrelevant one is excluded.
     assert plan.evidence_selection["outcome"] == "ENOUGH_EVIDENCE"
-    assert plan.evidence_fact_ids == (f"{product_id}-fact",)
-    assert f"{product_id}-fact" in plan.evidence_selection["explanations"]
-    assert f"{product_id}-fact" in plan.evidence_selection["score_by_fact"]
+    assert f"fact:{product_id}:allowed_claims_json:0" in plan.evidence_fact_ids
+    assert f"{product_id}-fact-irrelevant" not in plan.evidence_fact_ids
+    assert f"fact:{product_id}:allowed_claims_json:0" in plan.evidence_selection["explanations"]
+    assert f"fact:{product_id}:allowed_claims_json:0" in plan.evidence_selection["score_by_fact"]
 
     # The prompt embeds only the governed subset, not the whole approved registry.
     preview = await service.prompt_preview(plan.plan_id)
-    assert f"{product_id}-fact" in preview.untrusted_truth_json
+    assert f"fact:{product_id}:allowed_claims_json:0" in preview.untrusted_truth_json
     assert "industrial lubricant viscosity" not in preview.untrusted_truth_json
 
     # An override that names an unapproved fact fails closed (approved-only).

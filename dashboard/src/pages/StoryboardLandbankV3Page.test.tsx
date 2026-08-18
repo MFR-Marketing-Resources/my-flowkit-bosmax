@@ -188,7 +188,7 @@ describe("Copywriting Landbank operator wizard", () => {
 		vi.clearAllMocks();
 		mockNavigate.mockReset();
 		mockedStatus.mockResolvedValue({ lane: "text_assist", status: "NOT_CONFIGURED", configured: false, provider_id: null, model_id: null, execution_enabled: false, provider_calls: 0, credit_spend: 0, fake_provider_allowed: true });
-		mockedTruth.mockResolvedValue({ product_id: "p1", lineage: {}, facts: [{ fact_id: "fact-1", fact_kind: "BENEFIT", text: "A lightweight daily routine.", text_digest: "d".repeat(64), approved: true }], fact_count: 1, provider_calls: 0, mutations: 0 });
+		mockedTruth.mockResolvedValue({ product_id: "p1", lineage: { snapshot_status: "APPROVED", snapshot_id: "snap-1", snapshot_version: 5 }, facts: [{ fact_id: "fact-1", fact_kind: "BENEFIT", text: "A lightweight daily routine.", text_digest: "d".repeat(64), approved: true }], fact_count: 1, provider_calls: 0, mutations: 0 });
 		mockedCapacity.mockResolvedValue(capacityFixture({ semantic_capacity: 18 }));
 		mockedLandbank.mockResolvedValue(landbankResponse([makeItem()]));
 		mockedPlan.mockResolvedValue(planResponse());
@@ -257,6 +257,37 @@ describe("Copywriting Landbank operator wizard", () => {
 		// No Generate CTA is offered while blocked.
 		expect(screen.queryByTestId("v3-generate")).not.toBeInTheDocument();
 		expect(mockedExecute).not.toHaveBeenCalled();
+	});
+
+	// Task A: an APPROVED snapshot with facts reads Product Truth READY — the false
+	// "no approved Product Truth" (from a zero fact count) must be gone.
+	it("reports Product Truth READY (no false 'no approved Product Truth') for an approved snapshot with facts", async () => {
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=GENERATE");
+		const ready = await screen.findByTestId("v3-preflight-ready");
+		expect(ready).toHaveTextContent(/Product Truth/i);
+		expect(ready).toHaveTextContent(/READY/i);
+		expect(screen.queryByText(/no approved Product Truth/i)).not.toBeInTheDocument();
+	});
+
+	// Task A: approved truth + zero evidence facts is an EVIDENCE state, not a
+	// "no approved Product Truth" state (Truth approval and evidence are distinct).
+	it("shows an evidence blocker (not 'no approved Product Truth') when the approved snapshot has no facts", async () => {
+		mockedTruth.mockResolvedValue({ product_id: "p1", lineage: { snapshot_status: "APPROVED", snapshot_id: "s", snapshot_version: 5 }, facts: [], fact_count: 0, provider_calls: 0, mutations: 0 });
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=GENERATE");
+		const blocked = await screen.findByTestId("v3-preflight-blocked");
+		expect(blocked).not.toHaveTextContent(/no approved Product Truth/i);
+		expect(blocked).toHaveTextContent(/evidence/i);
+		expect(screen.queryByTestId("v3-generate")).not.toBeInTheDocument();
+	});
+
+	// Task A: Next Action is blocker-aware — it must never recommend Generate while
+	// generation is blocked (e.g. the snapshot is not approved).
+	it("recommends resolving the Product-Truth blocker, never Generate, when the snapshot is not approved", async () => {
+		mockedTruth.mockResolvedValue({ product_id: "p1", lineage: { snapshot_status: "DRAFT" }, facts: [], fact_count: 0, provider_calls: 0, mutations: 0 });
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1");
+		const label = await screen.findByTestId("v3-next-action-label");
+		expect(label).toHaveTextContent(/Product Truth/i);
+		expect(label).not.toHaveTextContent(/Generate/i);
 	});
 
 	// G: Review separates PASS vs NEEDS ATTENTION.

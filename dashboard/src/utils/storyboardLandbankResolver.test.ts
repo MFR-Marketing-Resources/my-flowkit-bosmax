@@ -3,6 +3,7 @@ import type { V3AssistantPlan, V3LandbankItem, V3ProductionCapacity } from "../a
 import {
 	blockerToOperator,
 	buildPreflightSummary,
+	resolvePrimaryTruthBlocker,
 	capacityLabels,
 	extractBlockerCode,
 	inferAssistantMode,
@@ -149,6 +150,28 @@ describe("resolveNextAction", () => {
 		const action = resolveNextAction({ hasProduct: true, recipeReady: true, counts: { ...baseCounts, target: 18, approved: 18, productionReady: 18 } });
 		expect(action.kind).toBe("OPEN_STUDIO");
 	});
+	it("recommends resolving a blocker instead of generating when generation is blocked", () => {
+		const action = resolveNextAction({
+			hasProduct: true,
+			recipeReady: true,
+			counts: { ...baseCounts, target: 54 },
+			blocker: { code: "PRODUCT_TRUTH_NOT_FOUND", message: "no truth", actionLabel: "Set up Product Truth", actionRoute: "/products" },
+		});
+		expect(action.kind).toBe("RESOLVE_BLOCKER");
+		expect(action.actionRoute).toBe("/products");
+	});
+});
+
+describe("resolvePrimaryTruthBlocker", () => {
+	it("blocks with PRODUCT_TRUTH_NOT_FOUND when the snapshot is not approved (regardless of fact count)", () => {
+		expect(resolvePrimaryTruthBlocker({ truthApproved: false, truthFactCount: 5 })?.code).toBe("PRODUCT_TRUTH_NOT_FOUND");
+	});
+	it("blocks with NO_APPROVED_EVIDENCE when approved but there are no current facts", () => {
+		expect(resolvePrimaryTruthBlocker({ truthApproved: true, truthFactCount: 0 })?.code).toBe("NO_APPROVED_EVIDENCE");
+	});
+	it("is clear when approved with current evidence", () => {
+		expect(resolvePrimaryTruthBlocker({ truthApproved: true, truthFactCount: 3 })).toBeNull();
+	});
 });
 
 describe("reconstructStep", () => {
@@ -200,8 +223,8 @@ describe("toOperatorError", () => {
 });
 
 describe("buildPreflightSummary", () => {
-	it("is READY when truth, evidence, and a plan are present", () => {
-		const summary = buildPreflightSummary({ plan: plan(), capacity: capacity({ semantic_capacity: 18 }), target: 54, truthFactCount: 3 });
+	it("is READY when truth is approved, evidence exists, and a plan is present", () => {
+		const summary = buildPreflightSummary({ plan: plan(), capacity: capacity({ semantic_capacity: 18 }), target: 54, truthApproved: true, truthFactCount: 3 });
 		expect(summary.ready).toBe(true);
 		expect(summary.productTruth).toBe("READY");
 		expect(summary.evidence).toBe("READY");
@@ -209,14 +232,22 @@ describe("buildPreflightSummary", () => {
 		expect(summary.formula).toBe("PAS");
 		expect(summary.estimatedAiCalls).toBe(1);
 	});
-	it("fails closed with an operator blocker when Product Truth is missing", () => {
-		const summary = buildPreflightSummary({ plan: plan(), capacity: capacity(), target: 54, truthFactCount: 0 });
+	it("fails closed with a no-approved-truth blocker only when the snapshot is not approved", () => {
+		const summary = buildPreflightSummary({ plan: plan(), capacity: capacity(), target: 54, truthApproved: false, truthFactCount: 0 });
 		expect(summary.ready).toBe(false);
 		expect(summary.productTruth).toBe("ACTION REQUIRED");
 		expect(summary.blockers[0].code).toBe("PRODUCT_TRUTH_NOT_FOUND");
 	});
+	it("keeps Product Truth READY but flags evidence when the approved snapshot has no usable facts", () => {
+		// The Sambal Nyet class: approved truth, but no current evidence facts. It
+		// must NOT read as 'no approved Product Truth'.
+		const summary = buildPreflightSummary({ plan: plan(), capacity: capacity(), target: 54, truthApproved: true, truthFactCount: 0 });
+		expect(summary.productTruth).toBe("READY");
+		expect(summary.evidence).toBe("ACTION REQUIRED");
+		expect(summary.blockers[0].code).toBe("NO_APPROVED_EVIDENCE");
+	});
 	it("surfaces a plan error as an operator blocker with the raw code preserved", () => {
-		const summary = buildPreflightSummary({ plan: null, capacity: capacity(), target: 54, truthFactCount: 3, planError: "COPY_V3_EVIDENCE_AUTHORITY_MISMATCH: mismatch" });
+		const summary = buildPreflightSummary({ plan: null, capacity: capacity(), target: 54, truthApproved: true, truthFactCount: 3, planError: "COPY_V3_EVIDENCE_AUTHORITY_MISMATCH: mismatch" });
 		expect(summary.ready).toBe(false);
 		expect(summary.blockers[0].code).toBe("COPY_V3_EVIDENCE_AUTHORITY_MISMATCH");
 	});

@@ -54,9 +54,9 @@ from agent.models.copy_blueprint_v2 import (
     ProductionReadinessProof,
     SemanticReviewProof,
     StageValidation,
-    digest_evidence_text,
     digest_json,
 )
+from agent.services.product_truth_evidence import derive_product_truth_evidence_facts
 from agent.services.copy_blueprint_v2_service import (
     CopyBlueprintV2Error,
     _blueprint_digest,
@@ -463,41 +463,11 @@ async def _product_truth_rows(product_id: str) -> tuple[dict[str, Any] | None, d
 
 
 def _fact_candidates(product: dict[str, Any], snapshot: dict[str, Any]) -> list[EvidenceFact]:
-    product_id = str(product["id"])
-    snapshot_id = str(snapshot["snapshot_id"])
-    version = int(snapshot["version"])
-    specs: list[tuple[str, str, Any]] = [
-        ("product_description", "PRODUCT_DESCRIPTION", snapshot.get("product_description")),
-        ("benefits_json", "BENEFIT", _parse_list(snapshot.get("benefits_json"))),
-        ("usp_json", "USP", _parse_list(snapshot.get("usp_json"))),
-        ("allowed_claims_json", "ALLOWED_CLAIM", _parse_list(snapshot.get("allowed_claims_json"))),
-        ("target_customer_text", "TARGET_CUSTOMER", snapshot.get("target_customer_text")),
-        ("pain_points_json", "PAIN_POINT", _parse_list(snapshot.get("pain_points_json"))),
-        ("usage_text", "USAGE", snapshot.get("usage_text")),
-    ]
-    facts: list[EvidenceFact] = []
-    for field_name, fact_kind, raw in specs:
-        values = raw if isinstance(raw, list) else [raw]
-        for index, value in enumerate(values):
-            text = _clean(value)
-            if not text:
-                continue
-            fact_id = f"fact:{product_id}:{field_name}:{index}"
-            facts.append(
-                EvidenceFact(
-                    snapshot_id=snapshot_id,
-                    fact_id=fact_id,
-                    product_id=product_id,
-                    fact_kind=fact_kind,
-                    text=text,
-                    text_digest=digest_evidence_text(text),
-                    snapshot_version=version,
-                    snapshot_status="APPROVED",
-                    approved=True,
-                    source_ref=f"product-intelligence:{snapshot_id}:{field_name}[{index}]",
-                )
-            )
-    return facts
+    # Behavior-preserving wrapper over the shared canonical derivation. V2 and the
+    # V3 read model now consume the exact same seam, so the current EvidenceFact
+    # set can never drift between the two subsystems. Existing private callers keep
+    # the identical signature and output.
+    return derive_product_truth_evidence_facts(product, snapshot)
 
 
 def _lineage(product: dict[str, Any], snapshot: dict[str, Any]) -> ProductTruthLineage:

@@ -40,6 +40,7 @@ import {
 	missingCopies,
 	reconstructStep,
 	resolveNextAction,
+	resolvePrimaryTruthBlocker,
 	reviewBuckets,
 	STEP_META,
 	toOperatorError,
@@ -336,6 +337,7 @@ export default function StoryboardLandbankV3Page() {
 
 	// Data.
 	const [truthFacts, setTruthFacts] = useState<V3TruthFact[]>([]);
+	const [truthApproved, setTruthApproved] = useState(false);
 	const [capacity, setCapacity] = useState<V3ProductionCapacity | null>(null);
 	const [items, setItems] = useState<V3LandbankItem[]>([]);
 	const [landbankOffset, setLandbankOffset] = useState(0);
@@ -407,11 +409,18 @@ export default function StoryboardLandbankV3Page() {
 	useEffect(() => {
 		if (!selectedProduct) {
 			setTruthFacts([]);
+			setTruthApproved(false);
 			setCapacity(null);
 			return;
 		}
 		void fetchV3ProductTruth(selectedProduct.id)
-			.then((response) => setTruthFacts(response.facts ?? []))
+			.then((response) => {
+				setTruthFacts(response.facts ?? []);
+				// Product Truth approval is decided by the snapshot lineage status
+				// from the SAME call — never inferred from the fact count.
+				const status = (response.lineage as { snapshot_status?: unknown } | null)?.snapshot_status;
+				setTruthApproved(String(status ?? "").toUpperCase() === "APPROVED");
+			})
 			.catch((reason) => setError(toOperatorError(errorMessage(reason))));
 		void fetchV3ProductionCapacity(selectedProduct.id)
 			.then(setCapacity)
@@ -460,11 +469,19 @@ export default function StoryboardLandbankV3Page() {
 		needsRevalidation: capacity?.stale_copy_count ?? 0,
 	};
 
+	// The primary Product Truth / evidence gate, decided from the snapshot approval
+	// status (lineage) + current evidence availability — surfaced identically in the
+	// preflight and the Next Action so they can never contradict each other.
+	const primaryTruthBlocker = useMemo(
+		() => (selectedProduct ? resolvePrimaryTruthBlocker({ truthApproved, truthFactCount: truthFacts.length }) : null),
+		[selectedProduct, truthApproved, truthFacts.length],
+	);
+
 	const nextAction = useMemo(
-		() => resolveNextAction({ hasProduct: Boolean(selectedProduct), recipeReady: Boolean(recipeId), counts }),
+		() => resolveNextAction({ hasProduct: Boolean(selectedProduct), recipeReady: Boolean(recipeId), counts, blocker: primaryTruthBlocker }),
 		// counts is derived; depend on its scalar members to avoid a churn loop.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[selectedProduct, recipeId, target, approvedCount, buckets.reviewable, productionReadyCount, needsPreparation, capacity?.stale_copy_count],
+		[selectedProduct, recipeId, target, approvedCount, buckets.reviewable, productionReadyCount, needsPreparation, capacity?.stale_copy_count, primaryTruthBlocker],
 	);
 
 	const urlStep = searchParams.get("step");
@@ -481,8 +498,8 @@ export default function StoryboardLandbankV3Page() {
 	);
 
 	const preflight = useMemo(
-		() => buildPreflightSummary({ plan, capacity, target, truthFactCount: truthFacts.length, planError }),
-		[plan, capacity, target, truthFacts.length, planError],
+		() => buildPreflightSummary({ plan, capacity, target, truthApproved, truthFactCount: truthFacts.length, planError }),
+		[plan, capacity, target, truthApproved, truthFacts.length, planError],
 	);
 
 	const goToStep = (next: WizardStep) => {
@@ -503,6 +520,7 @@ export default function StoryboardLandbankV3Page() {
 		setApprovalItem(null);
 		setBulkApproval(false);
 		setTruthFacts([]);
+		setTruthApproved(false);
 		setSuccess("");
 		setError("");
 	};
@@ -751,6 +769,12 @@ export default function StoryboardLandbankV3Page() {
 			openProductionStudio();
 			return;
 		}
+		// A blocker points at its own resolution route (e.g. approve Product Truth
+		// in Products); carry the product context so the operator lands in place.
+		if (nextAction.kind === "RESOLVE_BLOCKER" && nextAction.actionRoute) {
+			navigate(selectedProduct ? `${nextAction.actionRoute}?product_id=${encodeURIComponent(selectedProduct.id)}` : nextAction.actionRoute);
+			return;
+		}
 		goToStep(nextAction.step);
 	};
 
@@ -798,19 +822,6 @@ export default function StoryboardLandbankV3Page() {
 					<SummaryTile label="Approved" value={approvedCount} tone="success" testId="v3-summary-approved" />
 					<SummaryTile label="Production Ready" value={productionReadyCount} tone="info" testId="v3-summary-production-ready" />
 					<SummaryTile label="Missing" value={missing} tone={missing > 0 ? "warn" : "neutral"} testId="v3-summary-missing" />
-				</div>
-			) : null}
-
-			{selectedProduct ? (
-				<div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 p-4" data-testid="v3-next-action">
-					<div>
-						<div className="text-[10px] font-bold uppercase tracking-wide text-violet-200">Next step</div>
-						<div className="mt-1 text-base font-bold text-slate-100" data-testid="v3-next-action-label">{nextAction.label}</div>
-						<p className="text-xs text-slate-400">{nextAction.detail}</p>
-					</div>
-					<button type="button" onClick={handleNextAction} className="inline-flex items-center gap-1 rounded-lg bg-violet-600 px-4 py-2 text-xs font-bold text-white" data-testid="v3-next-action-go">
-						{nextAction.kind === "OPEN_STUDIO" ? <Film size={14} /> : <ArrowRight size={14} />} {nextAction.kind === "OPEN_STUDIO" ? "Open Production Studio" : "Go"}
-					</button>
 				</div>
 			) : null}
 
@@ -1001,6 +1012,21 @@ export default function StoryboardLandbankV3Page() {
 						{capacity?.production_capacity_note ? <HelperText className="mt-2">{capacity.production_capacity_note}</HelperText> : null}
 					</TechnicalDetails>
 				</Section>
+			) : null}
+
+			{/* Next Action appears AFTER the active step + preflight, so the operator
+			    understands the current state before seeing the recommendation. */}
+			{selectedProduct ? (
+				<div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 p-4" data-testid="v3-next-action">
+					<div>
+						<div className="text-[10px] font-bold uppercase tracking-wide text-violet-200">Next step</div>
+						<div className="mt-1 text-base font-bold text-slate-100" data-testid="v3-next-action-label">{nextAction.label}</div>
+						<p className="text-xs text-slate-400">{nextAction.detail}</p>
+					</div>
+					<button type="button" onClick={handleNextAction} className="inline-flex items-center gap-1 rounded-lg bg-violet-600 px-4 py-2 text-xs font-bold text-white" data-testid="v3-next-action-go">
+						{nextAction.kind === "OPEN_STUDIO" ? <Film size={14} /> : <ArrowRight size={14} />} {nextAction.kind === "OPEN_STUDIO" ? "Open Production Studio" : "Go"}
+					</button>
+				</div>
 			) : null}
 
 			{/* Approval dialog — grouped checklist, all 7 governed checks preserved. */}
