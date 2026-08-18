@@ -673,6 +673,11 @@ export default function ProductsSalesAnalyzerPage() {
 	const [products, setProducts] = useState<Product[]>([]);
 	const [searchParams] = useSearchParams();
 	const guidedClaimSafe = searchParams.get("claimSafeFix") === "1";
+	// Legacy maintenance-only intake panels (Manual Intake / Admin Quick Patch +
+	// TikTok draft-link) are hidden by default; canonical registration is Smart
+	// Registration. Reveal for maintenance only with ?classic=1 — the repo's classic-view
+	// gate idiom (CreativeProductionStudioPage / ImgCockpit / ImgFastlane / OperatorPage).
+	const showLegacyIntake = searchParams.get("classic") === "1";
 	// A deep-link that names a product must LOAD + SELECT it so its editable
 	// Product Intelligence opens — even when the product sorts beyond the initial
 	// server page. This covers BOTH the claim-safe fix link AND the Smart
@@ -4483,6 +4488,7 @@ export default function ProductsSalesAnalyzerPage() {
 							</div>
 						)}
 
+						{showLegacyIntake && (
 						<div className="border-t border-slate-800 my-8 pt-8">
 							<Panel
 								title="Legacy Manual Intake / Admin Quick Patch"
@@ -4765,6 +4771,7 @@ export default function ProductsSalesAnalyzerPage() {
 								</form>
 							</Panel>
 						</div>
+						)}
 					</div>
 
 					<div className="space-y-6 2xl:sticky 2xl:top-6">
@@ -5012,6 +5019,7 @@ export default function ProductsSalesAnalyzerPage() {
 							) : null}
 						</Panel>
 
+						{showLegacyIntake && (
 						<Panel
 							title="TikTok Shop Import"
 							subtitle="Maintenance-only draft link lane. Prefer Smart Registration TikTok intake."
@@ -5083,6 +5091,7 @@ export default function ProductsSalesAnalyzerPage() {
 								</div>
 							</form>
 						</Panel>
+						)}
 					</div>
 				</div>
 			</div>
