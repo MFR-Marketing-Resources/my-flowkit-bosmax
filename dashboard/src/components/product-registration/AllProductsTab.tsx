@@ -43,6 +43,30 @@ const DRAFT_BADGE: Record<string, string> = {
 	NEEDS_REVISION: "bg-red-500/20 text-red-300",
 };
 
+// Human-readable reason a review draft is stuck in NEEDS_REVISION, shown inline in
+// the table so operators see WHAT to fix (banned claim words / missing fields)
+// instead of an opaque red badge that reads like a bug after they "pressed update".
+function reviewDraftBlockerReason(
+	draft: NonNullable<Product["open_review_draft"]>,
+): string {
+	const tokens = (draft.claim_tokens || []).filter(Boolean);
+	if (tokens.length > 0) {
+		return `Claim: ${tokens.join(", ")}`;
+	}
+	const readiness = String(draft.readiness_status || "").toUpperCase();
+	if (readiness === "MISSING_REQUIRED_FIELDS") {
+		return "Missing required fields";
+	}
+	const gate = String(draft.claim_gate || "").toUpperCase();
+	if (gate === "CLAIM_REVIEW_REQUIRED") {
+		return "Claim review required";
+	}
+	if (gate === "CLAIM_BLOCKED") {
+		return "Claim blocked";
+	}
+	return "Edit + re-approve";
+}
+
 const PRODUCT_TRUTH_BADGE: Record<string, string> = {
 	APPROVED: "bg-emerald-500/20 text-emerald-300",
 	NEEDS_REVIEW: "bg-amber-500/20 text-amber-300",
@@ -1009,14 +1033,25 @@ return (
 											</td>
 											<td className="whitespace-nowrap px-3 py-3 align-top">
 												{draft ? (
-													<span
-														className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-															DRAFT_BADGE[draft.review_status] ||
-															"bg-slate-600/20 text-slate-400"
-														}`}
-													>
-														{draft.review_status.replace(/_/g, " ")}
-													</span>
+													<div className="flex flex-col items-start gap-0.5">
+														<span
+															className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+																DRAFT_BADGE[draft.review_status] ||
+																"bg-slate-600/20 text-slate-400"
+															}`}
+														>
+															{draft.review_status.replace(/_/g, " ")}
+														</span>
+														{draft.review_status === "NEEDS_REVISION" ? (
+															<span
+																className="text-[8px] text-red-300/80"
+																data-testid="review-draft-blocker-reason"
+																title="Fix this in the editor, then Validate & Approve"
+															>
+																{reviewDraftBlockerReason(draft)}
+															</span>
+														) : null}
+													</div>
 												) : (
 													<span className="text-[9px] text-slate-600">—</span>
 												)}
