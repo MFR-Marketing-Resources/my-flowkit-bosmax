@@ -542,6 +542,91 @@ def copy_v2_handoff_context(
     return context
 
 
+async def _resolve_explicit_v2_selection(
+    product_id: str,
+    lane: str,
+    selection: Mapping[str, Any],
+    context: Mapping[str, Any],
+    flags: CopyBlueprintV2FeatureFlagState,
+) -> CopyExecutionResolution:
+    """Resolve copy from ONE explicit V2 blueprint selection (Round 3 P6 per-item).
+
+    Loads the EXACT ``(blueprint_id, revision)`` — NOT the product-global binding —
+    revalidates it through the shared full V2 authority validator (fail-closed on
+    stale/mutated evidence, taxonomy drift, approval mutation, snapshot mismatch,
+    formula/duration drift), then builds the same governed projection/approved
+    dialogue the persisted resolver produces.  Never touches the global pointer.
+    """
+
+    from agent.services import copy_register_v2_service as register_service
+    from agent.services.round3_authority_validator import revalidate_round3_v2_authority
+
+    blueprint_id = str(selection.get("v2_blueprint_id") or "")
+    revision = int(selection.get("v2_blueprint_revision") or selection.get("revision") or 0)
+    expected_snapshot = str(selection.get("v2_approval_snapshot_id") or "") or None
+
+    authority = await revalidate_round3_v2_authority(
+        blueprint_id=blueprint_id,
+        revision=revision,
+        expected_approval_snapshot_id=expected_snapshot,
+    )
+    if not authority.valid or authority.blueprint is None:
+        raise CopyExecutionResolutionError(
+            authority.reason_codes[0] if authority.reason_codes else "COPY_V2_ROUND3_SELECTION_INVALID",
+            "The selected per-item V2 blueprint failed current production-authority revalidation.",
+            details={"reason_codes": list(authority.reason_codes)},
+        )
+    blueprint = authority.blueprint
+
+    try:
+        descriptor = get_lane_descriptor(lane)
+    except ValueError as exc:
+        raise CopyExecutionResolutionError("COPY_V2_UNKNOWN_LANE", str(exc)) from exc
+
+    try:
+        truth = await register_service.get_product_truth_proof(product_id)
+    except register_service.CopyRegisterV2Error as exc:
+        raise CopyExecutionResolutionError(exc.code, str(exc), details=exc.details) from exc
+
+    current_lineage = truth.get("product_truth", {}).get("lineage")
+    facts = truth.get("facts", [])
+    proof = blueprint.readiness_proof
+    semantic_review = blueprint.semantic_review
+    adapter_context = dict(_as_dict(context.get("adapter_context") or context.get("context")))
+    adapter_context.update(
+        {
+            "product_id": product_id,
+            "product_truth_lineage": current_lineage,
+            "readiness_validated": bool(proof and proof.readiness_validated),
+            "provenance_validated": bool(proof and proof.provenance_validated),
+            "safety_validated": bool(proof and proof.safety_validated),
+            "semantic_review_validated": bool(
+                semantic_review and semantic_review.decision == "APPROVED"
+            ),
+        }
+    )
+    explicit_context = dict(context)
+    explicit_context.pop("binding", None)
+    explicit_context.pop("copy_execution_binding", None)
+    explicit_context.pop("round3_selection", None)
+    explicit_context.update(
+        {
+            "blueprint": blueprint.model_dump(mode="python"),
+            "current_product_truth": current_lineage,
+            "evidence_facts": facts,
+            "adapter_context": adapter_context,
+        }
+    )
+    # The pure resolver validates the exact blueprint's envelope and produces the
+    # deterministic projection + approved dialogue for THIS selection.
+    return resolve_copy_execution_binding(
+        product_id,
+        descriptor.lane_id,
+        explicit_context,
+        feature_flag_state=flags,
+    )
+
+
 async def resolve_persisted_copy_execution_binding(
     product_id: str,
     lane: str,
@@ -615,6 +700,19 @@ async def resolve_persisted_copy_execution_binding(
             descriptor.lane_id,
             copy_free_context,
             feature_flag_state=flags,
+        )
+
+    # Round 3 P6 per-item selection: resolve the EXACT selected blueprint directly
+    # (never the product-global activation pointer) so multi-copy P6 items each
+    # compile their own approved copy without churning the interactive lanes.
+    round3_selection = context.get("round3_selection")
+    if isinstance(round3_selection, Mapping) and str(round3_selection.get("v2_blueprint_id") or ""):
+        return await _resolve_explicit_v2_selection(
+            product_id,
+            descriptor.lane_id,
+            dict(round3_selection),
+            context,
+            flags,
         )
 
     try:

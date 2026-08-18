@@ -177,6 +177,7 @@ _ITEM_UPDATE_COLUMNS = {
     "workspace_generation_package_id",
     "prompt_package_json",
     "execution_policy_json",
+    "round3_manifest_item_json",
     "status",
     "output_media_id",
     "replacement_for_item_id",
