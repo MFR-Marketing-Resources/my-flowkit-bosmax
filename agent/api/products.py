@@ -799,7 +799,10 @@ async def _list_products_response(
     # (batched, so attach once over the whole filtered set), status+risk live on the
     # enriched row. Applied PRE-pagination so total_count and pages reflect the facet.
     if any((cluster, product_type_group, intelligence_status, claim_risk_level, freshness, image)):
-        if cluster or product_type_group:
+        if cluster or product_type_group or freshness:
+            # freshness reads the taxonomy sidecar (VERIFIED review_status) via
+            # _freshness_of/_operator_verified_ready, so attach it here too — otherwise
+            # the STALE/FRESH facet filter would disagree with the badge the rows render.
             filtered_all = await attach_product_strategy_taxonomies(filtered_all)
         filtered_all = _apply_catalog_facets(
             filtered_all,
@@ -1193,13 +1196,37 @@ async def _merge_catalog_products(
 
 def _freshness_of(product: dict[str, Any]) -> str:
     """FRESH / STALE / UNKNOWN roll-up of a committed product's intelligence readiness —
-    the All Products analogue of the FastMoss queue's recompute_state."""
+    the All Products analogue of the FastMoss queue's recompute_state.
+
+    ``intelligence_status`` is a live, title-driven auto-recompute; for FastMoss
+    rows without a verified raw source anchor the reconciliation caps its
+    confidence to LOW, so it reports NEEDS_REVIEW even after an operator has fully
+    reviewed the product. A human VERIFIED taxonomy (cluster/type confirmed) plus a
+    resolved creative mapping (``mapping_status`` READY) is the authoritative
+    review signal, so such a row is not "stale" just because the automatic
+    confidence is low. This override is DISPLAY-ONLY (the All Products freshness
+    column/filter); it does not touch the intelligence ``confidence`` that the copy
+    and generation gates consume. Both signals are already on the catalog row
+    (``attach_product_strategy_taxonomies`` + enrichment), so this stays a pure read."""
     status = str(product.get("intelligence_status") or "").strip().upper()
     if status == "READY":
         return "FRESH"
     if status in {"NEEDS_REVIEW", "MISSING"}:
+        if _operator_verified_ready(product):
+            return "FRESH"
         return "STALE"
     return "UNKNOWN"
+
+
+def _operator_verified_ready(product: dict[str, Any]) -> bool:
+    """True when a human has VERIFIED the product's strategy taxonomy AND its
+    creative mapping resolved (``mapping_status`` READY). A missing signal (e.g. a
+    bounded registry-projection row that carries neither) fails closed to False, so
+    it never fabricates a FRESH roll-up."""
+    taxonomy = product.get("strategy_taxonomy") or {}
+    review_status = str(taxonomy.get("review_status") or "").strip().upper()
+    mapping_status = str(product.get("mapping_status") or "").strip().upper()
+    return review_status == "VERIFIED" and mapping_status == "READY"
 
 
 def _image_state_of(product: dict[str, Any]) -> str:

@@ -839,6 +839,9 @@ domains:
       - dashboard/src/components/product-registration/BulkFastMossConvertTab.test.tsx
       - dashboard/src/components/product-registration/AllProductsTab.tsx
       - agent/services/product_truth_catalog_projection.py
+      - agent/services/product_truth_import_soft_reconciliation.py
+      - tests/unit/test_product_truth_import_soft_reconciliation.py
+      - scripts/import_copywriting_hub_rev2.py
       - tests/unit/test_product_truth_catalog_projection.py
       - tests/api/test_product_truth_catalog_api.py
       # Review Draft column = actionable PI drafts only (not terminal history)

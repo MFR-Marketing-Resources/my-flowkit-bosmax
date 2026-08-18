@@ -1196,6 +1196,9 @@ async def create_revision_draft(
     supersession. An unrelated open draft (no revision lineage, or a different revision reason)
     is never silently reused and never deleted: it is transitioned to SUPERSEDED with an audit
     note, preserving its content and provenance as history.
+    
+
+    IMPORT SOFT-FIELD POLICY: bulk importers that only change persona/hooks/CTA/pain/subhook against an already-APPROVED core Product Truth must not leave the revision open as permanent UPDATE_PENDING. Prefer Copywriting Landbank / Copy Intelligence for those fields, or call product_truth_import_soft_reconciliation close-out after import. Claim/core diffs remain human-gated.
     """
     db = await get_db()
     now = _now_iso()
