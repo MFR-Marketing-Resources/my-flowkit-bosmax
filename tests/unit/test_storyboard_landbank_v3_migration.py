@@ -272,12 +272,21 @@ async def test_v3_core_tables_indexes_and_deferred_tables_are_exact():
         columns = {row[1] for row in await cursor.fetchall()}
         assert required_columns <= columns
 
-    legacy_sql_before = {}
-    for table in ("copy_set", "copy_component"):
-        cursor = await db.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
-        )
-        legacy_sql_before[table] = (await cursor.fetchone())[0]
+    # Legacy copy stores (copy_set / copy_component) are RETIRED: the maintenance-OFF
+    # init_db align drops the inert shells and keeps them absent idempotently across
+    # restarts. Capture their (now absent) state and assert the retirement stays stable
+    # across a double re-init, replacing the old "legacy SQL is preserved" invariant.
+    async def _legacy_copy_store_sql():
+        out = {}
+        for table in ("copy_set", "copy_component"):
+            cursor = await db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            )
+            r = await cursor.fetchone()
+            out[table] = r[0] if r else None
+        return out
+
+    legacy_sql_before = await _legacy_copy_store_sql()
 
     await _seed_truth("tables")
     await _insert_angle("tables", "angle-v3-tables")
@@ -294,11 +303,9 @@ async def test_v3_core_tables_indexes_and_deferred_tables_are_exact():
     assert tuple(row) == ("v3-product-tables", "A lightweight daily formula angle", "DRAFT")
     product = await (await db.execute("SELECT id FROM product WHERE id='v3-product-tables'")).fetchone()
     assert tuple(product) == ("v3-product-tables",)
-    for table, expected_sql in legacy_sql_before.items():
-        current = await (await db.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
-        )).fetchone()
-        assert current[0] == expected_sql
+    # Retired legacy copy stores remain absent and unchanged across the re-init.
+    assert await _legacy_copy_store_sql() == legacy_sql_before
+    assert all(sql is None for sql in legacy_sql_before.values())
 
 
 @pytest.mark.asyncio

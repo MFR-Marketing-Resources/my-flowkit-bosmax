@@ -205,8 +205,11 @@ async def test_historical_variation_group_fk_intact(production_default):
 
 
 @pytest.mark.asyncio
-async def test_legacy_path_reachable_only_under_maintenance(monkeypatch):
-    """§7: the legacy composer stays reachable ONLY under explicit maintenance mode."""
+async def test_legacy_maintenance_flag_is_retired_and_never_reopens_legacy(monkeypatch):
+    """§7 (post-D4): maintenance mode is RETIRED. Even with the historical
+    COPY_LEGACY_MAINTENANCE_MODE flag set, the legacy composer is never reached —
+    a missing V2 binding still FAILS CLOSED (COPY_V2_BINDING_REQUIRED). Recovery is
+    offline-only via scripts/migrate_copy_register_v2_only.py, not a runtime toggle."""
     monkeypatch.setenv("COPY_LEGACY_MAINTENANCE_MODE", "1")
     compose_calls: list = []
 
@@ -217,7 +220,8 @@ async def test_legacy_path_reachable_only_under_maintenance(monkeypatch):
     monkeypatch.setattr(service.copy_composer_service, "compose_and_persist", compose)
 
     task = _copy_task(binding=False, copy_set_ids=[], required=2)
-    status, result = await service._prepare_copy_task(task)
+    with pytest.raises(service.ProductTreatmentFactoryError) as exc:
+        await service._prepare_copy_task(task)
 
-    assert status == "REVIEW_REQUIRED"
-    assert compose_calls == [("product-a", 2, False)]  # maintenance path still active
+    assert exc.value.code == "COPY_V2_BINDING_REQUIRED"
+    assert compose_calls == []  # legacy composer never reached, even under the flag

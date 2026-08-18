@@ -245,38 +245,20 @@ async def test_physical_retirement_marker_drops_shells(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_maintenance_mode_skips_alignment_and_keeps_legacy_writable(tmp_path):
-    db = tmp_path / "maintenance.db"
-    await _init_at(db, maintenance=True)
-    c = _conn(db)
-    try:
-        assert "legacy_copy_set_receipt" not in _tables(c)
-        assert "trg_copy_set_v2_only_insert" not in _triggers(c)
-        assert "copy_set" in _tables(c)
-        assert any(
-            tgt == "copy_set" for (_c, tgt, _t) in _fk_targets(c, "creative_variation_group")
-        )
-        c.execute("PRAGMA foreign_keys=OFF")
-        c.execute(
-            "INSERT INTO copy_set (copy_set_id, product_id, created_at, updated_at) "
-            "VALUES ('cs','p','t','t')"
-        )
-        c.commit()
-        assert _count(c, "copy_set") == 1
-    finally:
-        c.close()
-
-
-@pytest.mark.asyncio
 async def test_pre_cutover_data_fails_closed_without_erasing(tmp_path):
+    """A database that still holds real legacy copy rows without a cut-over receipt
+    must fail closed on normal init_db — never silently dropped or migrated.
+    Maintenance mode is retired, so the pre-cutover shape is built directly."""
     db = tmp_path / "pre_cutover.db"
-    await _init_at(db, maintenance=True)
-    c = _conn(db)
-    c.execute("PRAGMA foreign_keys=OFF")
+    c = sqlite3.connect(str(db))
+    # Columns the untouched base schema indexes on copy_set (idx_copy_set_product /
+    # idx_copy_set_dedupe) must exist so init_db reaches the align, which then fails
+    # closed on the real pre-cutover row.
     c.execute(
-        "INSERT INTO copy_set (copy_set_id, product_id, created_at, updated_at) "
-        "VALUES ('legacy-1','p','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')"
+        "CREATE TABLE copy_set (copy_set_id TEXT PRIMARY KEY, product_id TEXT NOT NULL, "
+        "status TEXT, dedupe_key TEXT)"
     )
+    c.execute("INSERT INTO copy_set (copy_set_id, product_id) VALUES ('legacy-1','p')")
     c.commit()
     c.close()
     with pytest.raises(legacy_copy_ledger.LegacyCopyCutoverRequiredError):
@@ -284,9 +266,6 @@ async def test_pre_cutover_data_fails_closed_without_erasing(tmp_path):
     c = _conn(db)
     try:
         assert _count(c, "copy_set") == 1, "pre-cutover legacy row must be preserved"
-        tabs = _tables(c)
-        if "legacy_copy_set_receipt" in tabs:
-            assert _count(c, "legacy_copy_set_receipt") == 0
     finally:
         c.close()
 

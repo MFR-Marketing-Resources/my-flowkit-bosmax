@@ -19,7 +19,19 @@ async def _seed():
     db = await get_db()
     # The autouse DB reset is unreliable on Windows (file can be held → WinError 32
     # swallowed), so start from a known-clean slate. ON DELETE CASCADE from product /
-    # request wipes taxonomy, copy_set, snapshot and request_telemetry.
+    # request wipes taxonomy, snapshot and request_telemetry.
+    #
+    # The V2 copy-authority chain (authority -> binding -> blueprint) references
+    # product, and the binding is immutable-by-trigger, so it neither cascade-deletes
+    # nor deletes normally — a prior copywriting-coverage test would otherwise block
+    # this reseed's DELETE FROM product and wedge the shared connection. Drop the
+    # delete guard (this file never asserts binding immutability) and wipe the chain
+    # child-first before deleting products.
+    await db.execute("DROP TRIGGER IF EXISTS trg_copy_execution_binding_v2_immutable_delete")
+    await db.execute("DROP TRIGGER IF EXISTS trg_copy_blueprint_v2_approved_immutable_delete")
+    await db.execute("DELETE FROM copy_execution_authority_v2")
+    await db.execute("DELETE FROM copy_execution_binding_v2")
+    await db.execute("DELETE FROM copy_blueprint_v2")
     await db.execute("DELETE FROM product")
     await db.execute("DELETE FROM request")
 
@@ -49,9 +61,37 @@ async def _seed():
         "product_type_group='bedsheet' WHERE product_id='P3'"
     )
 
-    await db.execute("INSERT INTO copy_set (copy_set_id, product_id, status) VALUES ('cs1','P1','COPY_APPROVED')")
+    # Snapshots first: P1's copy blueprint references its product-truth snapshot
+    # (FK copy_blueprint_v2.product_truth_snapshot_id -> product_intelligence_snapshot).
     await db.execute("INSERT INTO product_intelligence_snapshot (snapshot_id, product_id, version, status, created_at, updated_at) VALUES ('sn1','P1',1,'APPROVED','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
     await db.execute("INSERT INTO product_intelligence_snapshot (snapshot_id, product_id, version, status, created_at, updated_at) VALUES ('sn3','P3',1,'APPROVED','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
+
+    # Current copy coverage = active V2 copy execution authority (the retired copy_set
+    # store is gone). Give P1 the full blueprint -> BOUND/REQUIRED/VIDEO binding ->
+    # activated authority chain so P1 counts as "has copy"; P2/P3 stay missing. Every
+    # FK / NOT NULL / CHECK / integrity trigger is satisfied with foreign keys ON.
+    await db.execute(
+        "INSERT INTO copy_blueprint_v2 (blueprint_id, product_id, revision, status, "
+        "formula_id, formula_version, objective_json, angle_json, stages_json, "
+        "component_refs_json, evidence_refs_json, product_truth_lineage_json, "
+        "product_truth_snapshot_id, product_truth_snapshot_version, product_truth_snapshot_digest, "
+        "approved_execution_text_json, provenance_json, estimated_word_count, blueprint_digest, created_at) "
+        "VALUES ('bp1','P1',1,'PRODUCTION_VALID','PAS','v1','{}','{}','{}','{}','{}','{}',"
+        "'sn1',1, ?, '{}','{}',10, ?, 't')",
+        ("d" * 64, "b" * 64),
+    )
+    await db.execute(
+        "INSERT INTO copy_execution_binding_v2 (binding_id, blueprint_id, revision, "
+        "product_id, lane, media_kind, copy_policy, formula_id, formula_version, "
+        "approval_snapshot_id, product_truth_lineage_json, evidence_lineage_json, "
+        "evidence_digest, compiler_binding_version, feature_flag_state_json, binding_status, bound_at) "
+        "VALUES ('b1','bp1',1,'P1','T2V','VIDEO','REQUIRED','PAS','v1','sn1','{}','{}', ?, 'v2', '{}', 'BOUND', 't')",
+        ("a" * 64,),
+    )
+    await db.execute(
+        "INSERT INTO copy_execution_authority_v2 (product_id, lane, binding_id, activated_at) "
+        "VALUES ('P1','T2V','b1','t')"
+    )
 
     await db.execute(
         "INSERT INTO request (id, type, status, created_at, updated_at) "
@@ -71,8 +111,10 @@ async def test_copywriting_coverage_active_vs_all():
     assert active["products_with_copy"] == 1       # P1
     assert active["products_missing_copy"] == 1    # P2
     assert active["products_with_approved_copy"] == 1
-    assert active["total_copy_sets"] == 1
-    assert active["copy_set_by_status"] == {"COPY_APPROVED": 1}
+    # copy_set aggregates are retired; V2 authority coverage reports them as absent.
+    assert active["total_copy_sets"] is None
+    assert active["copy_set_by_status"] is None
+    assert active["authority"] == "copy_execution_authority_v2"
     assert active["coverage_pct"] == 50.0
 
     allp = await svc.copywriting_coverage("ALL")

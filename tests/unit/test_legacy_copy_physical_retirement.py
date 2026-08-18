@@ -117,14 +117,14 @@ async def test_scenario2_idempotent_already_applied(tmp_path):
     assert r2.status == "ALREADY_APPLIED"
 
 
-@pytest.mark.asyncio
-async def test_scenario3_pre_cutover_rows_fail_closed(tmp_path):
+def test_scenario3_pre_cutover_rows_fail_closed(tmp_path):
     mig = _load_migration()
     db = tmp_path / "s3.db"
-    await _init_at(db, maintenance=True)  # shells present, writable
+    # Pre-cutover shape built directly (maintenance mode retired): a legacy store
+    # with a real row and no cut-over receipt.
     c = sqlite3.connect(str(db))
-    c.execute("PRAGMA foreign_keys=OFF")
-    c.execute("INSERT INTO copy_set (copy_set_id, product_id, created_at, updated_at) VALUES ('x','p','t','t')")
+    c.execute("CREATE TABLE copy_set (copy_set_id TEXT PRIMARY KEY, product_id TEXT NOT NULL)")
+    c.execute("INSERT INTO copy_set (copy_set_id, product_id) VALUES ('x','p')")
     c.commit()
     c.close()
     with pytest.raises(mig.RetirementError) as exc:

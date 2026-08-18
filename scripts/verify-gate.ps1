@@ -56,11 +56,17 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 # (The FULL suite carries pre-existing DB/fixture reds tracked in AGENTS.md; -Full runs it.)
 $SmokeTests = @(
     'tests/unit/test_copywriting_readiness_service.py',
-    'tests/api/test_copywriting_readiness_api.py',
-    'tests/unit/test_copyset_approval_formula_gate.py',
-    'tests/unit/test_poster_copy_governance.py',
     'tests/unit/test_poster_copy_recommendation_service.py',
-    'tests/unit/test_poster_prompt_draft_service.py',
+    # Legacy copy-storage retirement — CURRENT architecture coverage replaces the
+    # retired legacy-authoring smoke tests: Task C V2-only fail-closed runtime, the
+    # final receipt-native schema + physical-retirement migration, reporting V2
+    # coverage semantics, 410 tombstones, and governed pre-cutover recovery.
+    'tests/unit/test_legacy_copyset_runtime_closure.py',
+    'tests/unit/test_d1_fresh_schema_receipt_native.py',
+    'tests/unit/test_legacy_copy_physical_retirement.py',
+    'tests/unit/test_reporting_service.py',
+    'tests/unit/test_copy_register_v2_only_guards.py',
+    'tests/unit/test_copy_register_v2_only_migration.py',
     'tests/unit/test_claim_boundary.py',
     'tests/unit/test_female_health_sensitive.py',
     'tests/unit/test_canonical_prompt_compiler.py',
@@ -78,9 +84,6 @@ $SmokeTests = @(
     'tests/unit/test_round3_p6_exact_copy_and_authority.py',
     'tests/unit/test_production_scale_and_recovery.py',
     'tests/unit/test_formula_validator_service.py',
-    'tests/unit/test_copy_set_service.py',
-    'tests/unit/test_copy_binding_service.py',
-    'tests/api/test_copy_sets_api.py',
     # Smart Registration Visual / Canva is an explicit CI contract. Keep these
     # paths in the normal gate so deleting a regression suite fails the gate.
     'tests/api/test_product_visual_onboarding_api.py',
@@ -90,8 +93,7 @@ $SmokeTests = @(
     'tests/ui/test_product_data_loading_governance.py',
     'tests/unit/test_canonical_runtime_lock.py',
     'tests/unit/test_scene_choreography_v2.py',
-    'tests/unit/test_product_treatment_template_service.py',
-    'tests/unit/test_creative_treatment_service.py'
+    'tests/unit/test_product_treatment_template_service.py'
 )
 
 $DashboardContractTests = @(
