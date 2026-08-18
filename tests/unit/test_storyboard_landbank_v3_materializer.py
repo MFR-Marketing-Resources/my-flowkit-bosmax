@@ -39,7 +39,7 @@ _CHECKLIST = {
 }
 
 
-async def _seed_v2_production_ready_v3_supply(product_id: str):
+async def _seed_v2_production_ready_v3_supply(product_id: str, *, seed_evidence: bool = True):
     """Seed a V2-PRODUCTION-READY Product Truth plus an aligned V3 supply chain.
 
     The Round 2 seed is deliberately minimal and its evidence ids do not align
@@ -140,25 +140,29 @@ async def _seed_v2_production_ready_v3_supply(product_id: str):
     #     kind).  The V3 fake provider grounds claim-bearing stages on facts[0],
     #     so seeding the whole candidate set guarantees the referenced id aligns.
     candidates = v2._fact_candidates(product, snapshot)
-    for fact in candidates:
-        await db.execute(
-            "INSERT INTO copy_evidence_fact_v2 "
-            "(product_id, snapshot_id, fact_id, fact_kind, canonical_text, text_digest, "
-            "snapshot_version, snapshot_status, approved, source_ref, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, 'APPROVED', 1, ?, ?)",
-            (
-                fact.product_id,
-                fact.snapshot_id,
-                fact.fact_id,
-                fact.fact_kind,
-                fact.text,
-                fact.text_digest,
-                fact.snapshot_version,
-                fact.source_ref,
-                "2026-08-18T00:00:00Z",
-            ),
-        )
-    await db.commit()
+    # Task A regression uses seed_evidence=False to prove the V3 read model derives
+    # the current facts WITHOUT any persisted copy_evidence_fact_v2 (a product that
+    # never went through Copy Register V2 authoring).
+    if seed_evidence:
+        for fact in candidates:
+            await db.execute(
+                "INSERT INTO copy_evidence_fact_v2 "
+                "(product_id, snapshot_id, fact_id, fact_kind, canonical_text, text_digest, "
+                "snapshot_version, snapshot_status, approved, source_ref, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'APPROVED', 1, ?, ?)",
+                (
+                    fact.product_id,
+                    fact.snapshot_id,
+                    fact.fact_id,
+                    fact.fact_kind,
+                    fact.text,
+                    fact.text_digest,
+                    fact.snapshot_version,
+                    fact.source_ref,
+                    "2026-08-18T00:00:00Z",
+                ),
+            )
+        await db.commit()
     grounding_fact_id = candidates[0].fact_id
 
     # (5) Genuine V3 supply grounded on an aligned approved fact id.
@@ -512,4 +516,56 @@ async def test_prepare_for_production_spends_no_provider_credit(monkeypatch):
         projection_id=projection_id, receipt_id=receipt_id
     )
     # Materialization is a deterministic carry-forward — no provider, no credit.
+    assert out["status"] == "PRODUCTION_VALID"
+
+
+@pytest.mark.asyncio
+async def test_v3_flow_grounds_on_derived_evidence_without_persisted_rows(monkeypatch):
+    """Task A: an APPROVED product with ZERO persisted copy_evidence_fact_v2 (i.e. it
+    never went through Copy Register V2 authoring) still grounds the V3 plan/execute
+    flow on the current DERIVED evidence, and the existing bridge still reaches V2
+    PRODUCTION_VALID. Proves V3 no longer depends on prior V2 authoring, with zero
+    provider/credit and no lazy backfill during generation."""
+    monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
+    # Product with full production authority but NO persisted evidence (it never
+    # went through Copy Register V2 authoring). The V3 read model must derive it.
+    factory, recipe, _angle, _family = await _seed_v2_production_ready_v3_supply(
+        "derived-evidence", seed_evidence=False
+    )
+    db = await get_db()
+
+    async def _count() -> int:
+        row = await (await db.execute("SELECT COUNT(*) FROM copy_evidence_fact_v2 WHERE product_id=?", ("derived-evidence",))).fetchone()
+        return int(row[0])
+
+    assert await _count() == 0
+
+    svc = V3CopyRegisterRound2Service(factory=factory)
+    plan = await svc.plan_assistant(
+        recipe.product_id, recipe.recipe_id, mode="CREATE",
+        actor_id="op", request_id="derived-evidence:plan",
+    )
+    # Grounding is populated from the derived current facts (no persisted rows).
+    assert plan.evidence_fact_ids
+    result = await svc.execute_assistant(
+        plan.plan_id, actor_id="op", request_id="derived-evidence:exec", provider_mode="FAKE_TEST",
+    )
+    assert result["status"] == "EXECUTED"
+    assert result["provider_calls"] == 0
+    assert result["credit_spend"] == 0
+    # The V3 generation read path did NOT lazily backfill the evidence table.
+    assert await _count() == 0
+
+    approval = await svc.human_approve(
+        result["master"]["entity_id"], projection_ids=result["projections"], checklist=_CHECKLIST,
+        approved_by="owner", rationale="Reviewed storyboard, evidence, formula, bridge, safety, durations.",
+        actor_id="owner", request_id="derived-evidence:approve",
+    )
+    assert approval["master"]["status"] == "APPROVED"
+    receipt_id = approval["receipt"]["receipt_id"]
+    projection_id = await _first_projection_id(result["master"]["entity_id"])
+    out = await V3ToV2Materializer(v3=svc).materialize_projection(
+        projection_id=projection_id, receipt_id=receipt_id
+    )
+    # Existing production gates still reach PRODUCTION_VALID via the derived evidence.
     assert out["status"] == "PRODUCTION_VALID"

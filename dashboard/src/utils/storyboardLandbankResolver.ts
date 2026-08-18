@@ -178,10 +178,12 @@ export function missingCopies(counts: Pick<WorkflowCounts, "target" | "approved"
 
 export interface NextAction {
 	step: WizardStep;
-	kind: "SELECT_PRODUCT" | "SETUP" | "GENERATE" | "REVIEW" | "PREPARE" | "OPEN_STUDIO" | "DONE";
+	kind: "SELECT_PRODUCT" | "SETUP" | "GENERATE" | "REVIEW" | "PREPARE" | "OPEN_STUDIO" | "RESOLVE_BLOCKER" | "DONE";
 	label: string;
 	detail: string;
 	count?: number;
+	/** For RESOLVE_BLOCKER: where to send the operator to clear the blocker. */
+	actionRoute?: string;
 }
 
 /**
@@ -192,10 +194,23 @@ export function resolveNextAction(state: {
 	hasProduct: boolean;
 	recipeReady: boolean;
 	counts: WorkflowCounts;
+	/** When set, generation is blocked and resolving it is the ONLY next action. */
+	blocker?: OperatorBlocker | null;
 }): NextAction {
-	const { hasProduct, recipeReady, counts } = state;
+	const { hasProduct, recipeReady, counts, blocker } = state;
 	if (!hasProduct) {
 		return { step: "SETUP", kind: "SELECT_PRODUCT", label: "Select a product", detail: "Choose the product you want copy variations for." };
+	}
+	// A current preflight blocker (e.g. no approved Product Truth / no usable
+	// evidence) always wins: never recommend Generate while generation is blocked.
+	if (blocker) {
+		return {
+			step: "GENERATE",
+			kind: "RESOLVE_BLOCKER",
+			label: blocker.actionLabel ?? "Resolve blocker",
+			detail: blocker.message,
+			actionRoute: blocker.actionRoute,
+		};
 	}
 	if (!recipeReady) {
 		return { step: "SETUP", kind: "SETUP", label: "Set Up Campaign", detail: "Choose the goal, copy formula, and production scale." };
@@ -280,6 +295,21 @@ export interface PreflightSummary {
 }
 
 /**
+ * The single primary gate blocker for the Copywriting Landbank, decided from the
+ * Product Truth approval status (lineage.snapshot_status) and the current evidence
+ * availability — NEVER from a raw fact count masquerading as truth approval.
+ * Returns null when both are satisfied.
+ */
+export function resolvePrimaryTruthBlocker(input: {
+	truthApproved: boolean;
+	truthFactCount: number;
+}): OperatorBlocker | null {
+	if (!input.truthApproved) return blockerToOperator("PRODUCT_TRUTH_NOT_FOUND");
+	if (input.truthFactCount <= 0) return blockerToOperator("NO_APPROVED_EVIDENCE");
+	return null;
+}
+
+/**
  * Compose a deterministic, operator-friendly preflight from the plan + capacity.
  * When something blocks generation, it fails closed: `ready` is false and the
  * blockers carry operator-language messages plus a CTA, with the raw codes kept.
@@ -288,6 +318,10 @@ export function buildPreflightSummary(input: {
 	plan: V3AssistantPlan | null;
 	capacity: V3ProductionCapacity | null;
 	target: number;
+	/** Whether the current Product Truth SNAPSHOT is approved (lineage.snapshot_status),
+	 *  NOT whether facts exist. Truth approval and evidence availability are distinct. */
+	truthApproved: boolean;
+	/** Current derived evidence fact count for the product (V3 read model). */
 	truthFactCount: number;
 	planError?: string | null;
 }): PreflightSummary {
@@ -295,7 +329,6 @@ export function buildPreflightSummary(input: {
 	const target = Math.max(0, Math.floor(input.target || 0));
 	const missing = Math.max(0, target - approved);
 	const plan = input.plan;
-	const evidenceCount = plan?.evidence_fact_ids?.length ?? plan?.evidence_selection?.fact_ids?.length ?? 0;
 	const durations = plan?.target_durations_seconds && plan.target_durations_seconds.length ? plan.target_durations_seconds : [8, 16, 24];
 	const gapTotal = (plan?.gaps ?? []).reduce((sum, gap) => sum + Math.max(0, gap.gap_count || 0), 0);
 	// A run produces a bounded batch — take the plan's own bound, never invent one.
@@ -305,12 +338,14 @@ export function buildPreflightSummary(input: {
 	if (input.planError && input.planError.trim()) {
 		blockers.push(blockerToOperator(extractBlockerCode(input.planError), input.planError));
 	}
-	const productTruth: PreflightState = input.truthFactCount > 0 ? "READY" : "ACTION REQUIRED";
-	const evidence: PreflightState = evidenceCount > 0 ? "READY" : plan ? "ACTION REQUIRED" : "READY";
-	if (productTruth === "ACTION REQUIRED" && !blockers.length) {
-		blockers.push(blockerToOperator("PRODUCT_TRUTH_NOT_FOUND"));
-	} else if (evidence === "ACTION REQUIRED" && plan && !blockers.length) {
-		blockers.push(blockerToOperator("NO_APPROVED_EVIDENCE"));
+	// Product Truth approval is decided ONLY by the snapshot status; evidence
+	// availability is a SEPARATE state (an approved snapshot can still lack usable
+	// current evidence facts). The two are surfaced as distinct badges + blockers.
+	const productTruth: PreflightState = input.truthApproved ? "READY" : "ACTION REQUIRED";
+	const evidence: PreflightState = input.truthApproved && input.truthFactCount > 0 ? "READY" : "ACTION REQUIRED";
+	const truthBlocker = resolvePrimaryTruthBlocker({ truthApproved: input.truthApproved, truthFactCount: input.truthFactCount });
+	if (!blockers.length && truthBlocker) {
+		blockers.push(truthBlocker);
 	}
 	const ready = blockers.length === 0 && Boolean(plan);
 	return {

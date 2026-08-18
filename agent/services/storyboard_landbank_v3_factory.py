@@ -25,6 +25,7 @@ from agent.authority.copy_blueprint_v2_authority import (
 )
 from agent.db.schema import _db_lock, get_db
 from agent.models.copy_blueprint_v2 import EvidenceFact, EvidenceRegistry, digest_evidence_text
+from agent.services.product_truth_evidence import derive_product_truth_evidence_facts
 from agent.models.storyboard_landbank_v3 import (
     V3Angle,
     V3BridgeContract,
@@ -1686,29 +1687,47 @@ class ProductTruthEvidenceAdapter:
             snapshot_digest=_truth_snapshot_digest(snapshot),
             snapshot_status="APPROVED",
         )
+        # The CURRENT approved Product Truth snapshot is the canonical source for
+        # the current EvidenceFact set (exact parity with the V2 truth proof). This
+        # is a provider-free, zero-write derivation: an approved product no longer
+        # needs prior Copy Register V2 authoring to expose its current facts.
+        facts = tuple(derive_product_truth_evidence_facts(product, snapshot))
+        derived_by_id = {fact.fact_id: fact for fact in facts}
+        # Persisted copy_evidence_fact_v2 rows for THIS snapshot are inspected only
+        # for immutability integrity -- never as the read authority. Missing/partial
+        # rows never downgrade the derived set; older-snapshot rows are excluded by
+        # the query; a current-snapshot fact whose text/digest conflicts with the
+        # canonical derivation fails closed (evidence immutability violation).
         fact_cursor = await db.execute(
-            "SELECT * FROM copy_evidence_fact_v2 WHERE product_id=? AND snapshot_id=? "
-            "AND snapshot_version=? AND snapshot_status='APPROVED' AND approved=1 "
-            "ORDER BY fact_id LIMIT 500",
+            "SELECT fact_id, canonical_text, text_digest FROM copy_evidence_fact_v2 "
+            "WHERE product_id=? AND snapshot_id=? AND snapshot_version=? "
+            "AND snapshot_status='APPROVED' AND approved=1 ORDER BY fact_id LIMIT 500",
             (product_id, lineage.snapshot_id, lineage.snapshot_version),
         )
-        facts: list[EvidenceFact] = []
         for row in await fact_cursor.fetchall():
             data = dict(row)
-            try:
-                facts.append(
-                    EvidenceFact(
-                        snapshot_id=data["snapshot_id"], fact_id=data["fact_id"], product_id=data["product_id"],
-                        fact_kind=data["fact_kind"], text=data["canonical_text"], text_digest=data["text_digest"],
-                        snapshot_version=int(data["snapshot_version"]), snapshot_status=data["snapshot_status"],
-                        approved=bool(data["approved"]), source_ref=data.get("source_ref"),
-                    )
-                )
-            except Exception:
-                # A malformed evidence row is unsafe to derive from; it is
-                # excluded from the bounded read model and never repaired here.
+            derived = derived_by_id.get(str(data.get("fact_id")))
+            if derived is None:
+                # A persisted current-snapshot row with no canonical counterpart is
+                # stale/foreign; the derived set stays authoritative (no downgrade).
                 continue
-        return ProductTruthBundle(product=product, snapshot=snapshot, lineage=lineage, facts=tuple(facts))
+            if (
+                str(data.get("text_digest") or "") != derived.text_digest
+                or str(data.get("canonical_text") or "") != derived.text
+            ):
+                raise V3FactoryError(
+                    "PRODUCT_TRUTH_EVIDENCE_CORRUPTION",
+                    "Persisted evidence for the current Product Truth snapshot "
+                    "conflicts with the canonical derived evidence (immutability "
+                    "violation).",
+                    status_code=409,
+                    details={
+                        "fact_id": derived.fact_id,
+                        "snapshot_id": lineage.snapshot_id,
+                        "snapshot_version": lineage.snapshot_version,
+                    },
+                )
+        return ProductTruthBundle(product=product, snapshot=snapshot, lineage=lineage, facts=facts)
 
     async def revalidate(self, lineage: V3ProductTruthLineage) -> ProductTruthBundle:
         current = await self.current(lineage.product_id)
