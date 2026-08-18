@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+	closeImportSoftReconciliation,
+	fetchImportSoftReconciliationPreview,
 	fetchProductRegistry,
 	fetchProductStrategyTypeRegistry,
+	type ImportSoftReconciliationPreview,
 } from "../../api/products";
 import type { Product, ProductCatalogResponse } from "../../types";
 import { resolveProductPreviewUrl } from "../../utils/productVisualPresentation";
@@ -246,6 +249,12 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	const [cluster, setCluster] = useState("");
 	const [productType, setProductType] = useState("");
 	const [offset, setOffset] = useState(0);
+	const [importSoftPreview, setImportSoftPreview] = useState<ImportSoftReconciliationPreview | null>(null);
+	const [importSoftLoading, setImportSoftLoading] = useState(false);
+	const [importSoftBusy, setImportSoftBusy] = useState(false);
+	const [importSoftMsg, setImportSoftMsg] = useState<string | null>(null);
+	const [catalogEpoch, setCatalogEpoch] = useState(0);
+
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [data, setData] = useState<ProductCatalogResponse | null>(null);
@@ -356,7 +365,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 		} finally {
 			if (requestControllerRef.current === controller) setLoading(false);
 		}
-	}, [debouncedSearch, cluster, productType, risk, freshness, image, productTruth, status, offset]);
+	}, [debouncedSearch, cluster, productType, risk, freshness, image, productTruth, status, offset, catalogEpoch]);
 
 	useEffect(() => {
 		void fetchRows();
@@ -370,7 +379,72 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	const rangeStart = total === 0 ? 0 : offset + 1;
 	const rangeEnd = Math.min(offset + PAGE_SIZE, total);
 
-	return (
+	
+	useEffect(() => {
+		let cancelled = false;
+		setImportSoftLoading(true);
+		fetchImportSoftReconciliationPreview()
+			.then((p) => {
+				if (!cancelled) setImportSoftPreview(p);
+			})
+			.catch(() => {
+				if (!cancelled) setImportSoftPreview(null);
+			})
+			.finally(() => {
+				if (!cancelled) setImportSoftLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [data?.product_truth_summary?.UPDATE_PENDING]);
+
+	async function runCloseSafeImportRevisions() {
+		if (!importSoftPreview) return;
+		const n = importSoftPreview.safe_candidate_count;
+		const ok = window.confirm(
+			[
+				`Close ${n} SAFE import soft-field revisions?`,
+				"",
+				"• Current APPROVED Product Truth remains unchanged",
+				"• Import revisions will be SUPERSEDED (history kept, not deleted)",
+				"• Imported soft values will NOT become Product Truth",
+				`• ${importSoftPreview.review_required_count} Human Review Required remain open`,
+				`• ${importSoftPreview.hub_claim_conflict_open_count} Claim Conflict remain open`,
+				"",
+				"Server confirm phrase: CLOSE SAFE IMPORT REVISIONS",
+			].join("\n"),
+		);
+		if (!ok) return;
+		setImportSoftBusy(true);
+		setImportSoftMsg(null);
+		try {
+			const res = await closeImportSoftReconciliation({
+				confirm: true,
+				confirm_phrase: "CLOSE SAFE IMPORT REVISIONS",
+				actor: "operator",
+				expected_count: importSoftPreview.expected_safe_count,
+			});
+			if (res.status === "ABORTED_COUNT_MISMATCH") {
+				setImportSoftMsg(
+					`Aborted: safe count ${res.actual_safe_count} != expected ${res.expected_count}`,
+				);
+			} else {
+				setImportSoftMsg(
+					`Closed ${res.success_count ?? 0}/${res.candidate_count ?? n} (failures ${res.failure_count ?? 0})`,
+				);
+			}
+			const p = await fetchImportSoftReconciliationPreview();
+			setImportSoftPreview(p);
+			setCatalogEpoch((v) => v + 1);
+		} catch (e) {
+			setImportSoftMsg(e instanceof Error ? e.message : "Close failed");
+		} finally {
+			setImportSoftBusy(false);
+		}
+	}
+
+
+return (
 		<div className="min-w-0 space-y-5">
 			{/* Header */}
 			<div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
@@ -410,6 +484,61 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 					</button>
 				</div>
 			)}
+
+
+			{/* SAFE import soft-field reconciliation (AA-AH) */}
+			{importSoftPreview &&
+			(importSoftPreview.safe_candidate_count > 0 ||
+				importSoftPreview.review_required_count > 0 ||
+				importSoftPreview.hub_claim_conflict_open_count > 0) ? (
+				<div
+					className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3"
+					data-testid="import-soft-reconciliation-panel"
+				>
+					<div className="flex flex-wrap items-start justify-between gap-3">
+						<div className="space-y-1 text-sm text-slate-200">
+							<div className="text-[10px] font-bold uppercase tracking-widest text-amber-300">
+								Import soft-field reconciliation
+							</div>
+							<div data-testid="import-soft-safe-count">
+								Safe import revisions (closeable):{" "}
+								<span className="font-bold tabular-nums text-white">
+									{importSoftPreview.safe_candidate_count}
+								</span>
+							</div>
+							<div data-testid="import-soft-review-count" className="text-slate-400">
+								Human review required: {importSoftPreview.review_required_count}
+							</div>
+							<div data-testid="import-soft-claim-count" className="text-slate-400">
+								Claim review required: {importSoftPreview.hub_claim_conflict_open_count}
+							</div>
+							<div className="text-[11px] text-slate-500">
+								Default: keep current APPROVED Product Truth and supersede safe import
+								revisions. Soft values are not promoted. History is preserved.
+							</div>
+							{importSoftMsg ? (
+								<div className="text-xs text-sky-300" data-testid="import-soft-msg">
+									{importSoftMsg}
+								</div>
+							) : null}
+						</div>
+						<button
+							type="button"
+							disabled={
+								importSoftBusy ||
+								importSoftLoading ||
+								importSoftPreview.safe_candidate_count <= 0 ||
+								!importSoftPreview.matches_expected_safe_count
+							}
+							onClick={() => void runCloseSafeImportRevisions()}
+							className="rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+							data-testid="import-soft-close-button"
+						>
+							{importSoftBusy ? "Closing…" : "Close Safe Import Revisions"}
+						</button>
+					</div>
+				</div>
+			) : null}
 
 			{/* Product Truth summary — full scoped catalog, not page rows */}
 			{(() => {

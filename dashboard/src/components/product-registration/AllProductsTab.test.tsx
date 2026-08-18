@@ -2,20 +2,26 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { fetchProductRegistry, fetchProductStrategyTypeRegistry } from "../../api/products";
+import {
+	closeImportSoftReconciliation,
+	fetchImportSoftReconciliationPreview,
+	fetchProductRegistry,
+	fetchProductStrategyTypeRegistry,
+} from "../../api/products";
 import AllProductsTab from "./AllProductsTab";
 
-vi.mock("../../api/products", () => ({
-	fetchProductRegistry: vi.fn(),
-	fetchProductStrategyTypeRegistry: vi.fn(),
-}));
+vi.mock("../../api/products", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../api/products")>();
+	return {
+		...actual,
+		fetchProductRegistry: vi.fn(),
+		fetchProductStrategyTypeRegistry: vi.fn(),
+		fetchImportSoftReconciliationPreview: vi.fn(),
+		closeImportSoftReconciliation: vi.fn(),
+	};
+});
 
-describe("All Products per-product visual scope", () => {
-	afterEach(() => {
-		cleanup();
-		vi.resetAllMocks();
-	});
-
+describe("AllProductsTab visual surface", () => {
 	beforeEach(() => {
 		vi.mocked(fetchProductRegistry).mockResolvedValue({
 			items: [],
@@ -25,6 +31,25 @@ describe("All Products per-product visual scope", () => {
 			items: [],
 			clusters: [],
 		} as never);
+		vi.mocked(fetchImportSoftReconciliationPreview).mockResolvedValue({
+			safe_candidate_count: 0,
+			review_required_count: 0,
+			hub_claim_conflict_open_count: 0,
+			ineligible_count: 0,
+			expected_safe_count: 549,
+			matches_expected_safe_count: false,
+			reason_code: "SAFE_IMPORT_SOFT_FIELD_RECONCILIATION",
+			policy: {},
+		} as never);
+		vi.mocked(closeImportSoftReconciliation).mockResolvedValue({
+			status: "COMPLETED",
+			success_count: 0,
+			failure_count: 0,
+			candidate_count: 0,
+		} as never);
+	});
+	afterEach(() => {
+		cleanup();
 	});
 
 	it("keeps visual work per product and exposes no bulk cutout controls", async () => {
@@ -176,6 +201,23 @@ describe("All Products Product Truth operator surface", () => {
 	});
 
 	beforeEach(() => {
+		vi.mocked(fetchImportSoftReconciliationPreview).mockResolvedValue({
+			safe_candidate_count: 549,
+			review_required_count: 6,
+			hub_claim_conflict_open_count: 20,
+			ineligible_count: 0,
+			expected_safe_count: 549,
+			matches_expected_safe_count: true,
+			reason_code: "SAFE_IMPORT_SOFT_FIELD_RECONCILIATION",
+			policy: { approves_import_into_product_truth: false, deletes_history: false },
+		} as never);
+		vi.mocked(closeImportSoftReconciliation).mockResolvedValue({
+			status: "COMPLETED",
+			success_count: 549,
+			failure_count: 0,
+			candidate_count: 549,
+		} as never);
+
 		vi.mocked(fetchProductStrategyTypeRegistry).mockResolvedValue({
 			items: [],
 			clusters: [],
@@ -344,6 +386,16 @@ describe("All Products Product Truth operator surface", () => {
 		expect(await screen.findByText("Sambal Nyet Berapi by Khairulaming")).toBeInTheDocument();
 		expect(screen.getByRole("columnheader", { name: "Review Draft" })).toBeInTheDocument();
 		expect(screen.queryByText("READY FOR REVIEW")).not.toBeInTheDocument();
+	});
+
+
+	it("shows import soft reconciliation panel with safe/review/claim counts", async () => {
+		render(<AllProductsTab />);
+		expect(await screen.findByTestId("import-soft-reconciliation-panel")).toBeInTheDocument();
+		expect(screen.getByTestId("import-soft-safe-count")).toHaveTextContent("549");
+		expect(screen.getByTestId("import-soft-review-count")).toHaveTextContent("6");
+		expect(screen.getByTestId("import-soft-claim-count")).toHaveTextContent("20");
+		expect(screen.getByTestId("import-soft-close-button")).toBeEnabled();
 	});
 
 });
