@@ -1,8 +1,15 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import StoryboardLandbankV3Page from "./StoryboardLandbankV3Page";
+
+const mockNavigate = vi.fn();
+
+vi.mock("react-router-dom", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("react-router-dom")>();
+	return { ...actual, useNavigate: () => mockNavigate };
+});
 
 vi.mock("../hooks/useProductCatalog", () => ({
 	useProductCatalog: () => ({
@@ -23,6 +30,7 @@ vi.mock("../api/storyboardLandbankV3Round2", () => ({
 	executeV3Assistant: vi.fn(),
 	fetchV3CopyRegisterLandbank: vi.fn(),
 	fetchV3ProductTruth: vi.fn(),
+	fetchV3ProductionCapacity: vi.fn(),
 	approveV3Master: vi.fn(),
 	approveV3MasterBatch: vi.fn(),
 	setupV3Campaign: vi.fn(),
@@ -36,280 +44,298 @@ vi.mock("../api/storyboardLandbankV3Round2", () => ({
 import {
 	approveV3Master,
 	executeV3Assistant,
-	fetchV3AssistantPromptPreview,
 	fetchV3CopyRegisterLandbank,
 	fetchV3CopyRegisterProviderStatus,
+	fetchV3ProductionCapacity,
 	fetchV3ProductTruth,
 	materializeV3Projection,
 	materializeV3ProjectionsBulk,
 	planV3Assistant,
-	deleteV3Draft,
 	regenerateV3Component,
-	reviewV3Entity,
 	setupV3Campaign,
 	type V3LandbankItem,
+	type V3ProductionCapacity,
 } from "../api/storyboardLandbankV3Round2";
 
 const mockedStatus = vi.mocked(fetchV3CopyRegisterProviderStatus);
 const mockedPlan = vi.mocked(planV3Assistant);
-const mockedPreview = vi.mocked(fetchV3AssistantPromptPreview);
 const mockedExecute = vi.mocked(executeV3Assistant);
 const mockedLandbank = vi.mocked(fetchV3CopyRegisterLandbank);
 const mockedTruth = vi.mocked(fetchV3ProductTruth);
+const mockedCapacity = vi.mocked(fetchV3ProductionCapacity);
 const mockedApprove = vi.mocked(approveV3Master);
 const mockedSetup = vi.mocked(setupV3Campaign);
-const mockedReview = vi.mocked(reviewV3Entity);
 const mockedRegenerate = vi.mocked(regenerateV3Component);
-const mockedDelete = vi.mocked(deleteV3Draft);
 const mockedMaterialize = vi.mocked(materializeV3Projection);
 const mockedMaterializeBulk = vi.mocked(materializeV3ProjectionsBulk);
 
-const item = {
-	master: {
-		master_id: "master-v3",
-		revision: 1,
-		product_id: "p1",
-		formula: { formula_id: "PAS", formula_version: "pas.v1" },
-		angle: { entity_id: "angle-v3", revision: 1 },
-		storyline_family: { entity_id: "family-v3", revision: 1 },
-		stages: [
-			{ stage_key: "problem", formula_stage_key: "problem", semantic_class: "HOOK", authored_text: "Want a lighter routine?" },
-			{ stage_key: "agitate", formula_stage_key: "agitate", semantic_class: "BODY_CORE", authored_text: "Choose this lightweight formula today." },
-			{ stage_key: "solution", formula_stage_key: "solution", semantic_class: "BODY_CORE", authored_text: "Keep each step simple and steady." },
-			{ stage_key: "cta", formula_stage_key: "cta", semantic_class: "CTA", authored_text: "Start your routine today." },
-		],
-		status: "VALIDATED",
-		source: "ROUND2",
-		exact_content_digest: "a".repeat(64),
-		word_count: 19,
-	},
-	projections: [8, 16, 24].map((duration) => ({
-		projection_id: `projection-${duration}`,
-		revision: 1,
-		target_duration_seconds: duration,
-		exact_resolved_dialogue: "Want a lighter routine? Choose this lightweight formula today.",
-		derivation_source: "DETERMINISTIC",
-		status: "VALIDATED",
-		per_block_word_budgets: [19],
-	})),
-	quality: {
-		hard_pass: true,
-		formula_valid: true,
-		evidence_valid: true,
-		bridge_valid: true,
-		claim_safety_valid: true,
-		truth_current: true,
-		wps_valid: true,
-		issue_codes: [],
-		novelty_signal: "NOVEL",
-		novelty_score: 1,
-		quality_score: 1,
-	},
-	current_truth: true,
-	approval_receipt: null,
-	v2_materialization: "NOT_IN_ROUND2",
-	p6_status: "NOT_IN_ROUND2",
-} as const;
+function makeItem(overrides: { status?: string; hardPass?: boolean; masterId?: string } = {}): V3LandbankItem {
+	return {
+		master: {
+			master_id: overrides.masterId ?? "master-v3",
+			revision: 1,
+			product_id: "p1",
+			formula: { formula_id: "PAS", formula_version: "pas.v1" },
+			angle: { entity_id: "angle-v3", revision: 1 },
+			storyline_family: { entity_id: "family-v3", revision: 1 },
+			stages: [
+				{ stage_key: "problem", formula_stage_key: "problem", semantic_class: "HOOK", authored_text: "Want a lighter routine?" },
+				{ stage_key: "cta", formula_stage_key: "cta", semantic_class: "CTA", authored_text: "Start your routine today." },
+			],
+			status: overrides.status ?? "VALIDATED",
+			source: "ROUND2",
+			exact_content_digest: "a".repeat(64),
+			word_count: 12,
+			resolved_component_refs: [{ entity_id: "component-v3", revision: 1 }],
+		},
+		projections: [8, 16, 24].map((duration) => ({
+			projection_id: `projection-${duration}`,
+			revision: 1,
+			target_duration_seconds: duration,
+			exact_resolved_dialogue: "Want a lighter routine? Start today.",
+			derivation_source: "DETERMINISTIC",
+			status: "VALIDATED",
+			per_block_word_budgets: [12],
+		})),
+		quality: {
+			hard_pass: overrides.hardPass ?? true,
+			formula_valid: overrides.hardPass ?? true,
+			evidence_valid: overrides.hardPass ?? true,
+			bridge_valid: true,
+			claim_safety_valid: true,
+			truth_current: true,
+			wps_valid: true,
+			issue_codes: [],
+			novelty_signal: "NOVEL",
+			novelty_score: 1,
+			quality_score: 1,
+		},
+		current_truth: true,
+		approval_receipt: null,
+		v2_materialization: "NOT_IN_ROUND2",
+		p6_status: "NOT_IN_ROUND2",
+	};
+}
 
-const draftItem = {
-	...item,
-	master: { ...item.master, master_id: "master-draft", status: "DRAFT", resolved_component_refs: [{ entity_id: "component-v3", revision: 1 }] },
-};
-
-// Round 3 P3: an APPROVED landbank item enriched with per-projection V2
-// materialization status (MATERIALIZED + STALE + NOT_MATERIALIZED) and an approval
-// receipt. Typed as V3LandbankItem so the status string literals stay narrow.
 const approvedItem: V3LandbankItem = {
-	...item,
-	master: { ...item.master, master_id: "master-approved", status: "APPROVED" },
+	...makeItem({ status: "APPROVED", masterId: "master-approved" }),
 	approval_receipt: { receipt_id: "receipt-approved" },
 	v2_materialization: "PARTIALLY_MATERIALIZED",
 	p6_status: "NOT_ALLOCATED",
 	projections: [
-		{ projection_id: "proj-mat", revision: 1, target_duration_seconds: 8, exact_resolved_dialogue: "Want a lighter routine?", derivation_source: "DETERMINISTIC", status: "APPROVED", per_block_word_budgets: [19], exact_projection_digest: "e".repeat(64), materialization: { status: "MATERIALIZED", link_id: "link-mat", v2_blueprint_id: "bp-mat", v2_blueprint_revision: 1 } },
-		{ projection_id: "proj-stale", revision: 1, target_duration_seconds: 16, exact_resolved_dialogue: "Want a lighter routine?", derivation_source: "DETERMINISTIC", status: "APPROVED", per_block_word_budgets: [19], exact_projection_digest: "f".repeat(64), materialization: { status: "STALE", link_id: "link-stale", reason: "PRODUCT_TRUTH_ADVANCED" } },
-		{ projection_id: "proj-fresh", revision: 1, target_duration_seconds: 24, exact_resolved_dialogue: "Want a lighter routine?", derivation_source: "DETERMINISTIC", status: "APPROVED", per_block_word_budgets: [19], exact_projection_digest: "0".repeat(64), materialization: { status: "NOT_MATERIALIZED", link_id: null } },
+		{ projection_id: "proj-mat", revision: 1, target_duration_seconds: 8, exact_resolved_dialogue: "Ready copy.", derivation_source: "DETERMINISTIC", status: "APPROVED", per_block_word_budgets: [12], materialization: { status: "MATERIALIZED", link_id: "link-mat", v2_blueprint_id: "bp-mat", v2_blueprint_revision: 1 } },
+		{ projection_id: "proj-stale", revision: 1, target_duration_seconds: 16, exact_resolved_dialogue: "Stale copy.", derivation_source: "DETERMINISTIC", status: "APPROVED", per_block_word_budgets: [12], materialization: { status: "STALE", link_id: "link-stale", reason: "PRODUCT_TRUTH_ADVANCED" } },
+		{ projection_id: "proj-fresh", revision: 1, target_duration_seconds: 24, exact_resolved_dialogue: "Fresh copy.", derivation_source: "DETERMINISTIC", status: "APPROVED", per_block_word_budgets: [12], materialization: { status: "NOT_MATERIALIZED", link_id: null } },
 	],
 };
 
-function approvedLandbankResponse(items: V3LandbankItem[] = [approvedItem]) {
+function capacityFixture(overrides: Partial<V3ProductionCapacity> = {}): V3ProductionCapacity {
+	return { product_id: "p1", semantic_capacity: 0, projection_capacity: 0, executable_copy_capacity: 0, production_capacity: 0, stale_copy_count: 0, production_capacity_note: "note", ...overrides };
+}
+
+function landbankResponse(items: V3LandbankItem[]) {
 	return { source: "V3_COPY_REGISTER" as const, product_id: "p1", items, total: items.length, limit: 50, offset: 0, has_more: false, provider_calls: 0, v2_mixed: false as const, full_storyboard_first: true as const };
 }
 
-function renderPage() {
+function planResponse() {
+	return {
+		plan: {
+			plan_id: "plan-v3",
+			run_id: "run-v3",
+			product_id: "p1",
+			recipe: { entity_id: "recipe-v3", revision: 1 },
+			formula: { formula_id: "PAS", formula_version: "pas.v1" },
+			mode: "CREATE" as const,
+			target_counts: { HOOK: 1 },
+			gaps: [{ semantic_class: "HOOK" as const, current_count: 0, target_count: 1, gap_count: 1, reason: "target" }],
+			target_durations_seconds: [8, 16, 24],
+			wps_mode: "SAFE" as const,
+			provider: { lane: "text_assist" as const, status: "NOT_CONFIGURED", configured: false, provider_id: null, model_id: null, execution_enabled: false, provider_calls: 0, credit_spend: 0, fake_provider_allowed: true },
+			prompt_version: "v1",
+			prompt_digest: "b".repeat(64),
+			estimated_provider_calls: 1,
+			estimated_output_tokens: 540,
+			estimated_credit_spend: 0,
+			max_proposals: 1,
+			evidence_fact_ids: ["fact:p1:benefit:0"],
+			explicit_execute_required: true as const,
+			created_at: "2026-08-17T00:00:00Z",
+			created_by: "operator",
+		},
+		provider_calls: 0,
+		credit_spend: 0,
+	};
+}
+
+function renderAt(path: string) {
 	return render(
-		<MemoryRouter initialEntries={["/creative/storyboard-landbank-v3?product_id=p1"]}>
+		<MemoryRouter initialEntries={[path]}>
 			<StoryboardLandbankV3Page />
 		</MemoryRouter>,
 	);
 }
 
-describe("StoryboardLandbankV3Page Round 2 contract", () => {
+describe("Copywriting Landbank operator wizard", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockNavigate.mockReset();
 		mockedStatus.mockResolvedValue({ lane: "text_assist", status: "NOT_CONFIGURED", configured: false, provider_id: null, model_id: null, execution_enabled: false, provider_calls: 0, credit_spend: 0, fake_provider_allowed: true });
 		mockedTruth.mockResolvedValue({ product_id: "p1", lineage: {}, facts: [{ fact_id: "fact-1", fact_kind: "BENEFIT", text: "A lightweight daily routine.", text_digest: "d".repeat(64), approved: true }], fact_count: 1, provider_calls: 0, mutations: 0 });
-		mockedLandbank.mockResolvedValue({ source: "V3_COPY_REGISTER", product_id: "p1", items: [item], total: 1, limit: 50, offset: 0, has_more: false, provider_calls: 0, v2_mixed: false, full_storyboard_first: true });
-		mockedPlan.mockResolvedValue({ plan: { plan_id: "plan-v3", run_id: "run-v3", product_id: "p1", recipe: { entity_id: "recipe-v3", revision: 1 }, mode: "CREATE", target_counts: { HOOK: 1, BODY_CORE: 1, CTA: 1 }, gaps: [{ semantic_class: "HOOK", current_count: 0, target_count: 1, gap_count: 1, reason: "target" }, { semantic_class: "BODY_CORE", current_count: 0, target_count: 1, gap_count: 1, reason: "target" }, { semantic_class: "CTA", current_count: 0, target_count: 1, gap_count: 1, reason: "target" }], target_durations_seconds: [8, 16, 24], wps_mode: "SAFE", provider: { lane: "text_assist", status: "NOT_CONFIGURED", configured: false, provider_id: null, model_id: null, execution_enabled: false, provider_calls: 0, credit_spend: 0, fake_provider_allowed: true }, prompt_version: "v1", prompt_digest: "b".repeat(64), estimated_provider_calls: 1, estimated_output_tokens: 540, estimated_credit_spend: 0, max_proposals: 3, explicit_execute_required: true, created_at: "2026-08-17T00:00:00Z", created_by: "operator" }, provider_calls: 0, credit_spend: 0 });
-		mockedPreview.mockResolvedValue({ preview: { prompt_digest: "c".repeat(64), system_instructions: "strict", untrusted_truth_json: "{}", requested_output_contract: {} }, provider_calls: 0, credit_spend: 0 });
-		mockedExecute.mockResolvedValue({ run_id: "run-v3", plan_id: "plan-v3", status: "EXECUTED", provider: { mode: "FAKE_TEST", provider_id: "fake", model_id: "fixture" }, master: { entity_id: "master-v3", revision: 1 }, projections: [], quality: item.quality, provider_calls: 0, credit_spend: 0, projection_derivation: "DETERMINISTIC_WPS_FROM_AI_AUTHORED_MASTER" });
-		mockedApprove.mockResolvedValue({ receipt: { receipt_id: "receipt-v3" }, master: { ...item.master, status: "APPROVED" }, projections: item.projections, automatic_approval: false });
-		mockedSetup.mockResolvedValue({ recipe_id: "recipe-preset", recipe_revision: 1, preset: "FAST54", reused: false, recipe: {} });
-		mockedReview.mockResolvedValue({});
+		mockedCapacity.mockResolvedValue(capacityFixture({ semantic_capacity: 18 }));
+		mockedLandbank.mockResolvedValue(landbankResponse([makeItem()]));
+		mockedPlan.mockResolvedValue(planResponse());
+		mockedExecute.mockResolvedValue({ run_id: "run-v3", plan_id: "plan-v3", status: "EXECUTED", provider: { mode: "FAKE_TEST", provider_id: "fake", model_id: "fixture" }, master: { entity_id: "master-v3", revision: 1 }, projections: [], quality: makeItem().quality, provider_calls: 0, credit_spend: 0, projection_derivation: "DETERMINISTIC" });
+		mockedApprove.mockResolvedValue({ receipt: { receipt_id: "receipt-v3" }, master: { ...makeItem().master, status: "APPROVED" }, projections: [...makeItem().projections], automatic_approval: false });
+		mockedSetup.mockResolvedValue({ recipe_id: "recipe-resolved", recipe_revision: 1, preset: "FAST54", reused: false, recipe: {} });
 		mockedRegenerate.mockResolvedValue({ new_revision: 2, source_revision: 1, component: { entity_id: "component-v3", revision: 2 }, automatic_approval: false, run_id: "run-regen" });
-		mockedDelete.mockResolvedValue({ deleted: true });
 		mockedMaterialize.mockResolvedValue({ projection_id: "proj-fresh", status: "MATERIALIZED", blueprint_status: "PRODUCTION_VALID", blueprint_id: "bp-fresh", revision: 1, link_id: "link-fresh", v2_approval_snapshot_id: "snap-fresh", materialization_digest: "m".repeat(64), idempotent_reuse: false });
 		mockedMaterializeBulk.mockResolvedValue({ requested: 1, materialized_count: 1, blocked_count: 0, materialized: [], blocked: [] });
 	});
 
 	afterEach(() => cleanup());
 
-	it("builds a campaign recipe from a preset without a raw recipe id", async () => {
-		renderPage();
-		expect(await screen.findByTestId("storyboard-landbank-v3-page")).toBeInTheDocument();
-		fireEvent.change(screen.getByTestId("v3-preset"), { target: { value: "FAST54" } });
-		fireEvent.change(screen.getByTestId("v3-formula"), { target: { value: "PAS" } });
-		fireEvent.click(screen.getByTestId("v3-build-campaign"));
-		await waitFor(() => expect(mockedSetup).toHaveBeenCalledWith(expect.objectContaining({ product_id: "p1", preset: "FAST54", formula_id: "PAS", wps_mode: "SWEET" })));
-		expect(await screen.findByTestId("v3-active-recipe")).toBeInTheDocument();
-		// The raw recipe id lives in the Technical Details drawer, not the main path.
-		expect(screen.getByTestId("v3-technical-details")).toBeInTheDocument();
-	});
-
-	it("surfaces draft review actions and separates clean candidates from exceptions", async () => {
-		renderPage();
+	// A + J: Setup exposes only business fields; technical settings live under Advanced.
+	it("shows only business fields in Setup and keeps recipe id / WPS under Advanced", async () => {
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=SETUP");
 		await screen.findByTestId("storyboard-landbank-v3-page");
-		// Review-verb actions are available on the reviewable master card.
-		fireEvent.click(await screen.findByTestId("v3-action-validate"));
-		await waitFor(() => expect(mockedReview).toHaveBeenCalledWith("validate", "MASTER_STORYBOARD", "master-v3", 1));
-		// Batch approval dialog shows the exact machine-clean scope.
-		fireEvent.click(screen.getByTestId("v3-open-bulk-approval"));
-		expect(await screen.findByTestId("v3-batch-scope")).toBeInTheDocument();
-		expect(screen.getByTestId("v3-batch-clean-item")).toHaveTextContent("master-v3");
+		expect(screen.getByTestId("v3-goal")).toBeInTheDocument();
+		expect(screen.getByTestId("v3-formula")).toBeInTheDocument();
+		expect(screen.getByTestId("v3-scale")).toBeInTheDocument();
+		expect(screen.getByTestId("v3-target")).toBeInTheDocument();
+		// Recipe id and WPS are only inside the Advanced / Technical Details drawer.
+		const advanced = screen.getByTestId("v3-setup-technical");
+		expect(within(advanced).getByTestId("v3-recipe-id")).toBeInTheDocument();
+		expect(within(advanced).getByTestId("v3-wps-mode")).toBeInTheDocument();
 	});
 
-	it("keeps V3 jobs separated and walks explicit plan → fake execute → full review → approval", async () => {
-		renderPage();
-		expect(await screen.findByTestId("storyboard-landbank-v3-page")).toBeInTheDocument();
-		expect(screen.getByText("V2 production authority stays separate")).toBeInTheDocument();
-		expect(screen.getByTestId("v3-provider-status")).toHaveTextContent("FAKE TEST ENABLED");
+	// B + C: system auto-creates/reuses the recipe and calculates the gap.
+	it("creates the recipe and calculates the gap automatically without a raw recipe id", async () => {
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=SETUP");
+		fireEvent.click(await screen.findByTestId("v3-create-campaign"));
+		await waitFor(() => expect(mockedSetup).toHaveBeenCalledWith(expect.objectContaining({ product_id: "p1", preset: "FAST54", formula_id: "PAS", wps_mode: "SWEET" })));
+		// Reaching Generate auto-runs the gap plan (no manual "Plan" button).
+		await waitFor(() => expect(mockedPlan).toHaveBeenCalledWith(expect.objectContaining({ product_id: "p1", recipe_id: "recipe-resolved" })));
+		expect(await screen.findByTestId("v3-generate")).toBeInTheDocument();
+	});
 
-		fireEvent.change(screen.getByTestId("v3-recipe-id"), { target: { value: "recipe-v3" } });
-		fireEvent.click(screen.getByTestId("v3-plan-assistant"));
-		await waitFor(() => expect(mockedPlan).toHaveBeenCalledWith(expect.objectContaining({ product_id: "p1", recipe_id: "recipe-v3", mode: "CREATE" })));
-		expect(await screen.findByTestId("v3-assistant-plan")).toHaveTextContent("Plan plan-v3");
-		fireEvent.click(screen.getByTestId("v3-prompt-preview"));
-		await waitFor(() => expect(mockedPreview).toHaveBeenCalledWith("plan-v3"));
-		fireEvent.click(screen.getByTestId("v3-execute-fake"));
+	// D + E + F: one primary Generate CTA; no generation before it; no prominent fake control.
+	it("has a single Generate CTA, does not generate on load, and hides the fake-provider control", async () => {
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=GENERATE");
+		await screen.findByTestId("v3-preflight-ready");
+		expect(screen.getByTestId("v3-generate")).toBeInTheDocument();
+		// No live/fake generation happened just by loading the step.
+		expect(mockedExecute).not.toHaveBeenCalled();
+		// The fake-provider "test" button from the old UI is not in the primary path.
+		expect(screen.queryByTestId("v3-execute-fake")).not.toBeInTheDocument();
+		fireEvent.click(screen.getByTestId("v3-generate"));
+		// Provider is NOT configured, so the primary CTA routes through the fake lane internally.
 		await waitFor(() => expect(mockedExecute).toHaveBeenCalledWith("plan-v3", "FAKE_TEST"));
-		expect(await screen.findByTestId("v3-full-storyboard")).toHaveTextContent("Want a lighter routine?");
-		expect(screen.getByTestId("v3-projection-grid")).toHaveTextContent("8s projection");
+	});
 
-		fireEvent.click(screen.getByTestId("v3-open-approval"));
-		expect(await screen.findByTestId("v3-approval-dialog")).toBeInTheDocument();
+	it("routes the primary Generate CTA to the live provider when it is configured", async () => {
+		mockedStatus.mockResolvedValue({ lane: "text_assist", status: "READY", configured: true, provider_id: "qwen", model_id: "qwen-plus", execution_enabled: true, provider_calls: 0, credit_spend: 0, fake_provider_allowed: false });
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=GENERATE");
+		fireEvent.click(await screen.findByTestId("v3-generate"));
+		await waitFor(() => expect(mockedExecute).toHaveBeenCalledWith("plan-v3", "LIVE_TEXT_ASSIST"));
+	});
+
+	// Section 14: fail closed with operator language when Product Truth is missing.
+	it("fails closed with an operator message when there is no approved Product Truth", async () => {
+		mockedTruth.mockResolvedValue({ product_id: "p1", lineage: {}, facts: [], fact_count: 0, provider_calls: 0, mutations: 0 });
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=GENERATE");
+		const blocked = await screen.findByTestId("v3-preflight-blocked");
+		expect(blocked).toHaveTextContent(/Product Truth/i);
+		expect(screen.getByTestId("v3-blocker-action")).toBeInTheDocument();
+		// No Generate CTA is offered while blocked.
+		expect(screen.queryByTestId("v3-generate")).not.toBeInTheDocument();
+		expect(mockedExecute).not.toHaveBeenCalled();
+	});
+
+	// G: Review separates PASS vs NEEDS ATTENTION.
+	it("separates passed copy from copy that needs attention in Review", async () => {
+		mockedLandbank.mockResolvedValue(landbankResponse([
+			makeItem({ masterId: "m-pass", hardPass: true }),
+			makeItem({ masterId: "m-attn", hardPass: false }),
+		]));
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=REVIEW");
+		await screen.findByTestId("v3-review-summary");
+		expect(screen.getByTestId("v3-review-passed")).toHaveTextContent("1");
+		expect(screen.getByTestId("v3-review-attention")).toHaveTextContent("1");
+		// The needs-attention card explains itself in plain language.
+		expect(screen.getAllByTestId("v3-copy-warnings").length).toBeGreaterThan(0);
+	});
+
+	// H: approval requires all governed checks; grouped, never auto-checked.
+	it("requires all governed checks and groups them, never auto-approving", async () => {
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=REVIEW");
+		fireEvent.click(await screen.findByTestId("v3-open-approval"));
+		const dialog = await screen.findByTestId("v3-approval-dialog");
+		// Grouped into operator sections.
+		expect(within(dialog).getByText("Content")).toBeInTheDocument();
+		expect(within(dialog).getByText("Product safety")).toBeInTheDocument();
+		expect(within(dialog).getByText("Production fit")).toBeInTheDocument();
+		const approve = screen.getByTestId("v3-approve-master");
+		expect(approve).toBeDisabled();
 		for (const key of ["semantic_reviewed", "product_truth_reviewed", "formula_reviewed", "evidence_reviewed", "bridge_reviewed", "safety_reviewed", "duration_reviewed"]) {
 			fireEvent.click(screen.getByTestId(`v3-check-${key}`));
 		}
-		fireEvent.click(screen.getByTestId("v3-approve-master"));
+		expect(approve).toBeEnabled();
+		fireEvent.click(approve);
 		await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith(expect.objectContaining({ master_id: "master-v3", checklist: expect.objectContaining({ duration_reviewed: true }) })));
 	});
 
-	it("disables live Generate with AI when text_assist is not configured", async () => {
-		// Default beforeEach mock is NOT_CONFIGURED (fake test enabled).
-		renderPage();
-		fireEvent.change(await screen.findByTestId("v3-recipe-id"), { target: { value: "recipe-v3" } });
-		fireEvent.click(screen.getByTestId("v3-plan-assistant"));
-		expect(await screen.findByTestId("v3-generate-live")).toBeDisabled();
-		expect(screen.getByTestId("v3-execute-fake")).toBeEnabled();
-	});
-
-	it("enables live Generate with AI when text_assist is configured", async () => {
-		mockedStatus.mockResolvedValue({ lane: "text_assist", status: "READY", configured: true, provider_id: "qwen", model_id: "qwen-plus", execution_enabled: true, provider_calls: 0, credit_spend: 0, fake_provider_allowed: false });
-		renderPage();
-		fireEvent.change(await screen.findByTestId("v3-recipe-id"), { target: { value: "recipe-v3" } });
-		fireEvent.click(screen.getByTestId("v3-plan-assistant"));
-		expect(await screen.findByTestId("v3-generate-live")).toBeEnabled();
-	});
-
-	it("gates safe-delete to DRAFT but allows regenerate on any reviewable master", async () => {
-		const validatedWithRefs = { ...item, master: { ...item.master, resolved_component_refs: [{ entity_id: "component-v3", revision: 1 }] } };
-		mockedLandbank.mockResolvedValue({ source: "V3_COPY_REGISTER", product_id: "p1", items: [validatedWithRefs], total: 1, limit: 50, offset: 0, has_more: false, provider_calls: 0, v2_mixed: false, full_storyboard_first: true });
-		renderPage();
-		await screen.findByTestId("storyboard-landbank-v3-page");
-		await screen.findByTestId("v3-action-validate");
-		// Regenerate is allowed on any reviewable (non-terminal) master; Safe Delete stays DRAFT-only and fails closed here.
-		expect(await screen.findByTestId("v3-action-regenerate")).toBeInTheDocument();
-		expect(screen.queryByTestId("v3-action-delete")).not.toBeInTheDocument();
-	});
-
-	it("regenerates a draft component into a new revision without auto-approval", async () => {
-		mockedLandbank.mockResolvedValue({ source: "V3_COPY_REGISTER", product_id: "p1", items: [draftItem], total: 1, limit: 50, offset: 0, has_more: false, provider_calls: 0, v2_mixed: false, full_storyboard_first: true });
-		renderPage();
-		const regenerate = await screen.findByTestId("v3-action-regenerate");
-		const callsBefore = mockedLandbank.mock.calls.length;
-		fireEvent.click(regenerate);
-		// Provider is NOT_CONFIGURED by default, so the FE routes through the FAKE_TEST lane.
+	it("regenerates a copy without auto-approval", async () => {
+		mockedLandbank.mockResolvedValue(landbankResponse([makeItem()]));
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=REVIEW");
+		fireEvent.click(await screen.findByTestId("v3-action-regenerate"));
 		await waitFor(() => expect(mockedRegenerate).toHaveBeenCalledWith("component-v3", 1, "FAKE_TEST"));
-		// The landbank is reloaded so the new immutable revision surfaces; approval is never automatic.
-		await waitFor(() => expect(mockedLandbank.mock.calls.length).toBeGreaterThan(callsBefore));
 	});
 
-	it("safe-deletes an unreferenced draft only after explicit confirmation", async () => {
-		mockedLandbank.mockResolvedValue({ source: "V3_COPY_REGISTER", product_id: "p1", items: [draftItem], total: 1, limit: 50, offset: 0, has_more: false, provider_calls: 0, v2_mixed: false, full_storyboard_first: true });
-		renderPage();
-		fireEvent.click(await screen.findByTestId("v3-action-delete"));
-		// Explicit confirmation dialog is mandatory; no delete call fires before confirm.
-		expect(await screen.findByTestId("v3-delete-dialog")).toBeInTheDocument();
-		expect(mockedDelete).not.toHaveBeenCalled();
-		fireEvent.click(screen.getByTestId("v3-delete-confirm"));
-		await waitFor(() => expect(mockedDelete).toHaveBeenCalledWith("MASTER_STORYBOARD", "master-draft", 1));
-	});
-
-	it("renders per-projection materialization status chips in the approved landbank and never materializes on load", async () => {
-		mockedLandbank.mockResolvedValue(approvedLandbankResponse());
-		renderPage();
-		await screen.findByTestId("storyboard-landbank-v3-page");
-		// Status chips are driven by projection.materialization.status.
-		expect(await screen.findByTestId("v3-materialization-chip-proj-mat")).toHaveTextContent("MATERIALIZED");
-		expect(screen.getByTestId("v3-materialization-chip-proj-stale")).toHaveTextContent("STALE");
-		expect(screen.getByTestId("v3-materialization-chip-proj-fresh")).toHaveTextContent("NOT_MATERIALIZED");
-		expect(screen.getByTestId("v3-materialization-rollup")).toHaveTextContent("PARTIALLY_MATERIALIZED");
-		// Opening the landbank is read-only — no materialize call fires on initial render.
+	// I: Production Ready terminology maps to materialization states; read-only on load.
+	it("maps materialization to production language and never prepares on load", async () => {
+		mockedLandbank.mockResolvedValue(landbankResponse([approvedItem]));
+		mockedCapacity.mockResolvedValue(capacityFixture({ semantic_capacity: 1, production_capacity: 1 }));
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=PRODUCTION");
+		await screen.findByTestId("v3-production-summary");
+		expect(screen.getByTestId("v3-prepare-chip-proj-mat")).toHaveTextContent("Production Ready");
+		expect(screen.getByTestId("v3-prepare-chip-proj-stale")).toHaveTextContent("Needs Revalidation");
+		expect(screen.getByTestId("v3-prepare-chip-proj-fresh")).toHaveTextContent("Needs Preparation");
+		// A prepared projection cannot be re-prepared; stale + clean can.
+		expect(screen.getByTestId("v3-prepare-proj-mat")).toBeDisabled();
+		expect(screen.getByTestId("v3-prepare-proj-stale")).toBeEnabled();
+		expect(screen.getByTestId("v3-prepare-proj-fresh")).toBeEnabled();
 		expect(mockedMaterialize).not.toHaveBeenCalled();
 		expect(mockedMaterializeBulk).not.toHaveBeenCalled();
 	});
 
-	it("enables Materialize only for NOT_MATERIALIZED / STALE projections and calls it with the projection id + receipt id", async () => {
-		mockedLandbank.mockResolvedValue(approvedLandbankResponse());
-		renderPage();
-		// A MATERIALIZED projection cannot be re-materialized; clean + stale can.
-		expect(await screen.findByTestId("v3-materialize-proj-mat")).toBeDisabled();
-		expect(screen.getByTestId("v3-materialize-proj-stale")).toBeEnabled();
-		const fresh = screen.getByTestId("v3-materialize-proj-fresh");
-		expect(fresh).toBeEnabled();
-		const callsBefore = mockedLandbank.mock.calls.length;
-		fireEvent.click(fresh);
+	it("prepares an approved copy for production, receipt-bound", async () => {
+		mockedLandbank.mockResolvedValue(landbankResponse([approvedItem]));
+		mockedCapacity.mockResolvedValue(capacityFixture({ semantic_capacity: 1, production_capacity: 1 }));
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=PRODUCTION");
+		fireEvent.click(await screen.findByTestId("v3-prepare-proj-fresh"));
 		await waitFor(() => expect(mockedMaterialize).toHaveBeenCalledWith(expect.objectContaining({ projectionId: "proj-fresh", receiptId: "receipt-approved" })));
-		// The landbank is refetched so the new production status surfaces.
-		await waitFor(() => expect(mockedLandbank.mock.calls.length).toBeGreaterThan(callsBefore));
 	});
 
-	it("bulk-materializes only the clean NOT_MATERIALIZED projections, receipt-bound", async () => {
-		mockedLandbank.mockResolvedValue(approvedLandbankResponse());
-		renderPage();
-		const bulk = await screen.findByTestId("v3-materialize-all-clean");
-		// Only proj-fresh is NOT_MATERIALIZED (proj-mat is live, proj-stale is stale).
-		expect(bulk).toHaveTextContent("1");
-		fireEvent.click(bulk);
-		await waitFor(() => expect(mockedMaterializeBulk).toHaveBeenCalledWith({ items: [{ projectionId: "proj-fresh", receiptId: "receipt-approved" }] }));
+	it("hands off to Production Studio carrying the product id", async () => {
+		mockedLandbank.mockResolvedValue(landbankResponse([approvedItem]));
+		mockedCapacity.mockResolvedValue(capacityFixture({ semantic_capacity: 1, production_capacity: 1 }));
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=PRODUCTION");
+		fireEvent.click(await screen.findByTestId("v3-open-production-studio"));
+		expect(mockNavigate).toHaveBeenCalledWith("/production-studio?product_id=p1");
 	});
 
-	it("blocks materialization when the approved storyboard has no approval receipt", async () => {
-		mockedLandbank.mockResolvedValue(approvedLandbankResponse([{ ...approvedItem, approval_receipt: null }]));
-		renderPage();
-		// Without a receipt id, even the clean projection and the bulk action stay closed.
-		expect(await screen.findByTestId("v3-materialize-proj-fresh")).toBeDisabled();
-		expect(screen.getByTestId("v3-materialize-all-clean")).toBeDisabled();
-		expect(mockedMaterialize).not.toHaveBeenCalled();
+	// K: deep-link / refresh reconstructs the correct step from backend state.
+	it("reconstructs the Production step from approved copy on a bare deep-link", async () => {
+		mockedLandbank.mockResolvedValue(landbankResponse([approvedItem]));
+		mockedCapacity.mockResolvedValue(capacityFixture({ semantic_capacity: 1, production_capacity: 1 }));
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1");
+		// No explicit step in the URL — the page derives PRODUCTION from approved supply.
+		expect(await screen.findByTestId("v3-production-summary")).toBeInTheDocument();
+	});
+
+	it("reconstructs the Review step from reviewable copy on a bare deep-link", async () => {
+		mockedLandbank.mockResolvedValue(landbankResponse([makeItem()]));
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1");
+		expect(await screen.findByTestId("v3-review-summary")).toBeInTheDocument();
 	});
 });
