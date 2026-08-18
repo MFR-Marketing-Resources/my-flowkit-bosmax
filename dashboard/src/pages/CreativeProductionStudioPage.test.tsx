@@ -28,6 +28,7 @@ const reconcileAttempt = vi.fn();
 const retryAttempt = vi.fn();
 const decideItemQa = vi.fn();
 const fetchVideoModels = vi.fn();
+const fetchProductDetailMock = vi.fn();
 const copyV2State = vi.hoisted(() => ({ ready: true }));
 
 vi.mock("../api/creativeProduction", () => ({
@@ -59,6 +60,14 @@ vi.mock("../api/creativeProduction", () => ({
 vi.mock("../api/productionQueue", () => ({
 	fetchVideoModels: (...args: unknown[]) => fetchVideoModels(...args),
 }));
+
+vi.mock("../api/products", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../api/products")>();
+	return {
+		...actual,
+		fetchProductDetail: (...args: unknown[]) => fetchProductDetailMock(...args),
+	};
+});
 
 vi.mock(
 	"../components/copywriting/CopyArchitectureV2LaneCard",
@@ -102,6 +111,7 @@ vi.mock("../components/production-studio/CopySupplyPanel", () => ({
 }));
 
 import { collectProductionSessionResults } from "../utils/videoSessionResults";
+import type { Product } from "../types";
 import CreativeProductionStudioPage from "./CreativeProductionStudioPage";
 
 const COHORT_SHA =
@@ -1020,5 +1030,65 @@ describe("P6.3-R2 production plan state isolation", () => {
 		expect(screen.getByTestId("p6-readonly-plan-snapshot")).toHaveTextContent(
 			"8s SINGLE",
 		);
+	});
+
+	// Regression D: Production Studio consumes the ?product_id= deep link and
+	// auto-selects that exact product — no manual reselection required.
+	it("consumes the ?product_id= deep link and auto-selects that exact product", async () => {
+		fetchProductDetailMock.mockResolvedValue({
+			id: "product-a",
+			raw_product_title: "P6 Product A",
+			product_display_name: "P6 Product A",
+		} as unknown as Product);
+		window.history.replaceState({}, "", "/production-studio?product_id=product-a");
+		render(<CreativeProductionStudioPage />);
+		await waitFor(() =>
+			expect(fetchProductDetailMock).toHaveBeenCalledWith(
+				"product-a",
+				expect.anything(),
+			),
+		);
+		const selected = await screen.findByTestId("p6-selected-product");
+		expect(selected).toHaveTextContent("P6 Product A");
+		expect(screen.getByTestId("p6-allocation-summary")).toHaveTextContent(
+			"1 product",
+		);
+	});
+
+	// Regression E: a browser refresh re-mounts the page with the same URL; the
+	// product is resolved and preselected again from product_id.
+	it("preserves the deep-linked product across a refresh via the URL", async () => {
+		fetchProductDetailMock.mockResolvedValue({
+			id: "product-a",
+			raw_product_title: "P6 Product A",
+			product_display_name: "P6 Product A",
+		} as unknown as Product);
+		window.history.replaceState({}, "", "/production-studio?product_id=product-a");
+		const first = render(<CreativeProductionStudioPage />);
+		expect(await screen.findByTestId("p6-selected-product")).toHaveTextContent(
+			"P6 Product A",
+		);
+		first.unmount();
+		render(<CreativeProductionStudioPage />);
+		expect(await screen.findByTestId("p6-selected-product")).toHaveTextContent(
+			"P6 Product A",
+		);
+		expect(fetchProductDetailMock).toHaveBeenCalledTimes(2);
+	});
+
+	// Regression B (Production Studio side): an unresolvable deep-link id surfaces
+	// an operator error and never silently selects another product.
+	it("shows an operator error and selects nothing when the deep-linked id is invalid", async () => {
+		fetchProductDetailMock.mockRejectedValue(new Error("404 Not Found"));
+		window.history.replaceState({}, "", "/production-studio?product_id=ghost-id");
+		render(<CreativeProductionStudioPage />);
+		expect(await screen.findByTestId("p6-deeplink-error")).toHaveTextContent(
+			/couldn't open Production Studio/i,
+		);
+		expect(fetchProductDetailMock).toHaveBeenCalledWith(
+			"ghost-id",
+			expect.anything(),
+		);
+		expect(screen.queryByTestId("p6-selected-product")).not.toBeInTheDocument();
 	});
 });

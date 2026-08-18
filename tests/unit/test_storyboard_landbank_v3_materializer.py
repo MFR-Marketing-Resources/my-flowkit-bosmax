@@ -444,3 +444,72 @@ async def test_materialization_link_repairs_after_partial_failure(monkeypatch):
     assert repaired["link_status"] == "PRODUCTION_VALID"
     link = await supply_repo.get_link_for_blueprint(repaired["blueprint_id"], repaired["revision"])
     assert link is not None
+
+
+# --------------------------------------------------------------------------- #
+# Operator "Prepare for Production" flow guards (mission regression F / G / H)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_prepare_for_production_happy_path_full_authority_seed(monkeypatch):
+    """F: the operator "Prepare for Production" happy path succeeds on a fully
+    valid disposable authority seed — current Product Truth + aligned evidence +
+    taxonomy/strategy authority + a genuine APPROVED V3 human-approval receipt —
+    materializing to a V2 PRODUCTION_VALID blueprint with genuine human-approval
+    carry-forward provenance (never a fabricated authority)."""
+    svc, result, approval = await _approved_supply(monkeypatch, "prepare-happy")
+    receipt_id = approval["receipt"]["receipt_id"]
+    projection_id = await _first_projection_id(result["master"]["entity_id"])
+
+    out = await V3ToV2Materializer(v3=svc).materialize_projection(
+        projection_id=projection_id, receipt_id=receipt_id
+    )
+    assert out["status"] == "PRODUCTION_VALID"
+    assert out["blueprint"].status == "PRODUCTION_VALID"
+    provenance = {p.key: p.value for p in out["blueprint"].provenance}
+    assert provenance["approval_source"] == "V3_HUMAN_APPROVAL_CARRY_FORWARD"
+    assert provenance["v3_approval_receipt_id"] == receipt_id
+
+
+@pytest.mark.asyncio
+async def test_prepare_fails_closed_without_v2_taxonomy_authority(monkeypatch):
+    """G: Prepare for Production must FAIL CLOSED when the product lacks the V2
+    production taxonomy/strategy authority — the exact gap that blocked the
+    operator happy path before the seed was completed.  The V3 supply is genuinely
+    APPROVED, but removing the product's strategy-taxonomy authority makes the V2
+    production truth gate block, so materialization refuses (never a silent success
+    and never a fabricated authority)."""
+    svc, result, approval = await _approved_supply(monkeypatch, "prepare-no-taxonomy")
+    receipt_id = approval["receipt"]["receipt_id"]
+    projection_id = await _first_projection_id(result["master"]["entity_id"])
+
+    # Remove ONLY this product's strategy-taxonomy authority (isolated by
+    # product_id; other suites sharing the pytest session DB are untouched).
+    db = await get_db()
+    await db.execute(
+        "DELETE FROM product_strategy_taxonomy WHERE product_id=?",
+        ("prepare-no-taxonomy",),
+    )
+    await db.commit()
+
+    with pytest.raises(MaterializationError):
+        await V3ToV2Materializer(v3=svc).materialize_projection(
+            projection_id=projection_id, receipt_id=receipt_id
+        )
+
+
+@pytest.mark.asyncio
+async def test_prepare_for_production_spends_no_provider_credit(monkeypatch):
+    """H: the whole operator prepare flow — generate (fake lane) + human approval +
+    materialize to PRODUCTION_VALID — spends zero provider calls and zero credit."""
+    svc, result, approval = await _approved_supply(monkeypatch, "prepare-nocredit")
+    assert result["provider"]["mode"] == "FAKE_TEST"
+    assert result["provider_calls"] == 0
+    assert result["credit_spend"] == 0
+
+    receipt_id = approval["receipt"]["receipt_id"]
+    projection_id = await _first_projection_id(result["master"]["entity_id"])
+    out = await V3ToV2Materializer(v3=svc).materialize_projection(
+        projection_id=projection_id, receipt_id=receipt_id
+    )
+    # Materialization is a deterministic carry-forward — no provider, no credit.
+    assert out["status"] == "PRODUCTION_VALID"
