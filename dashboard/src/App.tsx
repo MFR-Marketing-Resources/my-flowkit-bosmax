@@ -103,7 +103,6 @@ const ALL_NAV_GROUPS = [
 		label: "COPYWRITING",
 		items: [
 			{ to: "/creative/storyboard-landbank-v3", icon: Sparkles, label: "Copywriting Landbank" },
-			{ to: "/creative/copy-intelligence", icon: Users, label: "Copy Intelligence" },
 		],
 	},
 	{

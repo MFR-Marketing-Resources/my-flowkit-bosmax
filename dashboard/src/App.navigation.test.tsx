@@ -3,6 +3,10 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { NAV_GROUPS, CopyRegistryRedirect } from "./App";
+import {
+	DEACTIVATED_SURFACE_REDIRECTS,
+	isDeactivatedSurfacePath,
+} from "./deactivatedSurfaces";
 
 afterEach(cleanup);
 
@@ -46,6 +50,26 @@ describe("Task B — navigation surface (Test A)", () => {
 		expect(landbankDoors.map((door) => door.group)).toEqual(["COPYWRITING"]);
 		// The legacy copy-registry route must never appear as a live nav door.
 		expect(allItems().some((item) => item.to === "/creative/copy-registry")).toBe(false);
+	});
+
+	// Copy Intelligence declutter — owner decision HIDE_FROM_NAV_KEEP_ROUTE.
+	it("removes Copy Intelligence from the normal COPYWRITING navigation", () => {
+		const copywriting = groupByLabel("COPYWRITING");
+		const labels = (copywriting?.items ?? []).map((item) => item.label);
+		expect(labels).not.toContain("Copy Intelligence");
+		// Copywriting Landbank stays the single primary door.
+		expect(copywriting?.items).toHaveLength(1);
+		// The Copy Intelligence surface must not appear as a nav door in ANY group.
+		expect(allItems().some((item) => item.to === "/creative/copy-intelligence")).toBe(false);
+	});
+
+	it("keeps /creative/copy-intelligence reachable — declutter is nav-only, not a redirect", () => {
+		// HIDE_FROM_NAV_KEEP_ROUTE: the surface leaves the sidebar but the route
+		// stays live, so it must NOT enter the deactivated-surface redirect map.
+		expect(isDeactivatedSurfacePath("/creative/copy-intelligence")).toBe(false);
+		expect(Object.keys(DEACTIVATED_SURFACE_REDIRECTS)).not.toContain(
+			"/creative/copy-intelligence",
+		);
 	});
 });
 
