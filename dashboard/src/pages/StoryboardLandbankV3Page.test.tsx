@@ -216,6 +216,17 @@ describe("Copywriting Landbank operator wizard", () => {
 		expect(within(advanced).getByTestId("v3-wps-mode")).toBeInTheDocument();
 	});
 
+	// Task B §5 / Test G (reverse) — the only Copy Authority door from Landbank lives
+	// under Advanced and carries the selected product id to the advanced V2 console.
+	it("bridges to Copy Authority from Advanced, carrying the product id", async () => {
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=SETUP");
+		await screen.findByTestId("storyboard-landbank-v3-page");
+		const advanced = screen.getByTestId("v3-setup-technical");
+		const bridge = within(advanced).getByTestId("v3-open-v2-register");
+		expect(bridge).toHaveTextContent(/Open Copy Authority/i);
+		expect(bridge).toHaveAttribute("href", "/creative/copy-authority?product_id=p1");
+	});
+
 	// B + C: system auto-creates/reuses the recipe and calculates the gap.
 	it("creates the recipe and calculates the gap automatically without a raw recipe id", async () => {
 		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=SETUP");
