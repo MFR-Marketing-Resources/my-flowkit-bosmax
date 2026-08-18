@@ -3781,16 +3781,20 @@ async def count_source_media_by_products(product_ids: list[str]) -> dict[str, di
 
 
 async def latest_open_review_drafts_by_products(product_ids: list[str]) -> dict[str, dict]:
-    """Batched {product_id: {'draft_id','review_status','updated_at'}} for the MOST RECENT
-    NON-committed review draft per product — feeds the All Products Draft column. 'Open' =
-    review_status != 'COMMITTED'; products with only committed drafts are omitted."""
+    """Batched {product_id: {'draft_id','review_status','updated_at','claim_gate',
+    'claim_tokens','readiness_status'}} for the MOST RECENT NON-committed review draft
+    per product — feeds the All Products Draft column. 'Open' = review_status !=
+    'COMMITTED'; products with only committed drafts are omitted. The claim_gate /
+    claim_tokens / readiness_status fields surface WHY a draft blocks approval so the
+    table can show the reason inline instead of an opaque NEEDS_REVISION badge."""
     db = await get_db()
     resolved = [str(v) for v in product_ids if str(v).strip()]
     if not resolved:
         return {}
     placeholders = ",".join("?" for _ in resolved)
     cur = await db.execute(
-        f"SELECT draft_id, product_id, review_status, updated_at "
+        f"SELECT draft_id, product_id, review_status, updated_at, "
+        f"claim_gate, claim_tokens_json, readiness_status "
         f"FROM product_intelligence_review_draft "
         f"WHERE product_id IN ({placeholders}) AND review_status != 'COMMITTED' "
         f"ORDER BY updated_at DESC",
@@ -3801,10 +3805,21 @@ async def latest_open_review_drafts_by_products(product_ids: list[str]) -> dict[
         pid = str(row["product_id"])
         if pid in out:  # ORDER BY updated_at DESC -> first seen is the most recent
             continue
+        # Parse the flagged claim tokens (JSON list) so the table can render e.g.
+        # "Claim: rawat" instead of leaving NEEDS_REVISION unexplained. Malformed
+        # JSON degrades to no reason, never an error.
+        try:
+            _tokens = json.loads(row["claim_tokens_json"]) if row["claim_tokens_json"] else []
+            claim_tokens = [str(t) for t in _tokens if t] if isinstance(_tokens, list) else []
+        except (ValueError, TypeError):
+            claim_tokens = []
         out[pid] = {
             "draft_id": row["draft_id"],
             "review_status": row["review_status"],
             "updated_at": row["updated_at"],
+            "claim_gate": row["claim_gate"],
+            "claim_tokens": claim_tokens,
+            "readiness_status": row["readiness_status"],
         }
     return out
 

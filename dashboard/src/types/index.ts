@@ -1390,6 +1390,10 @@ export interface Product {
 		draft_id: string;
 		review_status: string;
 		updated_at?: string | null;
+		/** Why the draft blocks approval — surfaced inline so NEEDS_REVISION isn't opaque. */
+		claim_gate?: string | null;
+		claim_tokens?: string[] | null;
+		readiness_status?: string | null;
 	} | null;
 	/**
 	 * Product Truth operator projection (PI snapshot/draft authority only).

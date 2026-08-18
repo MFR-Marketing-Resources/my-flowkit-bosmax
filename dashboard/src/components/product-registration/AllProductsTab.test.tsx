@@ -301,6 +301,39 @@ describe("All Products Product Truth operator surface", () => {
 		);
 	});
 
+	it("Review Draft cell surfaces the NEEDS_REVISION blocker reason (claim tokens)", async () => {
+		vi.mocked(fetchProductRegistry).mockResolvedValue({
+			items: [
+				{
+					...baseItem,
+					id: "blocked",
+					raw_product_title: "Claim blocked product",
+					product_display_name: "Claim blocked product",
+					open_review_draft: {
+						draft_id: "d-blocked",
+						review_status: "NEEDS_REVISION",
+						claim_gate: "CLAIM_BLOCKED",
+						claim_tokens: ["rawat", "penyakit"],
+						readiness_status: "CLAIM_BLOCKED",
+					},
+				} as never,
+			],
+			total_count: 1,
+			product_truth_summary: {
+				APPROVED: 1,
+				NEEDS_REVIEW: 0,
+				ACTION_REQUIRED: 0,
+				NOT_STARTED: 0,
+				UPDATE_PENDING: 0,
+			},
+		} as never);
+
+		render(<AllProductsTab />);
+
+		const reason = await screen.findByTestId("review-draft-blocker-reason");
+		expect(reason).toHaveTextContent("Claim: rawat, penyakit");
+	});
+
 	it("maps Product Truth row action labels and opens Intelligence via callback", async () => {
 		const onOpen = vi.fn();
 		vi.mocked(fetchProductRegistry).mockResolvedValue({

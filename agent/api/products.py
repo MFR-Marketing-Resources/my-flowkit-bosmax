@@ -966,6 +966,10 @@ async def _list_products_response(
                 "draft_id": actionable.get("draft_id"),
                 "review_status": actionable.get("review_status"),
                 "updated_at": actionable.get("updated_at"),
+                # Blocker reason surfaced inline in All Products (why NEEDS_REVISION).
+                "claim_gate": actionable.get("claim_gate"),
+                "claim_tokens": actionable.get("claim_tokens") or [],
+                "readiness_status": actionable.get("readiness_status"),
             }
         else:
             item["open_review_draft"] = None
