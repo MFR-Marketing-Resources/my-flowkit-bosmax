@@ -1385,12 +1385,28 @@ export interface Product {
 	/** Count of uploaded source images / videos (product_source_media). */
 	source_media_image_count?: number | null;
 	source_media_video_count?: number | null;
-	/** The most recent NON-committed review draft, if any (feeds the Draft column). */
+	/** The most recent NON-committed review draft, if any (feeds the Review Draft column). */
 	open_review_draft?: {
 		draft_id: string;
 		review_status: string;
 		updated_at?: string | null;
 	} | null;
+	/**
+	 * Product Truth operator projection (PI snapshot/draft authority only).
+	 * Independent of copy-evidence / visual readiness.
+	 */
+	product_truth_status?:
+		| "APPROVED"
+		| "NEEDS_REVIEW"
+		| "ACTION_REQUIRED"
+		| "NOT_STARTED"
+		| string
+		| null;
+	/** True when APPROVED snapshot exists AND a newer non-terminal revision draft is open. */
+	product_truth_update_pending?: boolean | null;
+	product_truth_approved_snapshot_version?: number | null;
+	/** Operator CTA label for the Product Truth action. */
+	product_truth_action_label?: string | null;
 	visual_readiness?: ProductVisualReadiness;
 	taxonomy_conflict?: boolean;
 	taxonomy_conflict_reason?: string | null;
@@ -1678,6 +1694,15 @@ export interface ProductCatalogResponse {
 		URL_MISSING: number;
 		DOWNLOAD_FAILED: number;
 		NOT_AVAILABLE: number;
+	};
+	/** Full scoped-catalog Product Truth distribution (pre-pagination). */
+	product_truth_summary?: {
+		APPROVED: number;
+		NEEDS_REVIEW: number;
+		ACTION_REQUIRED: number;
+		NOT_STARTED: number;
+		/** Secondary count nested under APPROVED (update pending). */
+		UPDATE_PENDING: number;
 	};
 }
 

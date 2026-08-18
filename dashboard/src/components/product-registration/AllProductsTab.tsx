@@ -36,6 +36,15 @@ const DRAFT_BADGE: Record<string, string> = {
 	NEEDS_HUMAN_REVIEW: "bg-amber-500/20 text-amber-300",
 	BLOCKED: "bg-red-500/20 text-red-300",
 	DRAFT: "bg-sky-500/20 text-sky-300",
+	READY_FOR_REVIEW: "bg-amber-500/20 text-amber-300",
+	NEEDS_REVISION: "bg-red-500/20 text-red-300",
+};
+
+const PRODUCT_TRUTH_BADGE: Record<string, string> = {
+	APPROVED: "bg-emerald-500/20 text-emerald-300",
+	NEEDS_REVIEW: "bg-amber-500/20 text-amber-300",
+	ACTION_REQUIRED: "bg-red-500/20 text-red-300",
+	NOT_STARTED: "bg-slate-600/20 text-slate-400",
 };
 
 // Filter option sets. "" = no filter. Status maps to lifecycle; the rest map 1:1
@@ -48,6 +57,14 @@ const STATUS_OPTIONS = [
 const FRESHNESS_OPTIONS = ["FRESH", "STALE", "UNKNOWN"];
 const RISK_OPTIONS = ["LOW", "MEDIUM", "HIGH"];
 const IMAGE_OPTIONS = ["READY", "MISSING"];
+const PRODUCT_TRUTH_OPTIONS = [
+	{ value: "", label: "All" },
+	{ value: "APPROVED", label: "Approved" },
+	{ value: "APPROVED_UPDATE_PENDING", label: "Approved — Update Pending" },
+	{ value: "NEEDS_REVIEW", label: "Needs Review" },
+	{ value: "ACTION_REQUIRED", label: "Action Required" },
+	{ value: "NOT_STARTED", label: "Not Started" },
+];
 
 const PAGE_SIZE = 50;
 
@@ -212,7 +229,10 @@ const LABEL_CLASS =
 	"text-[9px] font-bold uppercase tracking-widest text-slate-500 mb-1";
 
 interface Props {
-	onOpenProduct?: (productId: string) => void;
+	onOpenProduct?: (
+		productId: string,
+		opts?: { tab?: "EDIT" | "INTELLIGENCE" | "CREATIVE" | "VISUAL" },
+	) => void;
 }
 
 export default function AllProductsTab({ onOpenProduct }: Props) {
@@ -222,6 +242,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	const [freshness, setFreshness] = useState("");
 	const [risk, setRisk] = useState("");
 	const [image, setImage] = useState("");
+	const [productTruth, setProductTruth] = useState("");
 	const [cluster, setCluster] = useState("");
 	const [productType, setProductType] = useState("");
 	const [offset, setOffset] = useState(0);
@@ -275,6 +296,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 		(freshness ? 1 : 0) +
 		(risk ? 1 : 0) +
 		(image ? 1 : 0) +
+		(productTruth ? 1 : 0) +
 		(cluster ? 1 : 0) +
 		(productType ? 1 : 0) +
 		(debouncedSearch.trim() ? 1 : 0);
@@ -285,6 +307,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 		setFreshness("");
 		setRisk("");
 		setImage("");
+		setProductTruth("");
 		setCluster("");
 		setProductType("");
 		setOffset(0);
@@ -316,6 +339,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 				claimRiskLevel: risk || undefined,
 				freshness: freshness || undefined,
 				image: image || undefined,
+				productTruth: productTruth || undefined,
 				// Status = lifecycle. Active excludes archived (default); Archived shows
 				// only archived; All shows both.
 				includeArchived: status === "ALL",
@@ -332,7 +356,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 		} finally {
 			if (requestControllerRef.current === controller) setLoading(false);
 		}
-	}, [debouncedSearch, cluster, productType, risk, freshness, image, status, offset]);
+	}, [debouncedSearch, cluster, productType, risk, freshness, image, productTruth, status, offset]);
 
 	useEffect(() => {
 		void fetchRows();
@@ -386,6 +410,55 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 					</button>
 				</div>
 			)}
+
+			{/* Product Truth summary — full scoped catalog, not page rows */}
+			{(() => {
+				const pts = data?.product_truth_summary;
+				if (!pts) return null;
+				return (
+					<div
+						className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+						data-testid="product-truth-summary"
+					>
+						{(
+							[
+								["APPROVED", "Approved", pts.APPROVED ?? 0],
+								["NEEDS_REVIEW", "Needs Review", pts.NEEDS_REVIEW ?? 0],
+								["ACTION_REQUIRED", "Action Required", pts.ACTION_REQUIRED ?? 0],
+								["NOT_STARTED", "Not Started", pts.NOT_STARTED ?? 0],
+							] as const
+						).map(([value, label, count]) => (
+							<button
+								key={value}
+								type="button"
+								onClick={() => {
+									setProductTruth(value);
+									setOffset(0);
+								}}
+								className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+									productTruth === value
+										? "border-indigo-500/50 bg-indigo-500/10"
+										: "border-slate-800 bg-slate-900/50 hover:border-slate-700"
+								}`}
+								data-testid={`product-truth-summary-${value.toLowerCase()}`}
+							>
+								<div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">
+									{label}
+								</div>
+								<div className="mt-0.5 text-lg font-bold tabular-nums text-white">{count}</div>
+								{value === "APPROVED" && (pts.UPDATE_PENDING ?? 0) > 0 ? (
+									<div
+										className="mt-0.5 text-[10px] font-semibold text-amber-300"
+										data-testid="product-truth-summary-update-pending"
+									>
+										Update Pending: {pts.UPDATE_PENDING}
+									</div>
+								) : null}
+							</button>
+						))}
+					</div>
+				);
+			})()}
 
 			{/* Filter bar */}
 			<div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
@@ -457,6 +530,25 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 							{IMAGE_OPTIONS.map((o) => (
 								<option key={o} value={o}>
 									{o}
+								</option>
+							))}
+						</select>
+					</div>
+					<div className="flex flex-col">
+						<span className={LABEL_CLASS}>Product Truth</span>
+						<select
+							value={productTruth}
+							onChange={(e) => {
+								setProductTruth(e.target.value);
+								setOffset(0);
+							}}
+							className={`${SELECT_CLASS} w-44`}
+							data-testid="product-truth-filter"
+							aria-label="Product Truth filter"
+						>
+							{PRODUCT_TRUTH_OPTIONS.map((o) => (
+								<option key={o.value || "all"} value={o.value}>
+									{o.label}
 								</option>
 							))}
 						</select>
@@ -571,7 +663,8 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Status</th>
 									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Visual</th>
 									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Freshness</th>
-									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Draft</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Product Truth</th>
+									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Review Draft</th>
 									<th scope="col" className="whitespace-nowrap px-3 py-2 text-left font-semibold">Actions</th>
 								</tr>
 							</thead>
@@ -753,6 +846,38 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 													<span className="text-[9px] text-slate-600">—</span>
 												)}
 											</td>
+											<td
+												className="whitespace-nowrap px-3 py-3 align-top"
+												data-testid="product-truth-cell"
+											>
+												{(() => {
+													const pt = String(product.product_truth_status || "").toUpperCase();
+													if (!pt) {
+														return <span className="text-[9px] text-slate-600">—</span>;
+													}
+													return (
+														<div className="flex flex-col items-start gap-0.5">
+															<span
+																className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+																	PRODUCT_TRUTH_BADGE[pt] ||
+																	"bg-slate-600/20 text-slate-400"
+																}`}
+																data-testid="product-truth-status"
+															>
+																{pt.replace(/_/g, " ")}
+															</span>
+															{product.product_truth_update_pending ? (
+																<span
+																	className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-amber-500/15 text-amber-300"
+																	data-testid="product-truth-update-pending"
+																>
+																	Update pending
+																</span>
+															) : null}
+														</div>
+													);
+												})()}
+											</td>
 											<td className="whitespace-nowrap px-3 py-3 align-top">
 												{draft ? (
 													<span
@@ -768,17 +893,32 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 												)}
 											</td>
 											<td className="whitespace-nowrap px-3 py-3 align-top">
-												<button
-													type="button"
-													onClick={(e) => {
-														e.stopPropagation();
-														onOpenProduct?.(product.id);
-													}}
-													disabled={!onOpenProduct}
-													className="px-2 py-1 rounded-lg bg-sky-600/20 hover:bg-sky-600/40 disabled:opacity-40 disabled:cursor-not-allowed text-sky-300 text-[9px] font-bold uppercase tracking-widest transition-all"
-												>
-													Open
-												</button>
+												<div className="flex flex-col items-start gap-1">
+													<button
+														type="button"
+														onClick={(e) => {
+															e.stopPropagation();
+															onOpenProduct?.(product.id);
+														}}
+														disabled={!onOpenProduct}
+														className="px-2 py-1 rounded-lg bg-sky-600/20 hover:bg-sky-600/40 disabled:opacity-40 disabled:cursor-not-allowed text-sky-300 text-[9px] font-bold uppercase tracking-widest transition-all"
+														data-testid="table-open-product"
+													>
+														Open
+													</button>
+													<button
+														type="button"
+														onClick={(e) => {
+															e.stopPropagation();
+															onOpenProduct?.(product.id, { tab: "INTELLIGENCE" });
+														}}
+														disabled={!onOpenProduct}
+														className="px-2 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/40 disabled:opacity-40 disabled:cursor-not-allowed text-emerald-300 text-[9px] font-bold uppercase tracking-widest transition-all"
+														data-testid="table-product-truth-action"
+													>
+														{product.product_truth_action_label || "Set Up Product Truth"}
+													</button>
+												</div>
 											</td>
 										</tr>
 									);

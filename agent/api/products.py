@@ -711,6 +711,7 @@ async def _list_products_response(
     copy_route: str | None = None,
     claim_gate: str | None = None,
     intelligence_confidence: str | None = None,
+    product_truth: str | None = None,
     sort: str | None = None,
     catalog_view: str | None = None,
     limit: int = 50,
@@ -851,6 +852,33 @@ async def _list_products_response(
             == _normalized(intelligence_confidence)
         ]
 
+    # Product Truth operator projection (set-based, PI authority only).
+    # Applied after non-PT filters so summary/filter cover the full scoped catalog,
+    # never the current 50-row page, and never via N+1 PI lookups.
+    from agent.services.product_truth_catalog_projection import (
+        attach_product_truth_projections,
+        matches_product_truth_filter,
+        summarize_product_truth,
+    )
+
+    scope_ids = [str(p.get("id") or "") for p in filtered_all if p.get("id")]
+    approved_by_product = await crud.latest_approved_product_intelligence_snapshots_by_products(
+        scope_ids
+    )
+    drafts_by_product = await crud.latest_actionable_review_drafts_by_products(scope_ids)
+    attach_product_truth_projections(
+        filtered_all,
+        approved_by_product=approved_by_product,
+        drafts_by_product=drafts_by_product,
+    )
+    if product_truth:
+        filtered_all = [
+            product
+            for product in filtered_all
+            if matches_product_truth_filter(product, product_truth)
+        ]
+    product_truth_summary = summarize_product_truth(filtered_all)
+
     if sort:
         filtered_all = sorted(
             filtered_all,
@@ -948,6 +976,8 @@ async def _list_products_response(
         "items": enriched,
         "facets": facets,
         "image_readiness_summary": image_readiness_summary,
+        # Full scoped-catalog Product Truth distribution (pre-pagination).
+        "product_truth_summary": product_truth_summary,
     }
 
 
@@ -1271,6 +1301,14 @@ async def list_products(
     copy_route: str | None = Query(default=None),
     claim_gate: str | None = Query(default=None),
     intelligence_confidence: str | None = Query(default=None),
+    product_truth: str | None = Query(
+        default=None,
+        description=(
+            "Product Truth operator filter: ALL | APPROVED | APPROVED_UPDATE_PENDING | "
+            "NEEDS_REVIEW | ACTION_REQUIRED | NOT_STARTED. Derived from PI snapshot/draft "
+            "authority only (not copy-evidence)."
+        ),
+    ),
     sort: str | None = Query(default=None),
     view: str | None = Query(default=None),
     limit: int = Query(default=50),
@@ -1296,6 +1334,7 @@ async def list_products(
         copy_route=copy_route,
         claim_gate=claim_gate,
         intelligence_confidence=intelligence_confidence,
+        product_truth=product_truth,
         sort=sort,
         catalog_view=view,
         limit=limit,

@@ -836,6 +836,9 @@ domains:
       - dashboard/src/components/product-registration/BulkFastMossConvertTab.tsx
       - dashboard/src/components/product-registration/BulkFastMossConvertTab.test.tsx
       - dashboard/src/components/product-registration/AllProductsTab.tsx
+      - agent/services/product_truth_catalog_projection.py
+      - tests/unit/test_product_truth_catalog_projection.py
+      - tests/api/test_product_truth_catalog_api.py
       - dashboard/src/api/productVisualOnboarding.ts
       - dashboard/src/api/productTruthLock.ts
       - dashboard/src/components/product-registration/ProductOriginalSourceReupload.tsx
