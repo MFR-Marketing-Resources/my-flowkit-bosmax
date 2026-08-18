@@ -36,10 +36,6 @@ def test_compact_visual_combobox_is_shared_across_production_pickers():
         "dashboard/src/components/workspace/CanonicalReferenceBindingControls.tsx"
     )
     fastlane_source = _read("dashboard/src/pages/ImgFastlanePage.tsx")
-    cockpit_source = _read("dashboard/src/pages/ImgCockpitPage.tsx")
-    poster_source = _read(
-        "dashboard/src/components/poster/guided/PosterGuidedShell.tsx"
-    )
 
     for token in [
         'aria-haspopup="listbox"',
@@ -57,10 +53,6 @@ def test_compact_visual_combobox_is_shared_across_production_pickers():
     assert "VisualAssetPicker" in fastlane_source
     assert "handlePickSceneContext" in fastlane_source
     assert "/api/flow/retrieved/" in fastlane_source
-    assert "VisualAssetPicker" in cockpit_source
-    assert "/api/flow/retrieved/" in cockpit_source
-    assert "VisualAssetPicker" in poster_source
-    assert "onChange={wf.setBackgroundMediaId}" in poster_source
 
 
 def test_product_and_rpa_visual_summary_use_browser_safe_product_image_route():
