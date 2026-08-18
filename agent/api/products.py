@@ -945,17 +945,27 @@ async def _list_products_response(
     enriched = await attach_product_strategy_taxonomies(enriched)
 
     # All Products display columns (batched over just this page): freshness roll-up,
-    # source-media unit counts (Image(u)/Video(u)), and any open review draft (Draft).
+    # source-media unit counts (Image(u)/Video(u)), and actionable Review Draft only.
+    # Review Draft reuses the set-based latest_actionable_review_drafts_by_products
+    # result already loaded for Product Truth (DRAFT | READY_FOR_REVIEW | NEEDS_REVISION).
+    # Terminal APPROVED/REJECTED/SUPERSEDED/COMMITTED drafts must never paint here.
     page_ids = [str(item.get("id") or "") for item in enriched if item.get("id")]
     media_counts = await crud.count_source_media_by_products(page_ids)
-    open_drafts = await crud.latest_open_review_drafts_by_products(page_ids)
     for item in enriched:
         pid = str(item.get("id") or "")
         item["freshness"] = _freshness_of(item)
         counts = media_counts.get(pid) or {}
         item["source_media_image_count"] = int(counts.get("image", 0) or 0)
         item["source_media_video_count"] = int(counts.get("video", 0) or 0)
-        item["open_review_draft"] = open_drafts.get(pid)
+        actionable = drafts_by_product.get(pid)
+        if actionable:
+            item["open_review_draft"] = {
+                "draft_id": actionable.get("draft_id"),
+                "review_status": actionable.get("review_status"),
+                "updated_at": actionable.get("updated_at"),
+            }
+        else:
+            item["open_review_draft"] = None
 
     # One shared visual onboarding read model for All Products.  It is strictly
     # batched over the current page and never materializes URLs or calls a
