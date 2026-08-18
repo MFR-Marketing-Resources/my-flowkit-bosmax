@@ -95,9 +95,6 @@ vi.mock(
 	},
 );
 
-vi.mock("../components/CreativeSupplyFactoryPanel", () => ({
-	default: () => <div data-testid="p7-supply-preserved">Creative supply</div>,
-}));
 
 vi.mock(
 	"../components/production-studio/ProductTreatmentFactoryPanel",
