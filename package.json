@@ -11,7 +11,11 @@
     "test:copy-register-v2-lanes-browser": "node scripts/validate-copy-register-v2-lanes-browser.mjs",
     "test:product-data-network": "node scripts/test-product-data-loading-network.mjs",
     "test:selector-registry": "node scripts/test-flow-selector-registry.js",
-    "stamp:extension": "node scripts/stamp-extension-build.mjs"
+    "stamp:extension": "node scripts/stamp-extension-build.mjs",
+    "browser-uat:health": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/browser-uat/browser-uat-health.ps1",
+    "browser-uat:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/browser-uat/start-browser-uat.ps1",
+    "browser-uat:smoke": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/browser-uat/bosmax-smoke-uat.ps1",
+    "browser-uat:click-path": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/browser-uat/bosmax-click-path-uat.ps1"
   },
   "devDependencies": {
     "dependency-cruiser": "^17.4.2",

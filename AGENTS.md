@@ -159,3 +159,8 @@ Non-negotiable summary:
 - No runtime claims without runtime evidence.
 - No credit-spending generation without explicit user approval.
 - Stop if scope expands.
+
+## Browser UAT (interactive click-path)
+
+Canonical contract: `docs/BROWSER_UAT_RUNTIME.md`.
+Before reporting browser UAT unavailable, run `scripts/browser-uat/browser-uat-health.ps1` then `start-browser-uat.ps1`. Prefer CDP `http://127.0.0.1:9222` + Playwright fallback — never block on chrome://inspect consent.
