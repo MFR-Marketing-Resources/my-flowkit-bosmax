@@ -1175,6 +1175,88 @@ async def get_latest_approved_product_intelligence_snapshot(product_id: str) -> 
     return dict(row) if row else None
 
 
+async def latest_approved_product_intelligence_snapshots_by_products(
+    product_ids: list[str],
+) -> dict[str, dict]:
+    """Set-based latest APPROVED Product Intelligence snapshot per product.
+
+    Returns lightweight rows only (no full Product Truth payload). Used by the
+    Smart Registration catalog Product Truth projection — never N+1.
+    """
+    db = await get_db()
+    resolved = [str(v) for v in product_ids if str(v).strip()]
+    if not resolved:
+        return {}
+    placeholders = ",".join("?" for _ in resolved)
+    cur = await db.execute(
+        f"""
+        SELECT snapshot_id, product_id, version, status, approved_at, created_at, updated_at
+        FROM product_intelligence_snapshot
+        WHERE product_id IN ({placeholders}) AND status='APPROVED'
+        ORDER BY version DESC, approved_at DESC, created_at DESC, snapshot_id DESC
+        """,
+        resolved,
+    )
+    out: dict[str, dict] = {}
+    for row in await cur.fetchall():
+        pid = str(row["product_id"])
+        if pid in out:
+            continue
+        out[pid] = {
+            "snapshot_id": row["snapshot_id"],
+            "product_id": pid,
+            "version": row["version"],
+            "status": row["status"],
+            "approved_at": row["approved_at"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+    return out
+
+
+async def latest_actionable_review_drafts_by_products(
+    product_ids: list[str],
+) -> dict[str, dict]:
+    """Set-based latest NON-TERMINAL PI review draft per product.
+
+    Non-terminal = DRAFT | READY_FOR_REVIEW | NEEDS_REVISION.
+    Rejected / superseded / approved drafts never win current status.
+    """
+    db = await get_db()
+    resolved = [str(v) for v in product_ids if str(v).strip()]
+    if not resolved:
+        return {}
+    placeholders = ",".join("?" for _ in resolved)
+    cur = await db.execute(
+        f"""
+        SELECT draft_id, product_id, review_status, claim_gate, readiness_status,
+               updated_at, created_at, revision_of_snapshot_id, revision_of_draft_id
+        FROM product_intelligence_review_draft
+        WHERE product_id IN ({placeholders})
+          AND review_status IN ('DRAFT', 'READY_FOR_REVIEW', 'NEEDS_REVISION')
+        ORDER BY updated_at DESC, created_at DESC, draft_id DESC
+        """,
+        resolved,
+    )
+    out: dict[str, dict] = {}
+    for row in await cur.fetchall():
+        pid = str(row["product_id"])
+        if pid in out:
+            continue
+        out[pid] = {
+            "draft_id": row["draft_id"],
+            "product_id": pid,
+            "review_status": row["review_status"],
+            "claim_gate": row["claim_gate"],
+            "readiness_status": row["readiness_status"],
+            "updated_at": row["updated_at"],
+            "created_at": row["created_at"],
+            "revision_of_snapshot_id": row["revision_of_snapshot_id"],
+            "revision_of_draft_id": row["revision_of_draft_id"],
+        }
+    return out
+
+
 async def create_product_intelligence_field_provenance(
     snapshot_id: str,
     product_id: str,

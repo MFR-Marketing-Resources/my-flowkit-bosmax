@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fetchProductRegistry, fetchProductStrategyTypeRegistry } from "../../api/products";
@@ -165,5 +165,154 @@ describe("All Products per-product visual scope", () => {
 			"src",
 			"/api/product-visual-onboarding/pending-manual-product/cutout/preview/original",
 		);
+	});
+});
+
+
+describe("All Products Product Truth operator surface", () => {
+	afterEach(() => {
+		cleanup();
+		vi.resetAllMocks();
+	});
+
+	beforeEach(() => {
+		vi.mocked(fetchProductStrategyTypeRegistry).mockResolvedValue({
+			items: [],
+			clusters: [],
+		} as never);
+	});
+
+	const baseItem = {
+		id: "sambal",
+		source: "MANUAL",
+		raw_product_title: "Sambal Nyet Berapi by Khairulaming",
+		product_display_name: "Sambal Nyet Berapi by Khairulaming",
+		product_short_name: "Sambal Nyet",
+		lifecycle_status: "ACTIVE",
+		product_truth_status: "APPROVED",
+		product_truth_update_pending: false,
+		product_truth_action_label: "View Product Truth",
+		product_truth_approved_snapshot_version: 3,
+		open_review_draft: null,
+		visual_readiness: {
+			visual_canvas_label: "1000×1000 px",
+			canonical_media_status: "AVAILABLE",
+			cutout_status: "NOT_PREPARED",
+			cutout_review_status: "NOT_STARTED",
+			visual_grounding_status: "VISUAL_GROUNDING_READY_FALLBACK",
+			can_start_canva_cutout: true,
+		},
+	};
+
+	it("renders Product Truth badges, summary, filter, and keeps Review Draft separate", async () => {
+		vi.mocked(fetchProductRegistry).mockResolvedValue({
+			items: [
+				baseItem as never,
+				{
+					...baseItem,
+					id: "pending",
+					raw_product_title: "Pending update product",
+					product_display_name: "Pending update product",
+					product_truth_update_pending: true,
+					product_truth_action_label: "Review Update",
+				} as never,
+				{
+					...baseItem,
+					id: "review",
+					raw_product_title: "Needs review product",
+					product_display_name: "Needs review product",
+					product_truth_status: "NEEDS_REVIEW",
+					product_truth_action_label: "Review Product Truth",
+					open_review_draft: {
+						draft_id: "d1",
+						review_status: "READY_FOR_REVIEW",
+					},
+				} as never,
+			],
+			total_count: 3,
+			product_truth_summary: {
+				APPROVED: 2,
+				NEEDS_REVIEW: 1,
+				ACTION_REQUIRED: 0,
+				NOT_STARTED: 0,
+				UPDATE_PENDING: 1,
+			},
+		} as never);
+
+		render(<AllProductsTab />);
+
+		expect(await screen.findByTestId("product-truth-summary")).toBeInTheDocument();
+		expect(screen.getByTestId("product-truth-summary-approved")).toHaveTextContent("2");
+		expect(screen.getByTestId("product-truth-summary-update-pending")).toHaveTextContent(
+			"Update Pending: 1",
+		);
+		expect(screen.getByTestId("product-truth-filter")).toBeInTheDocument();
+		expect(screen.getByRole("columnheader", { name: "Product Truth" })).toBeInTheDocument();
+		expect(screen.getByRole("columnheader", { name: "Review Draft" })).toBeInTheDocument();
+		expect(screen.queryByRole("columnheader", { name: /^Draft$/i })).not.toBeInTheDocument();
+
+		const statuses = await screen.findAllByTestId("product-truth-status");
+		expect(statuses.some((el) => el.textContent?.includes("APPROVED"))).toBe(true);
+		expect(statuses.some((el) => el.textContent?.includes("NEEDS REVIEW"))).toBe(true);
+		expect(screen.getByTestId("product-truth-update-pending")).toHaveTextContent(
+			"Update pending",
+		);
+	});
+
+	it("maps Product Truth row action labels and opens Intelligence via callback", async () => {
+		const onOpen = vi.fn();
+		vi.mocked(fetchProductRegistry).mockResolvedValue({
+			items: [
+				{
+					...baseItem,
+					id: "sambal",
+					product_truth_action_label: "View Product Truth",
+				} as never,
+			],
+			total_count: 1,
+			product_truth_summary: {
+				APPROVED: 1,
+				NEEDS_REVIEW: 0,
+				ACTION_REQUIRED: 0,
+				NOT_STARTED: 0,
+				UPDATE_PENDING: 0,
+			},
+		} as never);
+
+		render(<AllProductsTab onOpenProduct={onOpen} />);
+
+		const action = await screen.findByTestId("table-product-truth-action");
+		expect(action).toHaveTextContent("View Product Truth");
+		fireEvent.click(action);
+		expect(onOpen).toHaveBeenCalledWith("sambal", { tab: "INTELLIGENCE" });
+
+		fireEvent.click(screen.getByTestId("table-open-product"));
+		expect(onOpen).toHaveBeenCalledWith("sambal");
+	});
+
+	it("applies Product Truth filter when a summary card is clicked", async () => {
+		vi.mocked(fetchProductRegistry).mockResolvedValue({
+			items: [baseItem as never],
+			total_count: 1,
+			product_truth_summary: {
+				APPROVED: 1,
+				NEEDS_REVIEW: 0,
+				ACTION_REQUIRED: 0,
+				NOT_STARTED: 0,
+				UPDATE_PENDING: 0,
+			},
+		} as never);
+
+		render(<AllProductsTab />);
+		await screen.findByTestId("product-truth-summary");
+		vi.mocked(fetchProductRegistry).mockClear();
+		fireEvent.click(screen.getByTestId("product-truth-summary-approved"));
+		await vi.waitFor(() => {
+			expect(fetchProductRegistry).toHaveBeenCalled();
+		});
+		const lastCall = vi.mocked(fetchProductRegistry).mock.calls.at(-1)?.[0] as {
+			productTruth?: string;
+		};
+		expect(lastCall?.productTruth).toBe("APPROVED");
 	});
 });

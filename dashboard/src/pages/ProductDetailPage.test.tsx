@@ -158,9 +158,9 @@ const taxonomyResolutionFixture: CopywritingTaxonomyResolution = {
 	candidates: [taxonomyRecord],
 };
 
-function renderProductDetail() {
+function renderProductDetail(initialPath = "/product/p1") {
 	return render(
-		<MemoryRouter initialEntries={["/product/p1"]}>
+		<MemoryRouter initialEntries={[initialPath]}>
 			<Routes>
 				<Route path="/product/:id" element={<ProductDetailPage />} />
 			</Routes>
@@ -377,4 +377,44 @@ describe("ProductDetailPage tab contract", () => {
 			screen.getByTestId("copywriting-taxonomy-category-select"),
 		).toHaveValue("");
 	});
+
+
+	it("opens INTELLIGENCE from ?tab=INTELLIGENCE deep-link", async () => {
+		renderProductDetail("/product/p1?tab=INTELLIGENCE");
+		expect(await screen.findByTestId("pi-panel")).toHaveTextContent(
+			"Product Intelligence functions",
+		);
+		expect(screen.getByRole("tab", { name: "Product Intelligence" })).toHaveAttribute(
+			"aria-selected",
+			"true",
+		);
+		expect(screen.queryByText("Identity & Commerce")).not.toBeInTheDocument();
+	});
+
+	it("falls back to EDIT for invalid tab values", async () => {
+		renderProductDetail("/product/p1?tab=NOT_A_TAB");
+		const tablist = await screen.findByRole("tablist", {
+			name: "Product detail sections",
+		});
+		expect(within(tablist).getByRole("tab", { name: "Edit & Save" })).toHaveAttribute(
+			"aria-selected",
+			"true",
+		);
+		expect(screen.getByText("Identity & Commerce")).toBeInTheDocument();
+		expect(screen.queryByTestId("pi-panel")).not.toBeInTheDocument();
+	});
+
+	it("keeps INTELLIGENCE selected when the tab query is present (refresh contract)", async () => {
+		// Remount with the same deep-link path to simulate a browser refresh.
+		const first = renderProductDetail("/product/p1?tab=INTELLIGENCE");
+		await screen.findByTestId("pi-panel");
+		first.unmount();
+		renderProductDetail("/product/p1?tab=INTELLIGENCE");
+		expect(await screen.findByTestId("pi-panel")).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: "Product Intelligence" })).toHaveAttribute(
+			"aria-selected",
+			"true",
+		);
+	});
+
 });

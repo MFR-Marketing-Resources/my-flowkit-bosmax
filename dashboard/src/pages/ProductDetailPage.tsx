@@ -6,7 +6,7 @@ import {
 	type FormEvent,
 	type ReactNode,
 } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { patchAPI } from "../api/client";
 import {
@@ -41,6 +41,17 @@ import {
 // three-column Sales-Analyzer clutter.
 
 type DetailTab = "EDIT" | "INTELLIGENCE" | "CREATIVE" | "VISUAL";
+
+const DETAIL_TABS = new Set<DetailTab>(["EDIT", "INTELLIGENCE", "CREATIVE", "VISUAL"]);
+
+function resolveDetailTab(raw: string | null): DetailTab {
+	const token = String(raw || "").trim().toUpperCase();
+	if (DETAIL_TABS.has(token as DetailTab)) {
+		return token as DetailTab;
+	}
+	// Invalid / missing tab safely falls back to EDIT (existing default).
+	return "EDIT";
+}
 
 const EDIT_FIELDS: { key: string; label: string }[] = [
 	{ key: "product_short_name", label: "Short Name" },
@@ -109,11 +120,35 @@ function normalizeTaxonomyRecord(
 export default function ProductDetailPage() {
 	const { id = "" } = useParams();
 	const navigate = useNavigate();
+	const [searchParams, setSearchParams] = useSearchParams();
 
 	const [product, setProduct] = useState<Product | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [loadError, setLoadError] = useState<string | null>(null);
-	const [tab, setTab] = useState<DetailTab>("EDIT");
+	const [tab, setTab] = useState<DetailTab>(() =>
+		resolveDetailTab(searchParams.get("tab")),
+	);
+
+	// Keep tab state aligned with ?tab= on deep-link / browser refresh / back-forward.
+	useEffect(() => {
+		const next = resolveDetailTab(searchParams.get("tab"));
+		setTab((prev) => (prev === next ? prev : next));
+	}, [searchParams]);
+
+	const selectTab = useCallback(
+		(next: DetailTab) => {
+			setTab(next);
+			const nextParams = new URLSearchParams(searchParams);
+			if (next === "EDIT") {
+				// EDIT is the default — drop tab to keep clean URLs.
+				nextParams.delete("tab");
+			} else {
+				nextParams.set("tab", next);
+			}
+			setSearchParams(nextParams, { replace: true });
+		},
+		[searchParams, setSearchParams],
+	);
 
 	const [registry, setRegistry] =
 		useState<ProductStrategyTypeRegistryResponse | null>(null);
@@ -478,7 +513,7 @@ export default function ProductDetailPage() {
 								type="button"
 								role="tab"
 								aria-selected={tab === value}
-								onClick={() => setTab(value)}
+								onClick={() => selectTab(value)}
 								className={`rounded-lg px-4 py-2 text-xs font-bold uppercase tracking-widest transition-all ${
 									tab === value
 										? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20"
