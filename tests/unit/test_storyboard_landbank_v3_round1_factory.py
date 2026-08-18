@@ -43,6 +43,10 @@ FACT_ID = "round1-fact"
 
 
 async def _seed_round1_truth(product_id: str = PRODUCT_ID, snapshot_id: str = SNAPSHOT_ID, fact_id: str = FACT_ID) -> None:
+    # Persist the CANONICAL current-snapshot evidence (allowed_claims_json[0]) with
+    # matching text, so the persisted row is integrity-consistent with the shared
+    # derivation. The passed synthetic fact_id is retained only for call signatures.
+    fact_id = f"fact:{product_id}:allowed_claims_json:0"
     db = await get_db()
     await db.execute(
         "INSERT INTO product (id, raw_product_title, product_display_name, product_short_name) VALUES (?, ?, ?, ?)",
@@ -67,7 +71,7 @@ async def _seed_round1_truth(product_id: str = PRODUCT_ID, snapshot_id: str = SN
             "2026-08-17T00:00:00Z",
         ),
     )
-    text = "Approved lightweight daily routine fact"
+    text = "lightweight daily routine"
     await db.execute(
         "INSERT INTO copy_evidence_fact_v2 "
         "(product_id, snapshot_id, fact_id, fact_kind, canonical_text, text_digest, snapshot_version, snapshot_status, approved, created_at) "
@@ -78,6 +82,10 @@ async def _seed_round1_truth(product_id: str = PRODUCT_ID, snapshot_id: str = SN
 
 
 async def _create_supply(service: V3CopyFactoryService, product_id: str = PRODUCT_ID, fact_id: str = FACT_ID):
+    # Ground on the canonical current-snapshot evidence the shared derivation
+    # produces (allowed_claims_json[0]). The passed synthetic fact_id only seeds the
+    # persisted row, which the derived read model correctly ignores.
+    fact_id = f"fact:{product_id}:allowed_claims_json:0"
     angle = await service.create_angle(
         product_id,
         {
@@ -233,7 +241,7 @@ async def test_round1_fast54_real_factory_is_lazy_and_compiles_all_compatible_ca
 @pytest.mark.asyncio
 async def test_round1_fast54_adversarial_supply_returns_real_bridge_exclusions():
     product_id = f"round1-adversarial-product-{uuid.uuid4().hex}"
-    fact_id = f"{product_id}-fact"
+    fact_id = f"fact:{product_id}:allowed_claims_json:0"
     await _seed_round1_truth(product_id, f"{product_id}-snapshot", fact_id)
     service = V3CopyFactoryService()
     recipe, angle, family, hooks, _bodies, _ctas = await _create_supply(service, product_id, fact_id)
@@ -412,7 +420,7 @@ async def test_round1_governance_rejects_approval_and_stale_or_cross_lineage():
 @pytest.mark.asyncio
 async def test_round1_evidence_ranker_is_explicitly_fail_closed():
     product_id = f"round1-evidence-product-{uuid.uuid4().hex}"
-    fact_id = f"{product_id}-fact"
+    fact_id = f"fact:{product_id}:allowed_claims_json:0"
     await _seed_round1_truth(product_id, f"{product_id}-snapshot", fact_id)
     service = V3CopyFactoryService()
     with pytest.raises(V3FactoryError, match="registered"):
@@ -428,7 +436,7 @@ async def test_round1_evidence_ranker_is_explicitly_fail_closed():
 async def test_round1_mutation_idempotency_returns_the_original_revision():
     idem_product = f"round1-idem-product-{uuid.uuid4().hex}"
     idem_snapshot = "round1-idem-snapshot"
-    idem_fact = "round1-idem-fact"
+    idem_fact = f"fact:{idem_product}:allowed_claims_json:0"
     await _seed_round1_truth(idem_product, idem_snapshot, idem_fact)
     service = V3CopyFactoryService()
     first = await service.create_angle(
@@ -458,7 +466,7 @@ async def test_round1_mutation_idempotency_returns_the_original_revision():
 async def test_round1_revisions_and_terminal_transitions_are_append_only():
     product_id = f"round1-revision-product-{uuid.uuid4().hex}"
     snapshot_id = f"{product_id}-snapshot"
-    fact_id = f"{product_id}-fact"
+    fact_id = f"fact:{product_id}:allowed_claims_json:0"
     await _seed_round1_truth(product_id, snapshot_id, fact_id)
     service = V3CopyFactoryService()
     angle = await service.create_angle(
