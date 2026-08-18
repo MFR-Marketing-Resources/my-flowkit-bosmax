@@ -260,6 +260,8 @@ domains:
       - tests/unit/test_product_treatment_factory_migration.py
       - tests/unit/test_product_treatment_template_service.py
       - tests/unit/test_product_treatment_factory_service.py
+      # Task C — legacy copy_set runtime closure (fail-closed on missing V2 authority)
+      - tests/unit/test_legacy_copyset_runtime_closure.py
       - tests/unit/test_b3_creative_config_backfill.py
       - tests/unit/test_universal_product_treatment_factory_rehearsal.py
       - tests/api/test_product_treatment_factory_api.py

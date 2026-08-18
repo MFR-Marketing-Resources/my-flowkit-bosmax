@@ -6,6 +6,7 @@ from typing import Iterable
 
 from agent.authority import product_readiness_applicability_registry as registry
 from agent.db import crud
+from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
 from agent.models.copy_set import STATUS_COPY_APPROVED
 from agent.models.product_readiness import (
     ApplicabilityProfileListResponse,
@@ -1048,7 +1049,15 @@ async def _resolve_copy(
     product: dict[str, object],
 ) -> CopyReadinessAuthority:
     grounding = await copy_grounding_service.resolve_copy_grounding(product)
-    copy_sets = await copy_set_service.list_copy_sets(str(product["id"]))
+    # Task C — legacy copy_set runtime closure: legacy copy_set rows never satisfy
+    # active copy readiness in normal runtime. Approved copy authority is V2
+    # (copy_register_v2 / Copywriting Landbank). Read the retired store only under
+    # explicit maintenance mode (pre-cutover recovery / historical inspection).
+    copy_sets = (
+        await copy_set_service.list_copy_sets(str(product["id"]))
+        if legacy_copy_maintenance_enabled()
+        else []
+    )
     approved = sorted(
         {
             str(item["copy_set_id"])

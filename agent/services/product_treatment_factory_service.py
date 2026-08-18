@@ -518,11 +518,10 @@ async def _scan_product(context: FactoryProductContext) -> ProductScan:
                 "produced": 0,
                 "provider_calls_enabled": False,
             }
-        else:
-            if legacy_copy_maintenance_enabled():
-                approved_copy_sets = await _eligible_approved_copy_sets(
-                    context.product_id
-                )
+        elif legacy_copy_maintenance_enabled():
+            approved_copy_sets = await _eligible_approved_copy_sets(
+                context.product_id
+            )
             composition_shortfall = max(
                 0,
                 required_dialogues - len(approved_copy_sets),
@@ -532,6 +531,16 @@ async def _scan_product(context: FactoryProductContext) -> ProductScan:
                 composition_shortfall,
                 dry_run=True,
             )
+        else:
+            # Task C — normal runtime has no legacy copy authority. Do not compose
+            # or advertise a legacy copy preview; the treatment fails closed
+            # downstream requiring V2 (Copywriting Landbank) authority.
+            composition_shortfall = required_dialogues
+            raw_preview = {
+                "copy_authority": "COPY_V2_BINDING_REQUIRED",
+                "produced": 0,
+                "provider_calls_enabled": False,
+            }
         raw_treatments = await creative_treatment_service.list_treatments(
             product_id=context.product_id,
             status=None,
@@ -559,7 +568,11 @@ async def _scan_product(context: FactoryProductContext) -> ProductScan:
                 ),
                 "composition_shortfall": composition_shortfall,
                 "copy_authority": (
-                    "COPY_REGISTER_V2" if approved_bindings else "LEGACY_COPY_SET"
+                    "COPY_REGISTER_V2"
+                    if approved_bindings
+                    else "LEGACY_COPY_SET"
+                    if legacy_copy_maintenance_enabled()
+                    else "COPY_V2_BINDING_REQUIRED"
                 ),
                 "provider_calls": 0,
                 "media_generation_calls": 0,
@@ -1186,6 +1199,22 @@ async def _prepare_copy_task(
             "credit_spend": 0,
             "copy_authority": "COPY_REGISTER_V2",
         }
+    if not legacy_copy_maintenance_enabled():
+        # Task C — legacy copy_set runtime closure: with no valid V2 execution
+        # binding there is NO production copy authority. Fail closed. Never fall
+        # back to legacy copy_set composition or legacy AI-copy assist, and never
+        # count legacy copy_set ids as authority. Approved copy must be prepared
+        # in Copywriting Landbank (V3 -> V2 materialization) first.
+        raise ProductTreatmentFactoryError(
+            "COPY_V2_BINDING_REQUIRED",
+            details={
+                "task_id": str(task.get("task_id")),
+                "product_id": str(task.get("product_id")),
+                "copy_authority": "COPY_REGISTER_V2",
+                "required_dialogues": required_dialogues,
+                "action_hint": "Create or prepare approved copy in Copywriting Landbank.",
+            },
+        )
     shortfall = max(0, required_dialogues - approved_copy_count)
     provider_enabled = bool(
         snapshot.get("provider_calls_enabled")
@@ -1299,6 +1328,21 @@ async def _prepare_treatment_task(
             ("v2", primary) for _ in range(required_dialogues)
         ]
     else:
+        if not legacy_copy_maintenance_enabled():
+            # Task C — legacy copy_set runtime closure: no valid V2 execution
+            # binding means no production copy authority. Fail closed. Legacy
+            # copy_set ids must never authorize treatment creation in normal
+            # runtime; approved copy must come from V2 (Copywriting Landbank).
+            raise ProductTreatmentFactoryError(
+                "COPY_V2_BINDING_REQUIRED",
+                details={
+                    "task_id": str(task.get("task_id")),
+                    "product_id": str(task.get("product_id")),
+                    "copy_authority": "COPY_REGISTER_V2",
+                    "required_dialogues": required_dialogues,
+                    "action_hint": "Create or prepare approved copy in Copywriting Landbank.",
+                },
+            )
         if len(copy_set_ids) < required_dialogues:
             raise ProductTreatmentFactoryError(
                 "APPROVED_COPY_CAPACITY_SHORTFALL",
