@@ -172,6 +172,11 @@ domains:
       - tests/unit/test_copy_register_v2_only_guards.py
       - tests/unit/test_copy_v2_p0_legacy_execution_cutover.py
       - tests/unit/test_copy_register_v2_only_migration.py
+      # Task D1 — fresh-schema receipt-native alignment: init_db converges a new /
+      # already-cut-over database on the same receipt-ledger + write-deny shape the
+      # governed cutover migration produces (shared ledger schema; no physical drop).
+      - agent/db/legacy_copy_ledger.py
+      - tests/unit/test_d1_fresh_schema_receipt_native.py
       - tests/unit/test_copy_architecture_v2_phase4_activation.py
       - docs/COPY_SELECTION_AND_COMPILER_BINDING_FOUNDATION_V1.md
       - docs/COPY_FALLBACK_EXPLICIT_CONFIRMATION_V1.md

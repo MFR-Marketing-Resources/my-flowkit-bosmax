@@ -4,6 +4,7 @@ import contextlib
 import aiosqlite
 import logging
 from agent.config import DB_PATH
+from agent.db import legacy_copy_ledger
 
 logger = logging.getLogger(__name__)
 
@@ -2098,6 +2099,127 @@ BEGIN
     SELECT RAISE(ABORT, 'LANDBANK_USAGE_V3_APPEND_ONLY');
 END;
 """
+
+
+async def _repoint_historical_fk_to_receipt(
+    db: aiosqlite.Connection, table: str, table_sql: str
+) -> None:
+    """Rebuild ``table`` so its retired-store FK points at the immutable receipt
+    ledger instead (e.g. ``creative_variation_group.copy_set_id`` ->
+    ``legacy_copy_set_receipt``).  Only ever invoked on a fresh shape whose active
+    store is empty, so the row copy is trivial and lossless.  Mirrors the proven
+    ``creative_treatment`` rebuild convention used elsewhere in ``init_db``."""
+
+    temp_table = f"__d1_align_{table}"
+    columns = [
+        row[1]
+        for row in await (await db.execute(f'PRAGMA table_info("{table}")')).fetchall()
+    ]
+    column_sql = ", ".join(f'"{column}"' for column in columns)
+    # Explicit indexes / triggers to recreate (auto-indexes carry sql=NULL and are
+    # rebuilt automatically by the new table's PK/UNIQUE constraints).
+    aux_objects = [
+        str(row[0])
+        for row in await (
+            await db.execute(
+                "SELECT sql FROM sqlite_master "
+                "WHERE tbl_name=? AND type IN ('index','trigger') AND sql IS NOT NULL "
+                "ORDER BY type, name",
+                (table,),
+            )
+        ).fetchall()
+    ]
+    temp_sql = legacy_copy_ledger.repoint_table_sql(table_sql, table, temp_table)
+    aux_sql = "\n".join(f"{obj.rstrip().rstrip(';')};" for obj in aux_objects)
+    script = (
+        "BEGIN IMMEDIATE;\n"
+        f"{temp_sql.rstrip().rstrip(';')};\n"
+        f'INSERT INTO "{temp_table}" ({column_sql}) '
+        f'SELECT {column_sql} FROM "{table}";\n'
+        f'DROP TABLE "{table}";\n'
+        f'ALTER TABLE "{temp_table}" RENAME TO "{table}";\n'
+        f"{aux_sql}\n"
+        "COMMIT;"
+    )
+    await db.execute("PRAGMA foreign_keys=OFF")
+    try:
+        await db.executescript(script)
+    finally:
+        await db.execute("PRAGMA foreign_keys=ON")
+    logger.info(
+        "D1: repointed %s historical FK to receipt ledger (receipt-native)", table
+    )
+
+
+async def _align_legacy_copy_storage_receipt_native(db: aiosqlite.Connection) -> None:
+    """Task D1 — converge this database on the canonical receipt-native legacy
+    shape at init time, without re-running the governed cut-over migration.
+
+    * Normal production runtime (maintenance OFF): create the receipt ledgers,
+      repoint historical FKs at those ledgers, and install the write-denial
+      triggers so the three retired stores are empty, inert shells.
+    * Maintenance/recovery mode and the maintenance-mode test suite
+      (COPY_LEGACY_MAINTENANCE_MODE set): skip entirely so legacy storage stays
+      writable for governed recovery — never silently mutate that posture.
+    * A database still holding real legacy rows without a cut-over receipt: fail
+      closed and require ``scripts/migrate_copy_register_v2_only.py``; never
+      archive, rewrite, or erase that data here.
+
+    Idempotent: every step is guarded so an already-cut-over (canonical) database
+    is a strict no-op.
+    """
+
+    try:
+        from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
+    except Exception:  # pragma: no cover - conservative posture if unavailable
+        return
+    if legacy_copy_maintenance_enabled():
+        return
+
+    existing_tables = {
+        row[0]
+        for row in await (
+            await db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        ).fetchall()
+    }
+
+    active_rows = 0
+    for store in legacy_copy_ledger.WRITE_DENY_STORES:
+        if store in existing_tables:
+            cursor = await db.execute(f'SELECT COUNT(*) FROM "{store}"')
+            active_rows += int((await cursor.fetchone())[0])
+    if active_rows > 0:
+        # Pre-cutover / unknown legacy data present under normal runtime.
+        raise legacy_copy_ledger.LegacyCopyCutoverRequiredError(
+            "LEGACY_COPY_PRE_CUTOVER_MIGRATION_REQUIRED: "
+            f"{active_rows} legacy copy row(s) present without a cut-over receipt; "
+            "run scripts/migrate_copy_register_v2_only.py before starting normal "
+            "(V2-only) runtime."
+        )
+
+    # 1) Receipt ledger substrate (idempotent).
+    await db.executescript(legacy_copy_ledger.RECEIPT_LEDGER_SCHEMA_SQL)
+    await db.commit()
+
+    # 2) Historical FK topology -> receipt ledgers (fresh shapes only; an
+    #    already-receipt-native table is detected and skipped).
+    for table in legacy_copy_ledger.RECEIPT_FK_REPOINTS:
+        if table not in existing_tables:
+            continue
+        row = await (
+            await db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            )
+        ).fetchone()
+        table_sql = row[0] if row else ""
+        if not legacy_copy_ledger.has_active_store_fk(table_sql, table):
+            continue
+        await _repoint_historical_fk_to_receipt(db, table, table_sql)
+
+    # 3) Write-denial triggers on the inert shells (idempotent).
+    await db.executescript(legacy_copy_ledger.write_deny_trigger_script())
+    await db.commit()
 
 
 async def init_db():
@@ -6103,6 +6225,11 @@ COMMIT;
             finally:
                 await db.execute("PRAGMA foreign_keys=ON")
 
+        # Task D1: converge a fresh / already-cut-over database on the canonical
+        # receipt-native legacy-copy shape (receipt ledgers, receipt-native
+        # historical FKs, inert write-denied legacy shells). Normal-runtime only;
+        # idempotent; fail-closed on un-migrated legacy data.
+        await _align_legacy_copy_storage_receipt_native(db)
 
     logger.info("Database initialized at %s", DB_PATH)
 
