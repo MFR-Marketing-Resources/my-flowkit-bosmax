@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from agent.services import production_allocation_service as allocation_service
 from agent.services import production_copy_supply_service as supply_service
 from agent.services import production_supply_manifest_service as manifest_service
 from agent.services.production_supply_manifest_service import ManifestError
@@ -689,6 +690,46 @@ async def freeze_v3_production_manifest(
         )
     except ManifestError as exc:
         raise _manifest_error(exc) from exc
+
+
+@router.post("/copy-register/manifest/{manifest_id}/allocate-to-plan")
+async def allocate_v3_manifest_to_production_plan(
+    request: Request, manifest_id: str, payload: dict[str, Any]
+):
+    """Persist a FROZEN manifest's exact per-item selections onto REAL P6 items.
+
+    Operator-governed: binds each production item to an exact V2 blueprint
+    revision + approval snapshot (idempotent) so compile resolves per-item copy.
+    Never mutates the product-global V2 activation pointer.
+    """
+
+    actor_id, _request_id, _source = _meta(request, payload)
+    revision = int(payload.get("revision") or 0)
+    production_plan_id = str(payload.get("production_plan_id") or "").strip()
+    requested_items = int(payload.get("requested_items") or 0)
+    if revision < 1 or not production_plan_id or requested_items < 1:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "ALLOCATION_REQUEST_INVALID",
+                "message": "revision, production_plan_id and requested_items are required.",
+            },
+        )
+    try:
+        return await allocation_service.allocate_manifest_to_production_plan(
+            production_plan_id=production_plan_id,
+            manifest_id=manifest_id,
+            manifest_revision=revision,
+            requested_items=requested_items,
+            actor_id=actor_id,
+            campaign_key=str(payload.get("campaign_key") or ""),
+            allow_exact_reuse=bool(payload.get("allow_exact_reuse") or False),
+        )
+    except allocation_service.AllocationError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": exc.detail, "details": exc.details},
+        ) from exc
 
 
 @router.get("/copy-register/manifest/{manifest_id}")

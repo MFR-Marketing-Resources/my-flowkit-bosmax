@@ -159,7 +159,15 @@ async def test_invalidation_matrix_fails_closed_and_never_churns_pointer(monkeyp
     # queue/start revalidation on the earlier allocation: fails closed
     reval = await alloc.revalidate_item_selection(selection)
     assert reval["valid"] is False
-    assert reval["reason"] == "PRODUCT_TRUTH_ADVANCED"
+    # Round 3 now revalidates via the full shared V2 authority validator, which
+    # surfaces the precise V2 authority reason (taxonomy/evidence staleness) on a
+    # Product-Truth advance rather than the old shallow "PRODUCT_TRUTH_ADVANCED".
+    assert reval["reason"] in {
+        "PRODUCT_TRUTH_ADVANCED",
+        "COPY_V2_TAXONOMY_AUTHORITY_STALE",
+        "COPY_V2_EVIDENCE_STALE",
+        "COPY_V2_EVIDENCE_NOT_FOUND",
+    }
 
     # still no pointer churn after all of this.
     assert await _count("copy_execution_authority_v2") == 0

@@ -75,6 +75,7 @@ $SmokeTests = @(
     'tests/unit/test_production_copy_supply_service.py',
     'tests/unit/test_production_supply_manifest_service.py',
     'tests/unit/test_production_allocation_service.py',
+    'tests/unit/test_round3_p6_exact_copy_and_authority.py',
     'tests/unit/test_production_scale_and_recovery.py',
     'tests/unit/test_formula_validator_service.py',
     'tests/unit/test_copy_set_service.py',

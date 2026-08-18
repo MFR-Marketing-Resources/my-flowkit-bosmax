@@ -118,7 +118,15 @@ async def test_revalidate_item_selection_valid_then_stale_after_truth_drift(monk
 
     stale = await alloc.revalidate_item_selection(selection)
     assert stale["valid"] is False
-    assert stale["reason"] == "PRODUCT_TRUTH_ADVANCED"
+    # Round 3 now revalidates through the FULL shared V2 authority validator, so a
+    # Product-Truth advance surfaces the precise V2 authority reason code (taxonomy /
+    # evidence staleness) rather than the old shallow "PRODUCT_TRUTH_ADVANCED".
+    assert stale["reason"] in {
+        "PRODUCT_TRUTH_ADVANCED",
+        "COPY_V2_TAXONOMY_AUTHORITY_STALE",
+        "COPY_V2_EVIDENCE_STALE",
+        "COPY_V2_EVIDENCE_NOT_FOUND",
+    }
 
 
 @pytest.mark.asyncio

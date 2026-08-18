@@ -5058,6 +5058,7 @@ CREATE TABLE IF NOT EXISTS creative_production_item (
                                ON DELETE SET NULL,
     prompt_package_json        TEXT NOT NULL DEFAULT '{}',
     execution_policy_json      TEXT NOT NULL DEFAULT '{}',
+    round3_manifest_item_json  TEXT NOT NULL DEFAULT '{}',
     status                     TEXT NOT NULL DEFAULT 'PLANNED'
                                CHECK(status IN (
                                    'PLANNED','COMPILED','DEDUPE_BLOCKED','PENDING_APPROVAL',
@@ -5906,6 +5907,22 @@ END;
         # V2 activation pointer (copy_execution_authority_v2).
         await db.executescript(V3_ROUND3_SCHEMA)
         await db.commit()
+
+        # Round 3 P6 per-item copy selection: real production items durably carry
+        # the exact manifest selection (v2 blueprint revision + approval snapshot)
+        # so compile resolves per-item copy without the product-global pointer.
+        item_cols = {
+            row[1]
+            for row in await (
+                await db.execute("PRAGMA table_info(creative_production_item)")
+            ).fetchall()
+        }
+        if "round3_manifest_item_json" not in item_cols:
+            await db.execute(
+                "ALTER TABLE creative_production_item "
+                "ADD COLUMN round3_manifest_item_json TEXT NOT NULL DEFAULT '{}'"
+            )
+            await db.commit()
 
 
         # V2-native treatment authority: optional copy_execution_binding_id_v2,

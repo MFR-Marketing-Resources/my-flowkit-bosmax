@@ -14,15 +14,18 @@ FAIL CLOSED on any drift — a stale item is blocked, never silently substituted
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
 from agent.authority.copy_blueprint_v2_authority import formula_version as v2_formula_version
+from agent.db import creative_production_crud as p6db
 from agent.models.storyboard_landbank_v3 import deterministic_digest, deterministic_id
 from agent.models.storyboard_landbank_v3_round3 import LandbankUsageV3, usage_event_digest
 from agent.services import copy_register_v2_service as v2svc
 from agent.services import production_copy_supply_service as supply_status
 from agent.services import production_supply_repository as supply_repo
+from agent.services.round3_authority_validator import revalidate_round3_v2_authority
 
 
 class AllocationError(Exception):
@@ -59,21 +62,28 @@ async def _revalidate_selection(
     product_truth_snapshot_digest: str,
     formula_id: str,
     current_truth: dict[str, Any] | None,
+    expected_approval_snapshot_id: str | None = None,
 ) -> tuple[bool, str | None, Any]:
-    blueprint = await _resolve_blueprint(v2_blueprint_id, v2_blueprint_revision)
-    if blueprint is None:
-        return False, "V2_BLUEPRINT_MISSING", None
-    if blueprint.status != "PRODUCTION_VALID":
-        return False, f"BLUEPRINT_{blueprint.status}", blueprint
-    if current_truth is None:
-        return False, "PRODUCT_TRUTH_UNAVAILABLE", blueprint
-    if blueprint.product_truth_lineage.snapshot_digest != current_truth["digest"]:
-        return False, "PRODUCT_TRUTH_ADVANCED", blueprint
-    if product_truth_snapshot_digest != current_truth["digest"]:
-        return False, "PRODUCT_TRUTH_ADVANCED", blueprint
-    if blueprint.formula_version != v2_formula_version(formula_id):
-        return False, "FORMULA_VERSION_ADVANCED", blueprint
-    return True, None, blueprint
+    """Full current-production-authority revalidation for one selected blueprint.
+
+    Delegates to the ONE shared Round 3 validator, which reuses the complete V2
+    authority (current-authority projection + validate_copy_blueprint_v2), so a
+    historically PRODUCTION_VALID blueprint whose current authority drifted
+    (stale/missing/mutated evidence, taxonomy drift, approval mutation, snapshot
+    mismatch, formula drift, duration) FAILS CLOSED — not just a status/digest
+    check.  ``current_truth`` is accepted for call-site compatibility; the shared
+    validator loads CURRENT truth + evidence itself.
+    """
+
+    result = await revalidate_round3_v2_authority(
+        blueprint_id=v2_blueprint_id,
+        revision=v2_blueprint_revision,
+        expected_approval_snapshot_id=expected_approval_snapshot_id,
+        expected_truth_digest=product_truth_snapshot_digest or None,
+        expected_formula=formula_id or None,
+    )
+    reason = result.reason_codes[0] if result.reason_codes else None
+    return result.valid, reason, result.blueprint
 
 
 def _authority_digest(item) -> str:
@@ -152,6 +162,7 @@ async def allocate_from_manifest(
     actor_id: str,
     campaign_key: str = "",
     allow_exact_reuse: bool = False,
+    p6_item_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Allocate up to ``requested_items`` FROZEN-manifest items to a P6 plan.
 
@@ -195,6 +206,7 @@ async def allocate_from_manifest(
             product_truth_snapshot_digest=item.product_truth_snapshot_digest,
             formula_id=item.formula_id,
             current_truth=current_truth,
+            expected_approval_snapshot_id=item.v2_approval_snapshot_id,
         )
         if not valid:
             blocked.append({"manifest_item_id": item.item_id, "reason": reason})
@@ -215,7 +227,12 @@ async def allocate_from_manifest(
             )
             continue
         used_digests.add(item.projection_exact_digest)
-        p6_item_id = f"{p6_plan_id}:item:{len(allocations)}"
+        # Bind to a REAL P6 item row id when provided (Blocker 1); the synthetic
+        # id path remains only for pure-allocation callers/tests without a plan.
+        if p6_item_ids is not None and len(allocations) < len(p6_item_ids):
+            p6_item_id = p6_item_ids[len(allocations)]
+        else:
+            p6_item_id = f"{p6_plan_id}:item:{len(allocations)}"
         await _record_usage(
             item=item,
             p6_plan_id=p6_plan_id,
@@ -314,4 +331,118 @@ async def revalidate_item_selection(selection: dict[str, Any]) -> dict[str, Any]
             {"stage_key": entry.stage_key, "text": entry.text}
             for entry in blueprint.approved_execution_text
         ],
+    }
+
+
+async def allocate_manifest_to_production_plan(
+    *,
+    production_plan_id: str,
+    manifest_id: str,
+    manifest_revision: int,
+    requested_items: int,
+    actor_id: str,
+    campaign_key: str = "",
+    allow_exact_reuse: bool = False,
+) -> dict[str, Any]:
+    """Persist a FROZEN manifest's validated selections onto REAL P6 item rows.
+
+    Deterministically maps ``allocate_from_manifest`` selections onto the plan's
+    actual ``creative_production_item`` rows and durably writes each item's exact
+    ``round3_manifest_item`` (v2 blueprint revision + approval snapshot + copy
+    digest).  Idempotent: the same (plan, manifest, revision) rebinds the same
+    real items to the same selection JSON (no-op on re-run); a DIFFERENT selection
+    already bound to a real item is a deterministic conflict, never a silent
+    overwrite.  NEVER mutates ``copy_execution_authority_v2`` (the product-global
+    interactive-lane pointer).
+    """
+
+    plan = await p6db.get_plan(production_plan_id)
+    if plan is None:
+        raise AllocationError(
+            "ALLOCATION_PLAN_NOT_FOUND",
+            f"Production plan {production_plan_id} not found.",
+            status_code=404,
+        )
+    manifest = await supply_repo.get_manifest(manifest_id, manifest_revision)
+    if manifest is None:
+        raise AllocationError(
+            "ALLOCATION_MANIFEST_NOT_FOUND",
+            f"Manifest {manifest_id}:{manifest_revision} not found.",
+            status_code=404,
+        )
+
+    # Real, eligible P6 item rows for this plan+product, in a stable order.
+    eligible_items = [
+        it
+        for it in await p6db.list_items(production_plan_id)
+        if str(it.get("product_id")) == str(manifest.product_id)
+        and str(it.get("status")) in {"PLANNED", "COMPILED", "PENDING_APPROVAL"}
+    ]
+    def _summary(selection: dict[str, Any], item_id: str) -> dict[str, Any]:
+        return {
+            "p6_item_id": item_id,
+            "manifest_item_id": selection.get("manifest_item_id"),
+            "v2_blueprint_id": selection.get("v2_blueprint_id"),
+            "v2_blueprint_revision": selection.get("v2_blueprint_revision"),
+            "v2_approval_snapshot_id": selection.get("v2_approval_snapshot_id"),
+        }
+
+    # Idempotency: real items already carrying a selection are returned as-is and
+    # are NEVER re-allocated (no duplicate usage events / no churn). Only unbound
+    # eligible items consume fresh manifest allocation on this call.
+    already_bound: list[dict[str, Any]] = []
+    unbound_ids: list[str] = []
+    for it in eligible_items:
+        raw = str(it.get("round3_manifest_item_json") or "{}")
+        if raw not in ("", "{}"):
+            already_bound.append(_summary(json.loads(raw), str(it["item_id"])))
+        else:
+            unbound_ids.append(str(it["item_id"]))
+
+    if not already_bound and not unbound_ids:
+        raise AllocationError(
+            "ALLOCATION_NO_ELIGIBLE_ITEMS",
+            "No eligible production items to bind for this plan/product.",
+            status_code=409,
+            details={"eligible": 0},
+        )
+
+    target = min(int(requested_items), len(eligible_items))
+    need = max(0, target - len(already_bound))
+    newly_bound: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    if need > 0 and unbound_ids:
+        assign_ids = unbound_ids[:need]
+        result = await allocate_from_manifest(
+            manifest_id,
+            manifest_revision,
+            p6_plan_id=production_plan_id,
+            requested_items=len(assign_ids),
+            actor_id=actor_id,
+            campaign_key=campaign_key,
+            allow_exact_reuse=allow_exact_reuse,
+            p6_item_ids=assign_ids,
+        )
+        for alloc in result.get("allocations", []):
+            item_id = str(alloc["p6_item_id"])
+            selection = alloc["round3_manifest_item"]
+            payload = json.dumps(selection, sort_keys=True, separators=(",", ":"))
+            await p6db.update_item(
+                item_id,
+                round3_manifest_item_json=payload,
+                updated_at=_now(),
+            )
+            newly_bound.append(_summary(selection, item_id))
+        blocked = result.get("blocked", [])
+
+    bound = already_bound + newly_bound
+    return {
+        "production_plan_id": production_plan_id,
+        "manifest_id": manifest_id,
+        "manifest_revision": manifest_revision,
+        "bound_count": len(bound),
+        "bound": bound,
+        "blocked_count": len(blocked),
+        "blocked": blocked,
+        "shortfall": max(0, int(requested_items) - len(bound)),
     }

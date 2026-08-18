@@ -40,6 +40,42 @@ def _plan_copy_v2_context(plan: dict[str, Any]) -> dict[str, Any] | None:
     return context if isinstance(context, dict) else None
 
 
+def _item_round3_selection(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the exact per-item V2 copy selection persisted by Round 3 allocation.
+
+    Real production items durably carry the manifest selection in
+    ``round3_manifest_item_json``.  When present, compile MUST resolve copy from
+    THIS exact blueprint revision — not the product-global activation pointer.
+    """
+
+    raw = item.get("round3_manifest_item_json")
+    if not raw or raw in ("{}", ""):
+        return None
+    selection = _loads(raw, {})
+    if not isinstance(selection, dict) or not selection.get("v2_blueprint_id"):
+        return None
+    return {
+        "v2_blueprint_id": selection.get("v2_blueprint_id"),
+        "v2_blueprint_revision": selection.get("v2_blueprint_revision"),
+        "v2_approval_snapshot_id": selection.get("v2_approval_snapshot_id"),
+    }
+
+
+def _with_round3_selection(
+    copy_v2_context: dict[str, Any] | None,
+    item: dict[str, Any],
+    *,
+    lane: str,
+) -> dict[str, Any] | None:
+    selection = _item_round3_selection(item)
+    if selection is None:
+        return copy_v2_context
+    base = dict(copy_v2_context) if isinstance(copy_v2_context, dict) else {}
+    base["round3_selection"] = selection
+    base.setdefault("lane", lane)
+    return base
+
+
 async def _compile_video(
     item: dict[str, Any],
     plan: dict[str, Any],
@@ -56,6 +92,9 @@ async def _compile_video(
     copy_v2_context = _plan_copy_v2_context(plan)
     if copy_v2_context is not None:
         copy_v2_context = {**copy_v2_context, "lane": "PRODUCTION_STUDIO_P6"}
+    copy_v2_context = _with_round3_selection(
+        copy_v2_context, item, lane="PRODUCTION_STUDIO_P6"
+    )
     aspect = str(execution_policy.get("aspect") or "9:16")
     logical_mode = str(plan["logical_mode"])
     treatment = await resolve_item_treatment(dimensions, plan)
@@ -261,6 +300,7 @@ async def _compile_image(
     copy_v2_context = _plan_copy_v2_context(plan)
     if copy_v2_context is not None:
         copy_v2_context = {**copy_v2_context, "lane": "IMAGE_GEN"}
+    copy_v2_context = _with_round3_selection(copy_v2_context, item, lane="IMAGE_GEN")
     package = await wgp_service.create_img_generation_package(
         product_id=item["product_id"],
         generation_mode="SINGLE",
@@ -313,6 +353,7 @@ async def _compile_poster(
     dimensions: dict[str, Any],
 ) -> tuple[None, str, dict[str, Any]]:
     copy_v2_context = _plan_copy_v2_context(plan)
+    copy_v2_context = _with_round3_selection(copy_v2_context, item, lane="POSTER_BUILDER")
     try:
         v2_resolution = await resolve_persisted_copy_execution_binding(
             item["product_id"],
