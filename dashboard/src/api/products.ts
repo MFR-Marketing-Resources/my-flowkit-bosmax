@@ -758,3 +758,54 @@ export async function rejectProductIntelligenceReviewDraft(
 		},
 	);
 }
+
+export type ImportSoftReconciliationPreview = {
+	safe_candidate_count: number;
+	review_required_count: number;
+	hub_claim_conflict_open_count: number;
+	ineligible_count: number;
+	expected_safe_count: number;
+	matches_expected_safe_count: boolean;
+	reason_code: string;
+	policy: {
+		default_action?: string;
+		approves_import_into_product_truth?: boolean;
+		deletes_history?: boolean;
+	};
+};
+
+export type ImportSoftReconciliationCloseResult = {
+	status: string;
+	batch_id?: string;
+	success_count?: number;
+	failure_count?: number;
+	candidate_count?: number;
+	receipt_path?: string;
+	expected_count?: number;
+	actual_safe_count?: number;
+	mutations?: number;
+};
+
+export async function fetchImportSoftReconciliationPreview(): Promise<ImportSoftReconciliationPreview> {
+	return fetchAPI<ImportSoftReconciliationPreview>(
+		"/api/product-intelligence/import-soft-reconciliation/preview",
+	);
+}
+
+export async function closeImportSoftReconciliation(body: {
+	confirm: boolean;
+	confirm_phrase: string;
+	actor?: string;
+	expected_count?: number | null;
+	implementation_sha?: string | null;
+}): Promise<ImportSoftReconciliationCloseResult> {
+	return fetchAPI<ImportSoftReconciliationCloseResult>(
+		"/api/product-intelligence/import-soft-reconciliation/close",
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		},
+	);
+}
+

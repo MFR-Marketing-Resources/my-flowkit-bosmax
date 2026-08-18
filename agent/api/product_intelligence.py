@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from agent.models.product_intelligence import ProductIntelligenceResolveRequest
 from agent.models.product_intelligence_review_draft import (
@@ -30,6 +31,10 @@ from agent.services.product_intelligence_review_draft_service import (
     reject_review_draft,
     update_review_draft,
     validate_review_draft,
+)
+from agent.services.product_truth_import_soft_reconciliation import (
+    close_safe_import_soft_revisions,
+    preview_import_soft_reconciliation,
 )
 from agent.services.all_product_mapping_audit_service import (
     get_all_product_mapping_audit,
@@ -284,6 +289,49 @@ async def product_intelligence_diagnose_evidence_tab(product_id: str) -> dict:
             "code": exc.code, "product_url": exc.product_url,
             "operator_actionable": exc.operator_actionable}) from exc
     return {"product_id": product_id, "source_url": source_url, **result}
+
+
+
+
+class ImportSoftReconciliationCloseRequest(BaseModel):
+    """Explicit operator confirmation for SAFE import soft-field batch close."""
+
+    confirm: bool = False
+    confirm_phrase: str = Field(
+        default="",
+        description="Must be exactly: CLOSE SAFE IMPORT REVISIONS",
+    )
+    actor: str = "operator"
+    expected_count: int | None = 549
+    implementation_sha: str | None = None
+
+
+@router.get("/import-soft-reconciliation/preview")
+async def import_soft_reconciliation_preview() -> dict:
+    """Dry-run candidate set for SAFE AA-AH import soft-field closure."""
+    return await preview_import_soft_reconciliation()
+
+
+@router.post("/import-soft-reconciliation/close")
+async def import_soft_reconciliation_close(
+    request: ImportSoftReconciliationCloseRequest,
+) -> dict:
+    """Governed batch: KEEP approved Product Truth + SUPERSEDE safe import revisions.
+
+    Never approves import soft values into Product Truth. Never deletes history.
+    Excludes review-required and claim-conflict drafts.
+    """
+    try:
+        return await close_safe_import_soft_revisions(
+            confirm=bool(request.confirm),
+            actor=(request.actor or "operator").strip() or "operator",
+            confirm_phrase=request.confirm_phrase,
+            expected_count=request.expected_count,
+            implementation_sha=request.implementation_sha,
+        )
+    except ValueError as exc:
+        code = str(exc)
+        raise HTTPException(status_code=400, detail=code) from exc
 
 
 @router.get("/{product_id}")

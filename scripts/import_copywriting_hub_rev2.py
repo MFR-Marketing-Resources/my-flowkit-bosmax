@@ -22,6 +22,11 @@ avoid identity churn / fingerprint invalidation. Commerce/taxonomy/copy are refr
 
 Zero network, zero credit. Dry-run by default; --apply writes. Back up first.
 
+RECURRENCE GUARD: claim-blocked/review-required drafts stay human-gated.
+Do not leave soft-only PI revisions open as permanent UPDATE_PENDING; use
+product_truth_import_soft_reconciliation for SAFE soft-field close-out, and
+prefer Copywriting Landbank / Copy Intelligence for persona/angles authoring.
+
 Usage:
     python scripts/import_copywriting_hub_rev2.py --phase 1
     python scripts/import_copywriting_hub_rev2.py --phase 1 --apply [--limit N]
@@ -451,11 +456,20 @@ async def phase3(b, apply, limit):
                 await approve_review_draft(did, APPROVE)
                 approved += 1
             except Exception as aexc:
-                if "CLAIM_BLOCKED" in str(aexc):
+                msg = str(aexc)
+                if "CLAIM_BLOCKED" in msg:
+                    # Claim-sensitive: leave NEEDS_REVISION/CLAIM_BLOCKED open for humans.
                     blocked += 1
                     blocked_list.append({"product_id": pid, "name": rec["name"]})
+                elif "CLAIM_REVIEW_REQUIRED" in msg:
+                    blocked += 1
+                    blocked_list.append({"product_id": pid, "name": rec["name"], "gate": "CLAIM_REVIEW_REQUIRED"})
                 else:
                     raise
+            else:
+                # Approved path already closed draft into snapshot. Soft-only leftovers
+                # must never remain as permanent UPDATE_PENDING — handled by safe recon.
+                pass
         except Exception as exc:
             failed += 1
             print(f"  PHASE3 FAIL {pid[:10]} ({(rec['name'] or '')[:24]}): {str(exc)[:110]}")
