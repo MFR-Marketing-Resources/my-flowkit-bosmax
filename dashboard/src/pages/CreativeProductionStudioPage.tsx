@@ -58,6 +58,9 @@ import {
 } from "../components/workflow";
 import ResultsSidebar from "../components/workspace/ResultsSidebar";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
+import CopySupplyPanel, {
+	type CopySupplyProduct,
+} from "../components/production-studio/CopySupplyPanel";
 import { collectProductionSessionResults } from "../utils/videoSessionResults";
 
 const splitValues = (value: string) =>
@@ -671,6 +674,26 @@ export default function CreativeProductionStudioPage() {
 			),
 		[cohort],
 	);
+
+	// Copy Supply focuses on whatever products are in context: the draft
+	// allocations while editing, or the selected plan's products when viewing one.
+	const copySupplyProducts = useMemo<CopySupplyProduct[]>(() => {
+		if (allocations.length) {
+			return allocations.map((allocation) => ({
+				id: allocation.product_id,
+				name: productNameById.get(allocation.product_id) ?? allocation.product_id,
+				target: allocation.video_count,
+			}));
+		}
+		return (detail?.snapshot?.product_allocations ?? []).map((allocation) => ({
+			id: allocation.product_id,
+			name:
+				allocation.product_name ??
+				productNameById.get(allocation.product_id) ??
+				allocation.product_id,
+			target: allocation.video_count,
+		}));
+	}, [allocations, detail, productNameById]);
 
 	const chooseModel = (modelKey: string) => {
 		const model = videoModels.find((candidate) => candidate.key === modelKey);
@@ -1420,6 +1443,13 @@ export default function CreativeProductionStudioPage() {
 					<CopyArchitectureV2LaneCard lane="PRODUCTION_STUDIO_P6" productId={null} />
 				)}
 			</div>
+
+			<CopySupplyPanel
+				products={copySupplyProducts}
+				defaultDurationSeconds={form.durationSeconds}
+				campaignKey={form.campaignKey}
+				productionPlanId={selectedPlanId || null}
+			/>
 
 			<div className={useV4 ? "grid gap-5 2xl:grid-cols-[minmax(0,1fr)_20rem]" : "contents"}>
 				<div className={useV4 ? "min-w-0" : "contents"}>

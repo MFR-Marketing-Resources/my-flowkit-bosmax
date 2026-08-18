@@ -9,6 +9,8 @@ import {
 	fetchV3CopyRegisterLandbank,
 	fetchV3CopyRegisterProviderStatus,
 	fetchV3ProductTruth,
+	materializeV3Projection,
+	materializeV3ProjectionsBulk,
 	planV3Assistant,
 	deleteV3Draft,
 	regenerateV3Component,
@@ -25,7 +27,7 @@ import {
 
 const RECIPE_PRESETS: V3RecipePreset[] = ["QUICK TEST", "FAST54", "MULTI-ANGLE", "SCALE", "CUSTOM"];
 const FORMULA_OPTIONS = ["PAS", "AIDA", "HSO", "BAB", "PASTOR", "PESTA"];
-import { Badge, FormField, HelperText, Section } from "../components/ui";
+import { Badge, FormField, HelperText, Section, type BadgeTone } from "../components/ui";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
 import { useProductCatalog } from "../hooks/useProductCatalog";
@@ -60,6 +62,42 @@ function statusTone(status: string): "success" | "warn" | "danger" | "neutral" {
 	if (status === "APPROVED" || status === "VALIDATED" || status === "EXECUTED") return "success";
 	if (status === "BLOCKED" || status === "FAILED") return "danger";
 	return "warn";
+}
+
+// Round 3 P3 materialization status colour: MATERIALIZED = green, STALE = amber,
+// BLOCKED = red, PARTIALLY_MATERIALIZED = info, NOT_MATERIALIZED/unknown = neutral.
+// Colour is never the only signal — the status text is always shown alongside.
+function materializationTone(status: string | undefined): BadgeTone {
+	switch (status) {
+		case "MATERIALIZED":
+			return "success";
+		case "STALE":
+			return "warn";
+		case "BLOCKED":
+			return "danger";
+		case "PARTIALLY_MATERIALIZED":
+			return "info";
+		default:
+			return "neutral";
+	}
+}
+
+// Bounded "Materialize All Clean" target collection: up to 25 NOT_MATERIALIZED
+// projections that carry an approval receipt. STALE/BLOCKED/MATERIALIZED are
+// excluded — only machine-clean, never-materialized projections are bulk-eligible.
+const MATERIALIZE_BULK_LIMIT = 25;
+function collectCleanMaterializeTargets(items: V3LandbankItem[]): Array<{ projectionId: string; receiptId: string }> {
+	const targets: Array<{ projectionId: string; receiptId: string }> = [];
+	for (const item of items) {
+		const receiptId = typeof item.approval_receipt?.receipt_id === "string" ? item.approval_receipt.receipt_id : "";
+		if (!receiptId) continue;
+		for (const projection of item.projections) {
+			if ((projection.materialization?.status ?? "NOT_MATERIALIZED") === "NOT_MATERIALIZED") {
+				targets.push({ projectionId: projection.projection_id, receiptId });
+			}
+		}
+	}
+	return targets.slice(0, MATERIALIZE_BULK_LIMIT);
 }
 
 function Checklist({ value, onChange }: { value: V3ApprovalChecklist; onChange: (next: V3ApprovalChecklist) => void }) {
@@ -133,6 +171,46 @@ function StoryboardCard({ item, onApprove, onReview, onRegenerate, onDeleteDraft
 				{item.master.status !== "APPROVED" ? <button type="button" onClick={() => onApprove(item)} className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-100" data-testid="v3-open-approval">Open human approval <ChevronRight size={14} className="inline" /></button> : <span className="inline-flex items-center gap-1 text-xs text-emerald-200"><CheckCircle2 size={14} /> Receipt recorded</span>}
 			</div>
 		</article>
+	);
+}
+
+// Round 3 P3: per-projection V2 production materialization status + explicit,
+// human-triggered action. Rendered ONLY in the Approved Landbank view. Opening the
+// landbank never materializes — the action fires only on an explicit operator click.
+function ApprovedMaterializationPanel({ item, busy, onMaterialize }: { item: V3LandbankItem; busy: boolean; onMaterialize: (projectionId: string, receiptId: string) => void }) {
+	const receiptId = typeof item.approval_receipt?.receipt_id === "string" ? item.approval_receipt.receipt_id : "";
+	return (
+		<div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3" data-testid="v3-materialization-panel">
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">V2 production materialization</div>
+				<span data-testid="v3-materialization-rollup"><Badge tone={materializationTone(item.v2_materialization)}>{item.v2_materialization}</Badge></span>
+			</div>
+			<div className="mt-2 space-y-2" data-testid="v3-materialization-projections">
+				{item.projections.map((projection) => {
+					const status = projection.materialization?.status ?? "NOT_MATERIALIZED";
+					const reason = projection.materialization?.reason;
+					const canMaterialize = (status === "NOT_MATERIALIZED" || status === "STALE") && Boolean(receiptId);
+					const hint = !receiptId
+						? "An approval receipt is required before materialization."
+						: status === "MATERIALIZED"
+							? "Already materialized into a V2 production blueprint."
+							: status === "BLOCKED"
+								? `Blocked${reason ? `: ${reason}` : ""}. Resolve the V2 blueprint before materializing.`
+								: "Materialize this approved projection into a V2 production blueprint.";
+					return (
+						<div key={projection.projection_id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
+							<div className="flex flex-wrap items-center gap-2">
+								<span className="text-[11px] font-bold uppercase text-slate-300">{projection.target_duration_seconds}s</span>
+								<span title={reason ? `Reason: ${reason}` : undefined} data-testid={`v3-materialization-chip-${projection.projection_id}`}><Badge tone={materializationTone(status)}>{status}</Badge></span>
+								{reason ? <span className="text-[10px] text-slate-500">{reason}</span> : null}
+							</div>
+							<button type="button" disabled={busy || !canMaterialize} onClick={() => onMaterialize(projection.projection_id, receiptId)} title={hint} className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-100 disabled:opacity-40" data-testid={`v3-materialize-${projection.projection_id}`}>Materialize for Production</button>
+						</div>
+					);
+				})}
+			</div>
+			{!receiptId ? <HelperText className="mt-2">An approval receipt is required before any projection can be materialized.</HelperText> : null}
+		</div>
 	);
 }
 
@@ -363,10 +441,33 @@ export default function StoryboardLandbankV3Page() {
 		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
 	};
 
+	const handleMaterialize = async (projectionId: string, receiptId: string) => {
+		if (!selectedProduct || !projectionId || !receiptId) return;
+		setBusy(true); setError(""); setSuccess("");
+		try {
+			const result = await materializeV3Projection({ productId: selectedProduct.id, projectionId, receiptId });
+			setSuccess(`Projection ${projectionId} materialized into V2 blueprint ${result.blueprint_id} rev ${result.revision}${result.idempotent_reuse ? " (idempotent reuse)" : ""}. Human approval remains the authority; nothing was auto-approved.`);
+			await loadLandbank(selectedProduct.id);
+		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+	};
+
+	const handleMaterializeAllClean = async () => {
+		if (!selectedProduct) return;
+		const targets = collectCleanMaterializeTargets(approvedItems);
+		if (!targets.length) return;
+		setBusy(true); setError(""); setSuccess("");
+		try {
+			const result = await materializeV3ProjectionsBulk({ items: targets });
+			setSuccess(`Bulk materialization complete: ${result.materialized_count} materialized, ${result.blocked_count} blocked of ${result.requested} requested.`);
+			await loadLandbank(selectedProduct.id);
+		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+	};
+
 	const visibleItems = useMemo(() => items, [items]);
 	const bulkCandidates = useMemo(() => visibleItems.filter((item) => item.master.status !== "APPROVED" && item.quality.hard_pass), [visibleItems]);
 	const bulkExceptions = useMemo(() => visibleItems.filter((item) => item.master.status !== "APPROVED" && !item.quality.hard_pass), [visibleItems]);
 	const approvedItems = useMemo(() => items.filter((item) => item.master.status === "APPROVED"), [items]);
+	const cleanMaterializeTargets = useMemo(() => collectCleanMaterializeTargets(approvedItems), [approvedItems]);
 	const visibleTruthFacts = useMemo(() => {
 		const query = evidenceSearch.trim().toLowerCase();
 		if (!query) return truthFacts;
@@ -440,9 +541,16 @@ export default function StoryboardLandbankV3Page() {
 				{visibleItems.length ? <div className="space-y-4">{visibleItems.map((item) => <StoryboardCard key={`${item.master.master_id}:${item.master.revision}`} item={item} onReview={handleReview} onApprove={(target) => { setBulkApproval(false); setApprovalItem(target); setActiveJob("REVIEW"); }} onRegenerate={handleRegenerate} onDeleteDraft={(target) => setDeleteItem(target)} />)}{landbankHasMore && selectedProduct ? <button type="button" disabled={busy} onClick={() => void loadLandbank(selectedProduct.id, landbankOffset, true)} className="w-full rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 disabled:opacity-40" data-testid="v3-load-more">Load more bounded results</button> : null}</div> : <div className="rounded-xl border border-dashed border-slate-700 p-6 text-sm text-slate-500" data-testid="v3-empty-review-queue">No V3 storyboard candidates in this bounded view. Execute an explicit plan or adjust the product/filters.</div>}
 			</Section>
 
-			<Section title="4. Approved storyboard landbank" helper="The V3 approved landbank is a supply-plane read model. Macro Round 3 owns V2 materialization, Production Supply Manifest, P6, and runtime pilot work.">
-				<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4" data-testid="v3-approved-landbank"><div className="flex items-center gap-2 text-xs font-bold uppercase text-slate-300"><BookOpen size={14} /> Approved V3 Storyboard Landbank</div><div className="mt-2 text-sm text-slate-400">{approvedItems.length} approved storyboard(s) in the current bounded read.</div><HelperText className="mt-2">No V2 rows, activation pointers, materialization links, P6 manifests, media calls, or provider credits are created by this surface.</HelperText></div>
-				{approvedItems.length ? <div className="mt-4 space-y-4">{approvedItems.map((item) => <StoryboardCard key={`approved:${item.master.master_id}:${item.master.revision}`} item={item} onApprove={() => undefined} />)}</div> : null}
+			<Section title="4. Approved storyboard landbank" helper="The V3 approved landbank is a supply-plane read model. Macro Round 3 P3 adds explicit, human-triggered V2 materialization — status is read-only until you act.">
+				<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4" data-testid="v3-approved-landbank">
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<div className="flex items-center gap-2 text-xs font-bold uppercase text-slate-300"><BookOpen size={14} /> Approved V3 Storyboard Landbank</div>
+						<button type="button" disabled={busy || !cleanMaterializeTargets.length} onClick={() => void handleMaterializeAllClean()} className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-100 disabled:opacity-40" title={`Materialize up to ${MATERIALIZE_BULK_LIMIT} clean (NOT_MATERIALIZED) approved projections into V2 production blueprints`} data-testid="v3-materialize-all-clean">Materialize All Clean ({cleanMaterializeTargets.length})</button>
+					</div>
+					<div className="mt-2 text-sm text-slate-400">{approvedItems.length} approved storyboard(s) in the current bounded read.</div>
+					<HelperText className="mt-2">Materialization into V2 production blueprints is explicit and human-triggered — nothing is materialized when this landbank loads. Bulk is bounded to {MATERIALIZE_BULK_LIMIT} clean projections per run.</HelperText>
+				</div>
+				{approvedItems.length ? <div className="mt-4 space-y-4">{approvedItems.map((item) => <div key={`approved:${item.master.master_id}:${item.master.revision}`} data-testid="v3-approved-item"><StoryboardCard item={item} onApprove={() => undefined} /><ApprovedMaterializationPanel item={item} busy={busy} onMaterialize={handleMaterialize} /></div>)}</div> : null}
 			</Section>
 
 			{approvalItem ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" data-testid="v3-approval-dialog"><div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-emerald-500/30 bg-slate-950 p-6"><div className="flex items-start justify-between gap-4"><div><div className="text-xs font-bold uppercase tracking-wide text-emerald-200">{bulkApproval ? "Human batch approval receipt" : "Human approval receipt"}</div><h2 className="mt-1 text-lg font-bold text-slate-100">{bulkApproval ? `Approve ${bulkCandidates.length} clean storyboard(s)?` : `Approve ${approvalItem.master.master_id}?`}</h2></div><button type="button" onClick={() => { setApprovalItem(null); setBulkApproval(false); }} className="text-slate-400" aria-label="Close approval">✕</button></div><p className="mt-3 text-xs leading-5 text-slate-400">{bulkApproval ? "This records one immutable batch receipt with each exact Master and projection revision. Every candidate still passes the same human checklist." : "This records an immutable v3_human_approval_receipt for the exact Master and selected projection revisions."} It does not activate or materialize V2.</p>{bulkApproval ? <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3" data-testid="v3-batch-scope"><div className="text-[10px] font-bold uppercase text-emerald-200">Machine-clean candidates ({bulkCandidates.length})</div><ul className="mt-1 max-h-28 space-y-1 overflow-y-auto text-[11px] text-slate-300">{bulkCandidates.map((item) => <li key={item.master.master_id} data-testid="v3-batch-clean-item">{item.master.master_id} · {item.master.formula.formula_id} · {item.projections.length} projection(s) · {item.projections.map((projection) => projection.target_duration_seconds).join("/")}s</li>)}</ul>{bulkExceptions.length ? <div className="mt-2"><div className="text-[10px] font-bold uppercase text-amber-300" data-testid="v3-batch-exceptions">Exceptions excluded from the batch ({bulkExceptions.length})</div><ul className="mt-1 max-h-20 space-y-1 overflow-y-auto text-[11px] text-amber-200">{bulkExceptions.map((item) => <li key={item.master.master_id}>{item.master.master_id} · {item.quality.issue_codes.join(", ") || "not hard-pass"}</li>)}</ul></div> : null}<div className="mt-2 text-[10px] text-slate-500">Only this exact machine-clean set receives the batch receipt; exceptions need individual review. The batch digest binds every target and is shown in Technical Details after approval.</div></div> : null}<div className="mt-4 grid gap-3 sm:grid-cols-2"><FormField label="Reviewer"><input className={INPUT_CLASS} value={reviewer} onChange={(event) => setReviewer(event.target.value)} data-testid="v3-reviewer" /></FormField><FormField label="Rationale"><textarea className={`${INPUT_CLASS} min-h-20`} value={rationale} onChange={(event) => setRationale(event.target.value)} data-testid="v3-rationale" /></FormField></div><div className="mt-4"><Checklist value={checklist} onChange={setChecklist} /></div><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => { setApprovalItem(null); setBulkApproval(false); }} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300">Cancel</button><button type="button" disabled={busy || !allChecks || !reviewer.trim() || rationale.trim().length < 8} onClick={() => void handleApprove()} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40" data-testid={bulkApproval ? "v3-approve-batch" : "v3-approve-master"}>{bulkApproval ? "Record batch approval receipt" : "Record approval receipt"}</button></div></div></div> : null}

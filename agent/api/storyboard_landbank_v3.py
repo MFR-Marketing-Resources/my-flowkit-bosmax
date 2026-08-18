@@ -10,11 +10,15 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from agent.services import production_copy_supply_service as supply_service
+from agent.services import production_supply_manifest_service as manifest_service
+from agent.services.production_supply_manifest_service import ManifestError
 from agent.services.storyboard_landbank_v3_factory import (
     ROUND1_SOURCE,
     V3CopyFactoryService,
     V3FactoryError,
 )
+from agent.services.storyboard_landbank_v3_materializer import MaterializationError
 from agent.services.storyboard_landbank_v3_round2 import round2_service
 
 
@@ -27,6 +31,20 @@ def _error(exc: V3FactoryError) -> HTTPException:
     if exc.details is not None:
         detail["details"] = exc.details
     return HTTPException(status_code=exc.status_code, detail=detail)
+
+
+def _materialization_error(exc: MaterializationError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": exc.detail, "details": exc.details},
+    )
+
+
+def _manifest_error(exc: ManifestError) -> HTTPException:
+    return HTTPException(
+        status_code=exc.status_code,
+        detail={"code": exc.code, "message": exc.detail, "details": exc.details},
+    )
 
 
 def _meta(request: Request, payload: dict[str, Any]) -> tuple[str, str, str]:
@@ -563,13 +581,122 @@ async def get_v3_copy_register_landbank(
     search: str | None = None,
 ):
     try:
-        return await round2_service.copy_register_landbank(
+        payload = await round2_service.copy_register_landbank(
             product_id, limit=limit, offset=offset, status=status, formula_id=formula_id,
             angle_id=angle_id, storyline_family_id=storyline_family_id, duration_seconds=duration_seconds,
             source=source, quality=quality, blocker=blocker, recipe_id=recipe_id, search=search,
         )
     except V3FactoryError as exc:
         raise _error(exc) from exc
+    # Read-only enrichment: report truthful V2 materialization status per
+    # projection.  Opening the landbank NEVER materializes and NEVER approves.
+    return await supply_service.enrich_landbank_payload(payload)
+
+
+@router.post("/copy-register/materialize")
+async def materialize_v3_projection(request: Request, payload: dict[str, Any]):
+    """Explicitly materialize ONE approved projection into a V2 PRODUCTION_VALID blueprint."""
+
+    actor_id, _request_id, _source = _meta(request, payload)
+    projection_id = str(payload.get("projection_id") or "").strip()
+    receipt_id = str(payload.get("receipt_id") or "").strip()
+    if not projection_id or not receipt_id:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "MATERIALIZE_REQUEST_INVALID",
+                "message": "projection_id and receipt_id are required.",
+            },
+        )
+    try:
+        return await supply_service.materialize(
+            projection_id=projection_id,
+            receipt_id=receipt_id,
+            projection_revision=payload.get("projection_revision"),
+            actor_id=actor_id,
+        )
+    except MaterializationError as exc:
+        raise _materialization_error(exc) from exc
+
+
+@router.post("/copy-register/materialize-bulk")
+async def materialize_v3_projections_bulk(request: Request, payload: dict[str, Any]):
+    """Bounded bulk materialization of clean approved projections (partial success)."""
+
+    actor_id, _request_id, _source = _meta(request, payload)
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "MATERIALIZE_BULK_REQUEST_INVALID",
+                "message": "items must be a non-empty list of {projection_id, receipt_id}.",
+            },
+        )
+    try:
+        return await supply_service.materialize_bulk(items, actor_id=actor_id)
+    except MaterializationError as exc:
+        raise _materialization_error(exc) from exc
+
+
+@router.get("/copy-register/capacity")
+async def get_v3_production_capacity(product_id: str):
+    """4-tier capacity: semantic / projection / executable-copy / production."""
+
+    return await supply_service.production_capacity(product_id)
+
+
+@router.post("/copy-register/manifest")
+async def build_v3_production_manifest(request: Request, payload: dict[str, Any]):
+    """Build a DRAFT production copy supply manifest from MATERIALIZED supply."""
+
+    actor_id, _request_id, _source = _meta(request, payload)
+    product_id = str(payload.get("product_id") or "").strip()
+    if not product_id:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "MANIFEST_REQUEST_INVALID", "message": "product_id is required."},
+        )
+    try:
+        outcome = await manifest_service.build_manifest(
+            product_id,
+            requested_capacity=int(payload.get("requested_capacity") or 1),
+            actor_id=actor_id,
+            duration_seconds=payload.get("duration_seconds"),
+            reuse_policy=payload.get("reuse_policy"),
+            campaign_key=str(payload.get("campaign_key") or ""),
+            production_plan_id=payload.get("production_plan_id"),
+        )
+    except ManifestError as exc:
+        raise _manifest_error(exc) from exc
+    return _dump(outcome)
+
+
+@router.post("/copy-register/manifest/{manifest_id}/freeze")
+async def freeze_v3_production_manifest(
+    request: Request, manifest_id: str, payload: dict[str, Any]
+):
+    actor_id, _request_id, _source = _meta(request, payload)
+    revision = int(payload.get("revision") or 0)
+    if revision < 1:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "MANIFEST_REQUEST_INVALID", "message": "revision is required."},
+        )
+    try:
+        return _dump(
+            await manifest_service.freeze_manifest(manifest_id, revision, actor_id=actor_id)
+        )
+    except ManifestError as exc:
+        raise _manifest_error(exc) from exc
+
+
+@router.get("/copy-register/manifest/{manifest_id}")
+async def get_v3_production_manifest(manifest_id: str, revision: int | None = None):
+    try:
+        return _dump(await manifest_service.get_manifest_view(manifest_id, revision))
+    except ManifestError as exc:
+        raise _manifest_error(exc) from exc
 
 
 @router.get("/copy-register/review-queue")

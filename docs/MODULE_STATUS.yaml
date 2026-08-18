@@ -1643,3 +1643,20 @@ domains:
       - tests/unit/test_storyboard_landbank_v3_round1_factory.py
       - tests/unit/test_storyboard_landbank_v3_round2_copy_register.py
       - tests/unit/test_storyboard_landbank_v3_validators.py
+      # Macro Round 3 production integration: V3 approved supply -> deterministic
+      # V2 materialization + carry-forward link -> production copy supply manifest
+      # -> P6 per-item selection + append-only usage ledger.  Adds no parallel
+      # authority; never churns the product-global V2 activation pointer.
+      - agent/models/storyboard_landbank_v3_round3.py
+      - agent/services/storyboard_landbank_v3_materializer.py
+      - agent/services/production_supply_repository.py
+      - agent/services/production_copy_supply_service.py
+      - agent/services/production_supply_manifest_service.py
+      - agent/services/production_allocation_service.py
+      - tests/unit/test_storyboard_landbank_v3_materializer.py
+      - tests/unit/test_production_copy_supply_service.py
+      - tests/unit/test_production_supply_manifest_service.py
+      - tests/unit/test_production_allocation_service.py
+      - tests/unit/test_production_scale_and_recovery.py
+      - dashboard/src/components/production-studio/CopySupplyPanel.tsx
+      - dashboard/src/components/production-studio/CopySupplyPanel.test.tsx

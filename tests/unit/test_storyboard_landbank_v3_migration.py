@@ -21,7 +21,11 @@ V3_TABLES = {
     "duration_projection_v3",
     "review_event_v3",
 }
-DEFERRED_TABLES = {
+# Macro Round 3 promoted these four from DEFERRED/absent to PRESENT.  They are
+# additive production-integration tables that bind approved V3 supply to Copy
+# Register V2 production authority and to P6 allocation without a parallel
+# authority.
+ROUND3_TABLES = {
     "materialization_link_v3",
     "production_copy_supply_manifest_v3",
     "manifest_item_v3",
@@ -30,6 +34,27 @@ DEFERRED_TABLES = {
 ROUND2_TABLES = {
     "v3_ai_authoring_run",
     "v3_human_approval_receipt",
+}
+ROUND3_INDEXES = {
+    "idx_materialization_link_v3_product_status",
+    "idx_materialization_link_v3_projection",
+    "idx_materialization_link_v3_receipt",
+    "idx_materialization_link_v3_digest",
+    "idx_materialization_link_v3_blueprint",
+    "idx_production_copy_supply_manifest_v3_product_status",
+    "idx_production_copy_supply_manifest_v3_plan",
+    "idx_production_copy_supply_manifest_v3_campaign",
+    "idx_production_copy_supply_manifest_v3_digest",
+    "idx_manifest_item_v3_manifest",
+    "idx_manifest_item_v3_blueprint",
+    "idx_manifest_item_v3_projection",
+    "idx_manifest_item_v3_link",
+    "idx_manifest_item_v3_digest",
+    "idx_landbank_usage_v3_product",
+    "idx_landbank_usage_v3_manifest",
+    "idx_landbank_usage_v3_item",
+    "idx_landbank_usage_v3_plan",
+    "idx_landbank_usage_v3_blueprint",
 }
 V3_INDEXES = {
     "idx_angle_v3_product_status",
@@ -179,13 +204,14 @@ async def test_v3_core_tables_indexes_and_deferred_tables_are_exact():
     tables = {row[0] for row in await table_cursor.fetchall()}
     assert V3_TABLES <= tables
     assert ROUND2_TABLES <= tables
-    assert not (DEFERRED_TABLES & tables)
+    assert ROUND3_TABLES <= tables
 
     index_cursor = await db.execute(
         "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE '%_v3_%'"
     )
     indexes = {row[0] for row in await index_cursor.fetchall()}
     assert V3_INDEXES <= indexes
+    assert ROUND3_INDEXES <= indexes
     expected_columns = {
         "storyboard_component_v3": {"objective_id", "formula_stage_keys_json", "stage_segments_json", "content_digest"},
         "copy_recipe_v3": {"campaign_key", "objective_id", "deterministic_seed", "config_digest"},
@@ -199,6 +225,46 @@ async def test_v3_core_tables_indexes_and_deferred_tables_are_exact():
             "stage_allocation_receipt_json",
             "derivation_source",
             "authoring_run_id",
+        },
+        "materialization_link_v3": {
+            "materialization_digest",
+            "materializer_version",
+            "derivation_source",
+            "projection_exact_digest",
+            "approval_receipt_id",
+            "approval_receipt_digest",
+            "v2_blueprint_id",
+            "v2_blueprint_revision",
+            "v2_approval_snapshot_id",
+            "status",
+        },
+        "production_copy_supply_manifest_v3": {
+            "manifest_digest",
+            "recipe_policy_version",
+            "reuse_policy_json",
+            "source_authority_digest",
+            "item_count",
+            "valid_item_count",
+            "blocked_item_count",
+            "status",
+        },
+        "manifest_item_v3": {
+            "item_digest",
+            "projection_exact_digest",
+            "materialization_link_id",
+            "materialization_link_revision",
+            "v2_blueprint_id",
+            "v2_approval_snapshot_id",
+            "duration_seconds",
+        },
+        "landbank_usage_v3": {
+            "usage_type",
+            "outcome_status",
+            "reason_code",
+            "authority_digest",
+            "event_digest",
+            "v2_blueprint_id",
+            "manifest_item_id",
         },
     }
     for table, required_columns in expected_columns.items():
@@ -353,3 +419,159 @@ async def test_disposable_clone_can_be_checked_and_discarded_without_touching_te
         "SELECT COUNT(*) FROM angle_v3 WHERE angle_id='angle-v3-clone'"
     )).fetchone()
     assert tuple(count) == (1,)
+
+
+@pytest.mark.asyncio
+async def test_v3_round3_usage_ledger_append_only_and_manifest_terminal_immutable():
+    await _seed_truth("round3")
+    db = await get_db()
+    now = "2026-08-18T00:00:00Z"
+    digest = "a" * 64
+
+    # The usage ledger is strictly append-only: insert succeeds, mutation aborts.
+    await db.execute(
+        "INSERT INTO landbank_usage_v3 (usage_id, product_id, v2_blueprint_id, "
+        "v2_blueprint_revision, usage_type, authority_digest, event_digest, "
+        "created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "usage-r3-1",
+            "v3-product-round3",
+            "bpv2_round3",
+            3,
+            "ALLOCATED",
+            digest,
+            digest,
+            now,
+            "v3-test",
+        ),
+    )
+    await db.commit()
+    with pytest.raises(sqlite3.IntegrityError, match="LANDBANK_USAGE_V3_APPEND_ONLY"):
+        await db.execute(
+            "UPDATE landbank_usage_v3 SET reason_code='edited' WHERE usage_id='usage-r3-1'"
+        )
+    await db.rollback()
+    with pytest.raises(sqlite3.IntegrityError, match="LANDBANK_USAGE_V3_APPEND_ONLY"):
+        await db.execute(
+            "DELETE FROM landbank_usage_v3 WHERE usage_id='usage-r3-1'"
+        )
+    await db.rollback()
+
+    # A DRAFT manifest header remains mutable while it is being built.
+    await db.execute(
+        "INSERT INTO production_copy_supply_manifest_v3 (manifest_id, revision, product_id, "
+        "recipe_policy_version, source_authority_digest, manifest_digest, status, source, "
+        "created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "man-r3-draft",
+            1,
+            "v3-product-round3",
+            "production-copy-reuse-policy-v1",
+            digest,
+            digest,
+            "DRAFT",
+            "v3-test",
+            now,
+            "v3-test",
+        ),
+    )
+    await db.commit()
+    await db.execute(
+        "UPDATE production_copy_supply_manifest_v3 SET requested_capacity=5 "
+        "WHERE manifest_id='man-r3-draft'"
+    )
+    await db.commit()
+
+    # A FROZEN manifest header is immutable: update and delete both abort.
+    await db.execute(
+        "INSERT INTO production_copy_supply_manifest_v3 (manifest_id, revision, product_id, "
+        "recipe_policy_version, source_authority_digest, manifest_digest, status, source, "
+        "created_at, created_by, frozen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "man-r3-frozen",
+            1,
+            "v3-product-round3",
+            "production-copy-reuse-policy-v1",
+            digest,
+            digest,
+            "FROZEN",
+            "v3-test",
+            now,
+            "v3-test",
+            now,
+        ),
+    )
+    await db.commit()
+    with pytest.raises(
+        sqlite3.IntegrityError, match="PRODUCTION_COPY_SUPPLY_MANIFEST_V3_IMMUTABLE"
+    ):
+        await db.execute(
+            "UPDATE production_copy_supply_manifest_v3 SET requested_capacity=9 "
+            "WHERE manifest_id='man-r3-frozen'"
+        )
+    await db.rollback()
+    with pytest.raises(
+        sqlite3.IntegrityError, match="PRODUCTION_COPY_SUPPLY_MANIFEST_V3_IMMUTABLE"
+    ):
+        await db.execute(
+            "DELETE FROM production_copy_supply_manifest_v3 WHERE manifest_id='man-r3-frozen'"
+        )
+    await db.rollback()
+
+    # A materialized (in-flight) link is mutable; a terminal one is immutable.
+    # Trigger isolation: exercise the trigger without the full V3->V2 chain.
+    await db.execute("PRAGMA foreign_keys=OFF")
+    await db.execute(
+        "INSERT INTO materialization_link_v3 (link_id, revision, product_id, master_id, "
+        "master_revision, master_exact_content_digest, projection_id, projection_revision, "
+        "projection_exact_digest, approval_receipt_id, approval_receipt_digest, v2_blueprint_id, "
+        "v2_blueprint_revision, v2_approval_snapshot_id, product_truth_snapshot_id, "
+        "product_truth_snapshot_version, product_truth_snapshot_digest, formula_id, formula_version, "
+        "evidence_digest, target_duration_seconds, materializer_version, materialization_digest, "
+        "status, source, created_at, created_by) VALUES "
+        "(?, 1, 'v3-product-round3', 'master-r3', 1, ?, 'proj-r3', 1, ?, 'receipt-r3', ?, "
+        "'bpv2_round3', 3, 'approval:bpv2_round3:3:abcd', 'snap-r3', 8, ?, 'PAS', 'fv1', ?, 8, "
+        "'v3-to-v2-materializer-v1', ?, 'PRODUCTION_VALID', 'v3-test', ?, 'v3-test')",
+        (
+            "link-r3-terminal",
+            digest,
+            digest,
+            digest,
+            digest,
+            digest,
+            digest,
+            now,
+        ),
+    )
+    await db.commit()
+    with pytest.raises(
+        sqlite3.IntegrityError, match="MATERIALIZATION_LINK_V3_IMMUTABLE"
+    ):
+        await db.execute(
+            "UPDATE materialization_link_v3 SET status='BLOCKED' WHERE link_id='link-r3-terminal'"
+        )
+    await db.rollback()
+    # A terminal link cannot be deleted either.
+    with pytest.raises(
+        sqlite3.IntegrityError, match="MATERIALIZATION_LINK_V3_IMMUTABLE"
+    ):
+        await db.execute(
+            "DELETE FROM materialization_link_v3 WHERE link_id='link-r3-terminal'"
+        )
+    await db.rollback()
+    # A new item cannot be inserted under a FROZEN manifest (FK off isolates the
+    # frozen-parent trigger from FK enforcement).
+    with pytest.raises(sqlite3.IntegrityError, match="MANIFEST_ITEM_V3_IMMUTABLE"):
+        await db.execute(
+            "INSERT INTO manifest_item_v3 (item_id, manifest_id, manifest_revision, item_index, "
+            "product_id, master_id, master_revision, projection_id, projection_revision, "
+            "projection_exact_digest, approval_receipt_id, materialization_link_id, "
+            "materialization_link_revision, v2_blueprint_id, v2_blueprint_revision, "
+            "v2_approval_snapshot_id, product_truth_snapshot_digest, formula_id, formula_version, "
+            "duration_seconds, item_digest, created_at, created_by) VALUES "
+            "('mig-frozen-item','man-r3-frozen',1,0,'v3-product-round3','m',1,'p',1,?,'r','l',1,'b',3,"
+            "'a',?,'PAS','fv',8,?,'2026-08-18T00:00:00Z','x')",
+            ("a" * 64, "a" * 64, "a" * 64),
+        )
+    await db.rollback()
+    await db.execute("PRAGMA foreign_keys=ON")

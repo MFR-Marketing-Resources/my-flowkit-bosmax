@@ -97,6 +97,10 @@ vi.mock(
 	}),
 );
 
+vi.mock("../components/production-studio/CopySupplyPanel", () => ({
+	default: () => <div data-testid="copy-supply-panel-mock">Copy supply</div>,
+}));
+
 import { collectProductionSessionResults } from "../utils/videoSessionResults";
 import CreativeProductionStudioPage from "./CreativeProductionStudioPage";
 
