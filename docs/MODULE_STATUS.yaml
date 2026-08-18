@@ -1666,3 +1666,8 @@ domains:
       - tests/unit/test_production_scale_and_recovery.py
       - dashboard/src/components/production-studio/CopySupplyPanel.tsx
       - dashboard/src/components/production-studio/CopySupplyPanel.test.tsx
+      # Task A: canonical Product Truth -> EvidenceFact derivation seam shared by the
+      # V2 authority path and the V3 read model, so the two can never drift, plus its
+      # V2<->V3 parity coverage. Pure/provider-free; no authority-semantics change.
+      - agent/services/product_truth_evidence.py
+      - tests/unit/test_product_truth_evidence_parity.py
