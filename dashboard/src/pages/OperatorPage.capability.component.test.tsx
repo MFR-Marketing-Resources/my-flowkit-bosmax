@@ -47,9 +47,6 @@ vi.mock("../api/client", () => ({
 		return Promise.resolve({ models: [] });
 	}),
 }));
-vi.mock("../api/copywritingReadiness", () => ({
-	useCopywritingReadiness: () => ({ readiness: null, loading: false }),
-}));
 vi.mock("../api/products", () => ({
 	fetchProductCatalog: vi.fn().mockResolvedValue({ items: [] }),
 }));
@@ -77,10 +74,8 @@ vi.mock("../api/workspaceGenerationPackages", () => ({
 	createI2VGenerationPackage: vi.fn(),
 }));
 vi.mock("../components/BackendVersionBanner", () => ({ default: () => null }));
-vi.mock("../components/copywriting/CopywritingReadinessCard", () => ({ default: () => null }));
 vi.mock("../components/reporting/RequestReportPanel", () => ({ default: () => null }));
 vi.mock("../components/SocialCopyPackagePanel", () => ({ default: () => null }));
-vi.mock("../components/workspace/CopySelectionPanel", () => ({ default: () => null }));
 vi.mock("../components/workspace/IMGModule", () => ({ default: () => null }));
 vi.mock("../components/workspace/SearchableProductSelect", () => ({ default: () => null }));
 

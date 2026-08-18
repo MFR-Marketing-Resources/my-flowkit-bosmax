@@ -111,7 +111,9 @@ export const POSTER_BUILDER_SETTINGS_FALLBACK: PosterBuilderSettings = {
 	copy_components: {
 		routes: ["DIRECT", "STEALTH", "REVIEW_REQUIRED"],
 		copy_sets_scope: "product",
-		copy_sets_endpoint: "/api/copy-sets/product/{product_id}",
+		// Legacy copy_set storage is archived (fail-closed 410). This fallback field
+		// intentionally holds no endpoint; copy authority is Copy Register V2.
+		copy_sets_endpoint: "",
 		landbank_products: 0,
 		source: "fallback",
 	},

@@ -18,9 +18,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("../api/client", () => ({
 	fetchAPI: vi.fn().mockResolvedValue({ models: [] }),
 }));
-vi.mock("../api/copywritingReadiness", () => ({
-	useCopywritingReadiness: () => ({ readiness: null, loading: false }),
-}));
 vi.mock("../api/creativeAssets", () => ({
 	fetchCreativeAssetEligibilityAudit: vi
 		.fn()
@@ -53,16 +50,10 @@ vi.mock("../components/copywriting/CopyArchitectureV2LaneCard", () => ({
 	),
 }));
 vi.mock("../components/NativeExtendPanel", () => ({ default: () => null }));
-vi.mock("../components/copywriting/CopywritingReadinessCard", () => ({
-	default: () => <div data-testid="copywriting-readiness-mock" />,
-}));
 vi.mock("../components/reporting/RequestReportPanel", () => ({
 	default: () => null,
 }));
 vi.mock("../components/SocialCopyPackagePanel", () => ({ default: () => null }));
-vi.mock("../components/workspace/CopySelectionPanel", () => ({
-	default: () => <div data-testid="copy-selection-panel-mock" />,
-}));
 vi.mock("../components/workspace/CanonicalReferenceBindingControls", () => ({
 	default: ({ mode }: { mode: string }) => (
 		<div data-testid="v4-reference-binding">{mode} reference controls</div>

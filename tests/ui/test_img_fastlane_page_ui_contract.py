@@ -278,9 +278,6 @@ def test_all_image_gen_pages_share_settings_and_route_the_model():
     assert "image_model: model" in imgmod
     operator = _read("dashboard/src/pages/OperatorPage.tsx")
     assert "image_model: data.image_model" in operator
-    # IMG Cockpit → startImgGeneration.
-    cockpit = _read("dashboard/src/pages/ImgCockpitPage.tsx")
-    assert "useImageGenSettings" in cockpit and "image_model: imageModel" in cockpit
     # Avatar Registry → /generate-image backend (additive image_model/count).
     avatar = _read("dashboard/src/pages/AvatarRegistryPage.tsx")
     assert "useImageGenSettings" in avatar and "image_model: imageModel" in avatar

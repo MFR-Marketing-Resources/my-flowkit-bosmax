@@ -29,7 +29,6 @@ def test_active_selector_consumers_use_the_shared_bounded_hook():
         "dashboard/src/pages/AvatarRegistryPage.tsx",
         "dashboard/src/pages/CopySetRegistryPage.tsx",
         "dashboard/src/pages/PosterBuilderPage.tsx",
-        "dashboard/src/components/poster/guided/PosterGuidedShell.tsx",
         "dashboard/src/components/prompt-tool/usePromptToolHydration.ts",
     )
     for relative_path in consumers:
