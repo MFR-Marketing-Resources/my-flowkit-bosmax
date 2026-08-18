@@ -315,4 +315,35 @@ describe("All Products Product Truth operator surface", () => {
 		};
 		expect(lastCall?.productTruth).toBe("APPROVED");
 	});
+
+	it("Review Draft cell shows em dash when open_review_draft is null (terminal history hidden)", async () => {
+		vi.mocked(fetchProductRegistry).mockResolvedValue({
+			items: [
+				{
+					...baseItem,
+					id: "d2f8fd58-437b-4447-8730-694b782eef17",
+					raw_product_title: "Sambal Nyet Berapi by Khairulaming",
+					product_display_name: "Sambal Nyet Berapi by Khairulaming",
+					product_truth_status: "APPROVED",
+					product_truth_update_pending: false,
+					product_truth_action_label: "View Product Truth",
+					open_review_draft: null,
+				} as never,
+			],
+			total_count: 1,
+			product_truth_summary: {
+				APPROVED: 1,
+				NEEDS_REVIEW: 0,
+				ACTION_REQUIRED: 0,
+				NOT_STARTED: 0,
+				UPDATE_PENDING: 0,
+			},
+		} as never);
+
+		render(<AllProductsTab />);
+		expect(await screen.findByText("Sambal Nyet Berapi by Khairulaming")).toBeInTheDocument();
+		expect(screen.getByRole("columnheader", { name: "Review Draft" })).toBeInTheDocument();
+		expect(screen.queryByText("READY FOR REVIEW")).not.toBeInTheDocument();
+	});
+
 });

@@ -249,6 +249,14 @@ def test_products_api_applies_server_facets_sort_and_pagination(monkeypatch):
         lambda _ids: _empty_async_dict(),
     )
     monkeypatch.setattr(
+        "agent.api.products.crud.latest_actionable_review_drafts_by_products",
+        lambda _ids: _empty_async_dict(),
+    )
+    monkeypatch.setattr(
+        "agent.api.products.crud.latest_approved_product_intelligence_snapshots_by_products",
+        lambda _ids: _empty_async_dict(),
+    )
+    monkeypatch.setattr(
         "agent.services.product_visual_onboarding_service.annotate_products_visual_readiness",
         fake_visual_readiness,
     )

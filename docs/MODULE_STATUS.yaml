@@ -839,6 +839,7 @@ domains:
       - agent/services/product_truth_catalog_projection.py
       - tests/unit/test_product_truth_catalog_projection.py
       - tests/api/test_product_truth_catalog_api.py
+      # Review Draft column = actionable PI drafts only (not terminal history)
       - dashboard/src/api/productVisualOnboarding.ts
       - dashboard/src/api/productTruthLock.ts
       - dashboard/src/components/product-registration/ProductOriginalSourceReupload.tsx

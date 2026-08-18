@@ -128,20 +128,25 @@ def test_catalog_product_truth_projection_matrix_and_no_n_plus_one(monkeypatch):
     }
     drafts = {
         "p-pending": {
+            "draft_id": "d-pending",
             "review_status": "READY_FOR_REVIEW",
             "updated_at": "2026-04-10T00:00:00Z",
             "created_at": "2026-04-10T00:00:00Z",
             "revision_of_snapshot_id": "snap-x",
         },
         "p-review": {
+            "draft_id": "d-review",
             "review_status": "READY_FOR_REVIEW",
             "claim_gate": "CLAIM_CLEAR",
             "readiness_status": "READY",
+            "updated_at": "2026-04-05T00:00:00Z",
         },
         "p-action": {
+            "draft_id": "d-action",
             "review_status": "NEEDS_REVISION",
             "claim_gate": "CLAIM_CLEAR",
             "readiness_status": "READY",
+            "updated_at": "2026-04-05T00:00:00Z",
         },
     }
     call_log = _wire_catalog(monkeypatch, products, approved, drafts)
@@ -157,14 +162,19 @@ def test_catalog_product_truth_projection_matrix_and_no_n_plus_one(monkeypatch):
     assert by_id["p-approved"]["product_truth_update_pending"] is False
     assert by_id["p-approved"]["product_truth_action_label"] == "View Product Truth"
     assert by_id["p-approved"]["product_truth_approved_snapshot_version"] == 4
+    assert by_id["p-approved"]["open_review_draft"] is None
 
     assert by_id["p-pending"]["product_truth_status"] == "APPROVED"
     assert by_id["p-pending"]["product_truth_update_pending"] is True
     assert by_id["p-pending"]["product_truth_action_label"] == "Review Update"
+    assert by_id["p-pending"]["open_review_draft"]["review_status"] == "READY_FOR_REVIEW"
 
     assert by_id["p-review"]["product_truth_status"] == "NEEDS_REVIEW"
+    assert by_id["p-review"]["open_review_draft"]["review_status"] == "READY_FOR_REVIEW"
     assert by_id["p-action"]["product_truth_status"] == "ACTION_REQUIRED"
+    assert by_id["p-action"]["open_review_draft"]["review_status"] == "NEEDS_REVISION"
     assert by_id["p-none"]["product_truth_status"] == "NOT_STARTED"
+    assert by_id["p-none"]["open_review_draft"] is None
 
     summary = body["product_truth_summary"]
     assert summary["APPROVED"] == 2
@@ -296,3 +306,138 @@ def test_catalog_product_truth_composes_with_risk_filter(monkeypatch):
     assert {item["id"] for item in body["items"]} == {"hi"}
     assert body["product_truth_summary"]["APPROVED"] == 1
     assert body["product_truth_summary"]["NOT_STARTED"] == 0
+
+
+def test_catalog_review_draft_column_excludes_terminal_history(monkeypatch):
+    """Review Draft column is actionable-only; terminal drafts never surface."""
+    products = [
+        _base_product("sambal", "Sambal Nyet Berapi by Khairulaming"),
+        _base_product("rej", "Rejected only"),
+        _base_product("sup", "Superseded only"),
+        _base_product("ready", "Ready revision"),
+        _base_product("needs", "Needs revision"),
+        _base_product("draft-only", "Draft only no snapshot"),
+    ]
+    products[0]["id"] = "d2f8fd58-437b-4447-8730-694b782eef17"
+    sambal_id = products[0]["id"]
+
+    approved = {
+        sambal_id: {
+            "snapshot_id": "snap-sambal",
+            "version": 5,
+            "status": "APPROVED",
+            "approved_at": "2026-08-08T15:40:14Z",
+            "created_at": "2026-08-08T15:40:14Z",
+        },
+        "rej": {
+            "version": 1,
+            "status": "APPROVED",
+            "approved_at": "2026-01-01T00:00:00Z",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+        "sup": {
+            "version": 1,
+            "status": "APPROVED",
+            "approved_at": "2026-01-01T00:00:00Z",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+        "ready": {
+            "version": 2,
+            "status": "APPROVED",
+            "approved_at": "2026-01-01T00:00:00Z",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+        "needs": {
+            "version": 2,
+            "status": "APPROVED",
+            "approved_at": "2026-01-01T00:00:00Z",
+            "created_at": "2026-01-01T00:00:00Z",
+        },
+    }
+    drafts = {
+        "ready": {
+            "draft_id": "d-ready",
+            "review_status": "READY_FOR_REVIEW",
+            "updated_at": "2026-02-01T00:00:00Z",
+            "created_at": "2026-02-01T00:00:00Z",
+            "revision_of_snapshot_id": "snap-ready",
+        },
+        "needs": {
+            "draft_id": "d-needs",
+            "review_status": "NEEDS_REVISION",
+            "updated_at": "2026-02-01T00:00:00Z",
+            "created_at": "2026-02-01T00:00:00Z",
+            "revision_of_snapshot_id": "snap-needs",
+        },
+        "draft-only": {
+            "draft_id": "d-draft",
+            "review_status": "DRAFT",
+            "updated_at": "2026-02-01T00:00:00Z",
+            "created_at": "2026-02-01T00:00:00Z",
+        },
+    }
+    call_log = _wire_catalog(monkeypatch, products, approved, drafts)
+
+    async def legacy_open_must_not_drive_column(ids):
+        call_log["legacy_open_calls"] = call_log.get("legacy_open_calls", 0) + 1
+        return {
+            sambal_id: {
+                "draft_id": "terminal-approved",
+                "review_status": "APPROVED",
+                "updated_at": "2026-08-08T15:40:14Z",
+            },
+            "rej": {
+                "draft_id": "t-rej",
+                "review_status": "REJECTED",
+                "updated_at": "2026-01-02T00:00:00Z",
+            },
+            "sup": {
+                "draft_id": "t-sup",
+                "review_status": "SUPERSEDED",
+                "updated_at": "2026-01-02T00:00:00Z",
+            },
+        }
+
+    monkeypatch.setattr(
+        "agent.db.crud.latest_open_review_drafts_by_products",
+        legacy_open_must_not_drive_column,
+    )
+
+    client = TestClient(_build_app())
+    resp = client.get("/api/products?view=REGISTRY&limit=50&exclude_reference=true")
+    assert resp.status_code == 200
+    body = resp.json()
+    by_id = {item["id"]: item for item in body["items"]}
+
+    s = by_id[sambal_id]
+    assert s["product_truth_status"] == "APPROVED"
+    assert s["product_truth_update_pending"] is False
+    assert s["product_truth_action_label"] == "View Product Truth"
+    assert s["open_review_draft"] is None
+
+    assert by_id["rej"]["product_truth_status"] == "APPROVED"
+    assert by_id["rej"]["open_review_draft"] is None
+    assert by_id["sup"]["product_truth_status"] == "APPROVED"
+    assert by_id["sup"]["open_review_draft"] is None
+
+    r = by_id["ready"]
+    assert r["product_truth_status"] == "APPROVED"
+    assert r["product_truth_update_pending"] is True
+    assert r["open_review_draft"]["review_status"] == "READY_FOR_REVIEW"
+    assert r["open_review_draft"]["draft_id"] == "d-ready"
+
+    n = by_id["needs"]
+    assert n["product_truth_status"] == "APPROVED"
+    assert n["open_review_draft"]["review_status"] == "NEEDS_REVISION"
+
+    d = by_id["draft-only"]
+    assert d["product_truth_status"] == "NEEDS_REVIEW"
+    assert d["open_review_draft"]["review_status"] == "DRAFT"
+
+    assert call_log["draft_calls"] == 1
+    resp2 = client.get("/api/products?view=REGISTRY&limit=2&offset=0&exclude_reference=true")
+    assert resp2.status_code == 200
+    b2 = resp2.json()
+    assert b2["returned_count"] == 2
+    assert b2["total_count"] == 6
+    assert call_log.get("legacy_open_calls", 0) == 0
