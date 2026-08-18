@@ -1653,6 +1653,7 @@ domains:
       - agent/services/production_copy_supply_service.py
       - agent/services/production_supply_manifest_service.py
       - agent/services/production_allocation_service.py
+      - agent/services/round3_authority_validator.py
       - tests/unit/test_storyboard_landbank_v3_materializer.py
       - tests/unit/test_production_copy_supply_service.py
       - tests/unit/test_production_supply_manifest_service.py

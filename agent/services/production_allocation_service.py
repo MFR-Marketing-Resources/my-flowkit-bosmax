@@ -23,6 +23,7 @@ from agent.models.storyboard_landbank_v3_round3 import LandbankUsageV3, usage_ev
 from agent.services import copy_register_v2_service as v2svc
 from agent.services import production_copy_supply_service as supply_status
 from agent.services import production_supply_repository as supply_repo
+from agent.services.round3_authority_validator import revalidate_round3_v2_authority
 
 
 class AllocationError(Exception):
@@ -59,21 +60,28 @@ async def _revalidate_selection(
     product_truth_snapshot_digest: str,
     formula_id: str,
     current_truth: dict[str, Any] | None,
+    expected_approval_snapshot_id: str | None = None,
 ) -> tuple[bool, str | None, Any]:
-    blueprint = await _resolve_blueprint(v2_blueprint_id, v2_blueprint_revision)
-    if blueprint is None:
-        return False, "V2_BLUEPRINT_MISSING", None
-    if blueprint.status != "PRODUCTION_VALID":
-        return False, f"BLUEPRINT_{blueprint.status}", blueprint
-    if current_truth is None:
-        return False, "PRODUCT_TRUTH_UNAVAILABLE", blueprint
-    if blueprint.product_truth_lineage.snapshot_digest != current_truth["digest"]:
-        return False, "PRODUCT_TRUTH_ADVANCED", blueprint
-    if product_truth_snapshot_digest != current_truth["digest"]:
-        return False, "PRODUCT_TRUTH_ADVANCED", blueprint
-    if blueprint.formula_version != v2_formula_version(formula_id):
-        return False, "FORMULA_VERSION_ADVANCED", blueprint
-    return True, None, blueprint
+    """Full current-production-authority revalidation for one selected blueprint.
+
+    Delegates to the ONE shared Round 3 validator, which reuses the complete V2
+    authority (current-authority projection + validate_copy_blueprint_v2), so a
+    historically PRODUCTION_VALID blueprint whose current authority drifted
+    (stale/missing/mutated evidence, taxonomy drift, approval mutation, snapshot
+    mismatch, formula drift, duration) FAILS CLOSED — not just a status/digest
+    check.  ``current_truth`` is accepted for call-site compatibility; the shared
+    validator loads CURRENT truth + evidence itself.
+    """
+
+    result = await revalidate_round3_v2_authority(
+        blueprint_id=v2_blueprint_id,
+        revision=v2_blueprint_revision,
+        expected_approval_snapshot_id=expected_approval_snapshot_id,
+        expected_truth_digest=product_truth_snapshot_digest or None,
+        expected_formula=formula_id or None,
+    )
+    reason = result.reason_codes[0] if result.reason_codes else None
+    return result.valid, reason, result.blueprint
 
 
 def _authority_digest(item) -> str:
@@ -195,6 +203,7 @@ async def allocate_from_manifest(
             product_truth_snapshot_digest=item.product_truth_snapshot_digest,
             formula_id=item.formula_id,
             current_truth=current_truth,
+            expected_approval_snapshot_id=item.v2_approval_snapshot_id,
         )
         if not valid:
             blocked.append({"manifest_item_id": item.item_id, "reason": reason})
