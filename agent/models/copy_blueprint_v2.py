@@ -42,14 +42,16 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def legacy_copy_maintenance_enabled() -> bool:
-    """Return whether an operator explicitly enabled pre-cutover recovery mode."""
+    """Retired (Task D4): legacy copy maintenance mode is permanently disabled.
 
-    return os.getenv(LEGACY_COPY_MAINTENANCE_FLAG, "0").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    The legacy copy_set / copy_component / poster_copy_set runtime is retired; there
+    is no operator switch that re-enables legacy reads/writes. Kept as a
+    permanently-False stub so the historical call sites and the receipt-native
+    init_db alignment resolve without a flag-dependent branch. Recovery of a
+    pre-cutover database is an OFFLINE flow via scripts/migrate_copy_register_v2_only.py,
+    not a runtime toggle."""
+
+    return False
 
 
 def canonicalize_evidence_text(value: str) -> str:
