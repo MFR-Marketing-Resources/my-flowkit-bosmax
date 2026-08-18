@@ -176,6 +176,11 @@ export async function fetchProductRegistry(params: {
 	freshness?: string;
 	/** Image availability: READY / MISSING. */
 	image?: string;
+	/**
+	 * Product Truth operator filter (PI authority):
+	 * ALL | APPROVED | APPROVED_UPDATE_PENDING | NEEDS_REVIEW | ACTION_REQUIRED | NOT_STARTED.
+	 */
+	productTruth?: string;
 	/** Restrict to one lifecycle (ACTIVE / ARCHIVED). ARCHIVED implies archived rows. */
 	lifecycleStatus?: string;
 	/** Drop read-only FastMoss reference rows (no product record) from the result. */
@@ -207,6 +212,7 @@ export async function fetchProductRegistry(params: {
 		query.set("claim_risk_level", params.claimRiskLevel);
 	if (params.freshness) query.set("freshness", params.freshness);
 	if (params.image) query.set("image", params.image);
+	if (params.productTruth) query.set("product_truth", params.productTruth);
 	if (params.lifecycleStatus)
 		query.set("lifecycle_status", params.lifecycleStatus);
 	if (params.group) query.set("group", params.group);

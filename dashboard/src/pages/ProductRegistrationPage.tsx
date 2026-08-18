@@ -107,10 +107,15 @@ export default function ProductRegistrationPage() {
 	// Open a committed product's Product Intelligence panel. Reuses the same
 	// deep-link bridge the "Open Product Intelligence" button uses; `?product=<id>`
 	// preselects the row on the /products surface.
-	const handleOpenProduct = (productId: string) => {
+	const handleOpenProduct = (
+		productId: string,
+		opts?: { tab?: "EDIT" | "INTELLIGENCE" | "CREATIVE" | "VISUAL" },
+	) => {
 		// One clean full-screen editor per product (edit & save + cluster/type +
 		// Product Intelligence + Creative Setup) — not the cramped Sales Analyzer.
-		navigate(`/product/${encodeURIComponent(productId)}`);
+		// Product Truth actions deep-link to ?tab=INTELLIGENCE.
+		const tabQs = opts?.tab ? `?tab=${encodeURIComponent(opts.tab)}` : "";
+		navigate(`/product/${encodeURIComponent(productId)}${tabQs}`);
 	};
 
 	const handleDeleteDraft = async (draftId: string) => {
