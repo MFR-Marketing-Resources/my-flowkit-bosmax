@@ -1,36 +1,63 @@
-import { BookOpen, CheckCircle2, ChevronRight, ClipboardCheck, Eye, LockKeyhole, Sparkles } from "lucide-react";
+import { ArrowRight, BookOpen, CheckCircle2, ChevronRight, Film, PencilLine, Sparkles, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
 	approveV3Master,
 	approveV3MasterBatch,
+	deleteV3Draft,
 	executeV3Assistant,
 	fetchV3AssistantPromptPreview,
 	fetchV3CopyRegisterLandbank,
 	fetchV3CopyRegisterProviderStatus,
+	fetchV3ProductionCapacity,
 	fetchV3ProductTruth,
 	materializeV3Projection,
 	materializeV3ProjectionsBulk,
 	planV3Assistant,
-	deleteV3Draft,
 	regenerateV3Component,
 	reviewV3Entity,
 	setupV3Campaign,
-	type V3AssistantMode,
-	type V3AssistantPlan,
 	type V3ApprovalChecklist,
+	type V3AssistantPlan,
 	type V3LandbankItem,
+	type V3ProductionCapacity,
 	type V3ProviderStatus,
 	type V3RecipePreset,
 	type V3TruthFact,
 } from "../api/storyboardLandbankV3Round2";
-
-const RECIPE_PRESETS: V3RecipePreset[] = ["QUICK TEST", "FAST54", "MULTI-ANGLE", "SCALE", "CUSTOM"];
-const FORMULA_OPTIONS = ["PAS", "AIDA", "HSO", "BAB", "PASTOR", "PESTA"];
-import { Badge, FormField, HelperText, Section, type BadgeTone } from "../components/ui";
+import { Badge, FormField, HelperText, Section, TechnicalDetails, type BadgeTone } from "../components/ui";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
-import type { Product } from "../types";
 import { useProductCatalog } from "../hooks/useProductCatalog";
+import type { Product } from "../types";
+import {
+	buildPreflightSummary,
+	capacityLabels,
+	CHECKLIST_GROUPS,
+	inferAssistantMode,
+	masterStatusToOperator,
+	materializationToOperator,
+	missingCopies,
+	reconstructStep,
+	resolveNextAction,
+	reviewBuckets,
+	STEP_META,
+	toOperatorError,
+	WIZARD_STEPS,
+	type WizardStep,
+	type WorkflowCounts,
+} from "../utils/storyboardLandbankResolver";
+
+// Operator-facing goal + formula + scale vocabulary. The technical presets stay
+// as the underlying values (the recipe/WPS/mode are all resolved for the operator).
+const GOAL_OPTIONS = ["conversion", "awareness", "consideration", "retention"];
+const FORMULA_OPTIONS = ["PAS", "AIDA", "HSO", "BAB", "PASTOR", "PESTA"];
+const SCALE_OPTIONS: Array<{ value: V3RecipePreset; label: string; hint: string }> = [
+	{ value: "QUICK TEST", label: "Quick test", hint: "A few copies to sanity-check" },
+	{ value: "FAST54", label: "Fast (54)", hint: "A full production batch" },
+	{ value: "MULTI-ANGLE", label: "Multi-angle", hint: "Spread across angles" },
+	{ value: "SCALE", label: "Scale", hint: "Large volume" },
+	{ value: "CUSTOM", label: "Custom", hint: "Set your own target" },
+];
 
 const INPUT_CLASS = "mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200";
 
@@ -45,7 +72,7 @@ const EMPTY_CHECKLIST: V3ApprovalChecklist = {
 };
 
 function errorMessage(error: unknown): string {
-	if (!(error instanceof Error)) return "V3 Copy Register request failed.";
+	if (!(error instanceof Error)) return "Copywriting Landbank request failed.";
 	const start = error.message.indexOf("{");
 	if (start < 0) return error.message;
 	try {
@@ -58,35 +85,16 @@ function errorMessage(error: unknown): string {
 	return error.message;
 }
 
-function statusTone(status: string): "success" | "warn" | "danger" | "neutral" {
-	if (status === "APPROVED" || status === "VALIDATED" || status === "EXECUTED") return "success";
-	if (status === "BLOCKED" || status === "FAILED") return "danger";
-	return "warn";
+function productName(product: Product | null): string {
+	if (!product) return "";
+	return product.product_display_name || product.raw_product_title || product.id;
 }
 
-// Round 3 P3 materialization status colour: MATERIALIZED = green, STALE = amber,
-// BLOCKED = red, PARTIALLY_MATERIALIZED = info, NOT_MATERIALIZED/unknown = neutral.
-// Colour is never the only signal — the status text is always shown alongside.
-function materializationTone(status: string | undefined): BadgeTone {
-	switch (status) {
-		case "MATERIALIZED":
-			return "success";
-		case "STALE":
-			return "warn";
-		case "BLOCKED":
-			return "danger";
-		case "PARTIALLY_MATERIALIZED":
-			return "info";
-		default:
-			return "neutral";
-	}
-}
-
-// Bounded "Materialize All Clean" target collection: up to 25 NOT_MATERIALIZED
-// projections that carry an approval receipt. STALE/BLOCKED/MATERIALIZED are
-// excluded — only machine-clean, never-materialized projections are bulk-eligible.
-const MATERIALIZE_BULK_LIMIT = 25;
-function collectCleanMaterializeTargets(items: V3LandbankItem[]): Array<{ projectionId: string; receiptId: string }> {
+// Approved projections that still need preparation into production (clean or
+// stale), receipt-bound. "Prepare All Clean" stays limited to genuinely-clean
+// (NOT_MATERIALIZED) projections; this wider set only powers the summary count.
+const PREPARE_BULK_LIMIT = 25;
+function collectCleanPrepareTargets(items: readonly V3LandbankItem[]): Array<{ projectionId: string; receiptId: string }> {
 	const targets: Array<{ projectionId: string; receiptId: string }> = [];
 	for (const item of items) {
 		const receiptId = typeof item.approval_receipt?.receipt_id === "string" ? item.approval_receipt.receipt_id : "";
@@ -97,167 +105,266 @@ function collectCleanMaterializeTargets(items: V3LandbankItem[]): Array<{ projec
 			}
 		}
 	}
-	return targets.slice(0, MATERIALIZE_BULK_LIMIT);
+	return targets.slice(0, PREPARE_BULK_LIMIT);
+}
+function countNeedsPreparation(items: readonly V3LandbankItem[]): number {
+	let count = 0;
+	for (const item of items) {
+		const hasReceipt = typeof item.approval_receipt?.receipt_id === "string";
+		if (!hasReceipt) continue;
+		for (const projection of item.projections) {
+			const status = projection.materialization?.status ?? "NOT_MATERIALIZED";
+			if (status === "NOT_MATERIALIZED" || status === "STALE") count += 1;
+		}
+	}
+	return count;
 }
 
-function Checklist({ value, onChange }: { value: V3ApprovalChecklist; onChange: (next: V3ApprovalChecklist) => void }) {
-	const labels: Array<[keyof V3ApprovalChecklist, string]> = [
-		["semantic_reviewed", "Semantic review"],
-		["product_truth_reviewed", "Product Truth"],
-		["formula_reviewed", "Formula route"],
-		["evidence_reviewed", "Evidence"],
-		["bridge_reviewed", "Bridge continuity"],
-		["safety_reviewed", "Claim safety"],
-		["duration_reviewed", "8 / 16 / 24 WPS"],
-	];
+// Plain-language quality warnings from the governed quality booleans, so a
+// "needs attention" card explains itself without exposing raw issue codes.
+function qualityWarnings(item: V3LandbankItem): string[] {
+	const quality = item.quality;
+	const warnings: string[] = [];
+	if (!quality.formula_valid) warnings.push("Formula structure needs attention");
+	if (!quality.evidence_valid) warnings.push("A claim needs supporting evidence");
+	if (!quality.claim_safety_valid) warnings.push("A claim may be unsafe");
+	if (!quality.bridge_valid) warnings.push("The flow between scenes needs attention");
+	if (!quality.truth_current) warnings.push("Product Truth changed — needs revalidation");
+	if (!quality.wps_valid) warnings.push("A duration version doesn't fit its time budget");
+	return warnings;
+}
+
+function GroupedChecklist({ value, onChange }: { value: V3ApprovalChecklist; onChange: (next: V3ApprovalChecklist) => void }) {
 	return (
-		<div className="grid gap-2 sm:grid-cols-2" data-testid="v3-approval-checklist">
-			{labels.map(([key, label]) => (
-				<label key={key} className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-xs text-slate-300">
-					<input type="checkbox" checked={value[key]} onChange={(event) => onChange({ ...value, [key]: event.target.checked })} data-testid={`v3-check-${key}`} />
-					{label}
-				</label>
+		<div className="space-y-3" data-testid="v3-approval-checklist">
+			{CHECKLIST_GROUPS.map((group) => (
+				<div key={group.title} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+					<div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{group.title}</div>
+					<div className="mt-2 grid gap-2 sm:grid-cols-2">
+						{group.items.map((entry) => {
+							const key = entry.key as keyof V3ApprovalChecklist;
+							return (
+								<label key={entry.key} className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs text-slate-300">
+									<input type="checkbox" checked={value[key]} onChange={(event) => onChange({ ...value, [key]: event.target.checked })} data-testid={`v3-check-${entry.key}`} />
+									{entry.label}
+								</label>
+							);
+						})}
+					</div>
+				</div>
 			))}
 		</div>
 	);
 }
 
-function StoryboardCard({ item, onApprove, onReview, onRegenerate, onDeleteDraft }: { item: V3LandbankItem; onApprove: (item: V3LandbankItem) => void; onReview?: (action: "validate" | "submit" | "reject" | "archive", item: V3LandbankItem) => void; onRegenerate?: (ref: { entity_id: string; revision: number }, item: V3LandbankItem) => void; onDeleteDraft?: (item: V3LandbankItem) => void }) {
+// A single copy, in operator language. The engineering identifiers (ids,
+// revisions, digests, evidence fact ids, review verbs) live in the per-card
+// Technical Details drawer.
+function CopyCard({
+	item,
+	onApprove,
+	onReview,
+	onRegenerate,
+	onDeleteDraft,
+}: {
+	item: V3LandbankItem;
+	onApprove?: (item: V3LandbankItem) => void;
+	onReview?: (action: "validate" | "submit" | "reject" | "archive", item: V3LandbankItem) => void;
+	onRegenerate?: (ref: { entity_id: string; revision: number }, item: V3LandbankItem) => void;
+	onDeleteDraft?: (item: V3LandbankItem) => void;
+}) {
 	const terminal = ["APPROVED", "ARCHIVED", "REJECTED", "SUPERSEDED", "FROZEN"].includes(item.master.status);
-	const [activeDuration, setActiveDuration] = useState<number | null>(null);
-	const focusedProjection = activeDuration ? item.projections.find((projection) => projection.target_duration_seconds === activeDuration) : null;
+	const warnings = qualityWarnings(item);
+	const statusChip = masterStatusToOperator(item.master.status);
+	const componentRef = (item.master.resolved_component_refs ?? [])[0];
 	return (
-		<article className="rounded-xl border border-slate-800 bg-slate-950/70 p-4" data-testid="v3-storyboard-card">
+		<article className="rounded-xl border border-slate-800 bg-slate-950/70 p-4" data-testid="v3-copy-card">
 			<div className="flex flex-wrap items-start justify-between gap-3">
-				<div>
-					<div className="flex flex-wrap items-center gap-2">
-						<span className="font-semibold text-sm text-slate-100">{item.master.master_id}</span>
-						<Badge tone={statusTone(item.master.status)}>{item.master.status}</Badge>
-						<Badge tone={item.quality.hard_pass ? "success" : "warn"}>{item.quality.novelty_signal}</Badge>
-					</div>
-					<p className="mt-1 text-xs text-slate-500">{item.master.formula.formula_id} · {item.master.word_count} words · {item.master.source}</p>
-					<p className="mt-1 text-[10px] text-slate-500">Objective: {item.master.objective?.definition || "locked V3 objective"} · Recipe: {item.master.recipe?.entity_id || "—"}</p>
+				<div className="flex flex-wrap items-center gap-2">
+					<Badge tone={statusChip.tone}>{statusChip.label}</Badge>
+					<Badge tone={item.quality.hard_pass ? "success" : "warn"}>{item.quality.hard_pass ? "Passed checks" : "Needs attention"}</Badge>
+					<span className="text-[11px] text-slate-500">{item.master.formula.formula_id} · {item.master.word_count} words</span>
 				</div>
-				<div className="text-right text-[11px] text-slate-500">Quality {Math.round(item.quality.quality_score * 100)}%<br />{item.projections.length} projections</div>
+				<div className="text-right text-[11px] text-slate-500">Quality {Math.round(item.quality.quality_score * 100)}%</div>
 			</div>
 
-			<div className="mt-3 space-y-2" data-testid="v3-full-storyboard">
+			<div className="mt-3 space-y-2" data-testid="v3-copy-body">
 				{item.master.stages.map((stage, index) => (
 					<div key={stage.stage_key} className="rounded-lg border border-slate-800 bg-slate-900/80 p-3">
-						<div className="text-[10px] font-bold uppercase tracking-wide text-blue-200">{index + 1}. {stage.formula_stage_key} · {stage.semantic_class}</div>
+						<div className="text-[10px] font-bold uppercase tracking-wide text-blue-200">{index + 1}. {stage.formula_stage_key}</div>
 						<p className="mt-1 text-sm leading-6 text-slate-200">{stage.authored_text}</p>
-						<div className="mt-2 text-[10px] text-slate-500">{stage.claim_bearing ? `Claim evidence: ${(stage.evidence_fact_ids ?? []).join(", ") || "MISSING"}` : "Non-claim stage"}</div>
 					</div>
 				))}
 			</div>
 
-			<div className="mt-3 flex flex-wrap items-center gap-2" role="tablist" aria-label="Duration projections" data-testid="v3-projection-tabs">
-				{[8, 16, 24].map((duration) => <button key={duration} type="button" role="tab" aria-selected={activeDuration === duration} onClick={() => setActiveDuration(activeDuration === duration ? null : duration)} className={`rounded-lg border px-3 py-1 text-[10px] font-bold uppercase ${activeDuration === duration ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-100" : "border-slate-700 text-slate-400"}`}>{duration}s tab</button>)}
-				{focusedProjection ? <span className="text-[10px] text-emerald-200">Focus: {focusedProjection.target_duration_seconds}s · {focusedProjection.wps_mode || "SAFE"} WPS</span> : <span className="text-[10px] text-slate-500">All projection authorities remain visible below.</span>}
-			</div>
-			<div className="mt-2 grid gap-2 md:grid-cols-3" data-testid="v3-projection-grid">
-				{item.projections.map((projection) => (
-					<div key={projection.projection_id} className={`rounded-lg border bg-slate-900/60 p-3 ${activeDuration === projection.target_duration_seconds ? "border-emerald-400/60" : "border-slate-800"}`}>
-						<div className="flex items-center justify-between text-[10px] font-bold uppercase text-emerald-200"><span>{projection.target_duration_seconds}s projection</span><span>{projection.status}</span></div>
-						<p className="mt-2 text-xs leading-5 text-slate-300">{projection.exact_resolved_dialogue}</p>
-						<div className="mt-2 text-[10px] text-slate-500">{projection.derivation_source} · {projection.wps_mode || "SAFE"} WPS · budgets [{projection.per_block_word_budgets.join(", ")}]</div>
-						{projection.stage_allocations?.some((allocation) => allocation.transform_mode === "COMPRESSED") ? <div className="mt-2 text-[10px] font-bold uppercase text-amber-200">Mechanical compression · human review required</div> : null}
-					</div>
-				))}
+			<div className="mt-3">
+				<div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Duration versions</div>
+				<div className="mt-2 grid gap-2 md:grid-cols-3" data-testid="v3-duration-versions">
+					{item.projections.map((projection) => (
+						<div key={projection.projection_id} className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+							<div className="text-[10px] font-bold uppercase text-emerald-200">{projection.target_duration_seconds}s version</div>
+							<p className="mt-1 text-xs leading-5 text-slate-300">{projection.exact_resolved_dialogue}</p>
+							{projection.stage_allocations?.some((allocation) => allocation.transform_mode === "COMPRESSED") ? (
+								<div className="mt-2 text-[10px] font-bold uppercase text-amber-200">Shortened to fit — review recommended</div>
+							) : null}
+						</div>
+					))}
+				</div>
 			</div>
 
-			<div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 pt-3">
-				{onReview && !terminal ? <div className="flex flex-wrap gap-1" data-testid="v3-review-actions"><button type="button" onClick={() => onReview("validate", item)} className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300" data-testid="v3-action-validate">Validate</button><button type="button" onClick={() => onReview("submit", item)} className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300" data-testid="v3-action-submit">Submit for review</button><button type="button" onClick={() => onReview("reject", item)} className="rounded border border-amber-600/50 px-2 py-1 text-[10px] text-amber-200" data-testid="v3-action-reject">Reject</button><button type="button" onClick={() => onReview("archive", item)} className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-400" data-testid="v3-action-archive">Archive</button>{onRegenerate && (item.master.resolved_component_refs ?? []).length ? <button type="button" onClick={() => onRegenerate((item.master.resolved_component_refs ?? [])[0], item)} className="rounded border border-violet-600/50 px-2 py-1 text-[10px] text-violet-200" data-testid="v3-action-regenerate">Regenerate</button> : null}{onDeleteDraft && item.master.status === "DRAFT" ? <button type="button" onClick={() => onDeleteDraft(item)} className="rounded border border-rose-600/50 px-2 py-1 text-[10px] text-rose-200" data-testid="v3-action-delete">Delete Draft</button> : null}</div> : <div className="text-[11px] text-slate-500">Truth current: {item.current_truth ? "YES" : "NO"} · V2/P6: {item.v2_materialization}/{item.p6_status}</div>}
-				{item.master.status !== "APPROVED" ? <button type="button" onClick={() => onApprove(item)} className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-100" data-testid="v3-open-approval">Open human approval <ChevronRight size={14} className="inline" /></button> : <span className="inline-flex items-center gap-1 text-xs text-emerald-200"><CheckCircle2 size={14} /> Receipt recorded</span>}
+			{warnings.length ? (
+				<div className="mt-3 flex flex-wrap gap-2" data-testid="v3-copy-warnings">
+					{warnings.map((warning) => (
+						<span key={warning} className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-100">{warning}</span>
+					))}
+				</div>
+			) : null}
+
+			<div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 pt-3">
+				<div className="flex flex-wrap gap-2">
+					{onReview && !terminal ? (
+						<button type="button" onClick={() => onReview("reject", item)} className="rounded-lg border border-amber-600/50 px-3 py-1.5 text-[11px] font-semibold text-amber-200" data-testid="v3-action-reject">Reject</button>
+					) : null}
+					{onRegenerate && !terminal && componentRef ? (
+						<button type="button" onClick={() => onRegenerate(componentRef, item)} className="inline-flex items-center gap-1 rounded-lg border border-violet-600/50 px-3 py-1.5 text-[11px] font-semibold text-violet-200" data-testid="v3-action-regenerate"><PencilLine size={12} /> Edit / Regenerate</button>
+					) : null}
+					{onDeleteDraft && item.master.status === "DRAFT" ? (
+						<button type="button" onClick={() => onDeleteDraft(item)} className="rounded-lg border border-rose-600/50 px-3 py-1.5 text-[11px] font-semibold text-rose-200" data-testid="v3-action-delete">Delete draft</button>
+					) : null}
+				</div>
+				{onApprove && item.master.status !== "APPROVED" ? (
+					<button type="button" onClick={() => onApprove(item)} className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-100" data-testid="v3-open-approval">Approve <ChevronRight size={14} /></button>
+				) : item.master.status === "APPROVED" ? (
+					<span className="inline-flex items-center gap-1 text-xs text-emerald-200" data-testid="v3-approved-badge"><CheckCircle2 size={14} /> Approved</span>
+				) : null}
 			</div>
+
+			<TechnicalDetails className="mt-3" testId="v3-card-technical" title="Technical details">
+				<div className="grid gap-1 text-[11px] text-slate-400 sm:grid-cols-2">
+					<div>Master: <span className="font-mono">{item.master.master_id}</span> · rev {item.master.revision}</div>
+					<div>Recipe: <span className="font-mono">{item.master.recipe?.entity_id || "—"}</span></div>
+					<div>Novelty: {item.quality.novelty_signal}</div>
+					<div>Content digest: <span className="font-mono">{item.master.exact_content_digest.slice(0, 12)}…</span></div>
+					<div className="sm:col-span-2">Claim evidence: {item.master.stages.filter((stage) => stage.claim_bearing).flatMap((stage) => stage.evidence_fact_ids ?? []).join(", ") || "none required"}</div>
+				</div>
+				{onReview && !terminal ? (
+					<div className="mt-2 flex flex-wrap gap-1" data-testid="v3-review-actions">
+						<button type="button" onClick={() => onReview("validate", item)} className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300" data-testid="v3-action-validate">Validate</button>
+						<button type="button" onClick={() => onReview("submit", item)} className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300" data-testid="v3-action-submit">Submit for review</button>
+						<button type="button" onClick={() => onReview("archive", item)} className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-400" data-testid="v3-action-archive">Archive</button>
+					</div>
+				) : null}
+			</TechnicalDetails>
 		</article>
 	);
 }
 
-// Round 3 P3: per-projection V2 production materialization status + explicit,
-// human-triggered action. Rendered ONLY in the Approved Landbank view. Opening the
-// landbank never materializes — the action fires only on an explicit operator click.
-function ApprovedMaterializationPanel({ item, busy, onMaterialize }: { item: V3LandbankItem; busy: boolean; onMaterialize: (projectionId: string, receiptId: string) => void }) {
+// Operator "Prepare for Production" panel (V2 materialization under the hood).
+function PreparePanel({ item, busy, onPrepare }: { item: V3LandbankItem; busy: boolean; onPrepare: (projectionId: string, receiptId: string) => void }) {
 	const receiptId = typeof item.approval_receipt?.receipt_id === "string" ? item.approval_receipt.receipt_id : "";
+	const rollup = materializationToOperator(item.v2_materialization === "NOT_IN_ROUND2" ? "NOT_MATERIALIZED" : item.v2_materialization);
 	return (
-		<div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3" data-testid="v3-materialization-panel">
+		<div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3" data-testid="v3-prepare-panel">
 			<div className="flex flex-wrap items-center justify-between gap-2">
-				<div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">V2 production materialization</div>
-				<span data-testid="v3-materialization-rollup"><Badge tone={materializationTone(item.v2_materialization)}>{item.v2_materialization}</Badge></span>
+				<div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Production readiness</div>
+				<span data-testid="v3-prepare-rollup"><Badge tone={rollup.tone}>{rollup.label}</Badge></span>
 			</div>
-			<div className="mt-2 space-y-2" data-testid="v3-materialization-projections">
+			<div className="mt-2 space-y-2">
 				{item.projections.map((projection) => {
 					const status = projection.materialization?.status ?? "NOT_MATERIALIZED";
 					const reason = projection.materialization?.reason;
-					const canMaterialize = (status === "NOT_MATERIALIZED" || status === "STALE") && Boolean(receiptId);
+					const label = materializationToOperator(status);
+					const canPrepare = (status === "NOT_MATERIALIZED" || status === "STALE") && Boolean(receiptId);
 					const hint = !receiptId
-						? "An approval receipt is required before materialization."
+						? "Approve this copy before preparing it for production."
 						: status === "MATERIALIZED"
-							? "Already materialized into a V2 production blueprint."
+							? "Already prepared for production."
 							: status === "BLOCKED"
-								? `Blocked${reason ? `: ${reason}` : ""}. Resolve the V2 blueprint before materializing.`
-								: "Materialize this approved projection into a V2 production blueprint.";
+								? "Blocked — resolve the issue before preparing."
+								: "Prepare this approved copy for production.";
 					return (
 						<div key={projection.projection_id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">
 							<div className="flex flex-wrap items-center gap-2">
 								<span className="text-[11px] font-bold uppercase text-slate-300">{projection.target_duration_seconds}s</span>
-								<span title={reason ? `Reason: ${reason}` : undefined} data-testid={`v3-materialization-chip-${projection.projection_id}`}><Badge tone={materializationTone(status)}>{status}</Badge></span>
-								{reason ? <span className="text-[10px] text-slate-500">{reason}</span> : null}
+								<span title={reason ? `Reason: ${reason}` : undefined} data-testid={`v3-prepare-chip-${projection.projection_id}`}><Badge tone={label.tone}>{label.label}</Badge></span>
 							</div>
-							<button type="button" disabled={busy || !canMaterialize} onClick={() => onMaterialize(projection.projection_id, receiptId)} title={hint} className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-100 disabled:opacity-40" data-testid={`v3-materialize-${projection.projection_id}`}>Materialize for Production</button>
+							<button type="button" disabled={busy || !canPrepare} onClick={() => onPrepare(projection.projection_id, receiptId)} title={hint} className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-100 disabled:opacity-40" data-testid={`v3-prepare-${projection.projection_id}`}>Prepare for Production</button>
 						</div>
 					);
 				})}
 			</div>
-			{!receiptId ? <HelperText className="mt-2">An approval receipt is required before any projection can be materialized.</HelperText> : null}
+			{!receiptId ? <HelperText className="mt-2">Approve this copy before it can be prepared for production.</HelperText> : null}
+		</div>
+	);
+}
+
+function SummaryTile({ label, value, tone = "neutral", testId }: { label: string; value: number | string; tone?: BadgeTone; testId?: string }) {
+	const toneClass: Record<BadgeTone, string> = {
+		neutral: "text-slate-100",
+		info: "text-blue-200",
+		success: "text-emerald-200",
+		warn: "text-amber-200",
+		danger: "text-rose-200",
+	};
+	return (
+		<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3" data-testid={testId}>
+			<div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</div>
+			<div className={`mt-1 text-2xl font-bold ${toneClass[tone]}`}>{value}</div>
 		</div>
 	);
 }
 
 export default function StoryboardLandbankV3Page() {
+	const navigate = useNavigate();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const { products, isLoadingProducts, productsError } = useProductCatalog(50);
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [provider, setProvider] = useState<V3ProviderStatus | null>(null);
-	const [recipeId, setRecipeId] = useState("");
+
+	// Operator business inputs.
 	const [objectiveId, setObjectiveId] = useState("conversion");
 	const [formulaId, setFormulaId] = useState("PAS");
 	const [preset, setPreset] = useState<V3RecipePreset>("FAST54");
-	const [durationMix, setDurationMix] = useState<Record<number, boolean>>({ 8: true, 16: true, 24: true });
 	const [targetCapacity, setTargetCapacity] = useState("54");
+	const [durationMix, setDurationMix] = useState<Record<number, boolean>>({ 8: true, 16: true, 24: true });
+
+	// Auto-resolved settings (surfaced only under Advanced).
 	const [languageProfile, setLanguageProfile] = useState("Malay");
 	const [wpsModeSel, setWpsModeSel] = useState<"SAFE" | "SWEET">("SWEET");
-	const [mode, setMode] = useState<V3AssistantMode>("CREATE");
-	const [plan, setPlan] = useState<V3AssistantPlan | null>(null);
-	const [promptDigest, setPromptDigest] = useState("");
+	const [recipeId, setRecipeId] = useState("");
+
+	// Data.
 	const [truthFacts, setTruthFacts] = useState<V3TruthFact[]>([]);
-	const [evidenceSearch, setEvidenceSearch] = useState("");
+	const [capacity, setCapacity] = useState<V3ProductionCapacity | null>(null);
 	const [items, setItems] = useState<V3LandbankItem[]>([]);
-	const [statusFilter, setStatusFilter] = useState("ALL");
-	const [durationFilter, setDurationFilter] = useState("ALL");
-	const [formulaFilter, setFormulaFilter] = useState("");
-	const [angleFilter, setAngleFilter] = useState("");
-	const [storylineFilter, setStorylineFilter] = useState("");
-	const [recipeFilter, setRecipeFilter] = useState("");
-	const [searchFilter, setSearchFilter] = useState("");
-	const [sourceFilter, setSourceFilter] = useState("ALL");
-	const [qualityFilter, setQualityFilter] = useState("ALL");
-	const [blockerFilter, setBlockerFilter] = useState("");
 	const [landbankOffset, setLandbankOffset] = useState(0);
 	const [landbankHasMore, setLandbankHasMore] = useState(false);
-	const [activeJob, setActiveJob] = useState<"SETUP" | "BUILD" | "REVIEW" | "LANDBANK">("SETUP");
+
+	// Generate / preflight.
+	const [plan, setPlan] = useState<V3AssistantPlan | null>(null);
+	const [planError, setPlanError] = useState("");
+	const [promptDigest, setPromptDigest] = useState("");
+	const [preflightBusy, setPreflightBusy] = useState(false);
+
+	// Review filters (Advanced only).
+	const [statusFilter, setStatusFilter] = useState("ALL");
+	const [durationFilter, setDurationFilter] = useState("ALL");
+	const [searchFilter, setSearchFilter] = useState("");
+
+	// Approval / delete.
 	const [approvalItem, setApprovalItem] = useState<V3LandbankItem | null>(null);
 	const [deleteItem, setDeleteItem] = useState<V3LandbankItem | null>(null);
 	const [bulkApproval, setBulkApproval] = useState(false);
 	const [checklist, setChecklist] = useState<V3ApprovalChecklist>(EMPTY_CHECKLIST);
 	const [reviewer, setReviewer] = useState("operator");
-	const [rationale, setRationale] = useState("Reviewed against the displayed V3 Product Truth, formula, evidence, bridge, safety, and WPS projections.");
+	const [rationale, setRationale] = useState("Reviewed against the displayed Product Truth, formula, evidence, flow, safety, and duration versions.");
+
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 	const [success, setSuccess] = useState("");
 
 	useEffect(() => {
-		void fetchV3CopyRegisterProviderStatus().then(setProvider).catch((reason) => setError(errorMessage(reason)));
+		void fetchV3CopyRegisterProviderStatus().then(setProvider).catch((reason) => setError(toOperatorError(errorMessage(reason))));
 	}, []);
 
 	useEffect(() => {
@@ -270,28 +377,25 @@ export default function StoryboardLandbankV3Page() {
 	useEffect(() => {
 		if (!selectedProduct) {
 			setTruthFacts([]);
+			setCapacity(null);
 			return;
 		}
 		void fetchV3ProductTruth(selectedProduct.id)
 			.then((response) => setTruthFacts(response.facts ?? []))
-			.catch((reason) => setError(errorMessage(reason)));
+			.catch((reason) => setError(toOperatorError(errorMessage(reason))));
+		void fetchV3ProductionCapacity(selectedProduct.id)
+			.then(setCapacity)
+			.catch((reason) => setError(toOperatorError(errorMessage(reason))));
 	}, [selectedProduct?.id]);
 
 	const loadLandbank = async (productId: string, offset = 0, append = false) => {
 		const response = await fetchV3CopyRegisterLandbank(productId, {
 			status: statusFilter !== "ALL" ? statusFilter : undefined,
 			duration_seconds: durationFilter !== "ALL" ? Number(durationFilter) : undefined,
-			formula_id: formulaFilter.trim() || undefined,
-			angle_id: angleFilter.trim() || undefined,
-			storyline_family_id: storylineFilter.trim() || undefined,
-			recipe_id: recipeFilter.trim() || undefined,
-			source: sourceFilter !== "ALL" ? sourceFilter : undefined,
-			quality: qualityFilter !== "ALL" ? qualityFilter : undefined,
-			blocker: blockerFilter.trim() || undefined,
 			search: searchFilter.trim() || undefined,
 			offset,
 		});
-		setItems((previous) => append ? [...previous, ...(response.items ?? [])] : (response.items ?? []));
+		setItems((previous) => (append ? [...previous, ...(response.items ?? [])] : response.items ?? []));
 		setLandbankOffset(response.offset + (response.items?.length ?? 0));
 		setLandbankHasMore(Boolean(response.has_more));
 	};
@@ -304,15 +408,68 @@ export default function StoryboardLandbankV3Page() {
 			return;
 		}
 		setLandbankOffset(0);
-		void loadLandbank(selectedProduct.id, 0, false).catch((reason) => setError(errorMessage(reason)));
-		// Filter changes intentionally re-read the bounded V3 projection.
+		void loadLandbank(selectedProduct.id, 0, false).catch((reason) => setError(toOperatorError(errorMessage(reason))));
+		// Filter changes intentionally re-read the bounded landbank.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [selectedProduct?.id, statusFilter, durationFilter, formulaFilter, angleFilter, storylineFilter, recipeFilter, searchFilter, sourceFilter, qualityFilter, blockerFilter]);
+	}, [selectedProduct?.id, statusFilter, durationFilter, searchFilter]);
+
+	const buckets = useMemo(() => reviewBuckets(items), [items]);
+	const target = Number(targetCapacity) || 0;
+	const approvedCount = capacity?.semantic_capacity ?? buckets.approved.length;
+	const productionReadyCount = capacity?.production_capacity ?? 0;
+	const missing = missingCopies({ target, approved: approvedCount });
+	const cleanPrepareTargets = useMemo(() => collectCleanPrepareTargets(buckets.approved), [buckets.approved]);
+	const needsPreparation = useMemo(() => countNeedsPreparation(buckets.approved), [buckets.approved]);
+
+	const counts: WorkflowCounts = {
+		target,
+		approved: approvedCount,
+		reviewable: buckets.reviewable,
+		productionReady: productionReadyCount,
+		needsPreparation,
+		needsRevalidation: capacity?.stale_copy_count ?? 0,
+	};
+
+	const nextAction = useMemo(
+		() => resolveNextAction({ hasProduct: Boolean(selectedProduct), recipeReady: Boolean(recipeId), counts }),
+		// counts is derived; depend on its scalar members to avoid a churn loop.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[selectedProduct, recipeId, target, approvedCount, buckets.reviewable, productionReadyCount, needsPreparation, capacity?.stale_copy_count],
+	);
+
+	const urlStep = searchParams.get("step");
+	const step: WizardStep = useMemo(
+		() =>
+			reconstructStep({
+				urlStep,
+				hasProduct: Boolean(selectedProduct),
+				recipeReady: Boolean(recipeId),
+				reviewableCount: buckets.reviewable,
+				approvedCount: buckets.approved.length,
+			}),
+		[urlStep, selectedProduct, recipeId, buckets.reviewable, buckets.approved.length],
+	);
+
+	const preflight = useMemo(
+		() => buildPreflightSummary({ plan, capacity, target, truthFactCount: truthFacts.length, planError }),
+		[plan, capacity, target, truthFacts.length, planError],
+	);
+
+	const goToStep = (next: WizardStep) => {
+		const params: Record<string, string> = {};
+		if (selectedProduct) params.product_id = selectedProduct.id;
+		params.step = next;
+		setSearchParams(params);
+	};
 
 	const selectProduct = (product: Product | null) => {
 		setSelectedProduct(product);
-		setSearchParams(product ? { product_id: product.id } : {});
+		const params: Record<string, string> = {};
+		if (product) params.product_id = product.id;
+		setSearchParams(params);
+		setRecipeId("");
 		setPlan(null);
+		setPlanError("");
 		setApprovalItem(null);
 		setBulkApproval(false);
 		setTruthFacts([]);
@@ -320,20 +477,54 @@ export default function StoryboardLandbankV3Page() {
 		setError("");
 	};
 
-	const handlePlan = async () => {
-		if (!selectedProduct || !recipeId.trim()) return;
-		setBusy(true); setError(""); setSuccess("");
+	// Deterministic preflight: ensure the recipe exists (idempotent reuse), then
+	// compute the gap plan. Provider-free — no copy is generated here.
+	const runPreflight = async () => {
+		if (!selectedProduct) return;
+		setPreflightBusy(true);
+		setPlanError("");
 		try {
-			const response = await planV3Assistant({ product_id: selectedProduct.id, recipe_id: recipeId.trim(), mode });
+			let rid = recipeId;
+			if (!rid) {
+				const durations = Object.entries(durationMix).filter(([, on]) => on).map(([duration]) => Number(duration));
+				const setup = await setupV3Campaign({
+					product_id: selectedProduct.id,
+					objective_id: objectiveId.trim() || "conversion",
+					objective_definition: objectiveId.trim() || "conversion",
+					formula_id: formulaId,
+					preset,
+					supported_durations_seconds: durations.length ? durations : [8, 16, 24],
+					target_capacity: target || undefined,
+					language_profile: languageProfile,
+					wps_mode: wpsModeSel,
+				});
+				rid = setup.recipe_id;
+				setRecipeId(rid);
+			}
+			const mode = inferAssistantMode({ existingApproved: approvedCount, target });
+			const response = await planV3Assistant({ product_id: selectedProduct.id, recipe_id: rid, mode, target_capacity: target || undefined });
 			setPlan(response.plan);
-			setActiveJob("BUILD");
-			setSuccess(`Plan ${response.plan.plan_id} created. Execution remains an explicit operator action.`);
-		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+		} catch (reason) {
+			setPlanError(errorMessage(reason));
+		} finally {
+			setPreflightBusy(false);
+		}
 	};
 
-	const handleBuildCampaign = async () => {
+	// When the operator reaches Generate with a resolved campaign but no plan yet,
+	// compute the preflight automatically (still no generation).
+	useEffect(() => {
+		if (step !== "GENERATE" || !selectedProduct) return;
+		if (plan || planError || preflightBusy) return;
+		void runPreflight();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [step, selectedProduct?.id, recipeId, plan, planError, preflightBusy]);
+
+	const handleCreateCampaign = async () => {
 		if (!selectedProduct) return;
-		setBusy(true); setError(""); setSuccess("");
+		setBusy(true);
+		setError("");
+		setSuccess("");
 		try {
 			const durations = Object.entries(durationMix).filter(([, on]) => on).map(([duration]) => Number(duration));
 			const response = await setupV3Campaign({
@@ -343,219 +534,484 @@ export default function StoryboardLandbankV3Page() {
 				formula_id: formulaId,
 				preset,
 				supported_durations_seconds: durations.length ? durations : [8, 16, 24],
-				target_capacity: Number(targetCapacity) || undefined,
+				target_capacity: target || undefined,
 				language_profile: languageProfile,
 				wps_mode: wpsModeSel,
 			});
 			setRecipeId(response.recipe_id);
-			setSuccess(`Recipe ${response.recipe_id} ${response.reused ? "reused" : "created"} from the ${response.preset} preset. Plan the assistant run next.`);
-		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+			setPlan(null);
+			setPlanError("");
+			setSuccess(`Campaign ready. ${missing > 0 ? `You can now generate the ${missing} missing ${missing === 1 ? "copy" : "copies"}.` : "You can now review and prepare your copy."}`);
+			goToStep("GENERATE");
+		} catch (reason) {
+			setError(toOperatorError(errorMessage(reason)));
+		} finally {
+			setBusy(false);
+		}
 	};
 
-	const handleReview = async (action: "validate" | "submit" | "reject" | "archive", item: V3LandbankItem) => {
-		setBusy(true); setError(""); setSuccess("");
-		try {
-			await reviewV3Entity(action, "MASTER_STORYBOARD", item.master.master_id, item.master.revision);
-			setSuccess(`Master ${item.master.master_id}: ${action} recorded. Immutable revisions are never edited in place.`);
-			if (selectedProduct) await loadLandbank(selectedProduct.id);
-		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+	const refreshProductData = async (productId: string) => {
+		await Promise.all([
+			fetchV3ProductionCapacity(productId).then(setCapacity).catch(() => undefined),
+			loadLandbank(productId).catch(() => undefined),
+		]);
 	};
 
-	const handleRegenerate = async (ref: { entity_id: string; revision: number }, _item: V3LandbankItem) => {
-		setBusy(true); setError(""); setSuccess("");
-		try {
-			const response = await regenerateV3Component(ref.entity_id, ref.revision, provider?.configured ? "LIVE_TEXT_ASSIST" : "FAKE_TEST");
-			setSuccess(`Component ${ref.entity_id} regenerated: revision ${response.source_revision} → ${response.new_revision}. Parent revision preserved; never auto-approved.`);
-			if (selectedProduct) await loadLandbank(selectedProduct.id);
-		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
-	};
+	const generateLane: "LIVE_TEXT_ASSIST" | "FAKE_TEST" | null = provider?.configured
+		? "LIVE_TEXT_ASSIST"
+		: provider?.fake_provider_allowed
+			? "FAKE_TEST"
+			: null;
 
-	const handleDeleteDraft = async () => {
-		if (!deleteItem) return;
-		setBusy(true); setError(""); setSuccess("");
+	const handleGenerate = async () => {
+		if (!plan || !selectedProduct || !generateLane || !preflight.ready) return;
+		setBusy(true);
+		setError("");
+		setSuccess("");
 		try {
-			await deleteV3Draft("MASTER_STORYBOARD", deleteItem.master.master_id, deleteItem.master.revision);
-			setSuccess(`Draft ${deleteItem.master.master_id} safe-deleted. Referenced or non-DRAFT rows are blocked server-side.`);
-			setDeleteItem(null);
-			if (selectedProduct) await loadLandbank(selectedProduct.id);
-		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+			await executeV3Assistant(plan.plan_id, generateLane);
+			setSuccess(
+				generateLane === "FAKE_TEST"
+					? "Copy generated in test mode — review it in step 3. No credits were spent."
+					: "Copy generated — review it in step 3.",
+			);
+			setPlan(null); // recompute the preflight for the next copy.
+			await refreshProductData(selectedProduct.id);
+		} catch (reason) {
+			setError(toOperatorError(errorMessage(reason)));
+		} finally {
+			setBusy(false);
+		}
 	};
 
 	const handlePreview = async () => {
 		if (!plan) return;
-		setBusy(true); setError("");
+		setBusy(true);
+		setError("");
 		try {
 			const response = await fetchV3AssistantPromptPreview(plan.plan_id);
 			setPromptDigest(response.preview.prompt_digest);
-			setSuccess("Prompt preview loaded. Product Truth is displayed as untrusted data; no provider call was made.");
-		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+			setSuccess("Prompt preview loaded. Product Truth is shown as untrusted data; no provider call was made.");
+		} catch (reason) {
+			setError(toOperatorError(errorMessage(reason)));
+		} finally {
+			setBusy(false);
+		}
 	};
 
-	const handleExecute = async () => {
-		if (!plan || !provider?.fake_provider_allowed) return;
-		setBusy(true); setError(""); setSuccess("");
+	const handleReview = async (action: "validate" | "submit" | "reject" | "archive", item: V3LandbankItem) => {
+		setBusy(true);
+		setError("");
+		setSuccess("");
 		try {
-			await executeV3Assistant(plan.plan_id, "FAKE_TEST");
-			setSuccess("Fake-provider run completed. Components, Master, and deterministic 8/16/24 projections are reviewable; provider calls and credit spend are zero.");
-			setActiveJob("REVIEW");
+			await reviewV3Entity(action, "MASTER_STORYBOARD", item.master.master_id, item.master.revision);
+			setSuccess(`Copy ${action} recorded.`);
 			if (selectedProduct) await loadLandbank(selectedProduct.id);
-		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+		} catch (reason) {
+			setError(toOperatorError(errorMessage(reason)));
+		} finally {
+			setBusy(false);
+		}
 	};
 
-	const handleGenerateLive = async () => {
-		if (!plan || !provider?.configured) return;
-		setBusy(true); setError(""); setSuccess("");
+	const handleRegenerate = async (ref: { entity_id: string; revision: number }) => {
+		setBusy(true);
+		setError("");
+		setSuccess("");
 		try {
-			await executeV3Assistant(plan.plan_id, "LIVE_TEXT_ASSIST");
-			setSuccess("Live text_assist run completed. Components, Master, and deterministic 8/16/24 projections are reviewable; media credits remain zero.");
-			setActiveJob("REVIEW");
+			const response = await regenerateV3Component(ref.entity_id, ref.revision, provider?.configured ? "LIVE_TEXT_ASSIST" : "FAKE_TEST");
+			setSuccess(`Copy regenerated (version ${response.source_revision} → ${response.new_revision}). It stays unapproved until you approve it.`);
 			if (selectedProduct) await loadLandbank(selectedProduct.id);
-		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+		} catch (reason) {
+			setError(toOperatorError(errorMessage(reason)));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	const handleDeleteDraft = async () => {
+		if (!deleteItem) return;
+		setBusy(true);
+		setError("");
+		setSuccess("");
+		try {
+			await deleteV3Draft("MASTER_STORYBOARD", deleteItem.master.master_id, deleteItem.master.revision);
+			setSuccess(`Draft ${deleteItem.master.master_id} deleted.`);
+			setDeleteItem(null);
+			if (selectedProduct) await loadLandbank(selectedProduct.id);
+		} catch (reason) {
+			setError(toOperatorError(errorMessage(reason)));
+		} finally {
+			setBusy(false);
+		}
 	};
 
 	const handleApprove = async () => {
 		if (!approvalItem || !reviewer.trim() || !Object.values(checklist).every(Boolean)) return;
-		setBusy(true); setError(""); setSuccess("");
+		setBusy(true);
+		setError("");
+		setSuccess("");
 		try {
 			if (bulkApproval) {
-				const targets = visibleItems
-					.filter((item) => item.master.status !== "APPROVED" && item.quality.hard_pass)
-					.map((item) => ({
-						master_id: item.master.master_id,
-						projection_ids: item.projections.map((projection) => ({ entity_id: projection.projection_id, revision: projection.revision })),
-					}));
+				const targets = buckets.passed.map((item) => ({
+					master_id: item.master.master_id,
+					projection_ids: item.projections.map((projection) => ({ entity_id: projection.projection_id, revision: projection.revision })),
+				}));
 				const response = await approveV3MasterBatch({ targets, approved_by: reviewer.trim(), rationale, checklist });
-				setSuccess(`Human batch approval receipt recorded for ${response.approved_count} storyboard(s)${response.batch_digest ? ` · batch digest ${response.batch_digest.slice(0, 12)}…` : ""}. No V2 activation or materialization was performed.`);
+				setSuccess(`Approved ${response.approved_count} ${response.approved_count === 1 ? "copy" : "copies"}. They are ready to prepare for production.`);
 			} else {
 				await approveV3Master({
 					master_id: approvalItem.master.master_id,
 					projection_ids: approvalItem.projections.map((projection) => ({ entity_id: projection.projection_id, revision: projection.revision })),
-					approved_by: reviewer.trim(), rationale, checklist,
+					approved_by: reviewer.trim(),
+					rationale,
+					checklist,
 				});
-				setSuccess("Human approval receipt recorded. The V3 approved artifact remains separate from V2 activation/materialization.");
+				setSuccess("Copy approved. It is ready to prepare for production.");
 			}
 			setApprovalItem(null);
 			setBulkApproval(false);
 			setChecklist(EMPTY_CHECKLIST);
-			if (selectedProduct) await loadLandbank(selectedProduct.id);
-		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+			if (selectedProduct) await refreshProductData(selectedProduct.id);
+		} catch (reason) {
+			setError(toOperatorError(errorMessage(reason)));
+		} finally {
+			setBusy(false);
+		}
 	};
 
-	const handleMaterialize = async (projectionId: string, receiptId: string) => {
+	const handlePrepare = async (projectionId: string, receiptId: string) => {
 		if (!selectedProduct || !projectionId || !receiptId) return;
-		setBusy(true); setError(""); setSuccess("");
+		setBusy(true);
+		setError("");
+		setSuccess("");
 		try {
 			const result = await materializeV3Projection({ productId: selectedProduct.id, projectionId, receiptId });
-			setSuccess(`Projection ${projectionId} materialized into V2 blueprint ${result.blueprint_id} rev ${result.revision}${result.idempotent_reuse ? " (idempotent reuse)" : ""}. Human approval remains the authority; nothing was auto-approved.`);
-			await loadLandbank(selectedProduct.id);
-		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+			setSuccess(`Copy prepared for production${result.idempotent_reuse ? " (already prepared)" : ""}.`);
+			await refreshProductData(selectedProduct.id);
+		} catch (reason) {
+			setError(toOperatorError(errorMessage(reason)));
+		} finally {
+			setBusy(false);
+		}
 	};
 
-	const handleMaterializeAllClean = async () => {
-		if (!selectedProduct) return;
-		const targets = collectCleanMaterializeTargets(approvedItems);
-		if (!targets.length) return;
-		setBusy(true); setError(""); setSuccess("");
+	const handlePrepareAllClean = async () => {
+		if (!selectedProduct || !cleanPrepareTargets.length) return;
+		setBusy(true);
+		setError("");
+		setSuccess("");
 		try {
-			const result = await materializeV3ProjectionsBulk({ items: targets });
-			setSuccess(`Bulk materialization complete: ${result.materialized_count} materialized, ${result.blocked_count} blocked of ${result.requested} requested.`);
-			await loadLandbank(selectedProduct.id);
-		} catch (reason) { setError(errorMessage(reason)); } finally { setBusy(false); }
+			const result = await materializeV3ProjectionsBulk({ items: cleanPrepareTargets });
+			setSuccess(`Prepared ${result.materialized_count} for production${result.blocked_count ? `, ${result.blocked_count} still need attention` : ""}.`);
+			await refreshProductData(selectedProduct.id);
+		} catch (reason) {
+			setError(toOperatorError(errorMessage(reason)));
+		} finally {
+			setBusy(false);
+		}
 	};
 
-	const visibleItems = useMemo(() => items, [items]);
-	const bulkCandidates = useMemo(() => visibleItems.filter((item) => item.master.status !== "APPROVED" && item.quality.hard_pass), [visibleItems]);
-	const bulkExceptions = useMemo(() => visibleItems.filter((item) => item.master.status !== "APPROVED" && !item.quality.hard_pass), [visibleItems]);
-	const approvedItems = useMemo(() => items.filter((item) => item.master.status === "APPROVED"), [items]);
-	const cleanMaterializeTargets = useMemo(() => collectCleanMaterializeTargets(approvedItems), [approvedItems]);
-	const visibleTruthFacts = useMemo(() => {
-		const query = evidenceSearch.trim().toLowerCase();
-		if (!query) return truthFacts;
-		return truthFacts.filter((fact) => `${fact.fact_id} ${fact.fact_kind} ${fact.text}`.toLowerCase().includes(query));
-	}, [evidenceSearch, truthFacts]);
+	const openProductionStudio = () => {
+		navigate(selectedProduct ? `/production-studio?product_id=${encodeURIComponent(selectedProduct.id)}` : "/production-studio");
+	};
+
+	const handleNextAction = () => {
+		if (nextAction.kind === "OPEN_STUDIO") {
+			openProductionStudio();
+			return;
+		}
+		goToStep(nextAction.step);
+	};
+
 	const allChecks = Object.values(checklist).every(Boolean);
+	const capacityView = capacityLabels(capacity);
 
 	return (
-		<div className="mx-auto max-w-7xl space-y-6 p-4 md:p-8" data-testid="storyboard-landbank-v3-page">
-			<header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800 pb-5">
-				<div>
-					<div className="flex items-center gap-2 text-violet-300"><Sparkles size={20} /><span className="text-[10px] font-bold uppercase tracking-[0.2em]">V3 Supply Plane</span></div>
-					<h1 className="mt-1 text-2xl font-bold text-slate-100">Storyboard Copy Register</h1>
-					<p className="mt-1 max-w-3xl text-xs leading-5 text-slate-400">Formula-driven Copy Register V3: build bounded components, compile the complete Master first, derive deterministic duration projections, then record explicit human approval.</p>
-					<div className="mt-2 flex flex-wrap gap-2 text-[10px] font-bold uppercase"><span className="rounded border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-violet-200">V3 ACTIVE</span><span className="rounded border border-slate-700 px-2 py-1 text-slate-400">V2 production authority stays separate</span></div>
-				</div>
-				<a href={`/creative/copy-registry${selectedProduct ? `?product_id=${encodeURIComponent(selectedProduct.id)}` : ""}`} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:border-slate-500" data-testid="v3-open-v2-register"><BookOpen size={14} className="mr-1 inline" /> Open V2 Copy Register</a>
+		<div className="mx-auto max-w-5xl space-y-6 p-4 md:p-8" data-testid="storyboard-landbank-v3-page">
+			<header className="border-b border-slate-800 pb-5">
+				<div className="flex items-center gap-2 text-violet-300"><Sparkles size={18} /><span className="text-[10px] font-bold uppercase tracking-[0.2em]">Copy supply</span></div>
+				<h1 className="mt-1 text-2xl font-bold text-slate-100">Copywriting Landbank</h1>
+				<p className="mt-1 text-sm text-slate-400" data-testid="v3-product-name">{selectedProduct ? productName(selectedProduct) : "Select a product to begin."}</p>
 			</header>
 
 			{error ? <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100" data-testid="v3-error">{error}</p> : null}
 			{success ? <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100" data-testid="v3-success">{success}</p> : null}
 
-			<div className="grid gap-2 sm:grid-cols-4" data-testid="v3-operator-jobs">
-				{(["SETUP", "BUILD", "REVIEW", "LANDBANK"] as const).map((job, index) => <button key={job} type="button" onClick={() => setActiveJob(job)} className={`rounded-lg border px-3 py-2 text-left ${activeJob === job ? "border-violet-500/60 bg-violet-500/10" : "border-slate-800 bg-slate-950/60"}`}><span className="text-[10px] font-bold uppercase text-violet-200">{index + 1}. {job}</span><span className="mt-1 block text-xs text-slate-400">{job === "SETUP" ? "Truth + recipe" : job === "BUILD" ? "Plan then execute" : job === "REVIEW" ? "Human queue" : "Approved landbank"}</span></button>)}
-			</div>
+			{/* Real wizard progress: the active step dominates; visited steps are clickable. */}
+			<ol className="grid gap-2 sm:grid-cols-4" data-testid="v3-wizard-progress">
+				{WIZARD_STEPS.map((wizardStep) => {
+					const meta = STEP_META[wizardStep];
+					const active = step === wizardStep;
+					const reachable = Boolean(selectedProduct);
+					return (
+						<li key={wizardStep}>
+							<button
+								type="button"
+								disabled={!reachable}
+								onClick={() => goToStep(wizardStep)}
+								aria-current={active ? "step" : undefined}
+								className={`w-full rounded-lg border px-3 py-2 text-left disabled:opacity-40 ${active ? "border-violet-500/60 bg-violet-500/10" : "border-slate-800 bg-slate-950/60"}`}
+								data-testid={`v3-step-${wizardStep.toLowerCase()}`}
+							>
+								<span className={`text-[10px] font-bold uppercase ${active ? "text-violet-100" : "text-slate-500"}`}>{meta.index}. {meta.label}</span>
+								<span className="mt-0.5 block text-xs text-slate-400">{meta.blurb}</span>
+							</button>
+						</li>
+					);
+				})}
+			</ol>
 
-			<Section title="1. Setup campaign" helper="Select a registered product and an existing V3 Copy Recipe. Product Truth is read-only here; this surface never seeds or mutates canonical Product Truth.">
-				<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
+			{selectedProduct ? (
+				<div className="grid gap-2 sm:grid-cols-4" data-testid="v3-status-summary">
+					<SummaryTile label="Target" value={target} testId="v3-summary-target" />
+					<SummaryTile label="Approved" value={approvedCount} tone="success" testId="v3-summary-approved" />
+					<SummaryTile label="Production Ready" value={productionReadyCount} tone="info" testId="v3-summary-production-ready" />
+					<SummaryTile label="Missing" value={missing} tone={missing > 0 ? "warn" : "neutral"} testId="v3-summary-missing" />
+				</div>
+			) : null}
+
+			{selectedProduct ? (
+				<div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 p-4" data-testid="v3-next-action">
 					<div>
-						<SearchableProductSelect products={products} selectedProduct={selectedProduct} onSelect={selectProduct} isLoadingProducts={isLoadingProducts} productsError={productsError} showReadinessBadge={false} />
-						<div className="mt-4 grid gap-3 sm:grid-cols-2">
-							<FormField label="Objective"><input className={INPUT_CLASS} value={objectiveId} onChange={(event) => setObjectiveId(event.target.value)} placeholder="conversion" data-testid="v3-objective" /></FormField>
-							<FormField label="Formula"><select className={INPUT_CLASS} value={formulaId} onChange={(event) => setFormulaId(event.target.value)} data-testid="v3-formula">{FORMULA_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></FormField>
-							<FormField label="Recipe preset"><select className={INPUT_CLASS} value={preset} onChange={(event) => setPreset(event.target.value as V3RecipePreset)} data-testid="v3-preset">{RECIPE_PRESETS.map((option) => <option key={option} value={option}>{option}</option>)}</select></FormField>
-							<FormField label="Assistant mode"><select className={INPUT_CLASS} value={mode} onChange={(event) => setMode(event.target.value as V3AssistantMode)} data-testid="v3-assistant-mode"><option value="CREATE">CREATE · meet recipe target</option><option value="EXPAND">EXPAND · add bounded variants</option><option value="FILL_CAPACITY">FILL_CAPACITY · close capacity gaps</option></select></FormField>
-							<FormField label="Target capacity"><input className={INPUT_CLASS} value={targetCapacity} onChange={(event) => setTargetCapacity(event.target.value)} placeholder="54" data-testid="v3-target-capacity" /></FormField>
+						<div className="text-[10px] font-bold uppercase tracking-wide text-violet-200">Next step</div>
+						<div className="mt-1 text-base font-bold text-slate-100" data-testid="v3-next-action-label">{nextAction.label}</div>
+						<p className="text-xs text-slate-400">{nextAction.detail}</p>
+					</div>
+					<button type="button" onClick={handleNextAction} className="inline-flex items-center gap-1 rounded-lg bg-violet-600 px-4 py-2 text-xs font-bold text-white" data-testid="v3-next-action-go">
+						{nextAction.kind === "OPEN_STUDIO" ? <Film size={14} /> : <ArrowRight size={14} />} {nextAction.kind === "OPEN_STUDIO" ? "Open Production Studio" : "Go"}
+					</button>
+				</div>
+			) : null}
+
+			{/* STEP 1 — SETUP */}
+			{step === "SETUP" ? (
+				<Section title="Setup" helper="Choose the product and what copy you want. Everything technical is configured for you.">
+					<div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,320px)]">
+						<div>
+							<SearchableProductSelect products={products} selectedProduct={selectedProduct} onSelect={selectProduct} isLoadingProducts={isLoadingProducts} productsError={productsError} showReadinessBadge={false} />
+							<div className="mt-4 grid gap-3 sm:grid-cols-2">
+								<FormField label="Goal"><select className={INPUT_CLASS} value={objectiveId} onChange={(event) => setObjectiveId(event.target.value)} data-testid="v3-goal">{GOAL_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></FormField>
+								<FormField label="Copy formula"><select className={INPUT_CLASS} value={formulaId} onChange={(event) => setFormulaId(event.target.value)} data-testid="v3-formula">{FORMULA_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></FormField>
+								<FormField label="Production scale"><select className={INPUT_CLASS} value={preset} onChange={(event) => setPreset(event.target.value as V3RecipePreset)} data-testid="v3-scale">{SCALE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label} — {option.hint}</option>)}</select></FormField>
+								<FormField label="Target copy count"><input className={INPUT_CLASS} value={targetCapacity} onChange={(event) => setTargetCapacity(event.target.value)} placeholder="54" data-testid="v3-target" inputMode="numeric" /></FormField>
+								<FormField label="Duration mix"><div className="mt-1 flex gap-3">{[8, 16, 24].map((duration) => <label key={duration} className="flex items-center gap-1 text-xs text-slate-300"><input type="checkbox" checked={Boolean(durationMix[duration])} onChange={(event) => setDurationMix((previous) => ({ ...previous, [duration]: event.target.checked }))} data-testid={`v3-duration-${duration}`} />{duration}s</label>)}</div></FormField>
+							</div>
+							<HelperText className="mt-3">The copy recipe, evidence selection, writing style, and AI settings are all resolved for you. You only choose the business decisions above.</HelperText>
+							<div className="mt-4 flex flex-wrap items-center gap-3">
+								<button type="button" disabled={busy || !selectedProduct} onClick={() => void handleCreateCampaign()} className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40" data-testid="v3-create-campaign">Create copy campaign <ChevronRight size={14} /></button>
+								{recipeId ? <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase text-emerald-300" data-testid="v3-campaign-ready"><CheckCircle2 size={13} /> Campaign ready</span> : null}
+							</div>
+						</div>
+						<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+							<div className="text-xs font-bold uppercase text-slate-300">Approved Product Truth</div>
+							<HelperText className="mt-1">Copy is only built from approved Product Truth. It is shown for review and never edited here.</HelperText>
+							<div className="mt-2 text-2xl font-bold text-emerald-200" data-testid="v3-truth-count">{truthFacts.length}</div>
+							<div className="text-[10px] uppercase tracking-wide text-slate-500">approved facts available</div>
+						</div>
+					</div>
+
+					<TechnicalDetails className="mt-4" testId="v3-setup-technical" title="Advanced / technical details">
+						<div className="grid gap-3 sm:grid-cols-2">
+							<FormField label="Recipe ID (override)"><input className={INPUT_CLASS} value={recipeId} onChange={(event) => setRecipeId(event.target.value)} placeholder="recipe_… (auto-resolved)" data-testid="v3-recipe-id" /></FormField>
 							<FormField label="Language"><input className={INPUT_CLASS} value={languageProfile} onChange={(event) => setLanguageProfile(event.target.value)} data-testid="v3-language" /></FormField>
 							<FormField label="WPS mode"><select className={INPUT_CLASS} value={wpsModeSel} onChange={(event) => setWpsModeSel(event.target.value as "SAFE" | "SWEET")} data-testid="v3-wps-mode"><option value="SAFE">SAFE</option><option value="SWEET">SWEET</option></select></FormField>
-							<FormField label="Duration mix"><div className="mt-1 flex gap-3">{[8, 16, 24].map((duration) => <label key={duration} className="flex items-center gap-1 text-xs text-slate-300"><input type="checkbox" checked={Boolean(durationMix[duration])} onChange={(event) => setDurationMix((previous) => ({ ...previous, [duration]: event.target.checked }))} data-testid={`v3-duration-${duration}`} />{duration}s</label>)}</div></FormField>
+							<div className="text-[11px] text-slate-500">Assistant mode is inferred from current supply: {inferAssistantMode({ existingApproved: approvedCount, target })}.</div>
 						</div>
-						<HelperText className="mt-3">Pick a Product, Objective, Formula, and Recipe preset. Building the campaign creates/reuses the governed V3 recipe behind the scenes — no raw recipe ID required in the normal path.</HelperText>
-						<div className="mt-4 flex flex-wrap items-center gap-2">
-							<button type="button" disabled={busy || !selectedProduct} onClick={() => void handleBuildCampaign()} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40" data-testid="v3-build-campaign">Build campaign recipe</button>
-							<button type="button" disabled={busy || !selectedProduct || !recipeId.trim()} onClick={() => void handlePlan()} className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40" data-testid="v3-plan-assistant">Plan assistant run <ChevronRight size={14} className="inline" /></button>
-							{recipeId ? <span className="text-[10px] font-bold uppercase text-emerald-300" data-testid="v3-active-recipe">Recipe ready</span> : null}
+						<HelperText className="mt-2">Recipe ID, language, WPS mode, evidence fact IDs, and V2/V3 authority live here. Normal operators never need them.</HelperText>
+						<a href={`/creative/copy-registry${selectedProduct ? `?product_id=${encodeURIComponent(selectedProduct.id)}` : ""}`} className="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200" data-testid="v3-open-v2-register"><BookOpen size={12} /> Open V2 production Copy Register (advanced)</a>
+					</TechnicalDetails>
+				</Section>
+			) : null}
+
+			{/* STEP 2 — GENERATE */}
+			{step === "GENERATE" ? (
+				<Section title="Generate" helper="One deterministic preflight, then a single explicit Generate. Nothing is generated until you press Generate.">
+					{preflightBusy && !plan ? <div className="rounded-xl border border-dashed border-slate-700 p-6 text-sm text-slate-400" data-testid="v3-preflight-loading">Checking readiness…</div> : null}
+					{preflight.ready && plan ? (
+						<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4" data-testid="v3-preflight-ready">
+							<div className="text-xs font-bold uppercase tracking-wide text-emerald-200">Ready to generate</div>
+							<div className="mt-3 grid gap-2 text-sm text-slate-200 sm:grid-cols-2">
+								<div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">Product Truth <Badge tone="success">{preflight.productTruth}</Badge></div>
+								<div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">Evidence <Badge tone="success">{preflight.evidence}</Badge></div>
+								<div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">Formula <span className="font-semibold">{preflight.formula}</span></div>
+								<div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">Target <span className="font-semibold">{preflight.target}</span></div>
+								<div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">Approved so far <span className="font-semibold">{preflight.existingApproved}</span></div>
+								<div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">Still missing <span className="font-semibold text-amber-200">{preflight.missing}</span></div>
+								<div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">Durations <span className="font-semibold">{preflight.durations.map((duration) => `${duration}s`).join(" / ")}</span></div>
+								<div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">Estimated AI calls <span className="font-semibold">{preflight.estimatedAiCalls}</span></div>
+							</div>
+							<div className="mt-4 flex flex-wrap items-center gap-3">
+								<button type="button" disabled={busy || !generateLane} onClick={() => void handleGenerate()} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40" data-testid="v3-generate" title={generateLane ? undefined : "The AI copywriter is not connected yet."}><Wand2 size={15} /> {missing > 0 ? "Generate missing copy" : "Generate another copy"}</button>
+								<HelperText>Each run adds one reviewable copy with {preflight.durations.map((duration) => `${duration}s`).join(" / ")} versions. {generateLane === "FAKE_TEST" ? "Test mode is active — zero credits." : missing > 0 ? `${missing} still missing.` : "Target reached."}</HelperText>
+							</div>
 						</div>
-						<details className="mt-3 rounded-lg border border-slate-800 bg-slate-950/40 p-3" data-testid="v3-technical-details">
-							<summary className="cursor-pointer text-[10px] font-bold uppercase tracking-wide text-slate-500">Technical details · advanced</summary>
-							<div className="mt-2"><FormField label="V3 Copy Recipe ID (advanced override)"><input className={INPUT_CLASS} value={recipeId} onChange={(event) => setRecipeId(event.target.value)} placeholder="recipe_…" data-testid="v3-recipe-id" /></FormField><HelperText className="mt-1">UUIDs, digests, and internal identifiers live here, out of the primary workflow.</HelperText></div>
-						</details>
+					) : null}
+					{!preflight.ready && (plan || planError) ? (
+						<div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4" data-testid="v3-preflight-blocked">
+							<div className="text-xs font-bold uppercase tracking-wide text-amber-200">Action required</div>
+							{preflight.blockers.map((blocker) => (
+								<div key={blocker.code} className="mt-2">
+									<p className="text-sm text-slate-200">{blocker.message}</p>
+									{blocker.actionLabel ? (
+										blocker.actionRoute ? (
+											<button type="button" onClick={() => navigate(`${blocker.actionRoute}${selectedProduct ? `?product_id=${encodeURIComponent(selectedProduct.id)}` : ""}`)} className="mt-2 inline-flex items-center gap-1 rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-100" data-testid="v3-blocker-action">{blocker.actionLabel} <ChevronRight size={13} /></button>
+										) : (
+											<button type="button" onClick={() => goToStep("SETUP")} className="mt-2 inline-flex items-center gap-1 rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-100" data-testid="v3-blocker-action">{blocker.actionLabel} <ChevronRight size={13} /></button>
+										)
+									) : null}
+									<TechnicalDetails className="mt-2" testId="v3-blocker-technical" title="Technical details">
+										<div className="font-mono text-[11px] text-slate-400">{blocker.code}</div>
+									</TechnicalDetails>
+								</div>
+							))}
+						</div>
+					) : null}
+
+					<TechnicalDetails className="mt-4" testId="v3-generate-technical" title="Advanced / technical details">
+						<div className="flex flex-wrap items-center gap-2">
+							<button type="button" disabled={busy || !plan} onClick={() => void handlePreview()} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200 disabled:opacity-40" data-testid="v3-prompt-preview">Preview AI prompt</button>
+							<span className="text-[11px] text-slate-500">Provider: {provider?.configured ? `${provider.provider_id} · ${provider.model_id}` : provider?.fake_provider_allowed ? "test mode" : "not connected"} · calls {provider?.provider_calls ?? 0} · credit {provider?.credit_spend ?? 0}</span>
+						</div>
+						{plan ? <div className="mt-2 text-[11px] text-slate-500">Plan {plan.plan_id} · mode {plan.mode} · recipe {plan.recipe.entity_id} · WPS {plan.wps_mode} · evidence {plan.evidence_fact_ids?.length ?? 0} fact(s)</div> : null}
+						{promptDigest ? <div className="mt-1 font-mono text-[10px] text-slate-500" data-testid="v3-prompt-digest">Prompt digest: {promptDigest}</div> : null}
+					</TechnicalDetails>
+				</Section>
+			) : null}
+
+			{/* STEP 3 — REVIEW */}
+			{step === "REVIEW" ? (
+				<Section title="Review" helper="Read each copy, then Approve, Edit, or Reject. Approval records a governed human sign-off.">
+					<div className="mb-4 grid gap-2 sm:grid-cols-4" data-testid="v3-review-summary">
+						<SummaryTile label="Generated" value={buckets.reviewable} testId="v3-review-generated" />
+						<SummaryTile label="Passed checks" value={buckets.passed.length} tone="success" testId="v3-review-passed" />
+						<SummaryTile label="Needs attention" value={buckets.needsAttention.length} tone={buckets.needsAttention.length ? "warn" : "neutral"} testId="v3-review-attention" />
+						<SummaryTile label="Approved" value={buckets.approved.length} tone="info" testId="v3-review-approved" />
 					</div>
-					<div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4" data-testid="v3-provider-status"><div className="flex items-center gap-2 text-xs font-bold uppercase text-slate-300"><LockKeyhole size={14} /> text_assist provider</div><div className="mt-3 flex items-center gap-2"><Badge tone={provider?.configured ? "success" : provider?.fake_provider_allowed ? "warn" : "neutral"}>{provider?.configured ? "READY" : provider?.fake_provider_allowed ? "FAKE TEST ENABLED" : "NOT CONFIGURED"}</Badge><span className="text-xs text-slate-500">{provider?.provider_id || "no provider selected"} · {provider?.model_id || "no model"}</span></div><HelperText className="mt-3">Planning, reads, prompt preview, validation, and approval are provider-free. Generate is never automatic.</HelperText><div className="mt-2 text-[10px] text-slate-500">Calls this page has made: {provider?.provider_calls ?? 0} · credit spend: {provider?.credit_spend ?? 0}</div></div>
-				</div>
-				<div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 p-4" data-testid="v3-evidence-drawer">
-					<div className="flex flex-wrap items-center justify-between gap-2"><div><div className="text-xs font-bold uppercase text-slate-300">Evidence auto-selection</div><HelperText className="mt-1">Approved Product Truth evidence is visible for review and is never edited by the assistant.</HelperText></div><span className="text-[10px] font-bold uppercase text-emerald-200">{truthFacts.length} approved fact(s)</span></div>
-					<input className={INPUT_CLASS} value={evidenceSearch} onChange={(event) => setEvidenceSearch(event.target.value)} placeholder="Search fact ID, kind, or evidence text" data-testid="v3-evidence-search" />
-					<div className="mt-3 max-h-48 space-y-2 overflow-y-auto pr-1" data-testid="v3-evidence-list">
-						{visibleTruthFacts.length ? visibleTruthFacts.map((fact) => <div key={fact.fact_id} className="rounded-lg border border-slate-800 bg-slate-900/70 p-3"><div className="flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase text-blue-200"><span>{fact.fact_kind}</span><span className="font-mono text-slate-500">{fact.fact_id}</span><span className="text-emerald-300">{fact.approved ? "APPROVED" : "UNAPPROVED"}</span></div><p className="mt-1 text-xs leading-5 text-slate-300">{fact.text}</p></div>) : <div className="rounded-lg border border-dashed border-slate-700 p-4 text-xs text-slate-500">No approved evidence matches this search.</div>}
+
+					{buckets.passed.length ? (
+						<div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3" data-testid="v3-bulk-approval-panel">
+							<div>
+								<div className="text-xs font-bold uppercase text-emerald-100">Approve passed copies together</div>
+								<HelperText className="mt-1">{buckets.passed.length} {buckets.passed.length === 1 ? "copy" : "copies"} passed every check. Approve them with one governed sign-off.</HelperText>
+							</div>
+							<button type="button" disabled={busy || !buckets.passed.length} onClick={() => { setBulkApproval(true); setApprovalItem(buckets.passed[0]); }} className="rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-100 disabled:opacity-40" data-testid="v3-open-bulk-approval">Approve {buckets.passed.length}</button>
+						</div>
+					) : null}
+
+					{buckets.reviewable ? (
+						<div className="space-y-4">
+							{[...buckets.passed, ...buckets.needsAttention].map((item) => (
+								<CopyCard key={`${item.master.master_id}:${item.master.revision}`} item={item} onReview={handleReview} onApprove={(target) => { setBulkApproval(false); setApprovalItem(target); }} onRegenerate={(ref) => void handleRegenerate(ref)} onDeleteDraft={(target) => setDeleteItem(target)} />
+							))}
+							{landbankHasMore && selectedProduct ? <button type="button" disabled={busy} onClick={() => void loadLandbank(selectedProduct.id, landbankOffset, true)} className="w-full rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 disabled:opacity-40" data-testid="v3-load-more">Load more</button> : null}
+						</div>
+					) : (
+						<div className="rounded-xl border border-dashed border-slate-700 p-6 text-sm text-slate-500" data-testid="v3-empty-review">No copy is waiting for review. Generate copy in step 2, or check the Approved copies in step 4.</div>
+					)}
+
+					<TechnicalDetails className="mt-4" testId="v3-review-technical" title="Advanced / filters">
+						<div className="grid gap-2 sm:grid-cols-3">
+							<input className={INPUT_CLASS} value={searchFilter} onChange={(event) => setSearchFilter(event.target.value)} placeholder="Search copy" data-testid="v3-search-filter" />
+							<select className={INPUT_CLASS} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} data-testid="v3-status-filter"><option value="ALL">All statuses</option><option value="DRAFT">Draft</option><option value="VALIDATED">Passed checks</option><option value="APPROVED">Approved</option></select>
+							<select className={INPUT_CLASS} value={durationFilter} onChange={(event) => setDurationFilter(event.target.value)} data-testid="v3-duration-filter"><option value="ALL">All durations</option><option value="8">8s</option><option value="16">16s</option><option value="24">24s</option></select>
+						</div>
+					</TechnicalDetails>
+				</Section>
+			) : null}
+
+			{/* STEP 4 — PRODUCTION READY */}
+			{step === "PRODUCTION" ? (
+				<Section title="Production Ready" helper="Prepare approved copy for production, then hand it to Production Studio.">
+					<div className="mb-4 grid gap-2 sm:grid-cols-3" data-testid="v3-production-summary">
+						<SummaryTile label="Approved" value={approvedCount} tone="success" testId="v3-production-approved" />
+						<SummaryTile label="Production Ready" value={productionReadyCount} tone="info" testId="v3-production-ready" />
+						<SummaryTile label="Needs preparation" value={needsPreparation} tone={needsPreparation ? "warn" : "neutral"} testId="v3-production-needs-prep" />
+					</div>
+
+					<div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+						<div>
+							<div className="text-xs font-bold uppercase text-slate-300">Prepare approved copy</div>
+							<HelperText className="mt-1">Preparing turns approved copy into production-ready supply. Nothing is prepared until you press the button.</HelperText>
+						</div>
+						<button type="button" disabled={busy || !cleanPrepareTargets.length} onClick={() => void handlePrepareAllClean()} className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-100 disabled:opacity-40" data-testid="v3-prepare-all">Prepare {cleanPrepareTargets.length} for Production</button>
+					</div>
+
+					{productionReadyCount > 0 ? (
+						<div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 p-4" data-testid="v3-supply-ready">
+							<div>
+								<div className="text-xs font-bold uppercase text-violet-200">Copy supply ready</div>
+								<HelperText className="mt-1">{productionReadyCount} production-ready {productionReadyCount === 1 ? "copy is" : "copies are"} available for this product.</HelperText>
+							</div>
+							<button type="button" onClick={openProductionStudio} className="inline-flex items-center gap-1 rounded-lg bg-violet-600 px-4 py-2 text-xs font-bold text-white" data-testid="v3-open-production-studio"><Film size={14} /> Open Production Studio</button>
+						</div>
+					) : null}
+
+					{buckets.approved.length ? (
+						<div className="space-y-4">
+							{buckets.approved.map((item) => (
+								<div key={`approved:${item.master.master_id}:${item.master.revision}`} data-testid="v3-approved-item">
+									<CopyCard item={item} />
+									<PreparePanel item={item} busy={busy} onPrepare={handlePrepare} />
+								</div>
+							))}
+						</div>
+					) : (
+						<div className="rounded-xl border border-dashed border-slate-700 p-6 text-sm text-slate-500" data-testid="v3-empty-production">No approved copy yet. Approve copy in step 3 to prepare it for production.</div>
+					)}
+
+					<TechnicalDetails className="mt-4" testId="v3-production-technical" title="Advanced / capacity model">
+						<div className="grid gap-1 text-[11px] text-slate-400 sm:grid-cols-2">
+							<div>Copy Ideas (SEMANTIC): {capacityView.copyIdeas}</div>
+							<div>Duration Versions (PROJECTION): {capacityView.durationVersions}</div>
+							<div>Production Ready (EXECUTABLE_COPY): {capacityView.productionReady}</div>
+							<div>Available for Production (PRODUCTION): {capacityView.availableForProduction}</div>
+							<div>Needs Revalidation (STALE): {capacityView.needsRevalidation}</div>
+						</div>
+						{capacity?.production_capacity_note ? <HelperText className="mt-2">{capacity.production_capacity_note}</HelperText> : null}
+					</TechnicalDetails>
+				</Section>
+			) : null}
+
+			{/* Approval dialog — grouped checklist, all 7 governed checks preserved. */}
+			{approvalItem ? (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" data-testid="v3-approval-dialog">
+					<div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-emerald-500/30 bg-slate-950 p-6">
+						<div className="flex items-start justify-between gap-4">
+							<div>
+								<div className="text-xs font-bold uppercase tracking-wide text-emerald-200">{bulkApproval ? "Approve copies" : "Approve copy"}</div>
+								<h2 className="mt-1 text-lg font-bold text-slate-100">{bulkApproval ? `Approve ${buckets.passed.length} passed ${buckets.passed.length === 1 ? "copy" : "copies"}?` : "Approve this copy?"}</h2>
+							</div>
+							<button type="button" onClick={() => { setApprovalItem(null); setBulkApproval(false); }} className="text-slate-400" aria-label="Close approval">✕</button>
+						</div>
+						<p className="mt-3 text-xs leading-5 text-slate-400">Confirm every check below. Approval records a governed human sign-off; it does not spend any credits or start production.</p>
+						<div className="mt-4 grid gap-3 sm:grid-cols-2">
+							<FormField label="Reviewer"><input className={INPUT_CLASS} value={reviewer} onChange={(event) => setReviewer(event.target.value)} data-testid="v3-reviewer" /></FormField>
+							<FormField label="Notes"><textarea className={`${INPUT_CLASS} min-h-20`} value={rationale} onChange={(event) => setRationale(event.target.value)} data-testid="v3-rationale" /></FormField>
+						</div>
+						<div className="mt-4"><GroupedChecklist value={checklist} onChange={setChecklist} /></div>
+						<div className="mt-4 flex justify-end gap-2">
+							<button type="button" onClick={() => { setApprovalItem(null); setBulkApproval(false); }} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300">Cancel</button>
+							<button type="button" disabled={busy || !allChecks || !reviewer.trim() || rationale.trim().length < 8} onClick={() => void handleApprove()} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40" data-testid={bulkApproval ? "v3-approve-batch" : "v3-approve-master"}>{bulkApproval ? "Approve all" : "Approve"}</button>
+						</div>
 					</div>
 				</div>
-			</Section>
+			) : null}
 
-			<Section title="2. Build landbank" helper="PLAN is a read-only gap calculation. EXECUTE is a separate explicit action and always produces reviewable V3 drafts; no approval is inferred.">
-				{plan ? <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 p-4" data-testid="v3-assistant-plan"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-xs font-bold uppercase text-violet-200">Plan {plan.plan_id}</div><div className="mt-1 text-sm text-slate-200">{plan.mode} · {plan.max_proposals} bounded proposal(s) · {plan.target_durations_seconds.join(" / ")}s projections</div></div><Badge tone={plan.provider.configured || plan.provider.fake_provider_allowed ? "success" : "warn"}>{plan.provider.configured || plan.provider.fake_provider_allowed ? "EXECUTABLE AFTER OPERATOR ACTION" : "EXECUTION DISABLED"}</Badge></div><div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3" data-testid="v3-locked-contract"><div className="text-[10px] font-bold uppercase tracking-wide text-violet-200">Locked authoring contract</div><div className="mt-2 grid gap-2 text-xs text-slate-300 md:grid-cols-2"><div>Objective: {plan.objective?.definition || "—"}</div><div>Formula: {plan.formula?.formula_id || "—"} · {plan.formula?.formula_version || "—"}</div><div>Angle: {plan.angle?.entity_id || "—"} · Family: {plan.storyline_family?.entity_id || "—"}</div><div>Language/WPS: {plan.language_profile || "Malay"} · {plan.wps_mode}</div><div>Approved evidence IDs: {plan.evidence_fact_ids?.length ?? 0}</div><div>Capacity: {Object.entries(plan.current_capacity ?? {}).map(([key, value]) => `${key}=${value}`).join(" · ") || "—"}</div></div><div className="mt-2 text-[10px] text-slate-500">Budget: {plan.max_provider_calls} provider call · {plan.max_output_tokens} output tokens · {plan.max_cost} cost units · {plan.cost_status}</div>{plan.evidence_selection?.fact_ids ? <div className="mt-1 text-[10px] text-emerald-300" data-testid="v3-evidence-selection">{plan.evidence_selection.fact_ids.length} relevant approved fact(s) selected · {plan.evidence_selection.outcome ?? "ranked"}</div> : null}{plan.marginal_plan && Object.keys(plan.marginal_plan).length ? <div className="mt-1 text-[10px] text-amber-200" data-testid="v3-diversity-plan">Marginal unlock: {Object.entries(plan.marginal_plan).map(([key, value]) => `${key} +${value}`).join(" · ")}{plan.diversity_deficits?.length ? ` · deficits: ${plan.diversity_deficits.join(", ")}` : ""}</div> : null}</div><div className="mt-3 grid gap-2 md:grid-cols-3">{plan.gaps.map((gap) => <div key={gap.semantic_class} className="rounded-lg border border-slate-800 bg-slate-950/60 p-3"><div className="text-[10px] font-bold uppercase text-slate-500">{gap.semantic_class}</div><div className="mt-1 text-lg font-semibold text-slate-100">{gap.current_count} → {gap.target_count}</div><div className="text-xs text-slate-400">Gap {gap.gap_count}</div></div>)}</div><div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={busy} onClick={() => void handlePreview()} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200" data-testid="v3-prompt-preview"><Eye size={14} className="mr-1 inline" /> Preview prompt</button><button type="button" disabled={busy || !provider?.fake_provider_allowed} onClick={() => void handleExecute()} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-40" data-testid="v3-execute-fake">Execute fake-provider test</button><button type="button" disabled={busy || !provider?.configured} onClick={() => void handleGenerateLive()} className="rounded-lg bg-violet-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-40" data-testid="v3-generate-live" title={provider?.configured ? "Run the configured text_assist provider" : "Configure and enable text_assist before live generation"}>Generate with AI</button></div>{promptDigest ? <div className="mt-3 text-[10px] font-mono text-slate-500" data-testid="v3-prompt-digest">Prompt digest: {promptDigest}</div> : null}<HelperText className="mt-3">{provider?.fake_provider_allowed ? "Disposable fake-provider mode is enabled for UAT; it reports zero real provider calls and zero credits." : "Enable the disposable fake-provider runtime for browser UAT, or configure text_assist before any live execution."}</HelperText></div> : <div className="rounded-xl border border-dashed border-slate-700 p-6 text-sm text-slate-500" data-testid="v3-no-plan">Create a plan to see capacity gaps and the explicit execution boundary.</div>}
-			</Section>
-
-			<Section title="3. Review queue" helper="Full storyboard first: Master stages, 8/16/24 projections, quality gates, novelty signal, and approval receipt context stay together.">
-				<div className="mb-4 flex flex-wrap items-center gap-2"><ClipboardCheck size={16} className="text-violet-300" /><span className="text-xs font-semibold text-slate-200" data-testid="v3-review-queue-label">V3 Review Queue · {visibleItems.length} storyboard(s)</span><select className="ml-auto rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} data-testid="v3-status-filter"><option value="ALL">All statuses</option><option value="DRAFT">DRAFT</option><option value="VALIDATED">VALIDATED</option><option value="APPROVED">APPROVED</option></select><select className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-300" value={durationFilter} onChange={(event) => setDurationFilter(event.target.value)} data-testid="v3-duration-filter"><option value="ALL">All durations</option><option value="8">8s</option><option value="16">16s</option><option value="24">24s</option></select></div>
-				<div className="mb-4 grid gap-2 md:grid-cols-4" data-testid="v3-landbank-filters"><input className={INPUT_CLASS} value={searchFilter} onChange={(event) => setSearchFilter(event.target.value)} placeholder="Server search" data-testid="v3-search-filter" /><input className={INPUT_CLASS} value={formulaFilter} onChange={(event) => setFormulaFilter(event.target.value)} placeholder="Formula ID" data-testid="v3-formula-filter" /><input className={INPUT_CLASS} value={angleFilter} onChange={(event) => setAngleFilter(event.target.value)} placeholder="Angle ID" data-testid="v3-angle-filter" /><input className={INPUT_CLASS} value={storylineFilter} onChange={(event) => setStorylineFilter(event.target.value)} placeholder="Storyline family ID" data-testid="v3-storyline-filter" /><input className={INPUT_CLASS} value={recipeFilter} onChange={(event) => setRecipeFilter(event.target.value)} placeholder="Recipe ID" data-testid="v3-recipe-filter" /><select className={INPUT_CLASS} value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} data-testid="v3-source-filter"><option value="ALL">All sources</option><option value="ROUND2">ROUND2</option></select><select className={INPUT_CLASS} value={qualityFilter} onChange={(event) => setQualityFilter(event.target.value)} data-testid="v3-quality-filter"><option value="ALL">All quality</option><option value="HARD_PASS">HARD_PASS</option></select><input className={INPUT_CLASS} value={blockerFilter} onChange={(event) => setBlockerFilter(event.target.value)} placeholder="Blocker code" data-testid="v3-blocker-filter" /></div>
-				<div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3" data-testid="v3-bulk-approval-panel"><div><div className="text-xs font-bold uppercase text-amber-100">Human batch approval</div><HelperText className="mt-1">{bulkCandidates.length} hard-pass candidate(s) are ready for one explicit review receipt. V3 never auto-approves.</HelperText></div><button type="button" disabled={busy || !bulkCandidates.length} onClick={() => { setBulkApproval(true); setApprovalItem(bulkCandidates[0]); setActiveJob("REVIEW"); }} className="rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-100 disabled:opacity-40" data-testid="v3-open-bulk-approval">Open batch approval</button></div>
-				{visibleItems.length ? <div className="space-y-4">{visibleItems.map((item) => <StoryboardCard key={`${item.master.master_id}:${item.master.revision}`} item={item} onReview={handleReview} onApprove={(target) => { setBulkApproval(false); setApprovalItem(target); setActiveJob("REVIEW"); }} onRegenerate={handleRegenerate} onDeleteDraft={(target) => setDeleteItem(target)} />)}{landbankHasMore && selectedProduct ? <button type="button" disabled={busy} onClick={() => void loadLandbank(selectedProduct.id, landbankOffset, true)} className="w-full rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 disabled:opacity-40" data-testid="v3-load-more">Load more bounded results</button> : null}</div> : <div className="rounded-xl border border-dashed border-slate-700 p-6 text-sm text-slate-500" data-testid="v3-empty-review-queue">No V3 storyboard candidates in this bounded view. Execute an explicit plan or adjust the product/filters.</div>}
-			</Section>
-
-			<Section title="4. Approved storyboard landbank" helper="The V3 approved landbank is a supply-plane read model. Macro Round 3 P3 adds explicit, human-triggered V2 materialization — status is read-only until you act.">
-				<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4" data-testid="v3-approved-landbank">
-					<div className="flex flex-wrap items-center justify-between gap-2">
-						<div className="flex items-center gap-2 text-xs font-bold uppercase text-slate-300"><BookOpen size={14} /> Approved V3 Storyboard Landbank</div>
-						<button type="button" disabled={busy || !cleanMaterializeTargets.length} onClick={() => void handleMaterializeAllClean()} className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-100 disabled:opacity-40" title={`Materialize up to ${MATERIALIZE_BULK_LIMIT} clean (NOT_MATERIALIZED) approved projections into V2 production blueprints`} data-testid="v3-materialize-all-clean">Materialize All Clean ({cleanMaterializeTargets.length})</button>
+			{/* Delete-draft confirmation. */}
+			{deleteItem ? (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" data-testid="v3-delete-dialog">
+					<div className="w-full max-w-md rounded-2xl border border-rose-500/30 bg-slate-950 p-6">
+						<div className="text-xs font-bold uppercase tracking-wide text-rose-200">Delete draft</div>
+						<h2 className="mt-1 text-lg font-bold text-slate-100">Delete this draft copy?</h2>
+						<p className="mt-3 text-xs leading-5 text-slate-400">Only an unused draft can be removed. Approved or referenced copy is never deleted.</p>
+						<div className="mt-4 flex justify-end gap-2">
+							<button type="button" onClick={() => setDeleteItem(null)} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300" data-testid="v3-delete-cancel">Cancel</button>
+							<button type="button" disabled={busy} onClick={() => void handleDeleteDraft()} className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40" data-testid="v3-delete-confirm">Delete draft</button>
+						</div>
 					</div>
-					<div className="mt-2 text-sm text-slate-400">{approvedItems.length} approved storyboard(s) in the current bounded read.</div>
-					<HelperText className="mt-2">Materialization into V2 production blueprints is explicit and human-triggered — nothing is materialized when this landbank loads. Bulk is bounded to {MATERIALIZE_BULK_LIMIT} clean projections per run.</HelperText>
 				</div>
-				{approvedItems.length ? <div className="mt-4 space-y-4">{approvedItems.map((item) => <div key={`approved:${item.master.master_id}:${item.master.revision}`} data-testid="v3-approved-item"><StoryboardCard item={item} onApprove={() => undefined} /><ApprovedMaterializationPanel item={item} busy={busy} onMaterialize={handleMaterialize} /></div>)}</div> : null}
-			</Section>
-
-			{approvalItem ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" data-testid="v3-approval-dialog"><div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-emerald-500/30 bg-slate-950 p-6"><div className="flex items-start justify-between gap-4"><div><div className="text-xs font-bold uppercase tracking-wide text-emerald-200">{bulkApproval ? "Human batch approval receipt" : "Human approval receipt"}</div><h2 className="mt-1 text-lg font-bold text-slate-100">{bulkApproval ? `Approve ${bulkCandidates.length} clean storyboard(s)?` : `Approve ${approvalItem.master.master_id}?`}</h2></div><button type="button" onClick={() => { setApprovalItem(null); setBulkApproval(false); }} className="text-slate-400" aria-label="Close approval">✕</button></div><p className="mt-3 text-xs leading-5 text-slate-400">{bulkApproval ? "This records one immutable batch receipt with each exact Master and projection revision. Every candidate still passes the same human checklist." : "This records an immutable v3_human_approval_receipt for the exact Master and selected projection revisions."} It does not activate or materialize V2.</p>{bulkApproval ? <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3" data-testid="v3-batch-scope"><div className="text-[10px] font-bold uppercase text-emerald-200">Machine-clean candidates ({bulkCandidates.length})</div><ul className="mt-1 max-h-28 space-y-1 overflow-y-auto text-[11px] text-slate-300">{bulkCandidates.map((item) => <li key={item.master.master_id} data-testid="v3-batch-clean-item">{item.master.master_id} · {item.master.formula.formula_id} · {item.projections.length} projection(s) · {item.projections.map((projection) => projection.target_duration_seconds).join("/")}s</li>)}</ul>{bulkExceptions.length ? <div className="mt-2"><div className="text-[10px] font-bold uppercase text-amber-300" data-testid="v3-batch-exceptions">Exceptions excluded from the batch ({bulkExceptions.length})</div><ul className="mt-1 max-h-20 space-y-1 overflow-y-auto text-[11px] text-amber-200">{bulkExceptions.map((item) => <li key={item.master.master_id}>{item.master.master_id} · {item.quality.issue_codes.join(", ") || "not hard-pass"}</li>)}</ul></div> : null}<div className="mt-2 text-[10px] text-slate-500">Only this exact machine-clean set receives the batch receipt; exceptions need individual review. The batch digest binds every target and is shown in Technical Details after approval.</div></div> : null}<div className="mt-4 grid gap-3 sm:grid-cols-2"><FormField label="Reviewer"><input className={INPUT_CLASS} value={reviewer} onChange={(event) => setReviewer(event.target.value)} data-testid="v3-reviewer" /></FormField><FormField label="Rationale"><textarea className={`${INPUT_CLASS} min-h-20`} value={rationale} onChange={(event) => setRationale(event.target.value)} data-testid="v3-rationale" /></FormField></div><div className="mt-4"><Checklist value={checklist} onChange={setChecklist} /></div><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => { setApprovalItem(null); setBulkApproval(false); }} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300">Cancel</button><button type="button" disabled={busy || !allChecks || !reviewer.trim() || rationale.trim().length < 8} onClick={() => void handleApprove()} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40" data-testid={bulkApproval ? "v3-approve-batch" : "v3-approve-master"}>{bulkApproval ? "Record batch approval receipt" : "Record approval receipt"}</button></div></div></div> : null}
-
-			{deleteItem ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" data-testid="v3-delete-dialog"><div className="w-full max-w-md rounded-2xl border border-rose-500/30 bg-slate-950 p-6"><div className="text-xs font-bold uppercase tracking-wide text-rose-200">Safe delete draft</div><h2 className="mt-1 text-lg font-bold text-slate-100">Delete draft {deleteItem.master.master_id}?</h2><p className="mt-3 text-xs leading-5 text-slate-400">Only an unreferenced DRAFT master can be removed. The server fails closed when this master is referenced, approved, or otherwise terminal — no approved or historical revision is ever hard-deleted.</p><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setDeleteItem(null)} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300" data-testid="v3-delete-cancel">Cancel</button><button type="button" disabled={busy} onClick={() => void handleDeleteDraft()} className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40" data-testid="v3-delete-confirm">Delete draft</button></div></div></div> : null}
+			) : null}
 		</div>
 	);
 }

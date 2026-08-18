@@ -175,7 +175,7 @@ const ALL_NAV_GROUPS = [
 				label: "Product Type Registry",
 			},
 			{ to: "/creative/copy-registry", icon: PenLine, label: "Copy Registry" },
-			{ to: "/creative/storyboard-landbank-v3", icon: Sparkles, label: "Storyboard Landbank V3" },
+			{ to: "/creative/storyboard-landbank-v3", icon: Sparkles, label: "Copywriting Landbank" },
 			{
 				to: "/creative/copy-intelligence",
 				icon: Users,

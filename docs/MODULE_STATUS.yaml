@@ -1638,6 +1638,10 @@ domains:
       - dashboard/src/api/storyboardLandbankV3Round2.ts
       - dashboard/src/pages/StoryboardLandbankV3Page.tsx
       - dashboard/src/pages/StoryboardLandbankV3Page.test.tsx
+      # Operator-UX resolver: deterministic wizard defaults + next-action + operator
+      # language. Pure/FE-only; composes existing endpoints, changes no authority.
+      - dashboard/src/utils/storyboardLandbankResolver.ts
+      - dashboard/src/utils/storyboardLandbankResolver.test.ts
       - tests/unit/test_storyboard_landbank_v3_api.py
       - tests/unit/test_storyboard_landbank_v3_migration.py
       - tests/unit/test_storyboard_landbank_v3_round1_factory.py
