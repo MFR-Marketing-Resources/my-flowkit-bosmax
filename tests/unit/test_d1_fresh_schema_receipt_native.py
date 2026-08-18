@@ -1,22 +1,17 @@
-"""Task D1 — fresh-schema receipt-native alignment.
+"""Fresh-schema receipt-native alignment + final physical-retirement shape.
 
-Proves that a brand-new / already-cut-over database initialized under normal
-production runtime (COPY_LEGACY_MAINTENANCE_MODE OFF) converges on the canonical
-receipt-native legacy-copy shape:
+Task D1 made new databases receipt-native. Task D5 finalizes the retirement: a
+fresh / final-era database ends with the three legacy stores (copy_set,
+copy_component, poster_copy_set) PHYSICALLY ABSENT, while a database cut over from
+real legacy rows keeps them as empty, write-denied transitional shells until the
+governed physical-retirement migration records its receipt.
 
-  * five immutable receipt ledger tables exist from first init,
-  * historical FKs (creative_variation_group, creative_supply_review_event)
-    point at the receipt ledgers, not the active stores,
-  * the three legacy stores remain physically present but EMPTY and
-    write-denied (nine LEGACY_COPY_STORAGE_DISABLED triggers),
-  * init is idempotent,
-  * a pre-cutover database with real legacy rows fails closed (never silently
-    migrated/erased), and
-  * under maintenance mode the alignment is skipped so recovery + the legacy
-    maintenance test-suite keep legacy storage writable.
-
-Every test drives its own disposable temp DB and toggles the flag explicitly, so
-none passes merely because conftest globally enables maintenance mode.
+init_db converges toward this shape at startup (the untouched base schema still
+transiently creates the shells; the maintenance-OFF align then repoints historical
+FKs to the receipt ledgers and either drops the shells (final era / retired) or
+keeps them inert (transitional)). Every test drives its own disposable temp DB and
+toggles COPY_LEGACY_MAINTENANCE_MODE explicitly, so none passes merely because
+conftest globally enables maintenance mode.
 """
 
 import importlib.util
@@ -36,7 +31,6 @@ TRIGGERS = legacy_copy_ledger.write_deny_trigger_names()
 
 
 async def _init_at(path, *, maintenance: bool) -> None:
-    """Run schema.init_db() against ``path`` with the maintenance flag forced."""
     prev = os.environ.get("COPY_LEGACY_MAINTENANCE_MODE")
     if maintenance:
         os.environ["COPY_LEGACY_MAINTENANCE_MODE"] = "1"
@@ -90,24 +84,47 @@ def _norm(sql: str) -> str:
     return re.sub(r"\s+", " ", (sql or "").replace('"', "")).strip().upper()
 
 
+def _seed_cutover_marker(path, *, retired: bool) -> None:
+    """Turn a maintenance-ON-inited DB (shells present, no receipts) into a
+    cut-over-shaped DB: create the receipt ledgers and insert a migration receipt
+    (plain cut-over, or the physical-retirement marker)."""
+    c = _conn(path)
+    try:
+        c.executescript(legacy_copy_ledger.RECEIPT_LEDGER_SCHEMA_SQL)
+        version = (
+            legacy_copy_ledger.PHYSICAL_RETIREMENT_MIGRATION_VERSION
+            if retired
+            else "copy-register-v2-only-cutover-v1"
+        )
+        c.execute(
+            "INSERT INTO legacy_copy_migration_receipt (migration_id, migration_version, "
+            "applied_at, source_database_path, backup_path, backup_sha256, before_counts_json, "
+            "after_counts_json, archive_counts_json, reference_counts_json, source_schema_json, "
+            "manifest_sha256, integrity_check, foreign_key_check_json) VALUES "
+            "(?, ?, 't','p','b','s','{}','{}','{}','{}','{}','x','ok','[]')",
+            (f"m-{version}", version),
+        )
+        c.commit()
+    finally:
+        c.close()
+
+
 @pytest.mark.asyncio
-async def test_fresh_production_init_is_receipt_native(tmp_path):
-    db = tmp_path / "fresh_prod.db"
+async def test_fresh_final_init_has_no_legacy_tables(tmp_path):
+    db = tmp_path / "fresh_final.db"
     await _init_at(db, maintenance=False)
     c = _conn(db)
     try:
         tabs = _tables(c)
+        # The three legacy stores are physically ABSENT on a fresh final-era DB.
+        for shell in SHELLS:
+            assert shell not in tabs, f"legacy store {shell} must not exist on a fresh DB"
+        # ...and no write-denial triggers linger (nothing to protect).
+        assert not (set(TRIGGERS) & _triggers(c))
+        # Receipt ledgers are native.
         for receipt in RECEIPTS:
             assert receipt in tabs, f"missing receipt ledger {receipt}"
-        for shell in SHELLS:
-            assert shell in tabs, f"missing inert shell {shell}"
-            assert _count(c, shell) == 0, f"{shell} should be empty on a fresh DB"
-
-        trg = _triggers(c)
-        for name in TRIGGERS:
-            assert name in trg, f"missing write-denial trigger {name}"
-
-        # Historical FKs are receipt-native.
+        # Historical FKs are receipt-native and never point at an active store.
         assert (
             "copy_set_id",
             "legacy_copy_set_receipt",
@@ -118,19 +135,14 @@ async def test_fresh_production_init_is_receipt_native(tmp_path):
             "legacy_copy_component_receipt",
             "legacy_component_id",
         ) in _fk_targets(c, "creative_supply_review_event")
-        # ...and never point at the retired active stores.
         assert not any(
-            tgt in ("copy_set", "copy_component")
-            for (_col, tgt, _to) in _fk_targets(c, "creative_variation_group")
+            tgt in SHELLS for (_c, tgt, _t) in _fk_targets(c, "creative_variation_group")
         )
         assert not any(
-            tgt in ("copy_set", "copy_component")
-            for (_col, tgt, _to) in _fk_targets(c, "creative_supply_review_event")
+            tgt in SHELLS for (_c, tgt, _t) in _fk_targets(c, "creative_supply_review_event")
         )
-        # creative_treatment.copy_set_id is a free TEXT column (canonical shape).
         ct_fk_cols = {r["from"] for r in c.execute('PRAGMA foreign_key_list("creative_treatment")')}
         assert "copy_set_id" not in ct_fk_cols
-
         assert c.execute("PRAGMA foreign_key_check").fetchall() == []
         assert c.execute("PRAGMA quick_check").fetchone()[0] == "ok"
     finally:
@@ -138,29 +150,43 @@ async def test_fresh_production_init_is_receipt_native(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_fresh_production_init_is_idempotent(tmp_path):
-    db = tmp_path / "idempotent.db"
+async def test_fresh_final_init_is_idempotent(tmp_path):
+    db = tmp_path / "fresh_idem.db"
     await _init_at(db, maintenance=False)
     c = _conn(db)
-    # Simulate an already-cut-over marker; it must survive a re-init untouched.
-    c.execute(
-        "INSERT INTO legacy_copy_migration_receipt (migration_id, migration_version, "
-        "applied_at, source_database_path, backup_path, backup_sha256, before_counts_json, "
-        "after_counts_json, archive_counts_json, reference_counts_json, source_schema_json, "
-        "manifest_sha256, integrity_check, foreign_key_check_json) "
-        "VALUES ('m1','v1','t','p','b','s','{}','{}','{}','{}','{}','x','ok','[]')"
-    )
-    c.commit()
     before = _schema_objects(c)
-    before_receipt = _count(c, "legacy_copy_migration_receipt")
     c.close()
-
-    await _init_at(db, maintenance=False)  # re-init on the same file
-
+    await _init_at(db, maintenance=False)  # restart: base recreates shells, align re-drops
     c = _conn(db)
     try:
-        assert _schema_objects(c) == before, "schema objects drifted on re-init"
-        assert _count(c, "legacy_copy_migration_receipt") == before_receipt
+        assert _schema_objects(c) == before, "schema drifted on re-init"
+        for shell in SHELLS:
+            assert shell not in _tables(c)
+        assert c.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        c.close()
+
+
+@pytest.mark.asyncio
+async def test_transitional_cutover_db_keeps_inert_shells(tmp_path):
+    """A DB cut over from real legacy rows (migration receipt present, no
+    physical-retirement marker) keeps the empty shells inert until the governed
+    physical-retirement migration runs — the safe D6 pre-migration checkpoint."""
+    db = tmp_path / "transitional.db"
+    await _init_at(db, maintenance=True)  # base creates shells; align skipped
+    _seed_cutover_marker(db, retired=False)
+    await _init_at(db, maintenance=False)  # normal runtime, not yet retired
+    c = _conn(db)
+    try:
+        tabs = _tables(c)
+        for shell in SHELLS:
+            assert shell in tabs, f"transitional shell {shell} must be kept"
+            assert _count(c, shell) == 0
+        for name in TRIGGERS:
+            assert name in _triggers(c), f"missing write-denial trigger {name}"
+        assert (
+            "copy_set_id", "legacy_copy_set_receipt", "legacy_copy_set_id",
+        ) in _fk_targets(c, "creative_variation_group")
         assert c.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         c.close()
@@ -169,17 +195,16 @@ async def test_fresh_production_init_is_idempotent(tmp_path):
 @pytest.mark.asyncio
 async def test_inert_shell_writes_are_denied(tmp_path):
     db = tmp_path / "deny.db"
-    await _init_at(db, maintenance=False)
+    await _init_at(db, maintenance=True)
+    _seed_cutover_marker(db, retired=False)
+    await _init_at(db, maintenance=False)  # transitional: shells present + triggers
     c = _conn(db)
     try:
-        # INSERT is denied on every shell.
         for shell in SHELLS:
             with pytest.raises(sqlite3.Error) as exc:
                 c.execute(f'INSERT INTO "{shell}" DEFAULT VALUES')
             assert legacy_copy_ledger.LEGACY_COPY_STORAGE_DISABLED in str(exc.value)
             c.rollback()
-
-        # UPDATE/DELETE are denied too — seed one row past the INSERT guard.
         c.execute("PRAGMA foreign_keys=OFF")
         c.execute("DROP TRIGGER trg_copy_set_v2_only_insert")
         c.execute(
@@ -198,18 +223,39 @@ async def test_inert_shell_writes_are_denied(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_physical_retirement_marker_drops_shells(tmp_path):
+    """Once the governed physical-retirement receipt is present, init_db removes
+    any shell the base schema recreates on restart (stays absent across restarts)."""
+    db = tmp_path / "retired.db"
+    await _init_at(db, maintenance=True)  # base creates shells
+    _seed_cutover_marker(db, retired=True)  # physical-retirement marker
+    await _init_at(db, maintenance=False)
+    c = _conn(db)
+    try:
+        for shell in SHELLS:
+            assert shell not in _tables(c), f"{shell} must be dropped once retired"
+        # Receipts preserved.
+        assert _count(c, "legacy_copy_migration_receipt") == 1
+        for receipt in RECEIPTS:
+            assert receipt in _tables(c)
+        assert c.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert c.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+    finally:
+        c.close()
+
+
+@pytest.mark.asyncio
 async def test_maintenance_mode_skips_alignment_and_keeps_legacy_writable(tmp_path):
     db = tmp_path / "maintenance.db"
     await _init_at(db, maintenance=True)
     c = _conn(db)
     try:
-        # Alignment is skipped: no native receipts, no deny triggers, active FK intact.
         assert "legacy_copy_set_receipt" not in _tables(c)
         assert "trg_copy_set_v2_only_insert" not in _triggers(c)
+        assert "copy_set" in _tables(c)
         assert any(
-            tgt == "copy_set" for (_col, tgt, _to) in _fk_targets(c, "creative_variation_group")
+            tgt == "copy_set" for (_c, tgt, _t) in _fk_targets(c, "creative_variation_group")
         )
-        # Legacy storage remains writable for recovery / maintenance-mode tests.
         c.execute("PRAGMA foreign_keys=OFF")
         c.execute(
             "INSERT INTO copy_set (copy_set_id, product_id, created_at, updated_at) "
@@ -224,7 +270,6 @@ async def test_maintenance_mode_skips_alignment_and_keeps_legacy_writable(tmp_pa
 @pytest.mark.asyncio
 async def test_pre_cutover_data_fails_closed_without_erasing(tmp_path):
     db = tmp_path / "pre_cutover.db"
-    # Build the schema with legacy storage writable, then seed a real legacy row.
     await _init_at(db, maintenance=True)
     c = _conn(db)
     c.execute("PRAGMA foreign_keys=OFF")
@@ -234,38 +279,30 @@ async def test_pre_cutover_data_fails_closed_without_erasing(tmp_path):
     )
     c.commit()
     c.close()
-
-    # Normal-runtime init must fail closed rather than silently migrate/erase.
     with pytest.raises(legacy_copy_ledger.LegacyCopyCutoverRequiredError):
         await _init_at(db, maintenance=False)
-
     c = _conn(db)
     try:
         assert _count(c, "copy_set") == 1, "pre-cutover legacy row must be preserved"
         tabs = _tables(c)
-        # No hidden cutover: no fabricated archive rows or migration receipt.
         if "legacy_copy_set_receipt" in tabs:
             assert _count(c, "legacy_copy_set_receipt") == 0
-        if "legacy_copy_migration_receipt" in tabs:
-            assert _count(c, "legacy_copy_migration_receipt") == 0
     finally:
         c.close()
 
 
 def test_receipt_and_trigger_schema_matches_governed_migration():
-    """Anti-drift: the receipt ledger + write-deny triggers that init_db installs
-    are structurally identical to what the governed cut-over migration installs."""
     repo_root = pathlib.Path(agent.__file__).resolve().parents[1]
     mig_path = repo_root / "scripts" / "migrate_copy_register_v2_only.py"
     spec = importlib.util.spec_from_file_location("_d1_parity_migration", mig_path)
     mig = importlib.util.module_from_spec(spec)
     import sys as _sys
-    _sys.modules[spec.name] = mig  # dataclasses resolves annotations via sys.modules
+    _sys.modules[spec.name] = mig
     spec.loader.exec_module(mig)
 
     def _dump(build) -> dict:
         conn = sqlite3.connect(":memory:")
-        for store in SHELLS:  # triggers need their target tables to exist
+        for store in SHELLS:
             conn.execute(f"CREATE TABLE {store} (x)")
         build(conn)
         rows = conn.execute(
@@ -273,23 +310,17 @@ def test_receipt_and_trigger_schema_matches_governed_migration():
             "WHERE type IN ('table','trigger') AND name NOT LIKE 'sqlite_%' AND name != ?",
             (SHELLS[0],),
         ).fetchall()
-        out = {
-            n: _norm(s)
-            for (n, s) in rows
-            if n in RECEIPTS or n in TRIGGERS
-        }
+        out = {n: _norm(s) for (n, s) in rows if n in RECEIPTS or n in TRIGGERS}
         conn.close()
         return out
 
-    def _ledger(conn):
-        conn.executescript(legacy_copy_ledger.RECEIPT_LEDGER_SCHEMA_SQL)
-        conn.executescript(legacy_copy_ledger.write_deny_trigger_script())
-
-    def _migration(conn):
-        mig._create_receipt_schema(conn)
-        mig._install_write_denial_triggers(conn)
-
-    ledger = _dump(_ledger)
-    migration = _dump(_migration)
+    ledger = _dump(lambda conn: (
+        conn.executescript(legacy_copy_ledger.RECEIPT_LEDGER_SCHEMA_SQL),
+        conn.executescript(legacy_copy_ledger.write_deny_trigger_script()),
+    ))
+    migration = _dump(lambda conn: (
+        mig._create_receipt_schema(conn),
+        mig._install_write_denial_triggers(conn),
+    ))
     assert set(ledger) == set(RECEIPTS) | set(TRIGGERS)
     assert ledger == migration
