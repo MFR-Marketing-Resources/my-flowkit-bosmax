@@ -64,19 +64,11 @@ async def _resolve_product_and_creative(
 
 
 async def _approved_copy_set(product_id: str | None) -> dict | None:
-    """Most-recent APPROVED Copy Set for the product (the angle/hook/USP the video
-    was actually built on) so the caption echoes the creative's message."""
-    if not product_id:
-        return None
-    try:
-        rows = await crud.list_copy_sets_for_product(product_id)
-    except Exception:  # noqa: BLE001 — copy-set alignment is best-effort grounding
-        return None
-    approved = [
-        r for r in (rows or [])
-        if str(r.get("status") or "") == "COPY_APPROVED" and not r.get("archived")
-    ]
-    return approved[0] if approved else None  # crud returns newest-first
+    """Retired (Task D5): the legacy ``copy_set`` store is physically removed, so
+    caption generation no longer reads it for grounding. Captions operate without
+    legacy copy grounding; current V2 copy authority flows through the normal
+    execution path, not this best-effort legacy lookup."""
+    return None
 
 
 def _copy_set_usps(copy_set: dict) -> list[str]:

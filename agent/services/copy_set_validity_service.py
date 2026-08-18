@@ -1044,50 +1044,12 @@ async def mark_stale_copy_sets_for_product(
     db: Any | None = None,
     commit: bool = True,
 ) -> int:
-    """Fail-closed: approved sets not grounded on current snapshot → NEEDS_REVALIDATION.
-
-    Caller may pass an open ``db`` to make this part of the PI-approval transaction.
-    """
-    own_db = db is None
-    db = db or await get_db()
-    except_copy_set_ids = except_copy_set_ids or set()
-    cur = await db.execute(
-        "SELECT copy_set_id, pi_snapshot_id, provenance_json, status, archived, "
-        "pi_eligibility_status FROM copy_set WHERE product_id = ?",
-        (product_id,),
-    )
-    rows = await cur.fetchall()
-    await cur.close()
-    n = 0
-    for r in rows:
-        if str(r["status"]) != STATUS_COPY_APPROVED:
-            continue
-        if int(r["archived"] or 0):
-            continue
-        cid = str(r["copy_set_id"])
-        if cid in except_copy_set_ids:
-            continue
-        snap_id = _clean(r["pi_snapshot_id"]) if "pi_snapshot_id" in r.keys() else ""
-        if not snap_id:
-            prov = _parse_json(r["provenance_json"]) or {}
-            if isinstance(prov, dict):
-                snap_id = _clean((prov.get("pi_lineage") or {}).get("snapshot_id"))
-        if snap_id == current_snapshot_id:
-            continue
-        await db.execute(
-            "UPDATE copy_set SET pi_eligibility_status = ?, "
-            "pi_ineligible_reasons = ?, updated_at = ? WHERE copy_set_id = ?",
-            (
-                NEEDS_REVALIDATION,
-                f"PI_SNAPSHOT_STALE:expected={current_snapshot_id},got={snap_id or 'NONE'}",
-                _now(),
-                cid,
-            ),
-        )
-        n += 1
-    if n and commit and own_db:
-        await db.commit()
-    return n
+    """Retired (Task D5): the legacy ``copy_set`` store is physically removed.
+    Current V2 stale/lineage authority is enforced by the V2 copy register, so this
+    legacy per-row snapshot-staleness sweep is now a no-op. Kept with its original
+    signature so the PI-approval call site stays unchanged and never touches
+    ``copy_set``."""
+    return 0
 
 
 async def copywriting_validity_coverage(
