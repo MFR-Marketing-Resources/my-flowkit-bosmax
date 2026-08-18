@@ -412,54 +412,53 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 			)}
 
 			{/* Product Truth summary — full scoped catalog, not page rows */}
-			{data?.product_truth_summary && (
-				<div
-					className="grid grid-cols-2 gap-2 sm:grid-cols-4"
-					data-testid="product-truth-summary"
-				>
-					{(
-						[
-							["APPROVED", "Approved", data.product_truth_summary.APPROVED ?? 0],
-							["NEEDS_REVIEW", "Needs Review", data.product_truth_summary.NEEDS_REVIEW ?? 0],
+			{(() => {
+				const pts = data?.product_truth_summary;
+				if (!pts) return null;
+				return (
+					<div
+						className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+						data-testid="product-truth-summary"
+					>
+						{(
 							[
-								"ACTION_REQUIRED",
-								"Action Required",
-								data.product_truth_summary.ACTION_REQUIRED ?? 0,
-							],
-							["NOT_STARTED", "Not Started", data.product_truth_summary.NOT_STARTED ?? 0],
-						] as const
-					).map(([value, label, count]) => (
-						<button
-							key={value}
-							type="button"
-							onClick={() => {
-								setProductTruth(value);
-								setOffset(0);
-							}}
-							className={`rounded-xl border px-3 py-2 text-left transition-colors ${
-								productTruth === value
-									? "border-indigo-500/50 bg-indigo-500/10"
-									: "border-slate-800 bg-slate-900/50 hover:border-slate-700"
-							}`}
-							data-testid={`product-truth-summary-${value.toLowerCase()}`}
-						>
-							<div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">
-								{label}
-							</div>
-							<div className="mt-0.5 text-lg font-bold tabular-nums text-white">{count}</div>
-							{value === "APPROVED" &&
-							(data.product_truth_summary.UPDATE_PENDING ?? 0) > 0 ? (
-								<div
-									className="mt-0.5 text-[10px] font-semibold text-amber-300"
-									data-testid="product-truth-summary-update-pending"
-								>
-									Update Pending: {data.product_truth_summary.UPDATE_PENDING}
+								["APPROVED", "Approved", pts.APPROVED ?? 0],
+								["NEEDS_REVIEW", "Needs Review", pts.NEEDS_REVIEW ?? 0],
+								["ACTION_REQUIRED", "Action Required", pts.ACTION_REQUIRED ?? 0],
+								["NOT_STARTED", "Not Started", pts.NOT_STARTED ?? 0],
+							] as const
+						).map(([value, label, count]) => (
+							<button
+								key={value}
+								type="button"
+								onClick={() => {
+									setProductTruth(value);
+									setOffset(0);
+								}}
+								className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+									productTruth === value
+										? "border-indigo-500/50 bg-indigo-500/10"
+										: "border-slate-800 bg-slate-900/50 hover:border-slate-700"
+								}`}
+								data-testid={`product-truth-summary-${value.toLowerCase()}`}
+							>
+								<div className="text-[9px] font-bold uppercase tracking-widest text-slate-500">
+									{label}
 								</div>
-							) : null}
-						</button>
-					))}
-				</div>
-			)}
+								<div className="mt-0.5 text-lg font-bold tabular-nums text-white">{count}</div>
+								{value === "APPROVED" && (pts.UPDATE_PENDING ?? 0) > 0 ? (
+									<div
+										className="mt-0.5 text-[10px] font-semibold text-amber-300"
+										data-testid="product-truth-summary-update-pending"
+									>
+										Update Pending: {pts.UPDATE_PENDING}
+									</div>
+								) : null}
+							</button>
+						))}
+					</div>
+				);
+			})()}
 
 			{/* Filter bar */}
 			<div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
