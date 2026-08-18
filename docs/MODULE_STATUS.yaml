@@ -15,6 +15,17 @@ domains:
       - .ai/projects/MONTAGE_BUILD_BRIEF.md
       - docs/authority/working/WORKSPACE_GENERATION_PACKAGE_AND_HANDOFF_BANK_PLAN_v0_1.md
       - package.json
+      # BOSMAX Browser UAT runtime (dedicated CDP :9222 + Playwright fallback)
+      - AGENTS.md
+      - docs/BROWSER_UAT_RUNTIME.md
+      - scripts/browser-uat/lib/common.ps1
+      - scripts/browser-uat/start-browser-uat.ps1
+      - scripts/browser-uat/browser-uat-health.ps1
+      - scripts/browser-uat/run-browser-uat.ps1
+      - scripts/browser-uat/run-browser-uat.mjs
+      - scripts/browser-uat/bosmax-smoke-uat.ps1
+      - scripts/browser-uat/bosmax-click-path-uat.ps1
+      - scripts/browser-uat/install-browser-uat-autostart.ps1
       - package-lock.json
       - biome.json
       - .dependency-cruiser.cjs
@@ -1162,7 +1173,6 @@ domains:
       - docs/VERIFICATION_GATE.md
       - tests/ui/test_verification_gate_contract.py
       - dashboard/package.json
-      - AGENTS.md
       - .github/workflows/verify.yml
       # RESULTS_HUB: durable deliverable hub — every finished generation gets a
       # long-lived record (prompt+settings for manual Flow fallback) + per-platform
