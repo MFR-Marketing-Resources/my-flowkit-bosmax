@@ -52,6 +52,19 @@ def _provider_free(monkeypatch):
 
     monkeypatch.setattr(make_video, "_run_generate", _noop)
     monkeypatch.setattr(make_video, "_VIDEO_LANE_JOB", None, raising=False)
+
+    # PR #816: the canonical resolver FAILS CLOSED for product-backed lanes when
+    # the product visual can't resolve. These fixture products have no real visual,
+    # so mock the authority to a stable fake SHA — the canonical identity is then
+    # deterministic and review==dispatch, letting the UAT exercise the APPROVAL
+    # boundary (not the visual-resolution boundary).
+    async def _mock_fp(product_id: str, slot_key: str = "start_frame"):
+        return f"PRODUCT_VISUAL|{product_id}|{slot_key}|fake_canonical_sha256"
+
+    monkeypatch.setattr(
+        "agent.services.product_visual_grounding_resolver.get_canonical_product_visual_fingerprint",
+        _mock_fp,
+    )
     yield
 
 

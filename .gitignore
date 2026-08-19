@@ -58,10 +58,22 @@ test_image.jpg
 test_image_b64.txt
 data/products/images/*.jpg
 data/products/images/*.png
+data/products/images/*.jpeg
+data/products/images/*.webp
+data/exact-product/
+data/product-reference-packs/
+data/product_registration/intake_images/
+data/product_registration/intake_media/
 data/fastmoss/imports/
 data/product_knowledge/imports/
 data/product_registration/drafts/
 data/prompt_library/
+outputs/
+scripts/browser_evidence/
+_copy_register_v2_*
+_delivery_video_fix/
+_phase4_*
+_postmerge_video_validation/
 
 # Local tooling / debug artifacts (machine-specific; do not commit)
 .mcp.json
