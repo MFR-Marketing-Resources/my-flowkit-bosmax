@@ -797,6 +797,12 @@ class GenerateRequest(BaseModel):
     # leave it None; they create + approve their own explicit review snapshot.
     manifest_id: Optional[str] = None
     manifest_item_key: Optional[str] = None
+    # IMG WYSIWYG: when true, ``prompt`` is the human-APPROVED final provider-ready
+    # prompt (product-truth grounding already applied server-side during review via
+    # /api/execution-approval/prepare). The IMG gate still resolves product assets
+    # but does NOT re-ground the prompt — what the operator approved is dispatched
+    # EXACT (contract: no post-approval grounding rewrite).
+    final_prompt_pre_approved: bool = False
     refs: Optional[dict] = None
     startAsset: Optional[dict] = None
     endAsset: Optional[dict] = None             # optional F2V end frame
@@ -1483,6 +1489,11 @@ async def generate(body: GenerateRequest):
             reference_pack_id=body.reference_pack_id,
             creative_mode=body.creative_mode,
         )
+        if body.final_prompt_pre_approved:
+            # The prompt was grounded server-side BEFORE human review (/prepare) and
+            # approved. Keep asset resolution above, but dispatch the approved text
+            # VERBATIM — never re-ground an approved prompt (no post-approval rewrite).
+            generation_prompt = body.prompt
         if not exact_img:
             # Product-aware IMG lanes accept typed refs only.  A legacy
             # startAsset is untyped transport and could be the old catalog

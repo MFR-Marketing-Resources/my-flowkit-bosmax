@@ -363,12 +363,14 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     # job/lane/provider work, so a blocked dispatch spends nothing.
     from agent.services import execution_approval_service as _eas
     try:
-        # Product-aware IMG binds on the STABLE product_id anchor (+ grounded
-        # prompt), never the volatile per-session Flow media ids — those are
-        # derived deterministically from the product and would make review !=
-        # dispatch. Every other mode freezes its resolved reference assets.
+        # A manifest dispatch (multi-op run: Montage / bulk / queue / studio /
+        # Extend) and product-aware IMG both bind on the STABLE envelope
+        # (prompt + settings + product_id) — never the volatile per-session Flow
+        # media ids, which are derived downstream and cannot be frozen at review
+        # time. This is what makes materialise==dispatch parity exact. A UI single
+        # dispatch (Hybrid/Faceless) still freezes its resolved reference assets.
         _gate_assets = (
-            [] if (str(mode or "").strip().upper() == "IMG" and product_id)
+            [] if (manifest_id or (str(mode or "").strip().upper() == "IMG" and product_id))
             else list(image_media_ids or [])
         )
         _pinned_snapshot_id = None

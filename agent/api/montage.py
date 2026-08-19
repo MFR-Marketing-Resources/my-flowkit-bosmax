@@ -30,6 +30,7 @@ from agent.services.montage_run_service import (
     assemble_from_montage_run,
     authorize_montage_run_generation,
     bind_montage_scene_result,
+    build_montage_manifest_items,
     create_montage_discrete_run,
     estimate_montage_run_generation,
     get_montage_discrete_run,
@@ -555,6 +556,32 @@ async def montage_run_generation_estimate(run_id: str) -> dict[str, Any]:
         return await estimate_montage_run_generation(run_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/materialize-approval-manifest")
+async def montage_materialize_approval_manifest(
+    run_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """M-04a: freeze the run's per-scene FINAL prompts into an Approved Generation
+    Manifest for human WYSIWYG review. The operator reviews/edits each scene's
+    prompt, then approves the manifest; authorize-generation then resolves each
+    scene's approved item by envelope hash. Provider-free — nothing generates."""
+    from agent.services import execution_approval_service as _eas
+
+    derived = await build_montage_manifest_items(run_id)
+    if not derived["items"]:
+        raise HTTPException(422, "ERR_MONTAGE_NO_PENDING_SCENES")
+    created_by = request.headers.get("x-operator-id") or "operator"
+    manifest = await _eas.create_manifest(
+        surface="montage",
+        run_ref=run_id,
+        product_id=derived["product_id"],
+        logical_mode="F2V",
+        items=derived["items"],
+        created_by=created_by,
+    )
+    return manifest
 
 
 @router.post("/runs/{run_id}/authorize-generation")
