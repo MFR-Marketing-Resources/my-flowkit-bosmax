@@ -49,6 +49,9 @@ from agent.api.creative_lane_settings import router as creative_lane_settings_ro
 from agent.api.faceless import router as faceless_router
 from agent.api.workspace_generation_packages import router as workspace_generation_packages_router
 from agent.api.production_queue import router as production_queue_router
+from agent.api.production_queue import (
+    materialize_router as production_queue_materialize_router,
+)
 from agent.api.bulk_generation import router as bulk_generation_router
 from agent.api.creative_production import router as creative_production_router
 from agent.api.creative_treatments import router as creative_treatments_router
@@ -364,6 +367,7 @@ app.include_router(creative_lane_settings_router, prefix="/api")
 app.include_router(faceless_router, prefix="/api")
 app.include_router(workspace_generation_packages_router, prefix="/api")
 app.include_router(production_queue_router, prefix="/api")
+app.include_router(production_queue_materialize_router, prefix="/api")
 app.include_router(bulk_generation_router, prefix="/api")
 app.include_router(creative_production_router, prefix="/api")
 app.include_router(creative_treatments_router, prefix="/api")

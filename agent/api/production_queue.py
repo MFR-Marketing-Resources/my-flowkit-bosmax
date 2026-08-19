@@ -11,9 +11,15 @@ from pydantic import BaseModel
 from typing import List
 
 from agent.db import crud
+from agent.services import execution_approval_service as eas
 from agent.services import production_queue_service as pq
 
 router = APIRouter(prefix="/workspace/production-queue", tags=["production-queue"])
+
+# Operator-facing Approved Generation Manifest materialization. A dedicated
+# /production-queue prefix keeps the path at /api/production-queue/... while the
+# existing send-to-production router keeps its /workspace/production-queue prefix.
+materialize_router = APIRouter(prefix="/production-queue", tags=["production-queue"])
 
 
 class SendToProductionRequest(BaseModel):
@@ -132,3 +138,25 @@ async def retry_run(run_id: str):
         if message == "RUN_NOT_FOUND":
             raise HTTPException(status_code=404, detail=message)
         raise HTTPException(status_code=409, detail=message)
+
+
+@materialize_router.post("/packages/{wgp_id}/materialize-approval-manifest")
+async def materialize_package_approval_manifest(
+    wgp_id: str, surface: str = "production_queue",
+):
+    """Freeze a 1-item Approved Generation Manifest whose execution-envelope hash
+    matches this package's queue/studio dispatch (run_ref = the package id — the
+    exact key the dispatch uses to look up its approved manifest).
+
+    Provider-free: nothing fires and no credit is spent here. The manifest starts
+    REVIEW_REQUIRED; the operator still approves it before any dispatch can resolve
+    it. Returns HTTP 422 when the package cannot be dispatched (build blockers)."""
+    if surface not in ("production_queue", "production_studio"):
+        raise HTTPException(status_code=422, detail=f"UNSUPPORTED_SURFACE:{surface}")
+    try:
+        item = await pq.build_package_manifest_item(wgp_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return await eas.create_manifest(
+        surface=surface, run_ref=wgp_id, items=[item], created_by="operator",
+    )

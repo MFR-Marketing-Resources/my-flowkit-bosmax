@@ -562,6 +562,54 @@ async def build_execution_payload(pkg: dict, run_config: dict | None = None) -> 
     return payload, blockers
 
 
+async def build_package_manifest_item(
+    wgp_id: str, run_config: dict | None = None,
+) -> dict:
+    """Deterministic, credit-free Approved-Generation-Manifest item for ONE
+    production package, shaped to hash-MATCH exactly what the queue / studio /
+    bulk-video dispatch hands ``make_video.start_generate``.
+
+    Parity contract (see ``execution_approval_service.compute_dispatch_identity``):
+    a video dispatch passes NO product_id / source_mode / image_model, and for a
+    manifest dispatch ``start_generate`` binds asset_fingerprints=[] — so this item
+    deliberately carries none of those (including them would break the envelope
+    hash). It freezes only the provider-affecting fields the dispatch actually
+    sends: mode, final prompt, model, aspect, duration_s, count.
+
+    ``run_config`` selects the config that produced the dispatch payload. Queue and
+    Production Studio dispatch from the package's OWN production run, so the default
+    (None) resolves it via ``pkg['production_run_id']``. Bulk video dispatches from
+    the BULK run's config (model/aspect, count forced to 1); that caller passes its
+    run_config explicitly so the frozen item matches the bulk dispatch envelope.
+
+    Raises ``ValueError`` (joined blockers) when the package cannot be dispatched —
+    the caller surfaces this as HTTP 422 rather than freezing an unfireable item.
+    """
+    pkg = await crud.get_workspace_generation_package(wgp_id)
+    if not pkg:
+        raise ValueError(f"PACKAGE_NOT_FOUND:{wgp_id}")
+    if run_config is None:
+        production_run_id = pkg.get("production_run_id")
+        run = (
+            await crud.get_production_run(production_run_id)
+            if production_run_id
+            else None
+        )
+        run_config = _loads(run.get("config_json"), {}) if run else {}
+    payload, blockers = await build_execution_payload(pkg, run_config)
+    if blockers:
+        raise ValueError(",".join(blockers))
+    return {
+        "item_key": wgp_id,
+        "mode": payload["mode"],
+        "final_prompt_text": payload["prompt"],
+        "model": payload.get("model"),
+        "aspect": payload.get("aspect") or "9:16",
+        "duration_s": payload.get("duration_s"),
+        "count": payload.get("num_videos") or 1,
+    }
+
+
 async def _resolve_flow_media_id(asset_ref: str, pkg: dict) -> str | None:
     """asset_ref → Flow media UUID, or None when nothing is uploaded yet."""
     if _FLOW_MEDIA_UUID_RE.match(asset_ref):
