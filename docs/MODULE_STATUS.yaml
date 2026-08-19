@@ -79,6 +79,7 @@ domains:
       - dashboard/src/pages/OperatorPage.tsx
       - dashboard/src/pages/FacelessVideoPage.tsx
       - dashboard/src/pages/PosterBuilderPage.tsx
+      - dashboard/src/pages/PosterBuilderPage.test.tsx
       - agent/services/product_lock_builder.py
       - agent/services/product_visual_grounding_resolver.py
       # BOSMAX universal product-truth lock — immutable canonical product

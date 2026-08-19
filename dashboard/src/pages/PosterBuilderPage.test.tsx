@@ -7,6 +7,26 @@ import { composePosterV2 } from "../api/posterV2";
 import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
 import PosterBuilderPage from "./PosterBuilderPage";
 
+vi.mock("../api/executionApproval", () => {
+	const snap = (state: string, text: string) => ({
+		snapshot_id: "eas_test",
+		approval_state: state,
+		surface: "poster_builder",
+		logical_mode: "IMG",
+		final_prompt_text: text,
+		prompt_sha256: "aa",
+		execution_envelope_sha256: "bb",
+		scan_clean: 1,
+	});
+	return {
+		createReviewSnapshot: vi.fn(async (env: { final_prompt_text: string }) =>
+			snap("REVIEW_REQUIRED", env.final_prompt_text),
+		),
+		editSnapshot: vi.fn(async (_id: string, text: string) => snap("EDITED", text)),
+		approveSnapshot: vi.fn(async () => snap("APPROVED", "approved prompt")),
+	};
+});
+
 const fixtures = vi.hoisted(() => ({
 	product: {
 		id: "p1",
@@ -164,6 +184,12 @@ describe("PosterBuilderPage V2-only cutover", () => {
 		fireEvent.click(screen.getByTestId("poster-img-live-action-confirm-checkbox"));
 		expect(confirm).toBeEnabled();
 		fireEvent.click(confirm);
+
+		// The Final Prompt Approval Gate intercepts before the credit-bearing call;
+		// approve the reviewed prompt to proceed.
+		const approveBtn = await screen.findByTestId("final-prompt-approve-generate");
+		await waitFor(() => expect(approveBtn).toBeEnabled());
+		fireEvent.click(approveBtn);
 
 		await waitFor(() => expect(startImgGeneration).toHaveBeenCalledTimes(1));
 		expect(startImgGeneration).toHaveBeenCalledWith(
