@@ -54,6 +54,20 @@ domains:
       - tests/unit/test_runtime_release.py
       - tests/unit/test_product_detail_tabs_contract.py
       - agent/api/flow.py
+      # Final Prompt Approval Gate (WYSIWYG per-dispatch execution approval):
+      # approved execution-envelope SHA == dispatched, enforced at start_generate
+      # and the FlowClient provider boundary. Ships observe-only (inert) until
+      # EXECUTION_APPROVAL_GATE_ENFORCED.
+      - agent/services/execution_approval_service.py
+      - agent/db/execution_approval_crud.py
+      - agent/api/execution_approval.py
+      - tests/unit/test_execution_approval_gate.py
+      - tests/unit/test_execution_approval_backstop.py
+      - tests/api/test_execution_approval_api.py
+      - agent/db/schema.py
+      - agent/services/make_video.py
+      - agent/services/flow_client.py
+      - agent/main.py
       - agent/services/product_lock_builder.py
       - agent/services/product_visual_grounding_resolver.py
       # BOSMAX universal product-truth lock — immutable canonical product
