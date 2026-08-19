@@ -116,6 +116,19 @@ export async function runNativeExtend(input: NativeExtendRunInput): Promise<Exte
   return postAPI('/api/flow/extend-run', input);
 }
 
+// Freeze the chain's per-block continuation prompts into an Approved Generation
+// Manifest for human WYSIWYG review BEFORE any paid Extend operation. The operator
+// reviews every Extend prompt ONCE here; each /extend-run block then resolves its
+// approved item by canonical envelope hash (no ad-hoc per-clip approval).
+export async function materializeNativeExtendManifest(
+  input: NativeExtendRunInput,
+): Promise<import('./executionApproval').ApprovalManifest> {
+  return postAPI(
+    '/api/flow/native-extend/materialize-approval-manifest',
+    input,
+  );
+}
+
 export async function fetchNativeExtendLineage(
   projectId: string,
 ): Promise<{ lineage: ExtendLineageRow[]; count: number }> {

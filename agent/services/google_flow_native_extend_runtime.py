@@ -397,6 +397,17 @@ def _validate_context(req: ExtendChainRequest) -> str:
     return model_key
 
 
+def _extend_run_ref(req: ExtendChainRequest) -> str:
+    """Stable run identity a native-Extend manifest is keyed by — the workspace
+    package id when present, else a deterministic scene:source composite (an ad-hoc
+    Extend still gets a stable, resolvable key). Used IDENTICALLY at materialise and
+    dispatch so the approved manifest resolves."""
+    wgp = str(getattr(req, "workspace_generation_package_id", "") or "").strip()
+    if wgp:
+        return wgp
+    return f"{str(req.scene_id or '').strip()}:{str(req.source_operation_id or '').strip()}"
+
+
 def build_extend_manifest_items(req: ExtendChainRequest) -> dict:
     """Per-block Approved Generation Manifest items for a native Extend chain,
     shaped to hash-MATCH exactly what ``run_native_extend_block`` dispatches: mode
@@ -417,7 +428,7 @@ def build_extend_manifest_items(req: ExtendChainRequest) -> dict:
         }
         for b in req.blocks
     ]
-    return {"items": items, "run_ref": req.workspace_generation_package_id}
+    return {"items": items, "run_ref": _extend_run_ref(req)}
 
 
 async def plan_native_extend_chain(req: ExtendChainRequest) -> dict:
@@ -645,7 +656,7 @@ async def _run_one_extend_block(
     # retryable row) and BEFORE any provider call (spends nothing on a block).
     from agent.services import execution_approval_service as _eas
     _ext_manifest_id = await _eas.approved_manifest_id_for_run(
-        str(req.workspace_generation_package_id or ""), surface="native_extend",
+        _extend_run_ref(req), surface="native_extend",
     )
     _ext_resolved = await _eas.resolve_manifest_approved_snapshot(
         manifest_id=_ext_manifest_id or "", mode="EXTEND",

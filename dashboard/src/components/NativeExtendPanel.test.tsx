@@ -8,6 +8,7 @@ const previewMock = vi.fn();
 const lineageMock = vi.fn();
 const authorizeMock = vi.fn();
 const liveRunMock = vi.fn();
+const materializeMock = vi.fn();
 const candidatesMock = vi.fn();
 const resolveSourceMock = vi.fn();
 const lookupMock = vi.fn();
@@ -22,6 +23,7 @@ vi.mock('../api/nativeExtend', () => ({
   fetchNativeExtendLineage: (...a: unknown[]) => lineageMock(...a),
   requestNativeExtendLiveAuthorization: (...a: unknown[]) => authorizeMock(...a),
   runNativeExtend: (...a: unknown[]) => liveRunMock(...a),
+  materializeNativeExtendManifest: (...a: unknown[]) => materializeMock(...a),
   fetchNativeExtendSourceCandidates: (...a: unknown[]) => candidatesMock(...a),
   resolveNativeExtendSource: (...a: unknown[]) => resolveSourceMock(...a),
   lookupVideoJob: (...a: unknown[]) => lookupMock(...a),
@@ -30,6 +32,20 @@ vi.mock('../api/nativeExtend', () => ({
   startVideoJob: (...a: unknown[]) => startJobMock(...a),
   getVideoJobStatus: (...a: unknown[]) => jobStatusMock(...a),
 }));
+
+// The approval modal — stubbed to a one-click approve so the live-dispatch test
+// can drive materialize -> approve -> authorize -> run.
+vi.mock('./execution-approval/ManifestApprovalModal', async () => {
+  const React = await import('react');
+  return {
+    ManifestApprovalModal: ({ onApproved }: { onApproved: () => void }) =>
+      React.createElement(
+        'button',
+        { type: 'button', 'data-testid': 'mock-extend-manifest-approve', onClick: () => onApproved() },
+        'approve',
+      ),
+  };
+});
 
 // Import SUT after mocks.
 import NativeExtendPanel from './NativeExtendPanel';
@@ -40,6 +56,7 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  materializeMock.mockResolvedValue({ manifest_id: 'eam_test', items: [] });
   // Default: no finished clips — existing tests drive ids via props.
   candidatesMock.mockResolvedValue({ candidates: [], count: 0 });
   resolveSourceMock.mockResolvedValue({
@@ -196,6 +213,12 @@ describe('NativeExtendPanel', () => {
     fireEvent.click(screen.getByTestId('native-extend-live-btn'));
     expect(await screen.findByTestId('native-extend-live-confirm')).toHaveTextContent('exactly 2');
     fireEvent.click(screen.getByTestId('native-extend-live-confirm-btn'));
+
+    // Final Prompt Approval Gate: the per-block manifest is materialised, then
+    // approved, BEFORE any authorization / paid dispatch.
+    await waitFor(() => expect(materializeMock).toHaveBeenCalledTimes(1));
+    expect(authorizeMock).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByTestId('mock-extend-manifest-approve'));
 
     await waitFor(() => expect(authorizeMock).toHaveBeenCalledTimes(1));
     expect(liveRunMock).toHaveBeenCalledWith(expect.objectContaining({

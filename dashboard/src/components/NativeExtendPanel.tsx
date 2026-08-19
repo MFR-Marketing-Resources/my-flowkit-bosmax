@@ -22,6 +22,7 @@ import {
   resolveNativeExtendSource,
   requestNativeExtendLiveAuthorization,
   runNativeExtend,
+  materializeNativeExtendManifest,
   lookupVideoJob,
   planVideoJob,
   authorizeVideoJob,
@@ -35,6 +36,7 @@ import {
   type VideoJobPlan,
   type VideoJobStatus,
 } from '../api/nativeExtend';
+import { ManifestApprovalModal } from './execution-approval/ManifestApprovalModal';
 
 export interface NativeExtendPanelProps {
   projectId?: string | null;
@@ -75,6 +77,13 @@ export default function NativeExtendPanel({
   const [error, setError] = useState<string | null>(null);
   const [confirmLive, setConfirmLive] = useState(false);
   const [liveResult, setLiveResult] = useState<ExtendRunResult | null>(null);
+  // Final Prompt Approval Gate — a LIVE Extend chain first materialises ALL its
+  // per-block continuation prompts into one manifest and requires human WYSIWYG
+  // approval; the deferred paid dispatch runs on approval. The blocks are reviewed
+  // ONCE here (not per-clip).
+  const [pendingExtendManifest, setPendingExtendManifest] = useState<
+    { manifestId: string; input: Parameters<typeof runNativeExtend>[0] } | null
+  >(null);
   // SEV-1 UX repair: finished Block-1 clips auto-inherit into the Extend context —
   // the operator selects a clip, never pastes raw project/scene/operation ids.
   const [candidates, setCandidates] = useState<ExtendSourceCandidate[]>([]);
@@ -265,18 +274,11 @@ export default function NativeExtendPanel({
     !!resolution?.route_executable &&
     !busy;
 
-  const runLive = async () => {
-    if (!preview || !canStartLive) return;
-    const input = {
-      project_id: projectId,
-      scene_id: sceneId,
-      source_operation_id: sourceOperationId,
-      blocks: plannedBlocks,
-      aspect_ratio: aspectRatio,
-      dry_run: false,
-      confirm_live_credit_burn: true,
-      confirmed_extend_operation_count: preview.planned_operation_count,
-    };
+  // Paid dispatch — runs only after the per-block manifest is human-approved.
+  const dispatchExtendLive = async (
+    input: Parameters<typeof runNativeExtend>[0],
+  ) => {
+    if (!preview) return;
     setBusy(true);
     setError(null);
     try {
@@ -290,6 +292,32 @@ export default function NativeExtendPanel({
       });
       setLiveResult(result);
       setConfirmLive(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runLive = async () => {
+    if (!preview || !canStartLive) return;
+    const input = {
+      project_id: projectId,
+      scene_id: sceneId,
+      source_operation_id: sourceOperationId,
+      blocks: plannedBlocks,
+      aspect_ratio: aspectRatio,
+      dry_run: false,
+      confirm_live_credit_burn: true,
+      confirmed_extend_operation_count: preview.planned_operation_count,
+    };
+    // Final Prompt Approval Gate: freeze the per-block continuation prompts into a
+    // manifest and require human WYSIWYG approval BEFORE any paid Extend operation.
+    setBusy(true);
+    setError(null);
+    try {
+      const manifest = await materializeNativeExtendManifest(input);
+      setPendingExtendManifest({ manifestId: manifest.manifest_id, input });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -364,6 +392,19 @@ export default function NativeExtendPanel({
       data-testid="native-extend-panel"
       className="mt-4 rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-4 text-sm text-slate-200"
     >
+      {pendingExtendManifest && (
+        <ManifestApprovalModal
+          manifestId={pendingExtendManifest.manifestId}
+          approvedBy="operator"
+          title="Review every Extend block's final prompt"
+          onApproved={() => {
+            const deferred = pendingExtendManifest.input;
+            setPendingExtendManifest(null);
+            void dispatchExtendLive(deferred);
+          }}
+          onCancel={() => setPendingExtendManifest(null)}
+        />
+      )}
       <div className="mb-2 flex items-center justify-between">
         <h4 className="font-semibold text-indigo-200">Full Video</h4>
         <span className="text-xs text-slate-400">
