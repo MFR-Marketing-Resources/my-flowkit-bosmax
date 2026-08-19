@@ -98,6 +98,9 @@ $SmokeTests = @(
     'tests/unit/test_product_mascot_service.py',
     'tests/unit/test_montage_mascot_anchor.py',
     'tests/unit/test_prompt_library_service.py',
+    # Mascot Montage Creative Grammar V1.1 (final duration -> block plan, grammar).
+    'tests/unit/test_montage_mascot_creative_grammar.py',
+    'tests/unit/test_montage_mascot_v11_wiring.py',
     # Final Prompt Approval Gate (WYSIWYG per-dispatch execution approval).
     'tests/unit/test_execution_approval_gate.py',
     'tests/unit/test_execution_approval_backstop.py',

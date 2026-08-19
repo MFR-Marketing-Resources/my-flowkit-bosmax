@@ -169,6 +169,9 @@ async def execute_scene_plan(
     copy_v2_context: dict[str, Any] | None = None,
     mascot_start_asset: Optional[dict[str, Any]] = None,
     mascot_scene_context: Optional[str] = None,
+    mascot_block_count: Optional[int] = None,
+    mascot_atomic_seconds: Optional[int] = None,
+    mascot_has_dialogue: bool = True,
 ) -> SceneJobState:
     """Run one planned scene through existing package (+ optional generate) path."""
     resolved_copy_v2_context = copy_v2_context
@@ -343,7 +346,25 @@ async def execute_scene_plan(
         # human creator. Never inherit the generic VISIBLE_CREATOR default.
         kwargs["character_presence"] = "FACELESS"
         kwargs["avatar_id"] = None
-        if mascot_scene_context:
+        if mascot_block_count:
+            # V1.1 Creative Grammar: compose a DISTINCT per-scene direction —
+            # this block's macro purpose + its objective/visual_action + four
+            # micro-beats + mascot action grammar + lip-sync + identity lock +
+            # visual dynamism — layered on the resolved hook/background context.
+            # This is how objective/visual_action (dropped by the generic
+            # compiler) materially reach the engine prompt, per scene.
+            from agent.services import montage_mascot_creative_grammar as _mmcg
+
+            kwargs["scene_context_override"] = _mmcg.compose_scene_context(
+                block_index=plan.block_index,
+                block_count=int(mascot_block_count),
+                atomic_seconds=int(mascot_atomic_seconds or dur),
+                objective=plan.objective,
+                visual_action=plan.visual_action,
+                has_dialogue=mascot_has_dialogue,
+                existing_context=scene_context_override,
+            )
+        elif mascot_scene_context:
             kwargs["scene_context_override"] = mascot_scene_context
 
     try:
@@ -446,6 +467,9 @@ async def orchestrate_montage_scenes(
     copy_v2_context: dict[str, Any] | None = None,
     mascot_start_asset: Optional[dict[str, Any]] = None,
     mascot_scene_context: Optional[str] = None,
+    mascot_block_count: Optional[int] = None,
+    mascot_atomic_seconds: Optional[int] = None,
+    mascot_has_dialogue: bool = True,
 ) -> MontageOrchestrationReport:
     """Beat → route → package (/ optional generate) for the full scene set."""
     if not str(product_id or "").strip():
@@ -502,6 +526,9 @@ async def orchestrate_montage_scenes(
             copy_v2_context=resolved_copy_v2_context,
             mascot_start_asset=mascot_start_asset,
             mascot_scene_context=mascot_scene_context,
+            mascot_block_count=mascot_block_count,
+            mascot_atomic_seconds=mascot_atomic_seconds,
+            mascot_has_dialogue=mascot_has_dialogue,
         )
         report.scenes.append(state)
         if state.video_media_id:
