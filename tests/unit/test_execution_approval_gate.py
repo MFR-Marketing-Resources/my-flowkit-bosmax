@@ -53,6 +53,7 @@ def _dispatch(prompt: str, **ov):
         duration_s=8,
         count=1,
         asset_media_ids=[_ASSET],
+        product_id="prod_test_1",
     )
     d.update(ov)
     return d
@@ -85,6 +86,7 @@ def test_asset_order_does_not_change_hash():
         ("count", 2),
         ("source_mode", "FRAMES"),
         ("asset_media_ids", ["different-asset"]),
+        ("product_id", "prod_test_2"),
     ],
 )
 def test_any_provider_affecting_change_changes_the_hash(field, value):
@@ -138,14 +140,15 @@ async def test_no_approval_is_observe_only_when_not_enforced(monkeypatch):
     assert verdict["reason"] == "NO_APPROVED_SNAPSHOT_FOR_ENVELOPE"
 
 
-async def test_img_is_observe_only_even_when_enforced(monkeypatch):
+async def test_img_is_enforced_and_blocks_without_approval(monkeypatch):
     monkeypatch.setenv("EXECUTION_APPROVAL_GATE_ENFORCED", "1")
-    # IMG is credit-free (owner law): verify never RAISES for it, even enforced +
-    # unapproved — it returns an observe verdict so free image generation is never
-    # blocked. Video (the default _dispatch mode) DOES hard-block.
-    verdict = await eas.verify_and_bind_dispatch(**_dispatch("P_img_free", mode="IMG"))
-    assert verdict["pass"] is False
-    assert verdict["reason"] == "NO_APPROVED_SNAPSHOT_FOR_ENVELOPE"
+    # Corrective GAP 3: credit-FREE (owner law, no COST gate) does NOT mean
+    # approval-optional. IMG must ENFORCE approval — an unapproved IMG dispatch
+    # hard-blocks exactly like video (the free/paid axis governs cost warnings,
+    # not the WYSIWYG approval requirement).
+    with pytest.raises(eas.ExecutionApprovalError) as exc:
+        await eas.verify_and_bind_dispatch(**_dispatch("P_img_enforced", mode="IMG"))
+    assert exc.value.code == "DISPATCH_NOT_APPROVED"
 
 
 @pytest.mark.parametrize(
@@ -157,6 +160,7 @@ async def test_img_is_observe_only_even_when_enforced(monkeypatch):
         ("duration_s", 16),
         ("count", 2),
         ("asset_media_ids", ["swapped-asset"]),
+        ("product_id", "prod_switched_2"),
     ],
 )
 async def test_changed_field_after_approval_blocks(monkeypatch, field, value):
@@ -261,9 +265,10 @@ async def test_start_generate_blocks_unapproved_video_when_enforced(monkeypatch)
     assert result["error"] == "DISPATCH_NOT_APPROVED"
 
 
-async def test_start_generate_img_is_observe_only_when_enforced(monkeypatch):
+async def test_start_generate_img_blocks_unapproved_when_enforced(monkeypatch):
     import asyncio
 
+    eas._DISPATCH_AUTH.set(None)
     monkeypatch.setenv("EXECUTION_APPROVAL_GATE_ENFORCED", "1")
     from agent.services import make_video
 
@@ -271,14 +276,16 @@ async def test_start_generate_img_is_observe_only_when_enforced(monkeypatch):
         return None
 
     monkeypatch.setattr(make_video, "_run_generate", _noop)
-    # IMG generation is credit-free (owner law): never hard-blocked, even without
-    # an approval and even when enforcement is on.
+    # Corrective GAP 3: IMG enforces approval. An unapproved IMG dispatch is
+    # rejected at the gate BEFORE any lane/provider work — credit-free never means
+    # approval-optional.
     result = await make_video.start_generate(
-        mode="IMG", prompt="P_img_observe unapproved image prompt",
+        mode="IMG", prompt="P_img_block unapproved image prompt",
         aspect="1:1", num_videos=1, image_model="GEM_PIX_2",
     )
     await asyncio.sleep(0)
-    assert result["status"] == "SUBMITTED"
+    assert result["status"] == "REJECTED"
+    assert result["error"] == "DISPATCH_NOT_APPROVED"
 
 
 async def test_start_generate_passes_matching_approval_when_enforced(monkeypatch):
@@ -309,39 +316,72 @@ async def test_start_generate_passes_matching_approval_when_enforced(monkeypatch
 
 
 # --------------------------------------------------------------------------- #
-# Non-UI enablement safety: upstream-approved auto-snapshot (queue / bulk /
-# scheduler / Extend fire ALREADY-approved packages/plans).
+# Non-UI enablement: Approved Generation Manifest (queue / bulk / scheduler /
+# Montage / Extend). Corrective GAP 1/2: a non-UI dispatch inherits approval ONLY
+# by RESOLVING an already human-approved manifest item whose envelope hash
+# matches. No provenance string manufactures approval.
 # --------------------------------------------------------------------------- #
 
-async def test_ensure_upstream_approved_creates_and_approves():
-    snap = await eas.ensure_upstream_approved_snapshot(
-        **_dispatch("P_upstream_1"), surface="production_queue", provenance="production_queue",
+async def test_resolve_requires_an_approved_manifest_never_manufactures():
+    # A manifest that is only REVIEW_REQUIRED (created, not yet approved) does NOT
+    # authorise a dispatch — resolve returns None (never fabricates APPROVED).
+    prompt = "P_manifest_unapproved clean prompt"
+    manifest = await eas.create_manifest(
+        surface="production_queue", run_ref="run_unapproved_1",
+        items=[dict(item_key="op1", mode="IMG", final_prompt_text=prompt,
+                    image_model="GEM_PIX_2", aspect="1:1", count=1)],
     )
-    assert snap["approval_state"] == eas.ApprovalState.APPROVED
-    assert snap["created_by"] == "production_queue"
-
-
-async def test_ensure_upstream_approved_is_idempotent():
-    a = await eas.ensure_upstream_approved_snapshot(
-        **_dispatch("P_upstream_idem"), surface="bulk_video", provenance="bulk_video",
+    assert manifest["state"] == "REVIEW_REQUIRED"
+    resolved = await eas.resolve_manifest_approved_snapshot(
+        manifest_id=manifest["manifest_id"], mode="IMG", final_prompt_text=prompt,
+        image_model="GEM_PIX_2", aspect="1:1", count=1,
     )
-    b = await eas.ensure_upstream_approved_snapshot(
-        **_dispatch("P_upstream_idem"), surface="bulk_video", provenance="bulk_video",
+    assert resolved is None  # fail-closed: no approval was manufactured
+
+
+async def test_resolve_matches_only_after_manifest_approval():
+    prompt = "P_manifest_approved clean prompt"
+    manifest = await eas.create_manifest(
+        surface="bulk", run_ref="run_approved_1",
+        items=[dict(item_key="op1", mode="IMG", final_prompt_text=prompt,
+                    image_model="GEM_PIX_2", aspect="1:1", count=1)],
     )
-    assert a["snapshot_id"] == b["snapshot_id"]
-
-
-async def test_ensure_upstream_approved_never_approves_dirty_prompt():
-    snap = await eas.ensure_upstream_approved_snapshot(
-        **_dispatch("P_upstream leaks prod_dirty_1"), surface="production_queue",
-        provenance="production_queue", product_id="prod_dirty_1",
+    await eas.approve_manifest(manifest["manifest_id"], approved_by="faris")
+    resolved = await eas.resolve_manifest_approved_snapshot(
+        manifest_id=manifest["manifest_id"], mode="IMG", final_prompt_text=prompt,
+        image_model="GEM_PIX_2", aspect="1:1", count=1,
     )
-    assert snap["approval_state"] != eas.ApprovalState.APPROVED  # fail-closed
+    assert resolved is not None
+    assert resolved["approval_state"] == eas.ApprovalState.APPROVED
+    # A changed prompt (never approved) does NOT resolve — hash equality is the law.
+    assert await eas.resolve_manifest_approved_snapshot(
+        manifest_id=manifest["manifest_id"], mode="IMG",
+        final_prompt_text=prompt + " TAMPERED", image_model="GEM_PIX_2",
+        aspect="1:1", count=1,
+    ) is None
 
 
-async def test_start_generate_upstream_provenance_auto_approves(monkeypatch):
+async def test_approve_manifest_refuses_when_any_item_dirty():
+    manifest = await eas.create_manifest(
+        surface="montage", run_ref="run_dirty_1", product_id="prod_dirty_1",
+        items=[
+            dict(item_key="clean", mode="F2V", final_prompt_text="a clean scene prompt",
+                 model="Veo 3.1 Lite", aspect="9:16", duration_s=8, count=1),
+            dict(item_key="dirty", mode="F2V",
+                 final_prompt_text="scene leaking prod_dirty_1 into the text",
+                 product_id="prod_dirty_1", model="Veo 3.1 Lite", aspect="9:16",
+                 duration_s=8, count=1),
+        ],
+    )
+    with pytest.raises(eas.ExecutionApprovalError) as exc:
+        await eas.approve_manifest(manifest["manifest_id"], approved_by="faris")
+    assert exc.value.code == "MANIFEST_SCAN_NOT_CLEAN"
+
+
+async def test_start_generate_manifest_resolves_approved_run(monkeypatch):
     import asyncio
 
+    eas._DISPATCH_AUTH.set(None)
     monkeypatch.setenv("EXECUTION_APPROVAL_GATE_ENFORCED", "1")
     from agent.services import make_video
 
@@ -350,11 +390,44 @@ async def test_start_generate_upstream_provenance_auto_approves(monkeypatch):
 
     monkeypatch.setattr(make_video, "_run_generate", _noop)
 
-    # No pre-created snapshot; the upstream-approved provenance materialises one so
-    # an already-approved production run is not blocked when enforcement is on.
-    result = await make_video.start_generate(
-        mode="IMG", prompt="P_upstream_sg clean prompt", aspect="1:1", num_videos=1,
-        image_model="GEM_PIX_2", upstream_approved_provenance="production_queue",
+    prompt = "P_manifest_sg clean prompt"
+    manifest = await eas.create_manifest(
+        surface="production_queue", run_ref="run_sg_1",
+        items=[dict(item_key="op1", mode="IMG", final_prompt_text=prompt,
+                    image_model="GEM_PIX_2", aspect="1:1", count=1)],
+    )
+    manifest_id = manifest["manifest_id"]
+
+    # BEFORE approval: manifest_id present but not approved -> resolve None ->
+    # enforced gate BLOCKS (never auto-approved from the provenance/manifest ref).
+    blocked = await make_video.start_generate(
+        mode="IMG", prompt=prompt, aspect="1:1", num_videos=1,
+        image_model="GEM_PIX_2", manifest_id=manifest_id,
+    )
+    assert blocked["status"] == "REJECTED"
+    assert blocked["error"] == "DISPATCH_NOT_APPROVED"
+
+    # AFTER human approval: the exact item resolves by envelope hash -> PASS.
+    await eas.approve_manifest(manifest_id, approved_by="faris")
+    ok = await make_video.start_generate(
+        mode="IMG", prompt=prompt, aspect="1:1", num_videos=1,
+        image_model="GEM_PIX_2", manifest_id=manifest_id,
     )
     await asyncio.sleep(0)
-    assert result["status"] == "SUBMITTED"
+    assert ok["status"] == "SUBMITTED"
+
+
+async def test_approved_manifest_id_for_run_lookup():
+    prompt = "P_run_lookup clean prompt"
+    manifest = await eas.create_manifest(
+        surface="montage", run_ref="run_lookup_1",
+        items=[dict(item_key="s1", mode="F2V", final_prompt_text=prompt,
+                    model="Veo 3.1 Lite", aspect="9:16", duration_s=8, count=1)],
+    )
+    # Not approved yet -> no dispatch authority for the run.
+    assert await eas.approved_manifest_id_for_run("run_lookup_1", surface="montage") is None
+    await eas.approve_manifest(manifest["manifest_id"], approved_by="faris")
+    assert (
+        await eas.approved_manifest_id_for_run("run_lookup_1", surface="montage")
+        == manifest["manifest_id"]
+    )

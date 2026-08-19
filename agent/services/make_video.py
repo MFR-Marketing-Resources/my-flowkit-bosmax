@@ -363,20 +363,28 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     # job/lane/provider work, so a blocked dispatch spends nothing.
     from agent.services import execution_approval_service as _eas
     try:
+        # Product-aware IMG binds on the STABLE product_id anchor (+ grounded
+        # prompt), never the volatile per-session Flow media ids — those are
+        # derived deterministically from the product and would make review !=
+        # dispatch. Every other mode freezes its resolved reference assets.
+        _gate_assets = (
+            [] if (str(mode or "").strip().upper() == "IMG" and product_id)
+            else list(image_media_ids or [])
+        )
         _pinned_snapshot_id = None
         if manifest_id:
             _resolved = await _eas.resolve_manifest_approved_snapshot(
                 manifest_id=manifest_id, mode=mode, final_prompt_text=prompt,
                 source_mode=source_mode, model=model, aspect=aspect,
                 duration_s=duration_s, count=num_videos, image_model=image_model,
-                asset_media_ids=list(image_media_ids or []),
+                asset_media_ids=_gate_assets, product_id=product_id,
             )
             _pinned_snapshot_id = (_resolved or {}).get("snapshot_id")
         await _eas.verify_and_bind_dispatch(
             mode=mode, final_prompt_text=prompt, source_mode=source_mode,
             model=model, aspect=aspect, duration_s=duration_s,
             count=num_videos, image_model=image_model,
-            asset_media_ids=list(image_media_ids or []),
+            asset_media_ids=_gate_assets, product_id=product_id,
             snapshot_id=_pinned_snapshot_id,
         )
     except _eas.ExecutionApprovalError as _gate_err:

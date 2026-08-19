@@ -178,6 +178,7 @@ def compute_dispatch_identity(
     count: int | None = None,
     image_model: str | None = None,
     asset_media_ids: list[str] | None = None,
+    product_id: str | None = None,
 ) -> dict[str, Any]:
     """THE canonical envelope+hash builder. Called with identical semantics at
     review time and at the dispatch boundary, so equal provider-affecting inputs
@@ -187,6 +188,12 @@ def compute_dispatch_identity(
     The envelope keys are a fixed shape; unused fields normalise to ``None`` and
     still participate in the hash, so adding/removing a provider-affecting field
     later is an explicit, versioned change — never silent.
+
+    ``product_id`` anchors the product identity STABLY. For product-aware IMG the
+    caller binds on ``product_id`` and passes NO ``asset_media_ids`` — the product
+    visual is derived deterministically from the product authority + the grounded
+    prompt, so the volatile per-session Flow media id must not enter the approval
+    hash (it would make review != dispatch for the same approved product).
     """
     prompt_text = final_prompt_text or ""
     prompt_sha256 = _sha256_text(prompt_text)
@@ -200,7 +207,7 @@ def compute_dispatch_identity(
             return None
 
     envelope = {
-        "envelope_version": 1,
+        "envelope_version": 2,
         "mode": _norm(mode).upper(),
         "prompt_sha256": prompt_sha256,
         "source_mode": (_norm(source_mode).upper() or None),
@@ -209,6 +216,8 @@ def compute_dispatch_identity(
         "duration_s": _int_or_none(duration_s),
         "count": _int_or_none(count),
         "image_model": (_norm(image_model) or None),
+        # Stable product anchor (never the volatile Flow media id for product IMG).
+        "product_id": (_norm(product_id) or None),
         # Resolved reference asset identity. Sorted + de-duped so ordering never
         # changes the hash. A self-heal re-upload that swaps a media id IS an
         # asset change here — it correctly invalidates the approval (contract:
@@ -261,6 +270,7 @@ async def create_review_snapshot(
         count=count,
         image_model=image_model,
         asset_media_ids=asset_media_ids,
+        product_id=product_id,
     )
     scan = scan_prompt_text(final_prompt_text, product_id=product_id)
     scan_clean = not any(scan.values())
@@ -405,6 +415,7 @@ async def resolve_manifest_approved_snapshot(
     count: int | None = None,
     image_model: str | None = None,
     asset_media_ids: list[str] | None = None,
+    product_id: str | None = None,
 ) -> dict[str, Any] | None:
     """RESOLVE / BIND (never manufacture) a human-approved manifest item whose
     frozen execution-envelope SHA EXACTLY matches this dispatch.
@@ -427,6 +438,7 @@ async def resolve_manifest_approved_snapshot(
         count=count,
         image_model=image_model,
         asset_media_ids=asset_media_ids,
+        product_id=product_id,
     )
     return await _crud.find_approved_manifest_item(
         _norm(manifest_id), identity["execution_envelope_sha256"],
@@ -607,6 +619,7 @@ async def verify_and_bind_dispatch(
     count: int | None = None,
     image_model: str | None = None,
     asset_media_ids: list[str] | None = None,
+    product_id: str | None = None,
     snapshot_id: str | None = None,
     provider_job_id: str | None = None,
 ) -> dict[str, Any]:
@@ -631,6 +644,7 @@ async def verify_and_bind_dispatch(
         count=count,
         image_model=image_model,
         asset_media_ids=asset_media_ids,
+        product_id=product_id,
     )
     dispatched_env_sha = identity["execution_envelope_sha256"]
     dispatched_prompt_sha = identity["prompt_sha256"]
@@ -716,5 +730,6 @@ def _recompute_from_snapshot(snap: dict[str, Any], *, final_prompt_text: str) ->
         duration_s=env.get("duration_s"),
         count=env.get("count"),
         image_model=env.get("image_model"),
+        product_id=env.get("product_id") or snap.get("product_id"),
         asset_media_ids=env.get("asset_fingerprints"),
     )
