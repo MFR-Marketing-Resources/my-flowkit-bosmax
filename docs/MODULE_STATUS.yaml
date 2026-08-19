@@ -1672,6 +1672,10 @@ domains:
       - agent/services/montage_discrete_assembly.py
       - tests/unit/test_montage_run_service.py
       - agent/services/montage_run_service.py
+      # Mascot Montage Creative Grammar V1.1
+      - agent/services/montage_mascot_creative_grammar.py
+      - tests/unit/test_montage_mascot_creative_grammar.py
+      - tests/unit/test_montage_mascot_v11_wiring.py
       - tests/unit/test_montage_m04_authorize_generation.py
       - tests/unit/test_montage_m04_serial_poll.py
       - tests/unit/test_montage_scene_orchestrator.py
