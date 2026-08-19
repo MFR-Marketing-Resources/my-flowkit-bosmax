@@ -73,6 +73,7 @@ domains:
       - agent/services/creative_production_scheduler_service.py
       - agent/services/production_queue_service.py
       - agent/services/google_flow_native_extend_runtime.py
+      - agent/api/montage.py
       - dashboard/src/api/executionApproval.ts
       - dashboard/src/components/execution-approval/FinalPromptApprovalModal.tsx
       - dashboard/src/components/execution-approval/FinalPromptApprovalModal.test.tsx
