@@ -58,6 +58,12 @@ do {
   $env:FLOW_AGENT_DIR = $Repo       # canonical DB + data + .env stay external
   $env:API_PORT = $ApiPort
   $env:WS_PORT = $WsPort
+  # Final Prompt Approval Gate — ENFORCED on the canonical runtime. Every
+  # credit-bearing VIDEO dispatch must present a matching APPROVED review
+  # snapshot before a credit is spent (IMG stays observe-only — credit-free).
+  # Runtime-scoped: tests / CI / dev do not use this launcher, so they keep the
+  # default-OFF observe behaviour. This is the canonical enablement mechanism.
+  $env:EXECUTION_APPROVAL_GATE_ENFORCED = "1"
   Push-Location $Release
   try { & $Python -m agent.main } finally { Pop-Location }
   if ($Once) { break }
