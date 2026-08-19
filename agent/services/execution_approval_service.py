@@ -63,6 +63,12 @@ _INVALIDATABLE_FROM = {
     ApprovalState.APPROVED,
 }
 
+# Credit-bearing modes. IMG generation is credit-free (owner law: never gate image
+# for cost), so the gate hard-BLOCKS only video dispatches; IMG runs observe-only
+# (review + snapshot recorded and bound, never blocked). The FlowClient backstop is
+# likewise video-only (captchaAction VIDEO_GENERATION).
+_VIDEO_ENFORCED_MODES = {"T2V", "I2V", "F2V", "HYBRID"}
+
 
 class ExecutionApprovalError(Exception):
     """Raised when a dispatch is not covered by a valid APPROVED snapshot.
@@ -502,7 +508,7 @@ async def verify_and_bind_dispatch(
             if snapshot_id is None
             else "SNAPSHOT_ENVELOPE_MISMATCH_OR_NOT_APPROVED"
         )
-        if gate_enforced():
+        if gate_enforced() and _norm(mode).upper() in _VIDEO_ENFORCED_MODES:
             raise ExecutionApprovalError(
                 "DISPATCH_NOT_APPROVED",
                 "This generation was not covered by a matching APPROVED "

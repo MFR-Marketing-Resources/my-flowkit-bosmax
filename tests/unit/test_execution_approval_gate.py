@@ -138,6 +138,16 @@ async def test_no_approval_is_observe_only_when_not_enforced(monkeypatch):
     assert verdict["reason"] == "NO_APPROVED_SNAPSHOT_FOR_ENVELOPE"
 
 
+async def test_img_is_observe_only_even_when_enforced(monkeypatch):
+    monkeypatch.setenv("EXECUTION_APPROVAL_GATE_ENFORCED", "1")
+    # IMG is credit-free (owner law): verify never RAISES for it, even enforced +
+    # unapproved — it returns an observe verdict so free image generation is never
+    # blocked. Video (the default _dispatch mode) DOES hard-block.
+    verdict = await eas.verify_and_bind_dispatch(**_dispatch("P_img_free", mode="IMG"))
+    assert verdict["pass"] is False
+    assert verdict["reason"] == "NO_APPROVED_SNAPSHOT_FOR_ENVELOPE"
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
@@ -235,16 +245,40 @@ async def test_snapshot_id_pin_prevents_foreign_approval_match(monkeypatch):
 # IMG mode is single-flight-exempt and never touches the video lane globals.
 # --------------------------------------------------------------------------- #
 
-async def test_start_generate_blocks_unapproved_when_enforced(monkeypatch):
+async def test_start_generate_blocks_unapproved_video_when_enforced(monkeypatch):
     monkeypatch.setenv("EXECUTION_APPROVAL_GATE_ENFORCED", "1")
     from agent.services import make_video
 
+    monkeypatch.setattr(make_video, "_VIDEO_LANE_JOB", None)
+    # A credit-bearing VIDEO dispatch with no approval is rejected BEFORE any
+    # job/lane/provider work (the gate runs before the lane claim).
     result = await make_video.start_generate(
-        mode="IMG", prompt="P_wire_block — an unapproved image prompt",
-        aspect="1:1", num_videos=1, image_model="GEM_PIX_2",
+        mode="F2V", prompt="P_wire_block — an unapproved video prompt",
+        image_media_ids=["550e8400-e29b-41d4-a716-446655440000"],
+        aspect="9:16", num_videos=1, model="Veo 3.1 Lite", duration_s=8,
     )
     assert result["status"] == "REJECTED"
     assert result["error"] == "DISPATCH_NOT_APPROVED"
+
+
+async def test_start_generate_img_is_observe_only_when_enforced(monkeypatch):
+    import asyncio
+
+    monkeypatch.setenv("EXECUTION_APPROVAL_GATE_ENFORCED", "1")
+    from agent.services import make_video
+
+    async def _noop(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(make_video, "_run_generate", _noop)
+    # IMG generation is credit-free (owner law): never hard-blocked, even without
+    # an approval and even when enforcement is on.
+    result = await make_video.start_generate(
+        mode="IMG", prompt="P_img_observe unapproved image prompt",
+        aspect="1:1", num_videos=1, image_model="GEM_PIX_2",
+    )
+    await asyncio.sleep(0)
+    assert result["status"] == "SUBMITTED"
 
 
 async def test_start_generate_passes_matching_approval_when_enforced(monkeypatch):
