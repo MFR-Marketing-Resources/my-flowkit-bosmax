@@ -302,6 +302,10 @@ export interface StartImgGenerationInput {
 	confirm_live_credit_burn?: boolean;
 	maximum_provider_operations?: number;
 	max_retry_operations?: number;
+	/** When true, ``prompt`` is the human-APPROVED final provider-ready prompt
+	 * (grounded server-side during review); the dispatch uses it VERBATIM and does
+	 * NOT re-ground it — so what the operator approved is dispatched exact. */
+	final_prompt_pre_approved?: boolean;
 }
 
 export interface StartImgGenerationResult {
@@ -356,6 +360,7 @@ export async function startImgGeneration(
 	confirm_live_credit_burn: input.confirm_live_credit_burn,
 	maximum_provider_operations: input.maximum_provider_operations,
 	max_retry_operations: input.max_retry_operations,
+		final_prompt_pre_approved: input.final_prompt_pre_approved,
 	});
 }
 

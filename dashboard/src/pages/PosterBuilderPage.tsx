@@ -2,12 +2,9 @@ import { FileCheck2, ImageIcon, Loader2, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { FinalPromptApprovalModal } from "../components/execution-approval/FinalPromptApprovalModal";
-import type { ReviewEnvelope } from "../api/executionApproval";
+import type { PrepareDispatchRequest } from "../api/executionApproval";
 import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
-import {
-	buildExactSceneOnlyPrompt,
-	resolveExactGenerationGate,
-} from "../api/exactProductOutput";
+import { resolveExactGenerationGate } from "../api/exactProductOutput";
 import { usePosterRecipes } from "../api/posterRecipes";
 import {
 	createPosterPromptDraft,
@@ -164,7 +161,7 @@ export default function PosterBuilderPage() {
 		}
 	};
 
-	const [pendingApproval, setPendingApproval] = useState<ReviewEnvelope | null>(null);
+	const [pendingApproval, setPendingApproval] = useState<PrepareDispatchRequest | null>(null);
 
 	const generateLiveBackground = async (approved = false, approvedPrompt?: string) => {
 		if (
@@ -191,31 +188,26 @@ export default function PosterBuilderPage() {
 					`${PRODUCT_REFERENCE_IMAGE_REQUIRED} — live poster background generation is blocked.`,
 				);
 			}
-			let prompt = promptPackage.poster_prompt;
-			if (exact) {
-				setLiveStage("Preparing exact-product scene-only prompt…");
-				prompt = (await buildExactSceneOnlyPrompt(selectedProduct.id, prompt)).prompt;
-			}
-			// Final Prompt Approval Gate. IMG is credit-free (owner law) -> the gate
-			// runs observe-only, but the operator still reviews the exact prompt before
-			// generating. On approve, use the approved (possibly edited) prompt.
+			// Final Prompt Approval Gate (IMG is ENFORCED — credit-free never means
+			// approval-optional). The server grounds the RAW prompt (exact / product
+			// truth) during review via /prepare, so the operator approves the FINAL
+			// provider-ready prompt. On dispatch the approved text is sent VERBATIM
+			// (final_prompt_pre_approved) — no post-approval re-grounding.
 			if (!approved) {
 				setLiveLoading(false);
 				setLiveStage("");
 				setPendingApproval({
 					surface: "poster_builder",
 					logical_mode: "IMG",
-					final_prompt_text: prompt,
+					prompt: promptPackage.poster_prompt,
 					product_id: selectedProduct.id,
+					visual_lane_id: "POSTER_BUILDER",
 					aspect: "9:16",
 					count: 1,
-					asset_media_ids: [],
 				});
 				return;
 			}
-			if (approvedPrompt !== undefined) {
-				prompt = approvedPrompt;
-			}
+			const prompt = approvedPrompt ?? promptPackage.poster_prompt;
 			setLiveStage("Submitting one confirmed IMG operation…");
 			const { job_id } = await startImgGeneration({
 				prompt,
@@ -223,6 +215,7 @@ export default function PosterBuilderPage() {
 				visual_lane_id: "POSTER_BUILDER",
 				aspect: "9:16",
 				count: 1,
+				final_prompt_pre_approved: true,
 				...(subjectAsset && !exact ? { refs: { subjectAsset } } : {}),
 				maximum_provider_operations: 1,
 				max_retry_operations: 0,
@@ -261,7 +254,7 @@ export default function PosterBuilderPage() {
 		>
 			{pendingApproval && (
 				<FinalPromptApprovalModal
-					envelope={pendingApproval}
+					prepareRequest={pendingApproval}
 					approvedBy="operator"
 					onApproved={(snap) => {
 						setPendingApproval(null);

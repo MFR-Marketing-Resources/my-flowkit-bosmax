@@ -22,6 +22,9 @@ vi.mock("../api/executionApproval", () => {
 		createReviewSnapshot: vi.fn(async (env: { final_prompt_text: string }) =>
 			snap("REVIEW_REQUIRED", env.final_prompt_text),
 		),
+		prepareDispatch: vi.fn(async (req: { prompt: string }) =>
+			snap("REVIEW_REQUIRED", `GROUNDED::${req.prompt}`),
+		),
 		editSnapshot: vi.fn(async (_id: string, text: string) => snap("EDITED", text)),
 		approveSnapshot: vi.fn(async () => snap("APPROVED", "approved prompt")),
 	};
