@@ -68,6 +68,11 @@ domains:
       - agent/services/make_video.py
       - agent/services/flow_client.py
       - agent/main.py
+      - scripts/verify-gate.ps1
+      - agent/services/bulk_generation_service.py
+      - agent/services/creative_production_scheduler_service.py
+      - agent/services/production_queue_service.py
+      - agent/services/google_flow_native_extend_runtime.py
       - agent/services/product_lock_builder.py
       - agent/services/product_visual_grounding_resolver.py
       # BOSMAX universal product-truth lock — immutable canonical product

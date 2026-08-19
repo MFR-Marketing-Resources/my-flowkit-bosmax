@@ -852,6 +852,7 @@ async def _dispatch_attempt(
                 duration_s=runtime_payload.get("duration_s"),
                 num_videos=int(runtime_payload.get("num_videos") or 1),
                 image_model=runtime_payload.get("image_model"),
+                upstream_approved_provenance="production_studio",
             )
     except Exception as exc:
         await p6db.update_attempt(

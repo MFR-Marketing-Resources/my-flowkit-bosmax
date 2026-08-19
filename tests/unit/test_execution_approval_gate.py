@@ -272,3 +272,55 @@ async def test_start_generate_passes_matching_approval_when_enforced(monkeypatch
     await asyncio.sleep(0)
     assert result["status"] == "SUBMITTED"
     assert (await eas.get_snapshot(snap["snapshot_id"]))["approval_state"] == "DISPATCHED"
+
+
+# --------------------------------------------------------------------------- #
+# Non-UI enablement safety: upstream-approved auto-snapshot (queue / bulk /
+# scheduler / Extend fire ALREADY-approved packages/plans).
+# --------------------------------------------------------------------------- #
+
+async def test_ensure_upstream_approved_creates_and_approves():
+    snap = await eas.ensure_upstream_approved_snapshot(
+        **_dispatch("P_upstream_1"), surface="production_queue", provenance="production_queue",
+    )
+    assert snap["approval_state"] == eas.ApprovalState.APPROVED
+    assert snap["created_by"] == "production_queue"
+
+
+async def test_ensure_upstream_approved_is_idempotent():
+    a = await eas.ensure_upstream_approved_snapshot(
+        **_dispatch("P_upstream_idem"), surface="bulk_video", provenance="bulk_video",
+    )
+    b = await eas.ensure_upstream_approved_snapshot(
+        **_dispatch("P_upstream_idem"), surface="bulk_video", provenance="bulk_video",
+    )
+    assert a["snapshot_id"] == b["snapshot_id"]
+
+
+async def test_ensure_upstream_approved_never_approves_dirty_prompt():
+    snap = await eas.ensure_upstream_approved_snapshot(
+        **_dispatch("P_upstream leaks prod_dirty_1"), surface="production_queue",
+        provenance="production_queue", product_id="prod_dirty_1",
+    )
+    assert snap["approval_state"] != eas.ApprovalState.APPROVED  # fail-closed
+
+
+async def test_start_generate_upstream_provenance_auto_approves(monkeypatch):
+    import asyncio
+
+    monkeypatch.setenv("EXECUTION_APPROVAL_GATE_ENFORCED", "1")
+    from agent.services import make_video
+
+    async def _noop(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(make_video, "_run_generate", _noop)
+
+    # No pre-created snapshot; the upstream-approved provenance materialises one so
+    # an already-approved production run is not blocked when enforcement is on.
+    result = await make_video.start_generate(
+        mode="IMG", prompt="P_upstream_sg clean prompt", aspect="1:1", num_videos=1,
+        image_model="GEM_PIX_2", upstream_approved_provenance="production_queue",
+    )
+    await asyncio.sleep(0)
+    assert result["status"] == "SUBMITTED"

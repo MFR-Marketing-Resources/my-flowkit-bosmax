@@ -383,6 +383,69 @@ async def invalidate_snapshot(
     )
 
 
+async def ensure_upstream_approved_snapshot(
+    *,
+    mode: str,
+    final_prompt_text: str,
+    surface: str,
+    provenance: str,
+    product_id: str | None = None,
+    source_mode: str | None = None,
+    model: str | None = None,
+    aspect: str | None = None,
+    duration_s: int | None = None,
+    count: int | None = None,
+    image_model: str | None = None,
+    asset_media_ids: list[str] | None = None,
+    approved_by: str = "system:upstream-approval",
+) -> dict[str, Any]:
+    """Materialise an APPROVED snapshot for a NON-UI dispatch that fires an
+    already-approved package/plan (Production Queue, bulk, Production Studio
+    scheduler, Extend). The human review happened UPSTREAM at package/plan
+    approval; this records that lineage (``provenance`` -> ``created_by``) so the
+    enforced dispatch boundary passes for legitimately-approved production runs.
+
+    Fail-closed guarantees preserved:
+      * Idempotent by envelope — reuses an existing APPROVED snapshot.
+      * A dirty prompt (failed safety scan) is NEVER auto-approved; it stays
+        REVIEW_REQUIRED so the dispatch blocks.
+      * Callers MUST pass this ONLY when a real upstream approval exists (e.g.
+        production_status == APPROVED). A path with no upstream approval must not
+        call it — that dispatch remains fail-closed.
+    """
+    identity = compute_dispatch_identity(
+        mode=mode,
+        final_prompt_text=final_prompt_text,
+        source_mode=source_mode,
+        model=model,
+        aspect=aspect,
+        duration_s=duration_s,
+        count=count,
+        image_model=image_model,
+        asset_media_ids=asset_media_ids,
+    )
+    existing = await _crud.find_approved_by_envelope(identity["execution_envelope_sha256"])
+    if existing:
+        return existing
+    snap = await create_review_snapshot(
+        surface=surface,
+        logical_mode=mode,
+        final_prompt_text=final_prompt_text,
+        product_id=product_id,
+        source_mode=source_mode,
+        model=model,
+        aspect=aspect,
+        duration_s=duration_s,
+        count=count,
+        image_model=image_model,
+        asset_media_ids=asset_media_ids,
+        created_by=_norm(provenance) or "upstream-approval",
+    )
+    if not int(snap.get("scan_clean") or 0):
+        return snap  # dirty prompt -> not approved -> dispatch stays fail-closed
+    return await approve_snapshot(snap["snapshot_id"], approved_by=approved_by)
+
+
 async def verify_and_bind_dispatch(
     *,
     mode: str,

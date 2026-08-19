@@ -591,6 +591,7 @@ async def _process_avatar_image_item(run_id: str, item: dict, config: dict) -> N
             aspect=aspect,
             num_videos=count,
             image_model=image_model,
+            upstream_approved_provenance="bulk_avatar_image",
         )
         if result.get("status") == "REJECTED":
             raise RuntimeError(result.get("error") or "REJECTED")
@@ -684,6 +685,7 @@ async def _fire_video_payload(payload: dict, wgp_id: str) -> dict:
             model=payload.get("model"),
             duration_s=payload.get("duration_s"),
             num_videos=payload.get("num_videos") or 1,
+            upstream_approved_provenance="bulk_video",
         )
         if result.get("status") == "REJECTED" and result.get("error") == "VIDEO_JOB_IN_FLIGHT":
             attempts += 1
