@@ -13,6 +13,17 @@ from agent.services import execution_approval_service as eas
 from agent.services.flow_client import FlowClient
 
 
+@pytest.fixture(autouse=True)
+def _mock_canonical_pv(monkeypatch):
+    async def _mock_fp(product_id: str, slot_key: str = "start_frame"):
+        return f"PRODUCT_VISUAL|{product_id}|{slot_key}|fake_canonical_sha256"
+
+    monkeypatch.setattr(
+        "agent.services.product_visual_grounding_resolver.get_canonical_product_visual_fingerprint",
+        _mock_fp,
+    )
+
+
 _ASSET = "550e8400-e29b-41d4-a716-446655440000"
 
 
