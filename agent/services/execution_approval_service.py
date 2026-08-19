@@ -35,6 +35,7 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import json
+import logging
 import os
 import uuid
 from datetime import UTC, datetime
@@ -42,6 +43,8 @@ from typing import Any
 
 from agent.db import execution_approval_crud as _crud
 from agent.services.production_prompt_approval_service import scan_prompt_text
+
+logger = logging.getLogger(__name__)
 
 
 class ApprovalState:
@@ -177,11 +180,13 @@ def compute_dispatch_identity(
     duration_s: int | None = None,
     count: int | None = None,
     image_model: str | None = None,
+    asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
+    product_id: str | None = None,
 ) -> dict[str, Any]:
-    """THE canonical envelope+hash builder. Called with identical semantics at
-    review time and at the dispatch boundary, so equal provider-affecting inputs
-    always yield equal hashes.
+    """THE canonical envelope+hash builder (Envelope v2). Called with identical
+    semantics at review time and at the dispatch boundary, so equal provider-affecting
+    inputs always yield equal hashes.
 
     Returns ``{prompt_sha256, execution_envelope, execution_envelope_sha256}``.
     The envelope keys are a fixed shape; unused fields normalise to ``None`` and
@@ -199,8 +204,11 @@ def compute_dispatch_identity(
         except (TypeError, ValueError):
             return None
 
+    raw_fps = asset_fingerprints if asset_fingerprints is not None else (asset_media_ids or [])
+    fps = sorted({_norm(m) for m in raw_fps if _norm(m)})
+
     envelope = {
-        "envelope_version": 1,
+        "envelope_version": 2,
         "mode": _norm(mode).upper(),
         "prompt_sha256": prompt_sha256,
         "source_mode": (_norm(source_mode).upper() or None),
@@ -209,11 +217,8 @@ def compute_dispatch_identity(
         "duration_s": _int_or_none(duration_s),
         "count": _int_or_none(count),
         "image_model": (_norm(image_model) or None),
-        # Resolved reference asset identity. Sorted + de-duped so ordering never
-        # changes the hash. A self-heal re-upload that swaps a media id IS an
-        # asset change here — it correctly invalidates the approval (contract:
-        # "asset changed -> INVALIDATED -> REVIEW_REQUIRED").
-        "asset_fingerprints": sorted({_norm(m) for m in (asset_media_ids or []) if _norm(m)}),
+        "product_id": (_norm(product_id) or None),
+        "asset_fingerprints": fps,
     }
     return {
         "prompt_sha256": prompt_sha256,
@@ -222,6 +227,49 @@ def compute_dispatch_identity(
             _stable_json(envelope).encode("utf-8")
         ).hexdigest(),
     }
+
+
+async def resolve_canonical_asset_fingerprints(
+    *,
+    mode: str,
+    source_mode: str | None = None,
+    product_id: str | None = None,
+    asset_fingerprints: list[str] | None = None,
+    asset_media_ids: list[str] | None = None,
+) -> list[str]:
+    """Server-authoritative canonical asset fingerprint resolver.
+
+    For product-backed HYBRID / F2V with product_id:
+      Derive the canonical product visual fingerprint from the Product Visual
+      authority: PRODUCT_VISUAL|<product_id>|<slot_key>|<full_sha256>.
+      This binds the exact byte content of the official product visual. Provider
+      transport media UUIDs (newly uploaded during generation) do NOT participate
+      in the logical approval hash.
+
+    For manual frame lanes (source_mode == FRAMES) and explicit assets:
+      Retain strict locking to the explicit frame/asset fingerprints/IDs.
+    """
+    norm_source = _norm(source_mode).upper()
+    norm_mode = _norm(mode).upper()
+
+    if product_id and (norm_source == "HYBRID" or (norm_mode == "F2V" and norm_source != "FRAMES")):
+        from agent.services.product_visual_grounding_resolver import (
+            get_canonical_product_visual_fingerprint,
+        )
+        try:
+            pv_fp = await get_canonical_product_visual_fingerprint(product_id, slot_key="start_frame")
+            return [pv_fp]
+        except Exception as exc:
+            logger.warning(
+                "Could not resolve canonical product visual fingerprint for product %s: %s",
+                product_id,
+                exc,
+            )
+
+    if asset_fingerprints is not None:
+        return sorted({_norm(f) for f in asset_fingerprints if _norm(f)})
+
+    return sorted({_norm(m) for m in (asset_media_ids or []) if _norm(m)})
 
 
 # --------------------------------------------------------------------------- #
@@ -240,6 +288,7 @@ async def create_review_snapshot(
     duration_s: int | None = None,
     count: int | None = None,
     image_model: str | None = None,
+    asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
     review_session_id: str | None = None,
     created_by: str | None = None,
@@ -249,6 +298,13 @@ async def create_review_snapshot(
     ``final_prompt_text`` MUST already be the fully grounded, provider-ready
     prompt (product-truth / grounding / safety / asset-resolution applied
     BEFORE review — never after approval)."""
+    canonical_fps = await resolve_canonical_asset_fingerprints(
+        mode=logical_mode,
+        source_mode=source_mode,
+        product_id=product_id,
+        asset_fingerprints=asset_fingerprints,
+        asset_media_ids=asset_media_ids,
+    )
     identity = compute_dispatch_identity(
         mode=logical_mode,
         final_prompt_text=final_prompt_text,
@@ -258,7 +314,8 @@ async def create_review_snapshot(
         duration_s=duration_s,
         count=count,
         image_model=image_model,
-        asset_media_ids=asset_media_ids,
+        asset_fingerprints=canonical_fps,
+        product_id=product_id,
     )
     scan = scan_prompt_text(final_prompt_text, product_id=product_id)
     scan_clean = not any(scan.values())
@@ -402,6 +459,7 @@ async def ensure_upstream_approved_snapshot(
     duration_s: int | None = None,
     count: int | None = None,
     image_model: str | None = None,
+    asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
     approved_by: str = "system:upstream-approval",
 ) -> dict[str, Any]:
@@ -419,6 +477,13 @@ async def ensure_upstream_approved_snapshot(
         production_status == APPROVED). A path with no upstream approval must not
         call it — that dispatch remains fail-closed.
     """
+    canonical_fps = await resolve_canonical_asset_fingerprints(
+        mode=mode,
+        source_mode=source_mode,
+        product_id=product_id,
+        asset_fingerprints=asset_fingerprints,
+        asset_media_ids=asset_media_ids,
+    )
     identity = compute_dispatch_identity(
         mode=mode,
         final_prompt_text=final_prompt_text,
@@ -428,7 +493,8 @@ async def ensure_upstream_approved_snapshot(
         duration_s=duration_s,
         count=count,
         image_model=image_model,
-        asset_media_ids=asset_media_ids,
+        asset_fingerprints=canonical_fps,
+        product_id=product_id,
     )
     existing = await _crud.find_approved_by_envelope(identity["execution_envelope_sha256"])
     if existing:
@@ -444,7 +510,7 @@ async def ensure_upstream_approved_snapshot(
         duration_s=duration_s,
         count=count,
         image_model=image_model,
-        asset_media_ids=asset_media_ids,
+        asset_fingerprints=canonical_fps,
         created_by=_norm(provenance) or "upstream-approval",
     )
     if not int(snap.get("scan_clean") or 0):
@@ -462,7 +528,9 @@ async def verify_and_bind_dispatch(
     duration_s: int | None = None,
     count: int | None = None,
     image_model: str | None = None,
+    asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
+    product_id: str | None = None,
     snapshot_id: str | None = None,
     provider_job_id: str | None = None,
 ) -> dict[str, Any]:
@@ -477,6 +545,13 @@ async def verify_and_bind_dispatch(
     credit-bearing dispatch choke calls it with the SAME inputs it hands the
     provider.
     """
+    canonical_fps = await resolve_canonical_asset_fingerprints(
+        mode=mode,
+        source_mode=source_mode,
+        product_id=product_id,
+        asset_fingerprints=asset_fingerprints,
+        asset_media_ids=asset_media_ids,
+    )
     identity = compute_dispatch_identity(
         mode=mode,
         final_prompt_text=final_prompt_text,
@@ -486,7 +561,8 @@ async def verify_and_bind_dispatch(
         duration_s=duration_s,
         count=count,
         image_model=image_model,
-        asset_media_ids=asset_media_ids,
+        asset_fingerprints=canonical_fps,
+        product_id=product_id,
     )
     dispatched_env_sha = identity["execution_envelope_sha256"]
     dispatched_prompt_sha = identity["prompt_sha256"]
@@ -572,5 +648,7 @@ def _recompute_from_snapshot(snap: dict[str, Any], *, final_prompt_text: str) ->
         duration_s=env.get("duration_s"),
         count=env.get("count"),
         image_model=env.get("image_model"),
-        asset_media_ids=env.get("asset_fingerprints"),
+        asset_fingerprints=env.get("asset_fingerprints"),
+        product_id=env.get("product_id") or snap.get("product_id"),
     )
+
