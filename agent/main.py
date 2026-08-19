@@ -58,6 +58,7 @@ from agent.api.postiz import router as postiz_router
 from agent.api.social_copy_packages import router as social_copy_packages_router
 from agent.api.results import router as results_router
 from agent.api.prompt_preview import router as prompt_preview_router
+from agent.api.execution_approval import router as execution_approval_router
 from agent.api.asset_registry import router as asset_registry_router
 from agent.api.creative_assets import (
     eligibility_router as creative_asset_eligibility_router,
@@ -374,6 +375,7 @@ app.include_router(postiz_router, prefix="/api")
 app.include_router(social_copy_packages_router, prefix="/api")
 app.include_router(results_router, prefix="/api")
 app.include_router(prompt_preview_router, prefix="/api")
+app.include_router(execution_approval_router, prefix="/api")
 app.include_router(asset_registry_router, prefix="/api")
 app.include_router(creative_assets_router, prefix="/api")
 app.include_router(creative_asset_eligibility_router, prefix="/api")

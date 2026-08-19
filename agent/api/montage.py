@@ -668,6 +668,10 @@ async def montage_authorize_generation(
                 engine="GOOGLE_FLOW",
                 startAsset=start_asset if isinstance(start_asset, dict) else None,
                 image_media_ids=image_media_ids or None,
+                # Montage scenes fire an operator-authorized run (confirm_credit_burn);
+                # materialise the upstream approval so the enforced gate never blocks
+                # a legitimately-authorized montage generation.
+                upstream_approved_provenance="montage",
             )
             result = await flow_generate(gen_body)
             if isinstance(result, dict):

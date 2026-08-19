@@ -621,6 +621,13 @@ async def _run_one_extend_block(
     await _crud.update_extend_lineage(lineage_id, polling_state=STATE_SUBMITTED)
 
     # ── LIVE SUBMIT ─────────────────────────────────────────────────────────
+    # The native-extend chain has ALREADY enforced its own bounded live-credit
+    # authorization upstream (confirm + one-shot token + exact operation count),
+    # and this continues an already-approved+generated initial clip. Mark the
+    # context authorised for the provider-boundary backstop. Documented/auditable;
+    # inert unless EXECUTION_APPROVAL_GATE_ENFORCED.
+    from agent.services import execution_approval_service as _eas
+    _eas.mark_dispatch_exempt("native_extend_bounded_authorization")
     resp = await client.generate_video_extend(
         source_operation_id=parent_op, project_id=req.project_id, scene_id=req.scene_id,
         position=block.position, prompt=block.prompt, aspect_ratio=req.aspect_ratio,

@@ -790,6 +790,11 @@ class GenerateRequest(BaseModel):
     image_model: Optional[str] = None          # IMG image model key/ui_label; default Nano Banana Pro
     duration_s: Optional[int] = None           # default = the model's default duration
     count: int = 1                             # USER count setting (1-4): negotiate AND retrieve N videos
+    # Non-UI callers (Montage / scheduler) firing an ALREADY-authorized run set
+    # this so the enforced Final Prompt Approval boundary materialises the upstream
+    # approval snapshot instead of blocking. UI callers leave it None — they create
+    # their own explicit review snapshot before dispatch.
+    upstream_approved_provenance: Optional[str] = None
     refs: Optional[dict] = None
     startAsset: Optional[dict] = None
     endAsset: Optional[dict] = None             # optional F2V end frame
@@ -1587,6 +1592,7 @@ async def generate(body: GenerateRequest):
                 consumer_context=body.copy_v2_context
             ) if v2_resolution and v2_resolution.v2_enabled else None
         ),
+        upstream_approved_provenance=body.upstream_approved_provenance,
     )
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)

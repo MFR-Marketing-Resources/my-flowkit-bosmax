@@ -1,6 +1,8 @@
 import { FileCheck2, ImageIcon, Loader2, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { FinalPromptApprovalModal } from "../components/execution-approval/FinalPromptApprovalModal";
+import type { ReviewEnvelope } from "../api/executionApproval";
 import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
 import {
 	buildExactSceneOnlyPrompt,
@@ -162,9 +164,11 @@ export default function PosterBuilderPage() {
 		}
 	};
 
-	const generateLiveBackground = async () => {
+	const [pendingApproval, setPendingApproval] = useState<ReviewEnvelope | null>(null);
+
+	const generateLiveBackground = async (approved = false, approvedPrompt?: string) => {
 		if (
-			!liveActionConfirmed ||
+			(!approved && !liveActionConfirmed) ||
 			!selectedProduct ||
 			!promptPackage?.poster_prompt ||
 			!copyReady
@@ -191,6 +195,26 @@ export default function PosterBuilderPage() {
 			if (exact) {
 				setLiveStage("Preparing exact-product scene-only prompt…");
 				prompt = (await buildExactSceneOnlyPrompt(selectedProduct.id, prompt)).prompt;
+			}
+			// Final Prompt Approval Gate. IMG is credit-free (owner law) -> the gate
+			// runs observe-only, but the operator still reviews the exact prompt before
+			// generating. On approve, use the approved (possibly edited) prompt.
+			if (!approved) {
+				setLiveLoading(false);
+				setLiveStage("");
+				setPendingApproval({
+					surface: "poster_builder",
+					logical_mode: "IMG",
+					final_prompt_text: prompt,
+					product_id: selectedProduct.id,
+					aspect: "9:16",
+					count: 1,
+					asset_media_ids: [],
+				});
+				return;
+			}
+			if (approvedPrompt !== undefined) {
+				prompt = approvedPrompt;
 			}
 			setLiveStage("Submitting one confirmed IMG operation…");
 			const { job_id } = await startImgGeneration({
@@ -235,6 +259,17 @@ export default function PosterBuilderPage() {
 			className="min-h-full bg-slate-950 px-4 py-5 text-slate-100 md:px-8"
 			data-testid="poster-builder-v2-only"
 		>
+			{pendingApproval && (
+				<FinalPromptApprovalModal
+					envelope={pendingApproval}
+					approvedBy="operator"
+					onApproved={(snap) => {
+						setPendingApproval(null);
+						void generateLiveBackground(true, snap.final_prompt_text);
+					}}
+					onCancel={() => setPendingApproval(null)}
+				/>
+			)}
 			<header className="mb-5 rounded-2xl border border-violet-500/30 bg-gradient-to-br from-slate-950 to-violet-950/30 p-5">
 				<div className="flex flex-wrap items-start justify-between gap-4">
 					<div>

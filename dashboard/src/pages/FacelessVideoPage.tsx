@@ -8,6 +8,8 @@
  * Never auto-fires credit-bearing generation.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FinalPromptApprovalModal } from "../components/execution-approval/FinalPromptApprovalModal";
+import type { ReviewEnvelope } from "../api/executionApproval";
 import {
 	prepareFacelessPackage,
 	useCreativeLaneSettings,
@@ -437,7 +439,9 @@ export default function FacelessVideoPage() {
 		}
 	};
 
-	const handleGenerate = async () => {
+	const [pendingApproval, setPendingApproval] = useState<ReviewEnvelope | null>(null);
+
+	const handleGenerate = async (approved = false, approvedPrompt?: string) => {
 		if (sceneMode === "EXTEND") {
 			setNotice({
 				tone: "info",
@@ -478,7 +482,7 @@ export default function FacelessVideoPage() {
 		});
 		try {
 			const generateBody = buildFacelessGenerateBody({
-				prompt: workspacePackage.prompt_text,
+				prompt: approvedPrompt ?? workspacePackage.prompt_text,
 				productId: selectedProduct?.id ?? workspacePackage.product_id,
 				workspacePackage,
 				startFrameAssetId:
@@ -494,6 +498,37 @@ export default function FacelessVideoPage() {
 				sceneMode,
 				extendTotalSeconds: extendTotalSec,
 			});
+			if (!approved) {
+				// Final Prompt Approval Gate: review the EXACT provider-ready body
+				// before spending a credit. The envelope is built from generateBody so
+				// the dispatch envelope matches the approval. On approve, re-fire with
+				// the approved (possibly edited) prompt.
+				executionInFlightRef.current = false;
+				setIsExecuting(false);
+				const gb = generateBody as {
+					mode?: string;
+					prompt?: string;
+					aspect?: string;
+					product_id?: string | null;
+					source_mode?: string;
+					model?: string;
+					duration_s?: number;
+					image_media_ids?: string[];
+				};
+				setPendingApproval({
+					surface: "faceless",
+					logical_mode: String(gb.mode ?? "F2V"),
+					final_prompt_text: String(gb.prompt ?? ""),
+					product_id: gb.product_id ?? null,
+					source_mode: gb.source_mode ?? null,
+					model: gb.model ?? null,
+					aspect: gb.aspect ?? null,
+					duration_s: gb.duration_s ?? null,
+					count: 1,
+					asset_media_ids: gb.image_media_ids ?? [],
+				});
+				return;
+			}
 			const response = await fetch("/api/flow/generate", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
@@ -557,6 +592,17 @@ export default function FacelessVideoPage() {
 			data-variant="v4"
 			data-mode="FACELESS"
 		>
+			{pendingApproval && (
+				<FinalPromptApprovalModal
+					envelope={pendingApproval}
+					approvedBy="operator"
+					onApproved={(snap) => {
+						setPendingApproval(null);
+						void handleGenerate(true, snap.final_prompt_text);
+					}}
+					onCancel={() => setPendingApproval(null)}
+				/>
+			)}
 			<header className="flex flex-wrap items-end justify-between gap-3">
 				<div>
 					<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-v4-accent">
