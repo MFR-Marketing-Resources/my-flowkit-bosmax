@@ -46,6 +46,8 @@ import {
 	type VideoCapabilityMatrix,
 } from "../utils/videoCapability";
 import { collectMontageSessionResults } from "../utils/videoSessionResults";
+import { ManifestApprovalModal } from "../components/execution-approval/ManifestApprovalModal";
+import { materializeMontageManifest } from "../api/executionApproval";
 
 const selectClass =
 	"w-full rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100";
@@ -91,6 +93,9 @@ export default function MontagePage() {
 	const [authNote, setAuthNote] = useState<string | null>(null);
 	const [creditConfirm, setCreditConfirm] = useState(false);
 	const [busy, setBusy] = useState(false);
+	// Approved Generation Manifest gate — a LIVE montage dispatch requires the
+	// operator to review + approve every scene's final prompt first.
+	const [pendingManifestId, setPendingManifestId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [v4Open, setV4Open] = useState<Record<number, boolean>>({});
 	const [v2CopyReady, setV2CopyReady] = useState(false);
@@ -285,12 +290,8 @@ export default function MontagePage() {
 		}
 	};
 
-	const handleAuthorize = async (dryRun: boolean) => {
+	const dispatchAuthorize = async (dryRun: boolean) => {
 		if (!run?.montage_run_id || !estimate) return;
-		if (!creditConfirm) {
-			setError("Confirm credit count before authorize (checkbox).");
-			return;
-		}
 		setBusy(true);
 		setError(null);
 		try {
@@ -322,6 +323,31 @@ export default function MontagePage() {
 					/* optional */
 				}
 			}
+		} catch (e) {
+			setError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	const handleAuthorize = async (dryRun: boolean) => {
+		if (!run?.montage_run_id || !estimate) return;
+		if (!creditConfirm) {
+			setError("Confirm credit count before authorize (checkbox).");
+			return;
+		}
+		if (dryRun) {
+			await dispatchAuthorize(true);
+			return;
+		}
+		// LIVE dispatch — Final Prompt Approval Gate. Materialise the per-scene
+		// final prompts into a manifest and require human WYSIWYG approval BEFORE
+		// any credit-bearing generation. Actual dispatch runs on manifest approval.
+		setBusy(true);
+		setError(null);
+		try {
+			const manifest = await materializeMontageManifest(run.montage_run_id);
+			setPendingManifestId(manifest.manifest_id);
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
 		} finally {
@@ -396,6 +422,18 @@ export default function MontagePage() {
 			data-mode="MONTAGE"
 			data-settings-source={settings.source}
 		>
+			{pendingManifestId && (
+				<ManifestApprovalModal
+					manifestId={pendingManifestId}
+					approvedBy="operator"
+					title="Review every scene's final prompt"
+					onApproved={() => {
+						setPendingManifestId(null);
+						void dispatchAuthorize(false);
+					}}
+					onCancel={() => setPendingManifestId(null)}
+				/>
+			)}
 			<header>
 				<div className="text-[10px] font-bold uppercase tracking-[0.2em] text-v4-accent">
 					Montage
