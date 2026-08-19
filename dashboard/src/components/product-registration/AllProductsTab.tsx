@@ -99,11 +99,26 @@ const getErrorMessage = (error: unknown, fallback: string) =>
 	error instanceof Error && error.message ? error.message : fallback;
 
 // Raw source image preview for table source column
-const resolveThumb = (product: Product): string | null =>
-	product.image_url ||
-	product.rendered_img_src ||
-	product.image_analysis?.image_url ||
-	null;
+const resolveThumb = (product: Product): string | null => {
+	const raw =
+		product.image_url ||
+		product.rendered_img_src ||
+		product.image_analysis?.image_url;
+	if (raw) return raw;
+	// Local-only bytes (no remote image_url) are still servable from the cached
+	// original via /api/products/{id}/image when the cache is ready — mirrors the
+	// Visual column's IMAGE_CACHE_READY fallback in productVisualPresentation.ts.
+	// Without this, MANUAL products (image in local_image_path, image_url null)
+	// render a blank thumbnail even though the file exists and serves 200.
+	const meta = product as Product & {
+		id?: string;
+		image_readiness_status?: string;
+	};
+	if (meta.image_readiness_status === 'IMAGE_CACHE_READY' && meta.id) {
+		return '/api/products/' + encodeURIComponent(meta.id) + '/image';
+	}
+	return null;
+};
 
 // The Visual column follows the canonical resolveProductPreviewUrl resolver
 const resolveVisualThumb = (product: Product): string | null =>

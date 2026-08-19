@@ -150,6 +150,39 @@ describe("AllProductsTab visual surface", () => {
 		);
 	});
 
+	it("serves the Image column thumbnail from /api/products/{id}/image when image_url is null but the cache is ready", async () => {
+		vi.mocked(fetchProductRegistry).mockResolvedValueOnce({
+			items: [
+				{
+					id: "local-cache-product",
+					source: "MANUAL",
+					raw_product_title: "Local cache product",
+					product_display_name: "Local cache product",
+					product_short_name: "Local cache",
+					image_url: null,
+					image_readiness_status: "IMAGE_CACHE_READY",
+					lifecycle_status: "ACTIVE",
+					visual_readiness: {
+						visual_canvas_label: "1000×1000 px",
+						canonical_media_status: "AVAILABLE",
+						cutout_status: "NOT_PREPARED",
+						cutout_review_status: "NOT_STARTED",
+						visual_grounding_status: "VISUAL_GROUNDING_READY_FALLBACK",
+					},
+				} as never,
+			],
+			total_count: 1,
+		} as never);
+
+		render(<AllProductsTab />);
+
+		await screen.findByTestId("table-visual-canvas-requirement");
+		expect(document.querySelectorAll("img")[0]).toHaveAttribute(
+			"src",
+			"/api/products/local-cache-product/image",
+		);
+	});
+
 	it("keeps the original source visible until a cutout candidate is officially approved", async () => {
 		vi.mocked(fetchProductRegistry).mockResolvedValueOnce({
 			items: [
