@@ -397,6 +397,29 @@ def _validate_context(req: ExtendChainRequest) -> str:
     return model_key
 
 
+def build_extend_manifest_items(req: ExtendChainRequest) -> dict:
+    """Per-block Approved Generation Manifest items for a native Extend chain,
+    shaped to hash-MATCH exactly what ``run_native_extend_block`` dispatches: mode
+    ``EXTEND``, the block continuation prompt, ``model`` = the deterministic
+    ``EXTEND_VIDEO_MODELS[aspect_ratio]`` (the same lookup the dispatch uses), and
+    ``aspect``. The dispatch passes no duration/count/asset/product, so the items
+    carry none either. Provider-free: nothing is planned, submitted, or spent —
+    the operator reviews + approves these before an ``/extend-run`` block can
+    resolve them (GAP 4: no generic Extend exemption)."""
+    model_key = _validate_context(req)
+    items = [
+        {
+            "item_key": f"{req.scene_id}:{b.block_index}",
+            "mode": "EXTEND",
+            "final_prompt_text": b.prompt,
+            "model": model_key,
+            "aspect": req.aspect_ratio,
+        }
+        for b in req.blocks
+    ]
+    return {"items": items, "run_ref": req.workspace_generation_package_id}
+
+
 async def plan_native_extend_chain(req: ExtendChainRequest) -> dict:
     """Resume-aware plan (no side effects, no submit). For each block, resolve its
     expected PARENT (prior block's persisted child if already SUCCEEDED, else the

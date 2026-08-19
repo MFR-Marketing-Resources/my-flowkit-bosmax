@@ -1943,6 +1943,32 @@ def _native_extend_chain_request(body: ExtendRunRequest, runtime):
         seed=body.seed, user_paygate_tier=body.user_paygate_tier)
 
 
+@router.post("/native-extend/materialize-approval-manifest")
+async def native_extend_materialize_approval_manifest(body: ExtendRunRequest):
+    """Freeze the per-block continuation prompts of a native Extend chain into an
+    Approved Generation Manifest (run_ref = the package id — the key each block
+    dispatch resolves against). The operator reviews + approves before /extend-run;
+    each block then matches its approved item by envelope hash (GAP 4 — no generic
+    Extend exemption). Provider-free: nothing is planned, submitted, or spent."""
+    from agent.services import execution_approval_service as _eas
+    from agent.services import google_flow_native_extend_runtime as _nx
+
+    chain_req = _native_extend_chain_request(body, _nx)
+    try:
+        derived = _nx.build_extend_manifest_items(chain_req)
+    except _nx.NativeExtendError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not derived["items"]:
+        raise HTTPException(422, "EXTEND_NO_BLOCKS")
+    return await _eas.create_manifest(
+        surface="native_extend",
+        run_ref=derived["run_ref"],
+        logical_mode="EXTEND",
+        items=derived["items"],
+        created_by="operator",
+    )
+
+
 @router.post("/native-extend/live-authorization")
 async def native_extend_live_authorization(body: ExtendRunRequest):
     """Issue one bounded, expiring authorization after explicit operator confirmation.

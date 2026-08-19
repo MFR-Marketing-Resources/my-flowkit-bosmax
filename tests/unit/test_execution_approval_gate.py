@@ -446,6 +446,56 @@ async def test_native_extend_requires_approved_manifest_item(monkeypatch):
     assert verdict["pass"] is True
 
 
+async def test_native_extend_materialize_hash_matches_dispatch(monkeypatch):
+    # The Extend materialize helper must produce items whose envelope hash EXACTLY
+    # matches run_native_extend_block's dispatch — else an approved Extend chain
+    # would still block. Proves the materialise->approve->resolve loop end to end.
+    import agent.services.google_flow_native_extend_runtime as nx
+    from agent import config
+
+    monkeypatch.setenv("EXECUTION_APPROVAL_GATE_ENFORCED", "1")
+    eas._DISPATCH_AUTH.set(None)
+    ar = "VIDEO_ASPECT_RATIO_PORTRAIT"
+    model_key = config.EXTEND_VIDEO_MODELS.get(ar)
+    prompt = "extend continuation block prompt"
+
+    class _B:
+        block_index = 1
+        position = 1
+        prompt = "extend continuation block prompt"
+        is_final = False
+        start_frame_index = 0
+        end_frame_index = 1
+
+    class _Req:
+        project_id = "pr1"
+        scene_id = "sc1"
+        source_operation_id = "op1"
+        aspect_ratio = ar
+        workspace_generation_package_id = "wgp_extend_mat"
+        blocks = [_B()]
+
+    derived = nx.build_extend_manifest_items(_Req())
+    manifest = await eas.create_manifest(
+        surface="native_extend", run_ref=derived["run_ref"],
+        logical_mode="EXTEND", items=derived["items"],
+    )
+    await eas.approve_manifest(manifest["manifest_id"], approved_by="faris")
+
+    # The exact dispatch run_native_extend_block performs.
+    resolved = await eas.resolve_manifest_approved_snapshot(
+        manifest_id=await eas.approved_manifest_id_for_run(
+            "wgp_extend_mat", surface="native_extend"),
+        mode="EXTEND", final_prompt_text=prompt, model=model_key, aspect=ar,
+    )
+    assert resolved is not None
+    verdict = await eas.verify_and_bind_dispatch(
+        mode="EXTEND", final_prompt_text=prompt, model=model_key, aspect=ar,
+        snapshot_id=resolved["snapshot_id"],
+    )
+    assert verdict["pass"] is True
+
+
 async def test_approved_manifest_id_for_run_lookup():
     prompt = "P_run_lookup clean prompt"
     manifest = await eas.create_manifest(
