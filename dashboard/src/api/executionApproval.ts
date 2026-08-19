@@ -41,6 +41,7 @@ export interface ReviewEnvelope {
   duration_s?: number | null;
   count?: number | null;
   image_model?: string | null;
+  asset_fingerprints?: string[] | null;
   asset_media_ids?: string[] | null;
   created_by?: string | null;
 }

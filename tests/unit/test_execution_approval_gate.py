@@ -47,6 +47,7 @@ def _dispatch(prompt: str, **ov):
     d = dict(
         mode="F2V",
         final_prompt_text=prompt,
+        product_id="prod_test_1",
         source_mode="HYBRID",
         model="Veo 3.1 Lite",
         aspect="9:16",
@@ -333,8 +334,9 @@ async def test_ensure_upstream_approved_is_idempotent():
 
 async def test_ensure_upstream_approved_never_approves_dirty_prompt():
     snap = await eas.ensure_upstream_approved_snapshot(
-        **_dispatch("P_upstream leaks prod_dirty_1"), surface="production_queue",
-        provenance="production_queue", product_id="prod_dirty_1",
+        **_dispatch("P_upstream leaks prod_dirty_1", product_id="prod_dirty_1"),
+        surface="production_queue",
+        provenance="production_queue",
     )
     assert snap["approval_state"] != eas.ApprovalState.APPROVED  # fail-closed
 

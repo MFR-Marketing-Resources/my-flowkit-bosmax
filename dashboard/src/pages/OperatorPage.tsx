@@ -1545,10 +1545,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			setIsExecuting(false);
 			setPendingApproval({
 				envelope: {
-					surface: "hybrid",
+					surface: mode === "HYBRID" ? "hybrid" : mode.toLowerCase(),
 					logical_mode: data.mode,
 					final_prompt_text: data.prompt ?? "",
-					product_id: data.product_id ?? null,
+					product_id: data.product_id ?? selectedProduct?.id ?? null,
 					source_mode: data.source_mode ?? resolveSourceMode(mode),
 					model: data.mode === "IMG" ? data.model ?? null : videoModel,
 					image_model: data.image_model ?? null,
