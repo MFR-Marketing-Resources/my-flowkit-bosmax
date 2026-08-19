@@ -32,6 +32,7 @@ Design notes:
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import json
 import os
@@ -90,6 +91,52 @@ def gate_enforced() -> bool:
     return str(os.environ.get("EXECUTION_APPROVAL_GATE_ENFORCED", "")).strip().lower() in {
         "1", "true", "yes", "on",
     }
+
+
+# --------------------------------------------------------------------------- #
+# Exhaustive provider-boundary backstop
+# --------------------------------------------------------------------------- #
+# The dispatch-lane gate (verify_and_bind_dispatch) covers start_generate,
+# Native Extend and Direct Capture. But several low-level provider paths reach a
+# credit-bearing FlowClient method WITHOUT crossing those lanes. The single layer
+# EVERY credit-bearing dispatch crosses is the FlowClient provider method itself,
+# so a thin authorisation backstop sits there and closes every video-credit leak.
+#
+# Authorisation flows implicitly: verify_and_bind_dispatch, on a PASS, marks the
+# CURRENT async context authorised; ``asyncio.create_task`` copies that context,
+# so the downstream FlowClient call inherits it. A legitimate non-lane path may
+# mark itself EXEMPT (documented) instead. When enforcement is OFF the backstop
+# is inert (never blocks).
+
+_DISPATCH_AUTH: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "bosmax_dispatch_authorization", default=None,
+)
+
+
+def current_dispatch_authorization() -> dict | None:
+    return _DISPATCH_AUTH.get()
+
+
+def mark_dispatch_exempt(reason: str) -> None:
+    """Mark the current async context as an intentional, non-approval provider
+    dispatch (assembly/recovery/dev). Documented and auditable; never silent."""
+    _DISPATCH_AUTH.set({"kind": "EXEMPT", "reason": _norm(reason) or "EXEMPT"})
+
+
+def video_dispatch_unauthorized_reason(*, method: str) -> str | None:
+    """Backstop for the FlowClient provider boundary. When
+    EXECUTION_APPROVAL_GATE_ENFORCED, a credit-bearing VIDEO call is refused
+    unless the current async context carries an APPROVED dispatch (from a passed
+    dispatch-lane gate) or an explicit EXEMPT marker. Returns a block-reason
+    string, or None when allowed.
+
+    Non-raising by design: FlowClient._send has a never-raise contract, so it
+    turns this into an ``{"error": ...}`` result. Inert when enforcement is off."""
+    if not gate_enforced():
+        return None
+    if _DISPATCH_AUTH.get():
+        return None
+    return "PROVIDER_DISPATCH_UNAUTHORIZED"
 
 
 # --------------------------------------------------------------------------- #
@@ -413,6 +460,13 @@ async def verify_and_bind_dispatch(
         dispatched_at=now,
         updated_at=now,
     )
+    # Authorise the current async context for the downstream provider-boundary
+    # backstop (copied into the generation task by asyncio.create_task).
+    _DISPATCH_AUTH.set({
+        "kind": "APPROVED",
+        "envelope_sha256": dispatched_env_sha,
+        "snapshot_id": match["snapshot_id"],
+    })
     verdict["reason"] = "APPROVED_ENVELOPE_MATCH"
     return verdict
 

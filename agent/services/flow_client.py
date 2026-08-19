@@ -278,6 +278,21 @@ class FlowClient:
         must check result.get("error") or use _is_ws_error() before reading data.
         Never raises; exceptions are caught and returned as error dicts.
         """
+        # Final Prompt Approval Gate — exhaustive provider-boundary backstop.
+        # captchaAction VIDEO_GENERATION marks exactly the 4 credit-bearing video
+        # methods (generate_video / _from_references / upscale_video /
+        # generate_video_extend); image/chat/concat use another or no action. No
+        # credit-bearing video dispatch may cross this boundary without an
+        # authorised dispatch. Non-raising (honours the never-raise contract),
+        # inert unless EXECUTION_APPROVAL_GATE_ENFORCED.
+        if isinstance(params, dict) and params.get("captchaAction") == "VIDEO_GENERATION":
+            from agent.services import execution_approval_service as _eas
+            _gate_block = _eas.video_dispatch_unauthorized_reason(
+                method=str(params.get("url") or "video_generation"))
+            if _gate_block:
+                return {"error": _gate_block,
+                        "detail": "Credit-bearing video generation blocked: no "
+                                  "authorised dispatch (Final Prompt Approval Gate)."}
         if not self._extension_ws:
             if getattr(self, "_mock_connected", False):
                 req_id = str(uuid.uuid4())
