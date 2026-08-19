@@ -75,14 +75,6 @@ async def create_review(req: ReviewSnapshotRequest) -> dict[str, Any]:
     )
 
 
-@router.get("/{snapshot_id}")
-async def get_snapshot(snapshot_id: str) -> dict[str, Any]:
-    snap = await eas.get_snapshot(snapshot_id)
-    if snap is None:
-        raise HTTPException(status_code=404, detail={"error": "SNAPSHOT_NOT_FOUND"})
-    return snap
-
-
 @router.get("")
 async def list_snapshots(
     product_id: str | None = Query(default=None),
@@ -303,3 +295,13 @@ async def invalidate_manifest(manifest_id: str, req: InvalidateManifestRequest) 
         return await eas.invalidate_manifest(manifest_id, reason=req.reason)
     except eas.ExecutionApprovalError as exc:
         _raise(exc)
+
+
+# Single-segment catch-all — registered LAST so literal paths (/manifest, /prepare)
+# are matched before this snapshot-id fallback.
+@router.get("/{snapshot_id}")
+async def get_snapshot(snapshot_id: str) -> dict[str, Any]:
+    snap = await eas.get_snapshot(snapshot_id)
+    if snap is None:
+        raise HTTPException(status_code=404, detail={"error": "SNAPSHOT_NOT_FOUND"})
+    return snap

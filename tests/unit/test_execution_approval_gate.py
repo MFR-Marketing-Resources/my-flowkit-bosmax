@@ -417,6 +417,35 @@ async def test_start_generate_manifest_resolves_approved_run(monkeypatch):
     assert ok["status"] == "SUBMITTED"
 
 
+async def test_native_extend_requires_approved_manifest_item(monkeypatch):
+    # Corrective GAP 4: native Extend has NO generic exemption. Its continuation
+    # prompt must match a human-APPROVED manifest item by envelope hash (the exact
+    # dispatch shape the extend runtime uses: mode=EXTEND + prompt + model + aspect).
+    monkeypatch.setenv("EXECUTION_APPROVAL_GATE_ENFORCED", "1")
+    eas._DISPATCH_AUTH.set(None)
+    prompt = "P_extend continuation block prompt"
+    ext = dict(mode="EXTEND", final_prompt_text=prompt, model="Veo 3.1 Lite", aspect="9:16")
+
+    # Unapproved -> hard block (no exemption).
+    with pytest.raises(eas.ExecutionApprovalError) as exc:
+        await eas.verify_and_bind_dispatch(**ext)
+    assert exc.value.code == "DISPATCH_NOT_APPROVED"
+
+    # Approve an Extend manifest item, then the exact block resolves + binds.
+    manifest = await eas.create_manifest(
+        surface="native_extend", run_ref="wgp_extend_1",
+        items=[dict(item_key="blk1", mode="EXTEND", final_prompt_text=prompt,
+                    model="Veo 3.1 Lite", aspect="9:16")],
+    )
+    await eas.approve_manifest(manifest["manifest_id"], approved_by="faris")
+    resolved = await eas.resolve_manifest_approved_snapshot(
+        manifest_id=manifest["manifest_id"], **ext,
+    )
+    assert resolved is not None
+    verdict = await eas.verify_and_bind_dispatch(**ext, snapshot_id=resolved["snapshot_id"])
+    assert verdict["pass"] is True
+
+
 async def test_approved_manifest_id_for_run_lookup():
     prompt = "P_run_lookup clean prompt"
     manifest = await eas.create_manifest(
