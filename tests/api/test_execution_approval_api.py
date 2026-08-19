@@ -220,3 +220,25 @@ def test_prepare_video_freezes_provided_prompt():
     assert snap["approval_state"] == "REVIEW_REQUIRED"
     # Video is pass-through (no product grounding): final == provided prompt.
     assert snap["final_prompt_text"] == "PREP_api video passes through unchanged"
+
+
+def test_manifest_fail_closed_on_unresolvable_product_visual(monkeypatch):
+    # PR #816: a product-backed HYBRID/F2V materialize whose canonical product
+    # visual cannot resolve fails CLOSED (never a silent fallback) and surfaces as
+    # a clean 4xx — not a 500. Overrides the autouse success-mock to raise.
+    async def _raise(product_id, slot_key="start_frame"):
+        raise RuntimeError("no canonical visual for " + product_id)
+
+    monkeypatch.setattr(
+        "agent.services.product_visual_grounding_resolver.get_canonical_product_visual_fingerprint",
+        _raise,
+    )
+    client = _client()
+    r = client.post("/api/execution-approval/manifest", json={
+        "surface": "montage", "run_ref": "run_failclosed", "product_id": "prod_novisual",
+        "items": [dict(item_key="s1", mode="F2V", final_prompt_text="a clean scene prompt",
+                       product_id="prod_novisual", source_mode="HYBRID",
+                       model="Veo 3.1 Lite", aspect="9:16", duration_s=8, count=1)],
+    })
+    assert r.status_code == 409, r.text
+    assert "PRODUCT_VISUAL_REFERENCE_REQUIRED" in str(r.json())
