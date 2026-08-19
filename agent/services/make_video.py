@@ -323,7 +323,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          collect_image_variants: bool = False,
                          product_id: str = None, source_mode: str = None,
                          copy_execution_binding: dict | None = None,
-                         upstream_approved_provenance: str | None = None,
+                         manifest_id: str | None = None,
                          asset_fingerprints: list[str] | None = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
@@ -354,33 +354,40 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
         return {"status": "REJECTED", "error": "VIDEO_JOB_IN_FLIGHT",
                 "active_job": _VIDEO_LANE_JOB}
     # Final Prompt Approval Gate (WYSIWYG dispatch verification). Recompute this
-    # dispatch's execution envelope and require a matching APPROVED review
-    # snapshot. Fail-closed ONLY when EXECUTION_APPROVAL_GATE_ENFORCED; otherwise
-    # observe-only (binds a matching approval, never blocks) so the gate ships
-    # inert until the operator approval surfaces are live. Provider-free — this
-    # runs before any job/lane/provider work, so a blocked dispatch spends nothing.
+    # dispatch's execution envelope and require a matching human-APPROVED snapshot.
+    # For a non-UI multi-op run (queue / bulk / scheduler / Montage / Extend) the
+    # caller passes the run's ALREADY human-approved manifest_id; the gate RESOLVES
+    # the approved manifest item whose hash exactly matches — it NEVER manufactures
+    # approval from the dispatch envelope. A UI single dispatch carries its own
+    # explicit approved snapshot (matched by envelope). Fail-closed when
+    # EXECUTION_APPROVAL_GATE_ENFORCED; provider-free — runs before any
+    # job/lane/provider work, so a blocked dispatch spends nothing.
     from agent.services import execution_approval_service as _eas
     try:
-        if upstream_approved_provenance:
-            # Non-UI dispatch firing an ALREADY-APPROVED package/plan (queue / bulk
-            # / scheduler / Extend): materialise its approval snapshot so the
-            # enforced boundary passes — human review happened upstream. Idempotent;
-            # a dirty prompt is never auto-approved (stays fail-closed).
-            await _eas.ensure_upstream_approved_snapshot(
-                mode=mode, final_prompt_text=prompt, surface=upstream_approved_provenance,
-                provenance=upstream_approved_provenance, product_id=product_id,
+        # Canonical Envelope v2 identity (PR #815 server-authoritative fingerprints):
+        # product-backed HYBRID/F2V/IMG bind on the product-visual SHA, manual FRAMES
+        # on explicit assets — so materialise==dispatch parity is exact. A manifest
+        # (multi-op) dispatch passes NO volatile transport media id into the hash
+        # (its run's canonical/empty asset set is what was reviewed, and the resolver
+        # derives the product SHA from product_id when product-backed); a UI single
+        # dispatch freezes its own resolved reference assets.
+        _assets = [] if manifest_id else list(image_media_ids or [])
+        _pinned_snapshot_id = None
+        if manifest_id:
+            _resolved = await _eas.resolve_manifest_approved_snapshot(
+                manifest_id=manifest_id, mode=mode, final_prompt_text=prompt,
                 source_mode=source_mode, model=model, aspect=aspect,
                 duration_s=duration_s, count=num_videos, image_model=image_model,
-                asset_fingerprints=asset_fingerprints,
-                asset_media_ids=list(image_media_ids or []),
+                asset_fingerprints=asset_fingerprints, asset_media_ids=_assets,
+                product_id=product_id,
             )
+            _pinned_snapshot_id = (_resolved or {}).get("snapshot_id")
         await _eas.verify_and_bind_dispatch(
             mode=mode, final_prompt_text=prompt, source_mode=source_mode,
             model=model, aspect=aspect, duration_s=duration_s,
             count=num_videos, image_model=image_model,
-            asset_fingerprints=asset_fingerprints,
-            asset_media_ids=list(image_media_ids or []),
-            product_id=product_id,
+            asset_fingerprints=asset_fingerprints, asset_media_ids=_assets,
+            product_id=product_id, snapshot_id=_pinned_snapshot_id,
         )
     except _eas.ExecutionApprovalError as _gate_err:
         return {"status": "REJECTED", "error": _gate_err.code,

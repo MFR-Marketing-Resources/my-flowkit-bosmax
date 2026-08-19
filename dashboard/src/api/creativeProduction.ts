@@ -475,6 +475,20 @@ export function startProductionPlan(
 	});
 }
 
+// Freeze the plan's per-item final prompts into an Approved Generation Manifest
+// for human WYSIWYG review before live dispatch. ``aspect`` MUST be the same
+// aspect passed to startProductionPlan so each item hash-matches its dispatch.
+export function materializeStudioPlanManifest(
+	planId: string,
+	operatorId: string,
+	aspect: "9:16" | "16:9",
+): Promise<{ manifest_id: string; items: unknown[] }> {
+	return postAPI(
+		`/api/creative-production/plans/${planId}/materialize-approval-manifest`,
+		{ ...planAction(operatorId), aspect },
+	);
+}
+
 export function controlProductionPlan(
 	planId: string,
 	action: "pause" | "resume" | "cancel",

@@ -24,12 +24,14 @@ import {
 	cancelBulkRun,
 	getBulkRun,
 	listBulkRuns,
+	materializeBulkRunManifest,
 	registerBulkAvatarAssets,
 	retryFailedBulkRun,
 	startBulkRun,
 	type BulkRunListEntry,
 	type BulkRunSummary,
 } from "../api/bulkGeneration";
+import { ManifestApprovalModal } from "../components/execution-approval/ManifestApprovalModal";
 import type { Product } from "../types";
 import { useProductCatalog } from "../hooks/useProductCatalog";
 
@@ -414,6 +416,19 @@ export default function AvatarRegistryPage() {
 	const [bulkAllowRegenerate, setBulkAllowRegenerate] = useState(false);
 	const [bulkRunId, setBulkRunId] = useState<string | null>(null);
 	const [bulkRunDetail, setBulkRunDetail] = useState<BulkRunSummary | null>(null);
+	// Final Prompt Approval Gate — a LIVE bulk run first materialises every item's
+	// FINAL prompt into a manifest and requires human WYSIWYG approval; the deferred
+	// live loop runs on approval.
+	const [pendingBulkStart, setPendingBulkStart] = useState<
+		{ manifestId: string; run: () => Promise<void> } | null
+	>(null);
+
+	// Materialise the run's per-item manifest, then defer the actual start until the
+	// operator approves it in the ManifestApprovalModal (the credit-burn gate).
+	const gateBulkStart = async (id: string, run: () => Promise<void>) => {
+		const manifest = await materializeBulkRunManifest(id);
+		setPendingBulkStart({ manifestId: manifest.manifest_id, run });
+	};
 	const [bulkRecentRuns, setBulkRecentRuns] = useState<BulkRunListEntry[]>([]);
 	const [isBulkBusy, setIsBulkBusy] = useState(false);
 
@@ -890,14 +905,16 @@ export default function AvatarRegistryPage() {
 				confirm_credit_burn: true,
 			});
 			setBulkRunId(created.bulk_run_id);
-			await startBulkRun(created.bulk_run_id, { confirm_credit_burn: true });
-			setSuccessMsg(
-				`Bulk run ${created.bulk_run_id.slice(0, 8)}… queued ${created.total_expected} item(s)` +
-					(created.skipped.length ? `, skipped ${created.skipped.length}` : ""),
-			);
-			const detail = await getBulkRun(created.bulk_run_id);
-			setBulkRunDetail(detail);
-			await loadBulkRecentRuns();
+			await gateBulkStart(created.bulk_run_id, async () => {
+				await startBulkRun(created.bulk_run_id, { confirm_credit_burn: true });
+				setSuccessMsg(
+					`Bulk run ${created.bulk_run_id.slice(0, 8)}… queued ${created.total_expected} item(s)` +
+						(created.skipped.length ? `, skipped ${created.skipped.length}` : ""),
+				);
+				const detail = await getBulkRun(created.bulk_run_id);
+				setBulkRunDetail(detail);
+				await loadBulkRecentRuns();
+			});
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Bulk generation failed.");
 		} finally {
@@ -961,17 +978,17 @@ export default function AvatarRegistryPage() {
 
 	const handleBulkStartRun = async () => {
 		if (!bulkRunId) return;
-		const confirmed = window.confirm(
-			"Start / resume this bulk run with live Flow credit burn?",
-		);
-		if (!confirmed) return;
+		// The manifest review (WYSIWYG approval of every item's final prompt) IS the
+		// live credit-burn confirmation — it replaces the old window.confirm.
 		setIsBulkBusy(true);
 		setError(null);
 		try {
-			await startBulkRun(bulkRunId, { confirm_credit_burn: true });
-			const detail = await getBulkRun(bulkRunId);
-			setBulkRunDetail(detail);
-			setSuccessMsg("Bulk run started.");
+			await gateBulkStart(bulkRunId, async () => {
+				await startBulkRun(bulkRunId, { confirm_credit_burn: true });
+				const detail = await getBulkRun(bulkRunId);
+				setBulkRunDetail(detail);
+				setSuccessMsg("Bulk run started.");
+			});
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Start failed.");
 		} finally {
@@ -1169,6 +1186,19 @@ export default function AvatarRegistryPage() {
 
 	return (
 		<div className="flex min-w-0 flex-col gap-6 p-4 md:p-6">
+			{pendingBulkStart && (
+				<ManifestApprovalModal
+					manifestId={pendingBulkStart.manifestId}
+					approvedBy="operator"
+					title="Review every item's final prompt"
+					onApproved={() => {
+						const deferred = pendingBulkStart.run;
+						setPendingBulkStart(null);
+						void deferred();
+					}}
+					onCancel={() => setPendingBulkStart(null)}
+				/>
+			)}
 			<section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5">
 				<a
 					href={backTo}

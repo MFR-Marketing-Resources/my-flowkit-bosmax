@@ -87,6 +87,15 @@ export async function startBulkRun(
 	return postAPI(`${BASE}/${bulkRunId}/start`, opts);
 }
 
+// Freeze the run's per-item FINAL prompts (video packages or avatar images) into an
+// Approved Generation Manifest for human WYSIWYG review BEFORE the live loop spends
+// any credit. Each item then dispatches only by its approved canonical envelope hash.
+export async function materializeBulkRunManifest(
+	bulkRunId: string,
+): Promise<import("./executionApproval").ApprovalManifest> {
+	return postAPI(`${BASE}/runs/${encodeURIComponent(bulkRunId)}/materialize-approval-manifest`, {});
+}
+
 export async function getBulkRun(bulkRunId: string): Promise<BulkRunSummary> {
 	return getAPI<BulkRunSummary>(`${BASE}/${bulkRunId}`);
 }

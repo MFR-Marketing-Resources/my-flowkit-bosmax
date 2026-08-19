@@ -51,6 +51,9 @@ from agent.api.creative_lane_settings import router as creative_lane_settings_ro
 from agent.api.faceless import router as faceless_router
 from agent.api.workspace_generation_packages import router as workspace_generation_packages_router
 from agent.api.production_queue import router as production_queue_router
+from agent.api.production_queue import (
+    materialize_router as production_queue_materialize_router,
+)
 from agent.api.bulk_generation import router as bulk_generation_router
 from agent.api.creative_production import router as creative_production_router
 from agent.api.creative_treatments import router as creative_treatments_router
@@ -59,6 +62,9 @@ from agent.api.social_copy_packages import router as social_copy_packages_router
 from agent.api.results import router as results_router
 from agent.api.prompt_preview import router as prompt_preview_router
 from agent.api.execution_approval import router as execution_approval_router
+from agent.services.execution_approval_service import (
+    ExecutionApprovalError as _ExecutionApprovalError,
+)
 from agent.api.asset_registry import router as asset_registry_router
 from agent.api.creative_assets import (
     eligibility_router as creative_asset_eligibility_router,
@@ -341,6 +347,21 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Flow Kit", version="0.2.0", lifespan=lifespan)
+
+
+@app.exception_handler(_ExecutionApprovalError)
+async def _execution_approval_error_handler(_request, exc: "_ExecutionApprovalError"):
+    """Fail-closed approval errors surface with their intended status code — not a
+    500. Covers PRODUCT_VISUAL_REFERENCE_REQUIRED (canonical resolver fail-closed,
+    PR #816), MANIFEST_SCAN_NOT_CLEAN, and any other approval error raised from a
+    materialize / manifest endpoint that does not catch it explicitly."""
+    from fastapi.responses import JSONResponse as _JSONResp
+    return _JSONResp(
+        status_code=exc.status_code,
+        content={"error": exc.code, "message": exc.message, "details": exc.details},
+    )
+
+
 app.include_router(product_treatment_factory_router, prefix="/api")
 app.include_router(product_readiness_router, prefix="/api")
 
@@ -368,6 +389,7 @@ app.include_router(creative_lane_settings_router, prefix="/api")
 app.include_router(faceless_router, prefix="/api")
 app.include_router(workspace_generation_packages_router, prefix="/api")
 app.include_router(production_queue_router, prefix="/api")
+app.include_router(production_queue_materialize_router, prefix="/api")
 app.include_router(bulk_generation_router, prefix="/api")
 app.include_router(creative_production_router, prefix="/api")
 app.include_router(creative_treatments_router, prefix="/api")

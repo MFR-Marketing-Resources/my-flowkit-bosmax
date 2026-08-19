@@ -790,11 +790,19 @@ class GenerateRequest(BaseModel):
     image_model: Optional[str] = None          # IMG image model key/ui_label; default Nano Banana Pro
     duration_s: Optional[int] = None           # default = the model's default duration
     count: int = 1                             # USER count setting (1-4): negotiate AND retrieve N videos
-    # Non-UI callers (Montage / scheduler) firing an ALREADY-authorized run set
-    # this so the enforced Final Prompt Approval boundary materialises the upstream
-    # approval snapshot instead of blocking. UI callers leave it None — they create
-    # their own explicit review snapshot before dispatch.
-    upstream_approved_provenance: Optional[str] = None
+    # Non-UI callers (Montage / bulk / queue / scheduler) firing an ALREADY
+    # human-approved multi-op run set this to the run's APPROVED Generation
+    # Manifest id. The dispatch boundary RESOLVES the approved manifest item whose
+    # execution-envelope hash matches — it never manufactures approval. UI callers
+    # leave it None; they create + approve their own explicit review snapshot.
+    manifest_id: Optional[str] = None
+    manifest_item_key: Optional[str] = None
+    # IMG WYSIWYG: when true, ``prompt`` is the human-APPROVED final provider-ready
+    # prompt (product-truth grounding already applied server-side during review via
+    # /api/execution-approval/prepare). The IMG gate still resolves product assets
+    # but does NOT re-ground the prompt — what the operator approved is dispatched
+    # EXACT (contract: no post-approval grounding rewrite).
+    final_prompt_pre_approved: bool = False
     refs: Optional[dict] = None
     startAsset: Optional[dict] = None
     endAsset: Optional[dict] = None             # optional F2V end frame
@@ -1481,6 +1489,11 @@ async def generate(body: GenerateRequest):
             reference_pack_id=body.reference_pack_id,
             creative_mode=body.creative_mode,
         )
+        if body.final_prompt_pre_approved:
+            # The prompt was grounded server-side BEFORE human review (/prepare) and
+            # approved. Keep asset resolution above, but dispatch the approved text
+            # VERBATIM — never re-ground an approved prompt (no post-approval rewrite).
+            generation_prompt = body.prompt
         if not exact_img:
             # Product-aware IMG lanes accept typed refs only.  A legacy
             # startAsset is untyped transport and could be the old catalog
@@ -1592,7 +1605,7 @@ async def generate(body: GenerateRequest):
                 consumer_context=body.copy_v2_context
             ) if v2_resolution and v2_resolution.v2_enabled else None
         ),
-        upstream_approved_provenance=body.upstream_approved_provenance,
+        manifest_id=body.manifest_id,
     )
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)
@@ -1928,6 +1941,32 @@ def _native_extend_chain_request(body: ExtendRunRequest, runtime):
         aspect_ratio=body.aspect_ratio,
         workspace_generation_package_id=body.workspace_generation_package_id,
         seed=body.seed, user_paygate_tier=body.user_paygate_tier)
+
+
+@router.post("/native-extend/materialize-approval-manifest")
+async def native_extend_materialize_approval_manifest(body: ExtendRunRequest):
+    """Freeze the per-block continuation prompts of a native Extend chain into an
+    Approved Generation Manifest (run_ref = the package id — the key each block
+    dispatch resolves against). The operator reviews + approves before /extend-run;
+    each block then matches its approved item by envelope hash (GAP 4 — no generic
+    Extend exemption). Provider-free: nothing is planned, submitted, or spent."""
+    from agent.services import execution_approval_service as _eas
+    from agent.services import google_flow_native_extend_runtime as _nx
+
+    chain_req = _native_extend_chain_request(body, _nx)
+    try:
+        derived = _nx.build_extend_manifest_items(chain_req)
+    except _nx.NativeExtendError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not derived["items"]:
+        raise HTTPException(422, "EXTEND_NO_BLOCKS")
+    return await _eas.create_manifest(
+        surface="native_extend",
+        run_ref=derived["run_ref"],
+        logical_mode="EXTEND",
+        items=derived["items"],
+        created_by="operator",
+    )
 
 
 @router.post("/native-extend/live-authorization")

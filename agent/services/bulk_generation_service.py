@@ -585,13 +585,18 @@ async def _process_avatar_image_item(run_id: str, item: dict, config: dict) -> N
         count = int(payload.get("count") or config.get("count") or 1)
         image_model = payload.get("image_model") or config.get("image_model")
 
+        from agent.services import execution_approval_service as _eas
+        # IMG still requires human approval (credit-free != approval-optional):
+        # resolve this item against the run's approved manifest by envelope hash.
+        _manifest_id = await _eas.approved_manifest_id_for_run(run_id, surface="bulk")
+
         result = await make_video.start_generate(
             "IMG",
             identity["prompt"],
             aspect=aspect,
             num_videos=count,
             image_model=image_model,
-            upstream_approved_provenance="bulk_avatar_image",
+            manifest_id=_manifest_id,
         )
         if result.get("status") == "REJECTED":
             raise RuntimeError(result.get("error") or "REJECTED")
@@ -673,7 +678,9 @@ _VIDEO_INFLIGHT_RETRY_SECONDS = 30
 _VIDEO_INFLIGHT_MAX_RETRIES = 20
 
 
-async def _fire_video_payload(payload: dict, wgp_id: str) -> dict:
+async def _fire_video_payload(
+    payload: dict, wgp_id: str, *, manifest_id: str | None = None,
+) -> dict:
     """Serial video lane: honour VIDEO_JOB_IN_FLIGHT retries like production queue."""
     attempts = 0
     while True:
@@ -685,7 +692,7 @@ async def _fire_video_payload(payload: dict, wgp_id: str) -> dict:
             model=payload.get("model"),
             duration_s=payload.get("duration_s"),
             num_videos=payload.get("num_videos") or 1,
-            upstream_approved_provenance="bulk_video",
+            manifest_id=manifest_id,
         )
         if result.get("status") == "REJECTED" and result.get("error") == "VIDEO_JOB_IN_FLIGHT":
             attempts += 1
@@ -758,6 +765,12 @@ async def _live_video_loop(run_id: str) -> None:
     cooldown_sec = int(run.get("cooldown_seconds") or 60)
     jobs_since_cooldown = 0
 
+    from agent.services import execution_approval_service as _eas
+    # Run's human-approved Generation Manifest (materialised + approved before the
+    # live loop starts). Each video item resolves its approved item by envelope
+    # hash; no approved manifest -> enforced gate blocks (never auto-approved).
+    _manifest_id = await _eas.approved_manifest_id_for_run(run_id, surface="bulk")
+
     try:
         while True:
             if _run_control.get(run_id) == "CANCEL":
@@ -791,7 +804,7 @@ async def _live_video_loop(run_id: str) -> None:
                 if blockers:
                     raise RuntimeError(",".join(blockers))
 
-                outcome = await _fire_video_payload(payload, wgp_id)
+                outcome = await _fire_video_payload(payload, wgp_id, manifest_id=_manifest_id)
                 if not outcome.get("ok"):
                     raise RuntimeError(outcome.get("error") or "VIDEO_FAILED")
 

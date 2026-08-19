@@ -3,17 +3,27 @@ import {
   approveSnapshot,
   createReviewSnapshot,
   editSnapshot,
+  prepareDispatch,
 } from "../../api/executionApproval";
 import type {
   ExecutionApprovalSnapshot,
+  PrepareDispatchRequest,
   ReviewEnvelope,
 } from "../../api/executionApproval";
 
 export interface FinalPromptApprovalModalProps {
   /** The provider-ready envelope to review. Mirror EXACTLY what the surface will
-   * dispatch (same prompt + settings + resolved asset ids). The parent renders
-   * this modal only when a review is pending, with a stable envelope. */
-  envelope: ReviewEnvelope;
+   * dispatch (same prompt + settings + resolved asset ids). Use this for
+   * pass-through prompts (video). The parent renders this modal only when a
+   * review is pending, with a stable envelope. */
+  envelope?: ReviewEnvelope;
+  /** Server-grounded review: the backend compiles the FINAL provider-ready prompt
+   * (product-truth grounding for IMG happens BEFORE review) and freezes the
+   * snapshot. Use this for any surface whose prompt is grounded/compiled
+   * server-side (IMG / Poster Builder) — the operator then reviews the GROUNDED
+   * prompt, never the raw one. Provide exactly one of ``envelope`` /
+   * ``prepareRequest``. */
+  prepareRequest?: PrepareDispatchRequest;
   approvedBy: string;
   /** Called with the APPROVED snapshot. The parent then dispatches using
    * ``snapshot.final_prompt_text`` (which reflects any edit) so the dispatch
@@ -29,6 +39,7 @@ export interface FinalPromptApprovalModalProps {
  */
 export function FinalPromptApprovalModal({
   envelope,
+  prepareRequest,
   approvedBy,
   onApproved,
   onCancel,
@@ -43,7 +54,12 @@ export function FinalPromptApprovalModal({
     let cancelled = false;
     setBusy(true);
     setError(null);
-    createReviewSnapshot(envelope)
+    // Server-grounded (IMG) vs client pass-through (video). Grounding runs BEFORE
+    // review so the operator always approves the FINAL provider-ready prompt.
+    const pending = prepareRequest
+      ? prepareDispatch(prepareRequest)
+      : createReviewSnapshot(envelope as ReviewEnvelope);
+    pending
       .then((snap) => {
         if (cancelled) return;
         setSnapshot(snap);
@@ -59,7 +75,7 @@ export function FinalPromptApprovalModal({
     return () => {
       cancelled = true;
     };
-  }, [envelope]);
+  }, [envelope, prepareRequest]);
 
   const scanClean = snapshot?.scan_clean === 1;
   const canApprove = !busy && snapshot !== null && (dirty || scanClean);

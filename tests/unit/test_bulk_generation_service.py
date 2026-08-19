@@ -319,7 +319,7 @@ async def test_live_video_loop_uses_build_execution_payload(monkeypatch):
             [],
         )
 
-    async def fake_fire(payload, wgp_id):
+    async def fake_fire(payload, wgp_id, *, manifest_id=None):
         calls.append(("fire", wgp_id))
         return {"ok": True, "job_id": "j1", "media_id": "m1", "local_path": "/tmp/v.mp4"}
 

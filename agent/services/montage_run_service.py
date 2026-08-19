@@ -421,6 +421,53 @@ async def estimate_montage_run_generation(run_id: str) -> dict[str, Any]:
     return est
 
 
+async def build_montage_manifest_items(run_id: str) -> dict[str, Any]:
+    """Derive the per-scene Approved Generation Manifest items with the SAME
+    derivation the authorize-generation run loop uses (mode / prompt / model /
+    duration / product), so each approved item's execution-envelope hash matches
+    the scene's dispatch EXACTLY. A montage dispatch binds on the stable envelope
+    (prompt + settings + product); the volatile per-session Flow media id never
+    enters the hash (see make_video.start_generate manifest asset rule).
+    Provider-free — no scene is generated here."""
+    estimate = await estimate_montage_run_generation(run_id)
+    state = await get_montage_discrete_run(run_id)
+    cfg = state.get("config") or {}
+    product_id = str(cfg.get("product_id") or state.get("product_id") or "").strip() or None
+    model, duration_s = _resolve_montage_single_settings(
+        cfg.get("model"), cfg.get("duration_seconds")
+    )
+    items: list[dict[str, Any]] = []
+    for scene in estimate["pending_scenes"]:
+        scene_id = str(scene.get("scene_id") or "")
+        mode = str(scene.get("transport_mode") or "F2V")
+        prompt = str(
+            scene.get("package_prompt")
+            or scene.get("detail")
+            or f"Montage scene {scene_id}"
+        )
+        items.append({
+            "item_key": scene_id,
+            "mode": mode,
+            "final_prompt_text": prompt,
+            "product_id": product_id,
+            # Preserve the scene's source lineage (e.g. FRAMES for a mascot
+            # start-frame scene) — the run loop threads scene.source_mode into the
+            # dispatch, so the frozen item must carry it too or the canonical
+            # envelope SHA won't match (FRAMES locks explicit assets; non-FRAMES
+            # product-backed resolves the product-visual SHA).
+            "source_mode": scene.get("source_mode"),
+            "model": model,
+            "aspect": "9:16",
+            "duration_s": duration_s,
+            "count": 1,
+        })
+    return {
+        "product_id": product_id,
+        "items": items,
+        "pending_scene_count": len(items),
+    }
+
+
 async def authorize_montage_run_generation(
     run_id: str,
     *,

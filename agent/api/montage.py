@@ -30,6 +30,7 @@ from agent.services.montage_run_service import (
     assemble_from_montage_run,
     authorize_montage_run_generation,
     bind_montage_scene_result,
+    build_montage_manifest_items,
     create_montage_discrete_run,
     estimate_montage_run_generation,
     get_montage_discrete_run,
@@ -710,6 +711,32 @@ async def montage_run_generation_estimate(run_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.post("/runs/{run_id}/materialize-approval-manifest")
+async def montage_materialize_approval_manifest(
+    run_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """M-04a: freeze the run's per-scene FINAL prompts into an Approved Generation
+    Manifest for human WYSIWYG review. The operator reviews/edits each scene's
+    prompt, then approves the manifest; authorize-generation then resolves each
+    scene's approved item by envelope hash. Provider-free — nothing generates."""
+    from agent.services import execution_approval_service as _eas
+
+    derived = await build_montage_manifest_items(run_id)
+    if not derived["items"]:
+        raise HTTPException(422, "ERR_MONTAGE_NO_PENDING_SCENES")
+    created_by = request.headers.get("x-operator-id") or "operator"
+    manifest = await _eas.create_manifest(
+        surface="montage",
+        run_ref=run_id,
+        product_id=derived["product_id"],
+        logical_mode="F2V",
+        items=derived["items"],
+        created_by=created_by,
+    )
+    return manifest
+
+
 @router.post("/runs/{run_id}/authorize-generation")
 async def montage_authorize_generation(
     run_id: str,
@@ -726,6 +753,16 @@ async def montage_authorize_generation(
     if not body.dry_run:
         from agent.api.flow import GenerateRequest
         from agent.api.flow import generate as flow_generate
+        from agent.services import execution_approval_service as _eas
+
+        # Human-approved Generation Manifest for this run (materialised + approved
+        # via the manifest review UI before authorize-generation). Each scene
+        # dispatch resolves its approved item by envelope hash; if the run has no
+        # approved manifest, the enforced gate blocks every scene (fail-closed —
+        # never auto-approved from provenance).
+        _run_manifest_id = await _eas.approved_manifest_id_for_run(
+            run_id, surface="montage",
+        )
 
         async def generate_fn(**kwargs: Any) -> dict[str, Any]:
             """Canonical GenerateRequest one-door — single body arg only (MON-02)."""
@@ -756,10 +793,10 @@ async def montage_authorize_generation(
                 engine="GOOGLE_FLOW",
                 startAsset=start_asset if isinstance(start_asset, dict) else None,
                 image_media_ids=image_media_ids or None,
-                # Montage scenes fire an operator-authorized run (confirm_credit_burn);
-                # materialise the upstream approval so the enforced gate never blocks
-                # a legitimately-authorized montage generation.
-                upstream_approved_provenance="montage",
+                # Resolve THIS scene against the run's human-approved manifest item
+                # (by envelope hash). No provenance string manufactures approval.
+                manifest_id=_run_manifest_id,
+                manifest_item_key=str(kwargs.get("scene_id") or "") or None,
             )
             result = await flow_generate(gen_body)
             if isinstance(result, dict):
