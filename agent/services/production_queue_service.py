@@ -1770,6 +1770,7 @@ async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
             model=runtime_payload.get("model"),
             duration_s=runtime_payload.get("duration_s"),
             num_videos=runtime_payload.get("num_videos") or 1,
+            upstream_approved_provenance="production_queue",
         )
         if result.get("status") == "REJECTED" and result.get("error") == "VIDEO_JOB_IN_FLIGHT":
             attempts += 1

@@ -322,7 +322,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          max_image_attempts: int = 8,
                          collect_image_variants: bool = False,
                          product_id: str = None, source_mode: str = None,
-                         copy_execution_binding: dict | None = None) -> dict:
+                         copy_execution_binding: dict | None = None,
+                         upstream_approved_provenance: str | None = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all.
@@ -351,6 +352,35 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     if mode in _VIDEO_MODES and _VIDEO_LANE_JOB and _job_active(_VIDEO_LANE_JOB):
         return {"status": "REJECTED", "error": "VIDEO_JOB_IN_FLIGHT",
                 "active_job": _VIDEO_LANE_JOB}
+    # Final Prompt Approval Gate (WYSIWYG dispatch verification). Recompute this
+    # dispatch's execution envelope and require a matching APPROVED review
+    # snapshot. Fail-closed ONLY when EXECUTION_APPROVAL_GATE_ENFORCED; otherwise
+    # observe-only (binds a matching approval, never blocks) so the gate ships
+    # inert until the operator approval surfaces are live. Provider-free — this
+    # runs before any job/lane/provider work, so a blocked dispatch spends nothing.
+    from agent.services import execution_approval_service as _eas
+    try:
+        if upstream_approved_provenance:
+            # Non-UI dispatch firing an ALREADY-APPROVED package/plan (queue / bulk
+            # / scheduler / Extend): materialise its approval snapshot so the
+            # enforced boundary passes — human review happened upstream. Idempotent;
+            # a dirty prompt is never auto-approved (stays fail-closed).
+            await _eas.ensure_upstream_approved_snapshot(
+                mode=mode, final_prompt_text=prompt, surface=upstream_approved_provenance,
+                provenance=upstream_approved_provenance, product_id=product_id,
+                source_mode=source_mode, model=model, aspect=aspect,
+                duration_s=duration_s, count=num_videos, image_model=image_model,
+                asset_media_ids=list(image_media_ids or []),
+            )
+        await _eas.verify_and_bind_dispatch(
+            mode=mode, final_prompt_text=prompt, source_mode=source_mode,
+            model=model, aspect=aspect, duration_s=duration_s,
+            count=num_videos, image_model=image_model,
+            asset_media_ids=list(image_media_ids or []),
+        )
+    except _eas.ExecutionApprovalError as _gate_err:
+        return {"status": "REJECTED", "error": _gate_err.code,
+                "detail": _gate_err.message, "approval": _gate_err.details}
     job_id = "g_" + uuid4().hex[:12]
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "mode": mode,
                      "stage": "queued", "project_id": project_id, "local_path": None,

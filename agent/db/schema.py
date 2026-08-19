@@ -5336,6 +5336,43 @@ CREATE TABLE IF NOT EXISTS creative_output_qa (
     UNIQUE(item_id, attempt_id, artifact_media_id)
 );
 
+CREATE TABLE IF NOT EXISTS execution_approval_snapshot (
+    snapshot_id                          TEXT PRIMARY KEY,
+    review_session_id                    TEXT NOT NULL,
+    product_id                           TEXT,
+    surface                              TEXT NOT NULL DEFAULT '',
+    logical_mode                         TEXT NOT NULL,
+    source_mode                          TEXT,
+    final_prompt_text                    TEXT NOT NULL,
+    prompt_sha256                        TEXT NOT NULL,
+    execution_envelope_json              TEXT NOT NULL DEFAULT '{}',
+    execution_envelope_sha256            TEXT NOT NULL,
+    approval_state                       TEXT NOT NULL DEFAULT 'REVIEW_REQUIRED'
+                                         CHECK(approval_state IN (
+                                             'REVIEW_REQUIRED','EDITED','APPROVED',
+                                             'INVALIDATED','DISPATCHED'
+                                         )),
+    edited                               INTEGER NOT NULL DEFAULT 0 CHECK(edited IN (0,1)),
+    scan_clean                           INTEGER NOT NULL DEFAULT 0 CHECK(scan_clean IN (0,1)),
+    scan_json                            TEXT NOT NULL DEFAULT '{}',
+    approved_version                     INTEGER NOT NULL DEFAULT 0 CHECK(approved_version >= 0),
+    approved_by                          TEXT,
+    approved_at                          TEXT,
+    approved_prompt_sha256               TEXT,
+    approved_execution_envelope_sha256   TEXT,
+    invalidation_reason                  TEXT,
+    dispatched_prompt_sha256             TEXT,
+    dispatched_execution_envelope_sha256 TEXT,
+    provider_job_id                      TEXT,
+    dispatched_at                        TEXT,
+    created_by                           TEXT,
+    created_at                           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_approval_envelope
+    ON execution_approval_snapshot(approved_execution_envelope_sha256, approval_state);
+
 CREATE TABLE IF NOT EXISTS creative_production_audit_event (
     event_id                   TEXT PRIMARY KEY,
     plan_id                    TEXT NOT NULL REFERENCES creative_production_plan(plan_id) ON DELETE CASCADE,

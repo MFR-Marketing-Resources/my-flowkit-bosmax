@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { fetchAPI } from "../api/client";
+import { FinalPromptApprovalModal } from "../components/execution-approval/FinalPromptApprovalModal";
+import type { ReviewEnvelope } from "../api/executionApproval";
 import {
 	bindingFallbackGenerateAsset,
 	generateAssetHasTransport,
@@ -1232,7 +1234,12 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// IMG now flows through the SAME unified one-door /generate (mode:"IMG") + pollJob as the
 	// video lanes — it saves to disk and returns a job (the legacy /generate-image-oneshot
 	// endpoint is kept server-side but no longer called from the dashboard).
-	const handleExecute = async (data: WorkspaceExecutePayload) => {
+	const [pendingApproval, setPendingApproval] = useState<{
+		envelope: ReviewEnvelope;
+		data: WorkspaceExecutePayload;
+	} | null>(null);
+
+	const handleExecute = async (data: WorkspaceExecutePayload, approved = false) => {
 		if (backendRuntimeStale) {
 			setNotice({
 				tone: "warning",
@@ -1529,6 +1536,31 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			data.aspectRatio === "16:9" || data.orientation === "HORIZONTAL"
 				? "16:9"
 				: "9:16";
+		// Final Prompt Approval Gate: the operator reviews (and may edit) the exact
+		// provider-ready prompt before any credit is spent. On the first pass, open
+		// the review modal and stop; the modal re-invokes handleExecute(..., true)
+		// with the APPROVED prompt so the dispatch matches the approved envelope.
+		if (!approved) {
+			executionInFlightRef.current = false;
+			setIsExecuting(false);
+			setPendingApproval({
+				envelope: {
+					surface: "hybrid",
+					logical_mode: data.mode,
+					final_prompt_text: data.prompt ?? "",
+					product_id: data.product_id ?? null,
+					source_mode: data.source_mode ?? resolveSourceMode(mode),
+					model: data.mode === "IMG" ? data.model ?? null : videoModel,
+					image_model: data.image_model ?? null,
+					aspect,
+					duration_s: data.mode === "IMG" ? null : videoDurationSeconds,
+					count: 1,
+					asset_media_ids: refs,
+				},
+				data,
+			});
+			return;
+		}
 		const isGfv2RuntimeLane =
 			data.mode === "F2V" &&
 			(data.gfv2 === true ||
@@ -3097,6 +3129,18 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			data-mode={mode}
 			className="flex h-full flex-col bg-slate-950 px-4 py-4 md:px-8 md:py-8"
 		>
+			{pendingApproval && (
+				<FinalPromptApprovalModal
+					envelope={pendingApproval.envelope}
+					approvedBy="operator"
+					onApproved={(snap) => {
+						const d = pendingApproval.data;
+						setPendingApproval(null);
+						void handleExecute({ ...d, prompt: snap.final_prompt_text }, true);
+					}}
+					onCancel={() => setPendingApproval(null)}
+				/>
+			)}
 			<div className="mb-6 flex flex-col gap-4 lg:mb-8 lg:flex-row lg:items-center lg:justify-between">
 				<div>
 					<h2 className="text-xl font-bold tracking-tight text-white md:text-2xl">
