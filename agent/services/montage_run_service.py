@@ -450,6 +450,12 @@ async def build_montage_manifest_items(run_id: str) -> dict[str, Any]:
             "mode": mode,
             "final_prompt_text": prompt,
             "product_id": product_id,
+            # Preserve the scene's source lineage (e.g. FRAMES for a mascot
+            # start-frame scene) — the run loop threads scene.source_mode into the
+            # dispatch, so the frozen item must carry it too or the canonical
+            # envelope SHA won't match (FRAMES locks explicit assets; non-FRAMES
+            # product-backed resolves the product-visual SHA).
+            "source_mode": scene.get("source_mode"),
             "model": model,
             "aspect": "9:16",
             "duration_s": duration_s,

@@ -496,6 +496,45 @@ async def test_native_extend_materialize_hash_matches_dispatch(monkeypatch):
     assert verdict["pass"] is True
 
 
+async def test_montage_mascot_frames_manifest_parity(monkeypatch):
+    # Mascot montage threads source_mode=FRAMES into the dispatch; the materialised
+    # manifest item must carry it too or the canonical Envelope v2 SHA won't match.
+    # A manifest dispatch passes asset_media_ids=[] (no volatile media id), so both
+    # the item (no assets) and the dispatch ([]) resolve to the same canonical set.
+    monkeypatch.setenv("EXECUTION_APPROVAL_GATE_ENFORCED", "1")
+    eas._DISPATCH_AUTH.set(None)
+    prompt = "P_montage_mascot start-frame scene prompt"
+    manifest = await eas.create_manifest(
+        surface="montage", run_ref="run_mascot_1", product_id="prod_mascot_1",
+        items=[dict(item_key="scene_1", mode="F2V", final_prompt_text=prompt,
+                    product_id="prod_mascot_1", source_mode="FRAMES",
+                    model="Veo 3.1 Lite", aspect="9:16", duration_s=8, count=1)],
+    )
+    await eas.approve_manifest(manifest["manifest_id"], approved_by="faris")
+    # Dispatch shape a montage mascot scene hands make_video (manifest -> assets=[]).
+    resolved = await eas.resolve_manifest_approved_snapshot(
+        manifest_id=await eas.approved_manifest_id_for_run(
+            "run_mascot_1", surface="montage"),
+        mode="F2V", final_prompt_text=prompt, source_mode="FRAMES",
+        model="Veo 3.1 Lite", aspect="9:16", duration_s=8, count=1,
+        product_id="prod_mascot_1", asset_media_ids=[],
+    )
+    assert resolved is not None
+    verdict = await eas.verify_and_bind_dispatch(
+        mode="F2V", final_prompt_text=prompt, source_mode="FRAMES",
+        model="Veo 3.1 Lite", aspect="9:16", duration_s=8, count=1,
+        product_id="prod_mascot_1", asset_media_ids=[],
+        snapshot_id=resolved["snapshot_id"],
+    )
+    assert verdict["pass"] is True
+    # A source_mode drift (FRAMES vs HYBRID) must NOT resolve — canonical identity.
+    assert await eas.resolve_manifest_approved_snapshot(
+        manifest_id=manifest["manifest_id"], mode="F2V", final_prompt_text=prompt,
+        source_mode="HYBRID", model="Veo 3.1 Lite", aspect="9:16", duration_s=8,
+        count=1, product_id="prod_mascot_1", asset_media_ids=[],
+    ) is None
+
+
 async def test_approved_manifest_id_for_run_lookup():
     prompt = "P_run_lookup clean prompt"
     manifest = await eas.create_manifest(
