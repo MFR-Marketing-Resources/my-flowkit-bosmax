@@ -842,6 +842,49 @@ def build_official_product_visual_asset(
     }
 
 
+def canonical_product_visual_approval_fingerprint(
+    product: dict[str, Any],
+    slot_key: str = "start_frame",
+) -> str:
+    """Return the server-authoritative canonical product visual fingerprint for
+    Final Prompt Approval Gate (envelope v2).
+
+    Format: PRODUCT_VISUAL|<product_id>|<slot_key>|<full_sha256>
+    Binds the exact byte content of the official product visual. If the visual
+    changes, the full SHA256 changes and any prior approval fails closed.
+    """
+    product_id = str(product.get("id") or product.get("product_id") or "").strip()
+    if not product_id:
+        raise ProductVisualReferenceRequiredError(
+            "PRODUCT_VISUAL_REFERENCE_REQUIRED: Product id is missing."
+        )
+    ref = resolve_official_product_reference_image(product)
+    if not ref or not ref.sha256:
+        raise ProductVisualReferenceRequiredError(
+            "PRODUCT_VISUAL_REFERENCE_REQUIRED: Official visual SHA is missing."
+        )
+    return f"PRODUCT_VISUAL|{product_id}|{slot_key}|{ref.sha256}"
+
+
+async def get_canonical_product_visual_fingerprint(
+    product_or_id: dict[str, Any] | str,
+    slot_key: str = "start_frame",
+) -> str:
+    """Async convenience helper to resolve canonical product visual fingerprint
+    from either a product dict or a product_id string."""
+    if isinstance(product_or_id, str):
+        product_id = product_or_id.strip()
+        from agent.db import crud
+
+        product = await crud.get_product(product_id)
+        if not product:
+            raise ProductVisualReferenceRequiredError(f"PRODUCT_NOT_FOUND: {product_id}")
+    else:
+        product = product_or_id
+    return canonical_product_visual_approval_fingerprint(product, slot_key=slot_key)
+
+
+
 def resolve_generation_strategy(
     lane_id: str | None = None,
     product_id: str | None = None,

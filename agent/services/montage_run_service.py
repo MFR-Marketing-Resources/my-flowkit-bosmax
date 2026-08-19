@@ -15,6 +15,8 @@ from typing import Any, Awaitable, Callable, Optional, Sequence
 
 from agent.db import crud
 from agent.services.montage_assembly_readiness import (
+    BLOCKED_INCOMPLETE_SCENE_SET,
+    MontageAssemblyError,
     MontageSceneReadiness,
     assess_montage_assembly_readiness,
 )
@@ -88,6 +90,11 @@ async def create_montage_discrete_run(
     model: str | None = None,
     duration_seconds: int | None = None,
     copy_v2_context: dict[str, Any] | None = None,
+    mascot_start_asset: Optional[dict[str, Any]] = None,
+    mascot_scene_context: Optional[str] = None,
+    mascot_block_count: Optional[int] = None,
+    mascot_atomic_seconds: Optional[int] = None,
+    mascot_has_dialogue: bool = True,
 ) -> dict[str, Any]:
     """Orchestrate packages and persist a durable run + per-scene jobs."""
     pid = str(product_id or "").strip()
@@ -133,6 +140,11 @@ async def create_montage_discrete_run(
         model=model_label,
         duration_seconds=dur,
         copy_v2_context=copy_v2_context,
+        mascot_start_asset=mascot_start_asset,
+        mascot_scene_context=mascot_scene_context,
+        mascot_block_count=mascot_block_count,
+        mascot_atomic_seconds=mascot_atomic_seconds,
+        mascot_has_dialogue=mascot_has_dialogue,
     )
 
     run_id = str(uuid.uuid4())
@@ -609,6 +621,11 @@ async def authorize_montage_run_generation(
             gen = await generate_fn(
                 product_id=product_id,
                 mode=mode,
+                # Preserve the scene's source lineage (e.g. FRAMES for a mascot
+                # start-frame scene) so the flow product-visual gate applies its
+                # existing FRAMES exemption instead of overwriting the operator
+                # start asset with the Official Product Visual.
+                source_mode=scene.get("source_mode"),
                 workspace_execution_package_id=scene.get(
                     "workspace_execution_package_id"
                 ),
@@ -823,6 +840,60 @@ async def readiness_from_montage_run(run_id: str) -> dict[str, Any]:
     }
 
 
+async def _finalize_single_block_montage_run(
+    run_id: str,
+    scenes: list["MontageSceneReadiness"],
+    cfg: dict[str, Any],
+    *,
+    job_id: Optional[str],
+    dry_run: bool,
+) -> dict[str, Any]:
+    """8s / 10s Mascot Montage finalization WITHOUT provider concat.
+
+    A single-block final video has exactly one scene, and the concat boundary
+    requires >= 2 clips. So the single finished clip IS the final deliverable:
+    promote it as the run's final artifact via the existing generated_artifact
+    mechanism — zero extra provider operation.
+    """
+    report = assess_montage_assembly_readiness(scenes)
+    if not report.ok:
+        raise MontageAssemblyError(
+            getattr(report, "code", None) or BLOCKED_INCOMPLETE_SCENE_SET,
+            getattr(report, "detail", "") or "single-block montage clip not ready",
+            blockers=report.blockers,
+        )
+    clip_media_id = (report.clip_media_ids or [None])[0]
+    if not clip_media_id:
+        raise MontageAssemblyError(
+            BLOCKED_INCOMPLETE_SCENE_SET,
+            "single-block montage has no finished clip to promote",
+            blockers=[{"error_code": "ERR_MONTAGE_MISSING_SCENE_CLIP"}],
+        )
+    effective_job = job_id or f"montage-run-{run_id[:8]}"
+    payload: dict[str, Any] = {
+        "ok": True,
+        "assembly_path": "SINGLE_FINALIZE",
+        "montage_run_id": run_id,
+        "final_media_id": clip_media_id,
+        "segment_count": 1,
+        "requested_seconds": int(cfg.get("duration_seconds") or 0),
+        "concat": {"status": "SINGLE_CLIP_PROMOTED", "invoked": False},
+        "credit_spend": False,
+        "dry_run": bool(dry_run),
+    }
+    if not dry_run:
+        await crud.insert_generated_artifact(
+            clip_media_id,
+            job_id=effective_job,
+            mode="MONTAGE",
+            artifact_kind="video",
+            model_used=cfg.get("model"),
+            duration_used=cfg.get("duration_seconds"),
+        )
+        payload["concat"]["status"] = "COMPLETE"
+    return payload
+
+
 async def assemble_from_montage_run(
     run_id: str,
     *,
@@ -830,7 +901,11 @@ async def assemble_from_montage_run(
     dry_run: bool = True,
     job_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    """M-03 path from durable run: readiness → gated concat."""
+    """M-03 path from durable run: readiness → gated concat.
+
+    Single-block (8s/10s) runs finalize the one clip WITHOUT concat; multi-block
+    (16/20/24/30) runs go through discrete readiness + concat.
+    """
     state = await get_montage_discrete_run(run_id)
     cfg = state.get("config") or {}
     model, duration_s = _resolve_montage_single_settings(
@@ -843,6 +918,12 @@ async def assemble_from_montage_run(
     scene_count = len(scenes)
     if scene_count <= 0:
         raise ValueError("ERR_MONTAGE_EMPTY_PLAN")
+    if scene_count == 1:
+        result = await _finalize_single_block_montage_run(
+            run_id, scenes, cfg, job_id=job_id, dry_run=dry_run
+        )
+        await persist_montage_assembly_result(run_id, result)
+        return result
     requested_seconds = duration_s * scene_count
     result = await assemble_montage_discrete(
         scenes,

@@ -31,6 +31,7 @@ export interface MontagePlanResponse {
 	execution_supported?: boolean;
 	model: string;
 	duration_seconds: number;
+	mascot_duration_plan?: MascotDurationOption | null;
 }
 
 export interface MontageSceneJob {
@@ -130,6 +131,29 @@ export interface MontageAuthorizeGenerationResponse extends MontageGenerationEst
 	run?: MontageRunResponse;
 }
 
+export interface MascotDurationOption {
+	final_seconds: number;
+	atomic_seconds: number;
+	block_plan: number[];
+	block_count: number;
+	engine: string;
+	language: string;
+	models: string[];
+	default_model: string;
+	per_block_word_budget: number;
+	assembly: string;
+	label: string;
+}
+
+/** V1.1 Mascot Montage: supported FINAL video durations resolved through the
+ * canonical block-plan + capability authorities. */
+export async function fetchMascotDurationOptions(): Promise<MascotDurationOption[]> {
+	const res = await getAPI<{ options: MascotDurationOption[] }>(
+		"/api/montage/mascot-duration-options",
+	);
+	return res.options ?? [];
+}
+
 export async function fetchMontagePolicies(): Promise<{
 	reference_policies: string[];
 	execution_supported?: boolean;
@@ -151,6 +175,8 @@ export async function createMontagePlan(input: {
 	model: string;
 	duration_seconds: number;
 	copy_v2_context?: Record<string, unknown> | null;
+	use_product_mascot?: boolean;
+	final_video_duration_seconds?: number | null;
 }): Promise<MontagePlanResponse> {
 	return postAPI("/api/montage/plan", {
 		product_id: input.product_id,
@@ -161,6 +187,8 @@ export async function createMontagePlan(input: {
 		model: input.model,
 		duration_seconds: input.duration_seconds,
 		copy_v2_context: input.copy_v2_context ?? null,
+		use_product_mascot: input.use_product_mascot ?? false,
+		final_video_duration_seconds: input.final_video_duration_seconds ?? null,
 		beats: [],
 	});
 }
@@ -175,6 +203,7 @@ export async function executeMontageScenes(input: {
 	model: string;
 	duration_seconds: number;
 	copy_v2_context?: Record<string, unknown> | null;
+	use_product_mascot?: boolean;
 }): Promise<MontageExecuteResponse> {
 	return postAPI("/api/montage/execute-scenes", {
 		product_id: input.product_id,
@@ -189,6 +218,7 @@ export async function executeMontageScenes(input: {
 		duration_seconds: input.duration_seconds,
 		allow_live_generate: false,
 		copy_v2_context: input.copy_v2_context ?? null,
+		use_product_mascot: input.use_product_mascot ?? false,
 	});
 }
 
@@ -203,6 +233,8 @@ export async function createMontageRun(input: {
 	model: string;
 	duration_seconds: number;
 	copy_v2_context?: Record<string, unknown> | null;
+	use_product_mascot?: boolean;
+	final_video_duration_seconds?: number | null;
 }): Promise<MontageRunResponse> {
 	return postAPI("/api/montage/runs", {
 		product_id: input.product_id,
@@ -217,6 +249,8 @@ export async function createMontageRun(input: {
 		model: input.model,
 		duration_seconds: input.duration_seconds,
 		copy_v2_context: input.copy_v2_context ?? null,
+		use_product_mascot: input.use_product_mascot ?? false,
+		final_video_duration_seconds: input.final_video_duration_seconds ?? null,
 	});
 }
 

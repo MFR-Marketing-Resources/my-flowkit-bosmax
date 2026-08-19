@@ -11,7 +11,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "product_visual_truth_lock", "product_visual_truth_lock_history", "product_reference_pack", "product_cutout_preparation", "product_visual_onboarding_run", "canva_cutout_workflow", "canva_cutout_bulk_run", "canva_cutout_bulk_item", "image_generation_operation", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "copywriting_taxonomy_registry", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media", "product_cutout_target"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "product_visual_truth_lock", "product_visual_truth_lock_history", "product_reference_pack", "product_cutout_preparation", "product_visual_onboarding_run", "canva_cutout_workflow", "canva_cutout_bulk_run", "canva_cutout_bulk_item", "image_generation_operation", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "copywriting_taxonomy_registry", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media", "product_cutout_target", "product_mascot_key_visual", "prompt_library_item", "prompt_library_attachment"})
 
 
 def _validate_table(table: str) -> None:
@@ -74,6 +74,9 @@ _COLUMNS = {
     "product_strategy_taxonomy": {"taxonomy_version", "product_fingerprint", "cluster", "product_type_group", "matched_scene_strategy_id", "scene_coverage_status", "fallback_used", "specific_strategy", "classification_confidence", "review_status", "consumer_status", "authority_source", "materialization_status", "review_reasons_json", "reviewer_id", "reviewer_note", "derived_at", "reviewed_at", "created_at", "updated_at"},
     "product_intelligence_review_field_provenance": {"draft_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "inherited_from_draft_id", "inherited_from_snapshot_id", "inherited_at", "updated_at"},
     "extend_lineage": {"workspace_generation_package_id", "project_id", "scene_id", "block_index", "block_position", "parent_operation_id", "parent_primary_media_id", "child_operation_id", "child_primary_media_id", "child_workflow_id", "batch_id", "model_key", "aspect_ratio", "start_frame_index", "end_frame_index", "continuation_prompt_hash", "idempotency_key", "polling_state", "retry_attempt", "output_url", "error_code", "error_message", "updated_at", "completed_at"},
+    "product_mascot_key_visual": {"creative_asset_id", "media_id", "created_at", "updated_at"},
+    "prompt_library_item": {"title", "type", "category", "description", "content", "tags_json", "status", "created_at", "updated_at"},
+    "prompt_library_attachment": {"item_id", "file_name", "mime", "ext", "size_bytes", "local_path", "created_at"},
 }
 
 
@@ -127,6 +130,151 @@ async def _delete(table: str, pk: str, pk_val: str) -> bool:
         cur = await db.execute(f"DELETE FROM {table} WHERE {pk}=?", (pk_val,))
         await db.commit()
     return cur.rowcount > 0
+
+
+# --- Product Mascot Key Visual (tiny product-scoped current pointer) ---------
+async def upsert_product_mascot_key_visual(product_id: str, **kwargs) -> Optional[dict]:
+    """Atomically point the product's current mascot at a creative_asset.
+
+    Mirrors upsert_product_truth_lock: whitelist kwargs, stamp updated_at, then
+    SELECT-then-INSERT-or-UPDATE under _db_lock. PK(product_id) enforces the
+    zero-or-one-current invariant at the storage layer.
+    """
+    _validate_table("product_mascot_key_visual")
+    allowed = _COLUMNS["product_mascot_key_visual"]
+    values = {key: value for key, value in kwargs.items() if key in allowed}
+    values["updated_at"] = _now()
+    db = await get_db()
+    async with _db_lock:
+        existing = await _get_with_db(db, "product_mascot_key_visual", "product_id", product_id)
+        if existing is None:
+            columns = ["product_id", *values.keys()]
+            placeholders = ",".join("?" for _ in columns)
+            await db.execute(
+                f"INSERT INTO product_mascot_key_visual ({','.join(columns)}) VALUES ({placeholders})",
+                [product_id, *values.values()],
+            )
+        else:
+            sets = ",".join(f"{key}=?" for key in values)
+            await db.execute(
+                f"UPDATE product_mascot_key_visual SET {sets} WHERE product_id=?",
+                [*values.values(), product_id],
+            )
+        await db.commit()
+    return await _get("product_mascot_key_visual", "product_id", product_id)
+
+
+async def get_product_mascot_key_visual(product_id: str) -> Optional[dict]:
+    return await _get("product_mascot_key_visual", "product_id", product_id)
+
+
+async def delete_product_mascot_key_visual(product_id: str) -> bool:
+    return await _delete("product_mascot_key_visual", "product_id", product_id)
+
+
+# --- Prompt & SOP Library (standalone human-reference CRUD) -------------------
+async def create_prompt_library_item(item_id: str, *, title: str, **kwargs) -> dict:
+    _validate_table("prompt_library_item")
+    fields = _safe_kwargs("prompt_library_item", kwargs)
+    fields.pop("title", None)
+    columns = ["id", "title", *fields.keys()]
+    values = [item_id, title, *fields.values()]
+    placeholders = ",".join("?" for _ in columns)
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO prompt_library_item ({','.join(columns)}) VALUES ({placeholders})",
+            values,
+        )
+        await db.commit()
+    return await _get("prompt_library_item", "id", item_id)
+
+
+async def get_prompt_library_item(item_id: str) -> Optional[dict]:
+    return await _get("prompt_library_item", "id", item_id)
+
+
+async def update_prompt_library_item(item_id: str, **kwargs) -> Optional[dict]:
+    return await _update("prompt_library_item", "id", item_id, **kwargs)
+
+
+async def delete_prompt_library_item(item_id: str) -> bool:
+    return await _delete("prompt_library_item", "id", item_id)
+
+
+async def list_prompt_library_items(
+    *,
+    type: Optional[str] = None,
+    category: Optional[str] = None,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    tag: Optional[str] = None,
+    limit: int = 500,
+) -> list[dict]:
+    _validate_table("prompt_library_item")
+    clauses = ["1=1"]
+    params: list = []
+    if type:
+        clauses.append("type = ?")
+        params.append(type)
+    if category:
+        clauses.append("category = ?")
+        params.append(category)
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if search:
+        clauses.append("(title LIKE ? OR description LIKE ? OR content LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like, like, like])
+    if tag:
+        clauses.append("tags_json LIKE ?")
+        params.append(f'%"{tag}"%')
+    sql = (
+        f"SELECT * FROM prompt_library_item WHERE {' AND '.join(clauses)} "
+        "ORDER BY updated_at DESC LIMIT ?"
+    )
+    params.append(int(limit))
+    db = await get_db()
+    cur = await db.execute(sql, params)
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def create_prompt_library_attachment(attachment_id: str, *, item_id: str, **kwargs) -> dict:
+    _validate_table("prompt_library_attachment")
+    fields = _safe_kwargs("prompt_library_attachment", kwargs)
+    fields.pop("item_id", None)
+    columns = ["id", "item_id", *fields.keys()]
+    values = [attachment_id, item_id, *fields.values()]
+    placeholders = ",".join("?" for _ in columns)
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            f"INSERT INTO prompt_library_attachment ({','.join(columns)}) VALUES ({placeholders})",
+            values,
+        )
+        await db.commit()
+    return await _get("prompt_library_attachment", "id", attachment_id)
+
+
+async def get_prompt_library_attachment(attachment_id: str) -> Optional[dict]:
+    return await _get("prompt_library_attachment", "id", attachment_id)
+
+
+async def list_prompt_library_attachments(item_id: str) -> list[dict]:
+    _validate_table("prompt_library_attachment")
+    db = await get_db()
+    cur = await db.execute(
+        "SELECT * FROM prompt_library_attachment WHERE item_id=? ORDER BY created_at ASC",
+        (item_id,),
+    )
+    rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def delete_prompt_library_attachment(attachment_id: str) -> bool:
+    return await _delete("prompt_library_attachment", "id", attachment_id)
 
 
 # ─── Character ──────────────────────────────────────────────

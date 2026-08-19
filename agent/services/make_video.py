@@ -323,7 +323,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          collect_image_variants: bool = False,
                          product_id: str = None, source_mode: str = None,
                          copy_execution_binding: dict | None = None,
-                         manifest_id: str | None = None) -> dict:
+                         manifest_id: str | None = None,
+                         asset_fingerprints: list[str] | None = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all.
@@ -363,31 +364,30 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     # job/lane/provider work, so a blocked dispatch spends nothing.
     from agent.services import execution_approval_service as _eas
     try:
-        # A manifest dispatch (multi-op run: Montage / bulk / queue / studio /
-        # Extend) and product-aware IMG both bind on the STABLE envelope
-        # (prompt + settings + product_id) — never the volatile per-session Flow
-        # media ids, which are derived downstream and cannot be frozen at review
-        # time. This is what makes materialise==dispatch parity exact. A UI single
-        # dispatch (Hybrid/Faceless) still freezes its resolved reference assets.
-        _gate_assets = (
-            [] if (manifest_id or (str(mode or "").strip().upper() == "IMG" and product_id))
-            else list(image_media_ids or [])
-        )
+        # Canonical Envelope v2 identity (PR #815 server-authoritative fingerprints):
+        # product-backed HYBRID/F2V/IMG bind on the product-visual SHA, manual FRAMES
+        # on explicit assets — so materialise==dispatch parity is exact. A manifest
+        # (multi-op) dispatch passes NO volatile transport media id into the hash
+        # (its run's canonical/empty asset set is what was reviewed, and the resolver
+        # derives the product SHA from product_id when product-backed); a UI single
+        # dispatch freezes its own resolved reference assets.
+        _assets = [] if manifest_id else list(image_media_ids or [])
         _pinned_snapshot_id = None
         if manifest_id:
             _resolved = await _eas.resolve_manifest_approved_snapshot(
                 manifest_id=manifest_id, mode=mode, final_prompt_text=prompt,
                 source_mode=source_mode, model=model, aspect=aspect,
                 duration_s=duration_s, count=num_videos, image_model=image_model,
-                asset_media_ids=_gate_assets, product_id=product_id,
+                asset_fingerprints=asset_fingerprints, asset_media_ids=_assets,
+                product_id=product_id,
             )
             _pinned_snapshot_id = (_resolved or {}).get("snapshot_id")
         await _eas.verify_and_bind_dispatch(
             mode=mode, final_prompt_text=prompt, source_mode=source_mode,
             model=model, aspect=aspect, duration_s=duration_s,
             count=num_videos, image_model=image_model,
-            asset_media_ids=_gate_assets, product_id=product_id,
-            snapshot_id=_pinned_snapshot_id,
+            asset_fingerprints=asset_fingerprints, asset_media_ids=_assets,
+            product_id=product_id, snapshot_id=_pinned_snapshot_id,
         )
     except _eas.ExecutionApprovalError as _gate_err:
         return {"status": "REJECTED", "error": _gate_err.code,

@@ -19,6 +19,8 @@ import {
 	createMontagePlan,
 	createMontageRun,
 	fetchMontageVideoCapability,
+	fetchMascotDurationOptions,
+	type MascotDurationOption,
 	fetchMontageGenerationEstimate,
 	type MontageAuthorizeGenerationResponse,
 	type MontageAssembleResponse,
@@ -75,6 +77,11 @@ export default function MontagePage() {
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [hookId, setHookId] = useState("AUTO");
 	const [backgroundId, setBackgroundId] = useState("AUTO");
+	const [useMascot, setUseMascot] = useState(false);
+	const [finalDuration, setFinalDuration] = useState(8);
+	const [mascotDurationOptions, setMascotDurationOptions] = useState<
+		MascotDurationOption[]
+	>([]);
 	const [capabilityMatrix, setCapabilityMatrix] =
 		useState<VideoCapabilityMatrix | null>(null);
 	const [capabilityError, setCapabilityError] = useState<string | null>(null);
@@ -127,6 +134,12 @@ export default function MontagePage() {
 						: "Video capability authority unavailable",
 				);
 			});
+	}, []);
+
+	useEffect(() => {
+		void fetchMascotDurationOptions()
+			.then(setMascotDurationOptions)
+			.catch(() => setMascotDurationOptions([]));
 	}, []);
 
 	const hookLabel = labelOf(settings.hook.options, hookId);
@@ -213,6 +226,8 @@ export default function MontagePage() {
 				model: validSelection.model,
 				duration_seconds: validSelection.durationSeconds,
 				copy_v2_context: { lane: "MONTAGE" },
+				use_product_mascot: useMascot,
+				final_video_duration_seconds: useMascot ? finalDuration : null,
 			});
 			setPlan(next);
 		} catch (err: unknown) {
@@ -244,6 +259,8 @@ export default function MontagePage() {
 				model: validSelection.model,
 				duration_seconds: validSelection.durationSeconds,
 				copy_v2_context: { lane: "MONTAGE" },
+				use_product_mascot: useMascot,
+				final_video_duration_seconds: useMascot ? finalDuration : null,
 			});
 			setRun(res);
 			try {
@@ -477,6 +494,28 @@ export default function MontagePage() {
 								setFinalCreditConfirm(false);
 							}}
 						/>
+						<label className="mt-3 flex items-start gap-2 text-sm text-slate-300">
+							<input
+								type="checkbox"
+								checked={useMascot}
+								onChange={(e) => {
+									setUseMascot(e.target.checked);
+									setPlan(null);
+									setRun(null);
+								}}
+								className="mt-0.5"
+							/>
+							<span>
+								<span className="font-medium text-white">
+									Use Product Mascot Key Visual
+								</span>
+								<span className="mt-0.5 block text-xs text-slate-400">
+									Drives scenes as START_FRAME (F2V / FRAMES) with the product's
+									mascot as the start visual. Fails clearly if the product has no
+									mascot (PRODUCT_MASCOT_KEY_VISUAL_REQUIRED).
+								</span>
+							</span>
+						</label>
 					</WorkflowStep>
 
 					<WorkflowStep
@@ -594,6 +633,37 @@ export default function MontagePage() {
 								fallback is offered. {capabilityError}
 							</div>
 						) : null}
+						{useMascot ? (
+							<div className="space-y-2">
+								<label className="space-y-1">
+									<span className={labelClass}>Final video duration</span>
+									<select
+										className={selectClass}
+										value={finalDuration}
+										onChange={(e) => {
+											setFinalDuration(Number(e.target.value));
+											setPlan(null);
+											setRun(null);
+										}}
+										data-testid="montage-final-duration"
+									>
+										{mascotDurationOptions.map((o) => (
+											<option key={o.final_seconds} value={o.final_seconds}>
+												{o.label}
+											</option>
+										))}
+									</select>
+								</label>
+								<p
+									className="text-[11px] text-slate-400"
+									data-testid="montage-final-duration-detail"
+								>
+									{mascotDurationOptions.find((o) => o.final_seconds === finalDuration)
+										?.label ?? finalDuration + "s"}{" "}
+									— scene count, block duration and model resolve automatically; the mascot speaks with lip-sync.
+								</p>
+							</div>
+						) : (
 						<div className="grid gap-3 sm:grid-cols-2">
 							<label className="space-y-1">
 								<span className={labelClass}>Video model</span>
@@ -636,6 +706,7 @@ export default function MontagePage() {
 								</select>
 							</label>
 						</div>
+						)}
 </WorkflowStep>
 
 					<WorkflowStep

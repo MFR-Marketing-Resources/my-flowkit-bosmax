@@ -47,13 +47,13 @@ def _dispatch(prompt: str, **ov):
     d = dict(
         mode="F2V",
         final_prompt_text=prompt,
+        product_id="prod_test_1",
         source_mode="HYBRID",
         model="Veo 3.1 Lite",
         aspect="9:16",
         duration_s=8,
         count=1,
         asset_media_ids=[_ASSET],
-        product_id="prod_test_1",
     )
     d.update(ov)
     return d

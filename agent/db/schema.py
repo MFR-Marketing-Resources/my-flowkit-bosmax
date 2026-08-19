@@ -850,6 +850,21 @@ CREATE INDEX IF NOT EXISTS idx_product_truth_lock_history_product
 -- Provider-facing creative reference pack.  This is intentionally separate
 -- from product_visual_truth_lock: exact compositor truth and generative
 -- campaign evidence have different approval and QA lifecycles.
+-- Product Mascot Key Visual: a tiny product-scoped current-pointer to the
+-- operator-uploaded mascot Creative Asset. Deliberately SEPARATE from
+-- product_visual_truth_lock (Official Product Visual authority). The mascot is a
+-- CHARACTER_REFERENCE creative_asset (subtype PRODUCT_MASCOT_KEY_VISUAL) and must
+-- NEVER enter the Official Product Visual resolution ladder. PK(product_id)
+-- guarantees exactly zero-or-one current mascot per product.
+CREATE TABLE IF NOT EXISTS product_mascot_key_visual (
+    product_id        TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
+    creative_asset_id TEXT NOT NULL,
+    media_id          TEXT,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_mascot_key_visual_asset ON product_mascot_key_visual(creative_asset_id);
+
 CREATE TABLE IF NOT EXISTS product_reference_pack (
     product_id              TEXT PRIMARY KEY REFERENCES product(id) ON DELETE CASCADE,
     pack_id                 TEXT NOT NULL UNIQUE,
@@ -1237,6 +1252,40 @@ CREATE TABLE IF NOT EXISTS image_generation_operation (
 );
 CREATE INDEX IF NOT EXISTS idx_image_generation_operation_job
     ON image_generation_operation(job_id, variant_index);
+
+-- === Prompt & SOP Library ===
+-- A standalone, human-reference knowledge CRUD surface. Deliberately DECOUPLED
+-- from generation / compilers / Product Truth / Copy V2 / Montage — reference
+-- storage only; it never feeds runtime generation and is not a prompt SSOT.
+CREATE TABLE IF NOT EXISTS prompt_library_item (
+    id            TEXT PRIMARY KEY,
+    title         TEXT NOT NULL,
+    type          TEXT NOT NULL DEFAULT 'PROMPT'
+                  CHECK(type IN ('PROMPT','SOP','TUTORIAL','TEMPLATE','REFERENCE')),
+    category      TEXT NOT NULL DEFAULT '',
+    description   TEXT NOT NULL DEFAULT '',
+    content       TEXT NOT NULL DEFAULT '',
+    tags_json     TEXT NOT NULL DEFAULT '[]',
+    status        TEXT NOT NULL DEFAULT 'ACTIVE'
+                  CHECK(status IN ('ACTIVE','ARCHIVED')),
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_item_status
+    ON prompt_library_item(status, type);
+
+CREATE TABLE IF NOT EXISTS prompt_library_attachment (
+    id            TEXT PRIMARY KEY,
+    item_id       TEXT NOT NULL REFERENCES prompt_library_item(id) ON DELETE CASCADE,
+    file_name     TEXT NOT NULL,
+    mime          TEXT NOT NULL DEFAULT 'application/octet-stream',
+    ext           TEXT NOT NULL DEFAULT 'bin',
+    size_bytes    INTEGER NOT NULL DEFAULT 0,
+    local_path    TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_library_attachment_item
+    ON prompt_library_attachment(item_id);
 """
 
 

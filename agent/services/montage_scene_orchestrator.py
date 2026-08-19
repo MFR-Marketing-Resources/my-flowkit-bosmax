@@ -167,6 +167,11 @@ async def execute_scene_plan(
     model: str | None = None,
     duration_seconds: int | None = None,
     copy_v2_context: dict[str, Any] | None = None,
+    mascot_start_asset: Optional[dict[str, Any]] = None,
+    mascot_scene_context: Optional[str] = None,
+    mascot_block_count: Optional[int] = None,
+    mascot_atomic_seconds: Optional[int] = None,
+    mascot_has_dialogue: bool = True,
 ) -> SceneJobState:
     """Run one planned scene through existing package (+ optional generate) path."""
     resolved_copy_v2_context = copy_v2_context
@@ -243,8 +248,17 @@ async def execute_scene_plan(
     # IMAGE_FIRST: optional image prepare; PRODUCT_ANCHOR/HYBRID may defer to package product image
     start_frame = _start_frame_for_plan(plan)
     hybrid_product_anchor = str(plan.source_mode or "").upper() == "HYBRID"
+    is_mascot_start_frame = (
+        mascot_start_asset is not None
+        and plan.reference_policy is SceneReferencePolicy.START_FRAME
+    )
     if plan.route == SceneExecutionRoute.IMAGE_FIRST and plan.image_generation_required:
-        if image_prepare_fn is not None and not start_frame and not hybrid_product_anchor:
+        if is_mascot_start_frame:
+            # Product Mascot Key Visual IS the start-frame visual; bound as the
+            # scene start asset after the package builds — never image_prepare,
+            # never the Official Product Visual.
+            state.status = "IMAGE_BOUND"
+        elif image_prepare_fn is not None and not start_frame and not hybrid_product_anchor:
             img = await image_prepare_fn(
                 product_id=product_id,
                 scene_id=plan.scene_id,
@@ -277,6 +291,13 @@ async def execute_scene_plan(
     # DIRECT_VIDEO or IMAGE_FIRST → create workspace execution package via canonical factory
     mode = plan.transport_mode
     source_mode = plan.source_mode if plan.source_mode != mode else None
+    if is_mascot_start_frame:
+        # Build a plain F2V prompt/copy package with NO frame binding — a mascot
+        # (CHARACTER_REFERENCE) cannot pass the package factory's FRAMES
+        # COMPOSITE_FRAME_REFERENCE validation. The FRAMES lineage stays on the
+        # scene state (state.source_mode) so the generate boundary + the existing
+        # flow gate honor the mascot start asset; it is not baked into a frame slot.
+        source_mode = None
     # Prefer operator-selected model/duration (no empty model / hardcoded-only path)
     model_label = str(model or "").strip()
     try:
@@ -320,6 +341,31 @@ async def execute_scene_plan(
         # Montage-owned intent explicit and keep Avatar Registry identity null.
         kwargs["character_presence"] = "FACELESS"
         kwargs["avatar_id"] = None
+    if is_mascot_start_frame:
+        # Presenter-free: the mascot is the on-screen product character, not a
+        # human creator. Never inherit the generic VISIBLE_CREATOR default.
+        kwargs["character_presence"] = "FACELESS"
+        kwargs["avatar_id"] = None
+        if mascot_block_count:
+            # V1.1 Creative Grammar: compose a DISTINCT per-scene direction —
+            # this block's macro purpose + its objective/visual_action + four
+            # micro-beats + mascot action grammar + lip-sync + identity lock +
+            # visual dynamism — layered on the resolved hook/background context.
+            # This is how objective/visual_action (dropped by the generic
+            # compiler) materially reach the engine prompt, per scene.
+            from agent.services import montage_mascot_creative_grammar as _mmcg
+
+            kwargs["scene_context_override"] = _mmcg.compose_scene_context(
+                block_index=plan.block_index,
+                block_count=int(mascot_block_count),
+                atomic_seconds=int(mascot_atomic_seconds or dur),
+                objective=plan.objective,
+                visual_action=plan.visual_action,
+                has_dialogue=mascot_has_dialogue,
+                existing_context=scene_context_override,
+            )
+        elif mascot_scene_context:
+            kwargs["scene_context_override"] = mascot_scene_context
 
     try:
         pkg = await package_factory(**kwargs)
@@ -341,6 +387,10 @@ async def execute_scene_plan(
     ) or None
     state.package_prompt = str(pkg.get("prompt_text") or pkg.get("prompt") or "") or None
     state.start_asset_snapshot = _snapshot_start_asset(pkg)
+    if is_mascot_start_frame:
+        # The mascot is the authoritative start visual — override any package plate
+        # so the scene renders FROM the mascot, not the Official Product Visual.
+        state.start_asset_snapshot = dict(mascot_start_asset)
     if state.package_prompt and not state.detail:
         state.detail = state.package_prompt[:400]
     if not bool(pkg.get("execution_allowed")):
@@ -381,6 +431,7 @@ async def execute_scene_plan(
     gen = await generate_fn(
         product_id=product_id,
         mode=mode,
+        source_mode=state.source_mode,
         workspace_execution_package_id=state.workspace_execution_package_id,
         prompt=state.package_prompt or pkg.get("prompt_text") or "",
         scene_id=plan.scene_id,
@@ -414,6 +465,11 @@ async def orchestrate_montage_scenes(
     model: str | None = None,
     duration_seconds: int | None = None,
     copy_v2_context: dict[str, Any] | None = None,
+    mascot_start_asset: Optional[dict[str, Any]] = None,
+    mascot_scene_context: Optional[str] = None,
+    mascot_block_count: Optional[int] = None,
+    mascot_atomic_seconds: Optional[int] = None,
+    mascot_has_dialogue: bool = True,
 ) -> MontageOrchestrationReport:
     """Beat → route → package (/ optional generate) for the full scene set."""
     if not str(product_id or "").strip():
@@ -468,6 +524,11 @@ async def orchestrate_montage_scenes(
             model=model,
             duration_seconds=duration_seconds,
             copy_v2_context=resolved_copy_v2_context,
+            mascot_start_asset=mascot_start_asset,
+            mascot_scene_context=mascot_scene_context,
+            mascot_block_count=mascot_block_count,
+            mascot_atomic_seconds=mascot_atomic_seconds,
+            mascot_has_dialogue=mascot_has_dialogue,
         )
         report.scenes.append(state)
         if state.video_media_id:

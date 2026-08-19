@@ -35,6 +35,7 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import json
+import logging
 import os
 import uuid
 from datetime import UTC, datetime
@@ -42,6 +43,8 @@ from typing import Any
 
 from agent.db import execution_approval_crud as _crud
 from agent.services.production_prompt_approval_service import scan_prompt_text
+
+logger = logging.getLogger(__name__)
 
 
 class ApprovalState:
@@ -177,12 +180,13 @@ def compute_dispatch_identity(
     duration_s: int | None = None,
     count: int | None = None,
     image_model: str | None = None,
+    asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
     product_id: str | None = None,
 ) -> dict[str, Any]:
-    """THE canonical envelope+hash builder. Called with identical semantics at
-    review time and at the dispatch boundary, so equal provider-affecting inputs
-    always yield equal hashes.
+    """THE canonical envelope+hash builder (Envelope v2). Called with identical
+    semantics at review time and at the dispatch boundary, so equal provider-affecting
+    inputs always yield equal hashes.
 
     Returns ``{prompt_sha256, execution_envelope, execution_envelope_sha256}``.
     The envelope keys are a fixed shape; unused fields normalise to ``None`` and
@@ -206,6 +210,9 @@ def compute_dispatch_identity(
         except (TypeError, ValueError):
             return None
 
+    raw_fps = asset_fingerprints if asset_fingerprints is not None else (asset_media_ids or [])
+    fps = sorted({_norm(m) for m in raw_fps if _norm(m)})
+
     envelope = {
         "envelope_version": 2,
         "mode": _norm(mode).upper(),
@@ -218,11 +225,12 @@ def compute_dispatch_identity(
         "image_model": (_norm(image_model) or None),
         # Stable product anchor (never the volatile Flow media id for product IMG).
         "product_id": (_norm(product_id) or None),
-        # Resolved reference asset identity. Sorted + de-duped so ordering never
-        # changes the hash. A self-heal re-upload that swaps a media id IS an
-        # asset change here — it correctly invalidates the approval (contract:
-        # "asset changed -> INVALIDATED -> REVIEW_REQUIRED").
-        "asset_fingerprints": sorted({_norm(m) for m in (asset_media_ids or []) if _norm(m)}),
+        # Server-authoritative CANONICAL fingerprints (PR #815): product-visual SHA
+        # for product-backed HYBRID/F2V, explicit locking for manual FRAMES; falls
+        # back to asset_media_ids. Sorted + de-duped so ordering never changes the
+        # hash. A self-heal re-upload that changes the CANONICAL identity IS an asset
+        # change (contract: "asset changed -> INVALIDATED -> REVIEW_REQUIRED").
+        "asset_fingerprints": fps,
     }
     return {
         "prompt_sha256": prompt_sha256,
@@ -231,6 +239,56 @@ def compute_dispatch_identity(
             _stable_json(envelope).encode("utf-8")
         ).hexdigest(),
     }
+
+
+async def resolve_canonical_asset_fingerprints(
+    *,
+    mode: str,
+    source_mode: str | None = None,
+    product_id: str | None = None,
+    asset_fingerprints: list[str] | None = None,
+    asset_media_ids: list[str] | None = None,
+) -> list[str]:
+    """Server-authoritative canonical asset fingerprint resolver.
+
+    For product-backed HYBRID / F2V / IMG with product_id (corrective GAP 3 extends
+    the authority to IMG):
+      Derive the canonical product visual fingerprint from the Product Visual
+      authority: PRODUCT_VISUAL|<product_id>|<slot_key>|<full_sha256>.
+      This binds the exact byte content of the official product visual. Provider
+      transport media UUIDs (newly uploaded during generation) do NOT participate
+      in the logical approval hash. If a product has no resolvable canonical visual
+      the resolver degrades to the explicit/empty asset set — identically at review
+      and dispatch, so parity holds either way.
+
+    For manual frame lanes (source_mode == FRAMES) and explicit assets:
+      Retain strict locking to the explicit frame/asset fingerprints/IDs
+      (manual-frame locking is never weakened).
+    """
+    norm_source = _norm(source_mode).upper()
+    norm_mode = _norm(mode).upper()
+
+    product_backed = product_id and norm_source != "FRAMES" and (
+        norm_source == "HYBRID" or norm_mode in ("F2V", "IMG")
+    )
+    if product_backed:
+        from agent.services.product_visual_grounding_resolver import (
+            get_canonical_product_visual_fingerprint,
+        )
+        try:
+            pv_fp = await get_canonical_product_visual_fingerprint(product_id, slot_key="start_frame")
+            return [pv_fp]
+        except Exception as exc:
+            logger.warning(
+                "Could not resolve canonical product visual fingerprint for product %s: %s",
+                product_id,
+                exc,
+            )
+
+    if asset_fingerprints is not None:
+        return sorted({_norm(f) for f in asset_fingerprints if _norm(f)})
+
+    return sorted({_norm(m) for m in (asset_media_ids or []) if _norm(m)})
 
 
 # --------------------------------------------------------------------------- #
@@ -249,6 +307,7 @@ async def create_review_snapshot(
     duration_s: int | None = None,
     count: int | None = None,
     image_model: str | None = None,
+    asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
     review_session_id: str | None = None,
     created_by: str | None = None,
@@ -260,6 +319,13 @@ async def create_review_snapshot(
     ``final_prompt_text`` MUST already be the fully grounded, provider-ready
     prompt (product-truth / grounding / safety / asset-resolution applied
     BEFORE review — never after approval)."""
+    canonical_fps = await resolve_canonical_asset_fingerprints(
+        mode=logical_mode,
+        source_mode=source_mode,
+        product_id=product_id,
+        asset_fingerprints=asset_fingerprints,
+        asset_media_ids=asset_media_ids,
+    )
     identity = compute_dispatch_identity(
         mode=logical_mode,
         final_prompt_text=final_prompt_text,
@@ -269,7 +335,7 @@ async def create_review_snapshot(
         duration_s=duration_s,
         count=count,
         image_model=image_model,
-        asset_media_ids=asset_media_ids,
+        asset_fingerprints=canonical_fps,
         product_id=product_id,
     )
     scan = scan_prompt_text(final_prompt_text, product_id=product_id)
@@ -414,20 +480,27 @@ async def resolve_manifest_approved_snapshot(
     duration_s: int | None = None,
     count: int | None = None,
     image_model: str | None = None,
+    asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
     product_id: str | None = None,
 ) -> dict[str, Any] | None:
     """RESOLVE / BIND (never manufacture) a human-approved manifest item whose
-    frozen execution-envelope SHA EXACTLY matches this dispatch.
-
-    This is the ONLY way a non-UI dispatch (queue / bulk / scheduler / Montage /
-    Extend) inherits approval — by referencing an already human-approved manifest
-    whose item hash matches. It NEVER creates or approves anything from the live
-    dispatch envelope. If no approved manifest item matches, returns None and the
-    dispatch stays fail-closed. (Corrective integrity invariant: no provenance
-    string manufactures human approval.)"""
+    frozen execution-envelope SHA (canonical Envelope v2 identity — PR #815 server-
+    authoritative fingerprints) EXACTLY matches this dispatch. This is the ONLY way
+    a non-UI dispatch (queue / bulk / scheduler / Montage / Extend) inherits
+    approval — by referencing an already human-approved manifest whose item hash
+    matches. It NEVER creates or approves anything from the live dispatch envelope;
+    no approved manifest item match -> returns None and the dispatch stays
+    fail-closed. (No provenance string manufactures human approval.)"""
     if not _norm(manifest_id):
         return None
+    canonical_fps = await resolve_canonical_asset_fingerprints(
+        mode=mode,
+        source_mode=source_mode,
+        product_id=product_id,
+        asset_fingerprints=asset_fingerprints,
+        asset_media_ids=asset_media_ids,
+    )
     identity = compute_dispatch_identity(
         mode=mode,
         final_prompt_text=final_prompt_text,
@@ -437,12 +510,57 @@ async def resolve_manifest_approved_snapshot(
         duration_s=duration_s,
         count=count,
         image_model=image_model,
-        asset_media_ids=asset_media_ids,
+        asset_fingerprints=canonical_fps,
         product_id=product_id,
     )
     return await _crud.find_approved_manifest_item(
         _norm(manifest_id), identity["execution_envelope_sha256"],
     )
+
+
+async def ensure_upstream_approved_snapshot(
+    *,
+    mode: str,
+    final_prompt_text: str,
+    surface: str = "upstream",
+    provenance: str = "upstream-approval",
+    product_id: str | None = None,
+    source_mode: str | None = None,
+    model: str | None = None,
+    aspect: str | None = None,
+    duration_s: int | None = None,
+    count: int | None = None,
+    image_model: str | None = None,
+    asset_fingerprints: list[str] | None = None,
+    asset_media_ids: list[str] | None = None,
+) -> dict[str, Any] | None:
+    """RESOLVE / BIND-ONLY upstream approval (corrective GAP 2 refactor of the
+    former create-and-auto-approve helper). Computes the canonical Envelope v2
+    identity (PR #815 server-authoritative fingerprints) and returns an EXISTING
+    APPROVED snapshot whose frozen envelope SHA matches — or None. It MUST NOT
+    create or approve a snapshot from provenance, so a path with no genuine upstream
+    human approval stays fail-closed. Prefer resolve_manifest_approved_snapshot
+    (manifest-scoped) for the multi-op dispatch surfaces."""
+    canonical_fps = await resolve_canonical_asset_fingerprints(
+        mode=mode,
+        source_mode=source_mode,
+        product_id=product_id,
+        asset_fingerprints=asset_fingerprints,
+        asset_media_ids=asset_media_ids,
+    )
+    identity = compute_dispatch_identity(
+        mode=mode,
+        final_prompt_text=final_prompt_text,
+        source_mode=source_mode,
+        model=model,
+        aspect=aspect,
+        duration_s=duration_s,
+        count=count,
+        image_model=image_model,
+        asset_fingerprints=canonical_fps,
+        product_id=product_id,
+    )
+    return await _crud.find_approved_by_envelope(identity["execution_envelope_sha256"])
 
 
 # --------------------------------------------------------------------------- #
@@ -618,6 +736,7 @@ async def verify_and_bind_dispatch(
     duration_s: int | None = None,
     count: int | None = None,
     image_model: str | None = None,
+    asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
     product_id: str | None = None,
     snapshot_id: str | None = None,
@@ -634,6 +753,13 @@ async def verify_and_bind_dispatch(
     credit-bearing dispatch choke calls it with the SAME inputs it hands the
     provider.
     """
+    canonical_fps = await resolve_canonical_asset_fingerprints(
+        mode=mode,
+        source_mode=source_mode,
+        product_id=product_id,
+        asset_fingerprints=asset_fingerprints,
+        asset_media_ids=asset_media_ids,
+    )
     identity = compute_dispatch_identity(
         mode=mode,
         final_prompt_text=final_prompt_text,
@@ -643,7 +769,7 @@ async def verify_and_bind_dispatch(
         duration_s=duration_s,
         count=count,
         image_model=image_model,
-        asset_media_ids=asset_media_ids,
+        asset_fingerprints=canonical_fps,
         product_id=product_id,
     )
     dispatched_env_sha = identity["execution_envelope_sha256"]
@@ -730,6 +856,9 @@ def _recompute_from_snapshot(snap: dict[str, Any], *, final_prompt_text: str) ->
         duration_s=env.get("duration_s"),
         count=env.get("count"),
         image_model=env.get("image_model"),
+        # An edit changes only the prompt — hold the FROZEN canonical fingerprints
+        # fixed (never re-resolve assets on an edit).
+        asset_fingerprints=env.get("asset_fingerprints"),
         product_id=env.get("product_id") or snap.get("product_id"),
-        asset_media_ids=env.get("asset_fingerprints"),
     )
+

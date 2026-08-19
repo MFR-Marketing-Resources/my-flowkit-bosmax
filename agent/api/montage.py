@@ -43,12 +43,58 @@ from agent.services.montage_scene_reference_policy import (
 from agent.services.workspace_execution_package_service import (
     create_workspace_execution_package,
 )
+from agent.services import product_mascot_service
+from agent.services import montage_mascot_creative_grammar as mascot_grammar
 from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
     resolve_persisted_copy_execution_binding,
 )
 
 router = APIRouter(prefix="/montage", tags=["montage"])
+
+# Minimum mascot-specific context injected into the existing Montage scene/story
+# compiler — the current planner treats the supplied mascot as the recurring
+# on-screen product character. No new planner, no second engine.
+MASCOT_SCENE_CONTEXT = (
+    "PRODUCT MASCOT MODE: The supplied Product Mascot Key Visual is the recurring "
+    "on-screen product character/hero across every scene. Treat the mascot as the "
+    "consistent visual identity and the start-frame subject to animate from. "
+    "Presenter-free (faceless) — no human creator."
+)
+
+
+def _mascot_to_start_asset(mascot: dict[str, Any]) -> dict[str, Any]:
+    """Map a resolved Product Mascot Key Visual to a transportable start-asset."""
+    download = mascot.get("download_url") or mascot.get("preview_url")
+    return {
+        "assetId": mascot.get("asset_id"),
+        "mediaId": mascot.get("media_id"),
+        "downloadUrl": download,
+        "previewUrl": mascot.get("preview_url"),
+        "localFilePath": mascot.get("local_file_path"),
+        "fileName": mascot.get("display_name") or "product-mascot",
+        "label": mascot.get("display_name") or "Product Mascot Key Visual",
+        "assetSource": "PRODUCT_MASCOT_KEY_VISUAL",
+        "semanticRole": "COMPOSITE_FRAME_REFERENCE",
+        "localImagePathPresent": bool(mascot.get("local_file_path")),
+        "remoteImageUrlPresent": bool(download),
+    }
+
+
+async def _resolve_mascot_start_asset_or_409(product_id: str) -> dict[str, Any]:
+    """Fail-closed mascot resolution for the Montage lane.
+
+    Raises HTTP 409 PRODUCT_MASCOT_KEY_VISUAL_REQUIRED when no current mascot is
+    resolvable — never a silent fallback to the Official Product Visual.
+    """
+    try:
+        mascot = await product_mascot_service.resolve_mascot_for_montage(product_id)
+    except product_mascot_service.ProductMascotUnavailableError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": exc.code, "detail": str(exc), "product_id": product_id},
+        ) from exc
+    return _mascot_to_start_asset(mascot)
 
 
 class MontageBeatInput(BaseModel):
@@ -69,6 +115,16 @@ class MontagePlanRequest(BaseModel):
     model: str = Field(..., min_length=1)
     duration_seconds: int = Field(..., gt=0)
     copy_v2_context: dict[str, Any] | None = None
+    # Mascot Montage V1.1 — the FINAL video duration (8/10/16/20/24/30). Resolved
+    # THROUGH the canonical block-plan + capability authorities into block count
+    # (= scene count), atomic block seconds, and compatible model(s). Mascot mode
+    # only; non-mascot montage behavior is unchanged. When omitted in mascot mode
+    # it defaults to the per-clip duration_seconds (a single-block final).
+    final_video_duration_seconds: Optional[int] = None
+    # Mascot Montage: resolve the product's current Product Mascot Key Visual and
+    # drive scenes as START_FRAME (F2V / FRAMES lineage) with the mascot as the
+    # start-frame visual. Fail-closed if no mascot (PRODUCT_MASCOT_KEY_VISUAL_REQUIRED).
+    use_product_mascot: bool = False
 
 
 class MontageExecuteRequest(MontagePlanRequest):
@@ -131,6 +187,51 @@ def _default_beats() -> list[MontageBeatInput]:
     ]
 
 
+async def _prepare_mascot_montage(body: "MontagePlanRequest") -> dict[str, Any]:
+    """Mascot Montage V1.1 resolution (fail-closed).
+
+    Resolves the current Product Mascot Key Visual (409 if absent) AND the FINAL
+    video duration through the canonical authorities into a discrete block plan:
+    scene count = block count, atomic block seconds, and the compatible SINGLE
+    model(s). Returns the resolved run inputs. Fail-closed 409 / 422 — never
+    fabricates a plan.
+    """
+    mascot_start_asset = await _resolve_mascot_start_asset_or_409(body.product_id)
+    final = body.final_video_duration_seconds or body.duration_seconds
+    try:
+        plan = mascot_grammar.resolve_final_duration_plan(int(final))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": mascot_grammar.ERR_UNSUPPORTED_FINAL_DURATION,
+                "detail": str(exc),
+                "supported_final_durations": list(mascot_grammar.V11_FINAL_DURATIONS),
+            },
+        ) from exc
+    # Honor an operator-chosen model ONLY if it validates for the atomic block;
+    # otherwise the capability authority's default for that atomic duration.
+    model = body.model if body.model in plan.models else plan.default_model
+    beats = [
+        MontageBeatInput(
+            beat_id=b["beat_id"],
+            role=b["role"],
+            objective=b["objective"],
+            visual_action=b["visual_action"],
+        )
+        for b in mascot_grammar.scene_beats(plan.block_count)
+    ]
+    return {
+        "mascot_start_asset": mascot_start_asset,
+        "beats": beats,
+        "model": model,
+        "duration_seconds": plan.atomic_seconds,
+        "block_count": plan.block_count,
+        "atomic_seconds": plan.atomic_seconds,
+        "plan": plan.to_dict(),
+    }
+
+
 def _parse_scenes(raw_scenes: list[MontageSceneReadyInput]) -> list[MontageSceneReadiness]:
     scenes: list[MontageSceneReadiness] = []
     for raw in raw_scenes:
@@ -169,14 +270,26 @@ async def montage_plan(body: MontagePlanRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     from agent.services.montage_run_service import _resolve_montage_single_settings
 
-    try:
-        model, duration_seconds = _resolve_montage_single_settings(
-            body.model, body.duration_seconds
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    mascot_duration_plan: dict[str, Any] | None = None
+    assembly_path = "DISCRETE_MONTAGE"
+    if body.use_product_mascot:
+        # V1.1: mascot anchor (409) + FINAL duration -> canonical block plan ->
+        # scene count / atomic block / model. Fail-closed before copy resolution.
+        prep = await _prepare_mascot_montage(body)
+        default_policy = SceneReferencePolicy.START_FRAME
+        beats = prep["beats"]
+        model, duration_seconds = prep["model"], prep["duration_seconds"]
+        mascot_duration_plan = prep["plan"]
+        assembly_path = prep["plan"]["assembly"]
+    else:
+        try:
+            model, duration_seconds = _resolve_montage_single_settings(
+                body.model, body.duration_seconds
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        beats = body.beats or _default_beats()
 
-    beats = body.beats or _default_beats()
     try:
         copy_resolution = await resolve_persisted_copy_execution_binding(
             body.product_id,
@@ -192,7 +305,7 @@ async def montage_plan(body: MontagePlanRequest) -> dict[str, Any]:
         story_beats=beats,
         default_policy=default_policy,
         per_beat_policy=body.per_beat_policy,
-        product_media_id=body.product_media_id,
+        product_media_id=None if body.use_product_mascot else body.product_media_id,
     )
     return {
         "product_id": body.product_id,
@@ -200,11 +313,12 @@ async def montage_plan(body: MontagePlanRequest) -> dict[str, Any]:
         "background_id": body.background_id,
         "scene_count": len(plans),
         "scenes": [plan_to_dict(p) for p in plans],
-        "assembly_path": "DISCRETE_MONTAGE",
+        "assembly_path": assembly_path,
         "credit_spend": False,
         "execution_supported": True,
         "model": model,
         "duration_seconds": duration_seconds,
+        "mascot_duration_plan": mascot_duration_plan,
         "copy_policy": "REQUIRED",
         "copy_architecture_v2": (
             copy_resolution.to_metadata(consumer_context=body.copy_v2_context)
@@ -212,6 +326,14 @@ async def montage_plan(body: MontagePlanRequest) -> dict[str, Any]:
             else None
         ),
     }
+
+
+@router.get("/mascot-duration-options")
+async def montage_mascot_duration_options() -> dict[str, Any]:
+    """V1.1 operator menu: the supported FINAL video durations for Mascot Montage,
+    each resolved THROUGH the canonical block-plan + capability authorities into
+    scene count, atomic block seconds, compatible model(s), and assembly mode."""
+    return {"options": mascot_grammar.duration_options()}
 
 
 @router.post("/execute-scenes")
@@ -238,27 +360,41 @@ async def montage_execute_scenes(body: MontageExecuteRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     from agent.services.montage_run_service import _resolve_montage_single_settings
 
-    try:
-        model, duration_seconds = _resolve_montage_single_settings(
-            body.model, body.duration_seconds
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    beats = body.beats or _default_beats()
+    mascot_start_asset = None
+    mascot_block_count = None
+    mascot_atomic_seconds = None
+    if body.use_product_mascot:
+        prep = await _prepare_mascot_montage(body)
+        mascot_start_asset = prep["mascot_start_asset"]
+        default_policy = SceneReferencePolicy.START_FRAME
+        beats = prep["beats"]
+        model, duration_seconds = prep["model"], prep["duration_seconds"]
+        mascot_block_count = prep["block_count"]
+        mascot_atomic_seconds = prep["atomic_seconds"]
+    else:
+        try:
+            model, duration_seconds = _resolve_montage_single_settings(
+                body.model, body.duration_seconds
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        beats = body.beats or _default_beats()
     report = await orchestrate_montage_scenes(
         product_id=body.product_id,
         story_beats=beats,
         package_factory=create_workspace_execution_package,
         default_policy=default_policy,
         per_beat_policy=body.per_beat_policy,
-        product_media_id=body.product_media_id,
+        product_media_id=None if body.use_product_mascot else body.product_media_id,
         generate_fn=None,
         scene_context_override=body.scene_context_override,
         copy_fallback_confirmed=body.copy_fallback_confirmed,
         model=model,
         duration_seconds=duration_seconds,
         copy_v2_context=body.copy_v2_context,
+        mascot_start_asset=mascot_start_asset,
+        mascot_block_count=mascot_block_count,
+        mascot_atomic_seconds=mascot_atomic_seconds,
     )
     payload = report.to_dict()
     payload["hook_id"] = body.hook_id
@@ -365,7 +501,21 @@ async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
         default_policy = parse_scene_reference_policy(body.default_policy)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    beats = body.beats or _default_beats()
+    mascot_start_asset = None
+    mascot_block_count = None
+    mascot_atomic_seconds = None
+    run_model = body.model
+    run_duration = body.duration_seconds
+    if body.use_product_mascot:
+        prep = await _prepare_mascot_montage(body)
+        mascot_start_asset = prep["mascot_start_asset"]
+        default_policy = SceneReferencePolicy.START_FRAME
+        beats = prep["beats"]
+        run_model, run_duration = prep["model"], prep["duration_seconds"]
+        mascot_block_count = prep["block_count"]
+        mascot_atomic_seconds = prep["atomic_seconds"]
+    else:
+        beats = body.beats or _default_beats()
     try:
         return await create_montage_discrete_run(
             product_id=body.product_id,
@@ -373,14 +523,17 @@ async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
             package_factory=create_workspace_execution_package,
             default_policy=default_policy,
             per_beat_policy=body.per_beat_policy,
-            product_media_id=body.product_media_id,
+            product_media_id=None if body.use_product_mascot else body.product_media_id,
             scene_context_override=body.scene_context_override,
             copy_fallback_confirmed=body.copy_fallback_confirmed,
             hook_id=body.hook_id,
             background_id=body.background_id,
-            model=body.model,
-            duration_seconds=body.duration_seconds,
+            model=run_model,
+            duration_seconds=run_duration,
             copy_v2_context=body.copy_v2_context,
+            mascot_start_asset=mascot_start_asset,
+            mascot_block_count=mascot_block_count,
+            mascot_atomic_seconds=mascot_atomic_seconds,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -627,6 +780,13 @@ async def montage_authorize_generation(
                 prompt=str(kwargs.get("prompt") or f"Montage scene {kwargs.get('scene_id')}"),
                 product_id=kwargs.get("product_id") or None,
                 aspect="9:16",
+                # Thread the source lineage + package id the run persisted. For a
+                # mascot START_FRAME scene source_mode="FRAMES" makes the global
+                # product-visual gate honor the mascot start asset (its existing
+                # FRAMES exemption) rather than replacing it with the Official
+                # Product Visual. The gate itself is unchanged.
+                source_mode=kwargs.get("source_mode") or None,
+                workspace_execution_package_id=kwargs.get("workspace_execution_package_id") or None,
                 model=kwargs.get("model") or None,
                 duration_s=kwargs.get("duration_s"),
                 generation_mode="SINGLE",

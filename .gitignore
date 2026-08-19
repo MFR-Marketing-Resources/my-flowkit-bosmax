@@ -61,6 +61,7 @@ data/products/images/*.png
 data/fastmoss/imports/
 data/product_knowledge/imports/
 data/product_registration/drafts/
+data/prompt_library/
 
 # Local tooling / debug artifacts (machine-specific; do not commit)
 .mcp.json
