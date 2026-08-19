@@ -824,6 +824,18 @@ domains:
       - dashboard/src/pages/ProductsSalesAnalyzerPage.sourceFilter.test.ts
       - dashboard/src/pages/ProductDetailPage.tsx
       - dashboard/src/pages/ProductDetailPage.test.tsx
+      # Product Mascot Key Visual + Montage Mascot Anchor + Prompt & SOP Library V1
+      - agent/api/product_mascot.py
+      - agent/services/product_mascot_service.py
+      - agent/api/prompt_library.py
+      - agent/services/prompt_library_service.py
+      - dashboard/src/components/product-registration/ProductMascotKeyVisualPanel.tsx
+      - dashboard/src/pages/PromptSopLibraryPage.tsx
+      - dashboard/src/api/productMascot.ts
+      - dashboard/src/api/promptLibrary.ts
+      - tests/unit/test_product_mascot_service.py
+      - tests/unit/test_montage_mascot_anchor.py
+      - tests/unit/test_prompt_library_service.py
       - dashboard/src/api/taxonomy.ts
       - dashboard/src/types/index.ts
       - dashboard/src/components/product-registration/ProductKnowledgeResultPanel.tsx

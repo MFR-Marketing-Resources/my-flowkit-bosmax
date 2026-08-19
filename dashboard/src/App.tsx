@@ -71,6 +71,7 @@ import TroubleshootPage from "./pages/TroubleshootPage";
 import WorkspaceGenerationPackagesPage from "./pages/WorkspaceGenerationPackagesPage";
 import WorkspaceJobsPage from "./pages/WorkspaceJobsPage";
 import LibraryPage from "./pages/LibraryPage";
+import PromptSopLibraryPage from "./pages/PromptSopLibraryPage";
 import type { TelemetrySummary } from "./types";
 
 const ALL_NAV_GROUPS = [
@@ -111,6 +112,7 @@ const ALL_NAV_GROUPS = [
 			{ to: "/library/videos", icon: Video, label: "Video Library" },
 			{ to: "/library/images", icon: ImageIcon, label: "Image Library" },
 			{ to: "/results", icon: FolderOpen, label: "Results" },
+			{ to: "/library/prompt-sop", icon: ScrollText, label: "Prompt & SOP Library" },
 		],
 	},
 	{
@@ -596,6 +598,7 @@ function Layout() {
 							element={<LibraryPage kind="image" />}
 						/>
 						<Route path="/results" element={<ResultsHubPage />} />
+						<Route path="/library/prompt-sop" element={<PromptSopLibraryPage />} />
 						<Route
 							path="/reporting/executive"
 							element={<ReportingExecutivePage />}

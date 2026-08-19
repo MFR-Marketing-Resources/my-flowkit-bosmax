@@ -73,6 +73,7 @@ export default function MontagePage() {
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [hookId, setHookId] = useState("AUTO");
 	const [backgroundId, setBackgroundId] = useState("AUTO");
+	const [useMascot, setUseMascot] = useState(false);
 	const [capabilityMatrix, setCapabilityMatrix] =
 		useState<VideoCapabilityMatrix | null>(null);
 	const [capabilityError, setCapabilityError] = useState<string | null>(null);
@@ -208,6 +209,7 @@ export default function MontagePage() {
 				model: validSelection.model,
 				duration_seconds: validSelection.durationSeconds,
 				copy_v2_context: { lane: "MONTAGE" },
+				use_product_mascot: useMascot,
 			});
 			setPlan(next);
 		} catch (err: unknown) {
@@ -239,6 +241,7 @@ export default function MontagePage() {
 				model: validSelection.model,
 				duration_seconds: validSelection.durationSeconds,
 				copy_v2_context: { lane: "MONTAGE" },
+				use_product_mascot: useMascot,
 			});
 			setRun(res);
 			try {
@@ -439,6 +442,28 @@ export default function MontagePage() {
 								setFinalCreditConfirm(false);
 							}}
 						/>
+						<label className="mt-3 flex items-start gap-2 text-sm text-slate-300">
+							<input
+								type="checkbox"
+								checked={useMascot}
+								onChange={(e) => {
+									setUseMascot(e.target.checked);
+									setPlan(null);
+									setRun(null);
+								}}
+								className="mt-0.5"
+							/>
+							<span>
+								<span className="font-medium text-white">
+									Use Product Mascot Key Visual
+								</span>
+								<span className="mt-0.5 block text-xs text-slate-400">
+									Drives scenes as START_FRAME (F2V / FRAMES) with the product's
+									mascot as the start visual. Fails clearly if the product has no
+									mascot (PRODUCT_MASCOT_KEY_VISUAL_REQUIRED).
+								</span>
+							</span>
+						</label>
 					</WorkflowStep>
 
 					<WorkflowStep

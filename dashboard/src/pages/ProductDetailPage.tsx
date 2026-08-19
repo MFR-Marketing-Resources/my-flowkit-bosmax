@@ -30,6 +30,7 @@ import RecommendedCameraPresetsCard from "../components/product-intelligence/Rec
 import CreativeHandoffPreview from "../components/product-intelligence/CreativeHandoffPreview";
 import ProductOriginalSourceReupload from "../components/product-registration/ProductOriginalSourceReupload";
 import ProductVisualReadinessPanel from "../components/product-registration/ProductVisualReadinessPanel";
+import ProductMascotKeyVisualPanel from "../components/product-registration/ProductMascotKeyVisualPanel";
 import {
 	resolveProductDisplayName,
 	resolveProductPreviewUrl,
@@ -586,6 +587,7 @@ export default function ProductDetailPage() {
 									)
 								}
 							/>
+							<ProductMascotKeyVisualPanel productId={product.id} />
 						</>
 					)}
 

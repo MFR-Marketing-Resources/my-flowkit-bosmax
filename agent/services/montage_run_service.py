@@ -88,6 +88,8 @@ async def create_montage_discrete_run(
     model: str | None = None,
     duration_seconds: int | None = None,
     copy_v2_context: dict[str, Any] | None = None,
+    mascot_start_asset: Optional[dict[str, Any]] = None,
+    mascot_scene_context: Optional[str] = None,
 ) -> dict[str, Any]:
     """Orchestrate packages and persist a durable run + per-scene jobs."""
     pid = str(product_id or "").strip()
@@ -133,6 +135,8 @@ async def create_montage_discrete_run(
         model=model_label,
         duration_seconds=dur,
         copy_v2_context=copy_v2_context,
+        mascot_start_asset=mascot_start_asset,
+        mascot_scene_context=mascot_scene_context,
     )
 
     run_id = str(uuid.uuid4())
@@ -568,6 +572,11 @@ async def authorize_montage_run_generation(
             gen = await generate_fn(
                 product_id=product_id,
                 mode=mode,
+                # Preserve the scene's source lineage (e.g. FRAMES for a mascot
+                # start-frame scene) so the flow product-visual gate applies its
+                # existing FRAMES exemption instead of overwriting the operator
+                # start asset with the Official Product Visual.
+                source_mode=scene.get("source_mode"),
                 workspace_execution_package_id=scene.get(
                     "workspace_execution_package_id"
                 ),

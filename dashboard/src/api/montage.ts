@@ -151,6 +151,7 @@ export async function createMontagePlan(input: {
 	model: string;
 	duration_seconds: number;
 	copy_v2_context?: Record<string, unknown> | null;
+	use_product_mascot?: boolean;
 }): Promise<MontagePlanResponse> {
 	return postAPI("/api/montage/plan", {
 		product_id: input.product_id,
@@ -161,6 +162,7 @@ export async function createMontagePlan(input: {
 		model: input.model,
 		duration_seconds: input.duration_seconds,
 		copy_v2_context: input.copy_v2_context ?? null,
+		use_product_mascot: input.use_product_mascot ?? false,
 		beats: [],
 	});
 }
@@ -175,6 +177,7 @@ export async function executeMontageScenes(input: {
 	model: string;
 	duration_seconds: number;
 	copy_v2_context?: Record<string, unknown> | null;
+	use_product_mascot?: boolean;
 }): Promise<MontageExecuteResponse> {
 	return postAPI("/api/montage/execute-scenes", {
 		product_id: input.product_id,
@@ -189,6 +192,7 @@ export async function executeMontageScenes(input: {
 		duration_seconds: input.duration_seconds,
 		allow_live_generate: false,
 		copy_v2_context: input.copy_v2_context ?? null,
+		use_product_mascot: input.use_product_mascot ?? false,
 	});
 }
 
@@ -203,6 +207,7 @@ export async function createMontageRun(input: {
 	model: string;
 	duration_seconds: number;
 	copy_v2_context?: Record<string, unknown> | null;
+	use_product_mascot?: boolean;
 }): Promise<MontageRunResponse> {
 	return postAPI("/api/montage/runs", {
 		product_id: input.product_id,
@@ -217,6 +222,7 @@ export async function createMontageRun(input: {
 		model: input.model,
 		duration_seconds: input.duration_seconds,
 		copy_v2_context: input.copy_v2_context ?? null,
+		use_product_mascot: input.use_product_mascot ?? false,
 	});
 }
 
