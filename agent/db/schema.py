@@ -2266,6 +2266,16 @@ async def init_db():
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA foreign_keys=ON")
         await db.executescript(SCHEMA)
+        # Migration: Approved Generation Manifest columns on the pre-existing
+        # execution_approval_snapshot table (added by a later corrective; deployed
+        # DBs created the table before these columns existed).
+        cursor = await db.execute("PRAGMA table_info(execution_approval_snapshot)")
+        _eas_cols = {row[1] for row in await cursor.fetchall()}
+        if _eas_cols:
+            if "manifest_id" not in _eas_cols:
+                await db.execute("ALTER TABLE execution_approval_snapshot ADD COLUMN manifest_id TEXT")
+            if "manifest_item_key" not in _eas_cols:
+                await db.execute("ALTER TABLE execution_approval_snapshot ADD COLUMN manifest_item_key TEXT")
         # Migration: add slug column to character table + backfill
         cursor = await db.execute("PRAGMA table_info(character)")
         columns = {row[1] for row in await cursor.fetchall()}
@@ -5366,12 +5376,40 @@ CREATE TABLE IF NOT EXISTS execution_approval_snapshot (
     provider_job_id                      TEXT,
     dispatched_at                        TEXT,
     created_by                           TEXT,
+    manifest_id                          TEXT,
+    manifest_item_key                    TEXT,
     created_at                           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at                           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_execution_approval_envelope
     ON execution_approval_snapshot(approved_execution_envelope_sha256, approval_state);
+
+-- Approved Generation Manifest: a group of per-item review snapshots (one per
+-- provider operation) that the operator reviews and approves ATOMICALLY before a
+-- multi-item run (Montage / Production Studio / bulk / Extend chain). Each item is
+-- an execution_approval_snapshot linked by manifest_id. Approval is explicit and
+-- per-exact-prompt; no provenance string may manufacture it.
+CREATE TABLE IF NOT EXISTS execution_approval_manifest (
+    manifest_id                          TEXT PRIMARY KEY,
+    surface                              TEXT NOT NULL DEFAULT '',
+    product_id                           TEXT,
+    logical_mode                         TEXT,
+    run_ref                              TEXT,
+    state                                TEXT NOT NULL DEFAULT 'REVIEW_REQUIRED'
+                                         CHECK(state IN ('REVIEW_REQUIRED','APPROVED','INVALIDATED')),
+    item_count                           INTEGER NOT NULL DEFAULT 0 CHECK(item_count >= 0),
+    approved_version                     INTEGER NOT NULL DEFAULT 0 CHECK(approved_version >= 0),
+    approved_by                          TEXT,
+    approved_at                          TEXT,
+    invalidation_reason                  TEXT,
+    created_by                           TEXT,
+    created_at                           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_execution_approval_manifest_item
+    ON execution_approval_snapshot(manifest_id, manifest_item_key);
 
 CREATE TABLE IF NOT EXISTS creative_production_audit_event (
     event_id                   TEXT PRIMARY KEY,

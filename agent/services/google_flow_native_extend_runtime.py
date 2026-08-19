@@ -615,19 +615,41 @@ async def _run_one_extend_block(
             retry_attempt=(existing.get("retry_attempt") or 0) + 1,
         )
 
+    # Final Prompt Approval Gate for native Extend. Every continuation prompt is a
+    # credit-bearing VIDEO op and must match a human-APPROVED Generation Manifest
+    # item by execution-envelope hash — there is NO generic Extend exemption. Runs
+    # BEFORE the STATE_SUBMITTED marker (a blocked dispatch leaves a clean,
+    # retryable row) and BEFORE any provider call (spends nothing on a block).
+    from agent.services import execution_approval_service as _eas
+    _ext_manifest_id = await _eas.approved_manifest_id_for_run(
+        str(req.workspace_generation_package_id or ""), surface="native_extend",
+    )
+    _ext_resolved = await _eas.resolve_manifest_approved_snapshot(
+        manifest_id=_ext_manifest_id or "", mode="EXTEND",
+        final_prompt_text=block.prompt, model=model_key, aspect=req.aspect_ratio,
+    )
+    try:
+        await _eas.verify_and_bind_dispatch(
+            mode="EXTEND", final_prompt_text=block.prompt,
+            model=model_key, aspect=req.aspect_ratio,
+            snapshot_id=(_ext_resolved or {}).get("snapshot_id"),
+        )
+    except _eas.ExecutionApprovalError as _gate_err:
+        await _crud.update_extend_lineage(
+            lineage_id, polling_state=STATE_FAILED,
+            error_code=EXTEND_REQUEST_REJECTED,
+            error_message=f"approval_gate:{_gate_err.code}",
+        )
+        raise NativeExtendError(EXTEND_REQUEST_REJECTED, _gate_err.message)
+
     # DEFECT-8 fix: mark EXTEND_SUBMITTED *before* the network call. If the process
     # dies during/after submit, the row is EXTEND_SUBMITTED (no child) and a later
     # resume fails closed (EXTEND_DUPLICATE_SUBMISSION_BLOCKED) instead of double-spending.
     await _crud.update_extend_lineage(lineage_id, polling_state=STATE_SUBMITTED)
 
     # ── LIVE SUBMIT ─────────────────────────────────────────────────────────
-    # The native-extend chain has ALREADY enforced its own bounded live-credit
-    # authorization upstream (confirm + one-shot token + exact operation count),
-    # and this continues an already-approved+generated initial clip. Mark the
-    # context authorised for the provider-boundary backstop. Documented/auditable;
-    # inert unless EXECUTION_APPROVAL_GATE_ENFORCED.
-    from agent.services import execution_approval_service as _eas
-    _eas.mark_dispatch_exempt("native_extend_bounded_authorization")
+    # Approval proven above (verify_and_bind_dispatch marked the async context
+    # authorised for the provider-boundary backstop on the envelope-hash match).
     resp = await client.generate_video_extend(
         source_operation_id=parent_op, project_id=req.project_id, scene_id=req.scene_id,
         position=block.position, prompt=block.prompt, aspect_ratio=req.aspect_ratio,

@@ -63,11 +63,11 @@ _INVALIDATABLE_FROM = {
     ApprovalState.APPROVED,
 }
 
-# Credit-bearing modes. IMG generation is credit-free (owner law: never gate image
-# for cost), so the gate hard-BLOCKS only video dispatches; IMG runs observe-only
-# (review + snapshot recorded and bound, never blocked). The FlowClient backstop is
-# likewise video-only (captchaAction VIDEO_GENERATION).
-_VIDEO_ENFORCED_MODES = {"T2V", "I2V", "F2V", "HYBRID"}
+# Corrective (2026-08-19): approval is REQUIRED for ALL active generation modes,
+# IMG included. Credit-free (owner law: no cost gating/warnings for image) does NOT
+# mean approval-optional. The dispatch hard-block below fires for every enforced
+# mode. Only the FlowClient CREDIT backstop stays video-only (captchaAction
+# VIDEO_GENERATION), since credit spend is a video-only concern.
 
 
 class ExecutionApprovalError(Exception):
@@ -243,6 +243,8 @@ async def create_review_snapshot(
     asset_media_ids: list[str] | None = None,
     review_session_id: str | None = None,
     created_by: str | None = None,
+    manifest_id: str | None = None,
+    manifest_item_key: str | None = None,
 ) -> dict[str, Any]:
     """Freeze a FINAL provider-ready envelope for human review (REVIEW_REQUIRED).
 
@@ -290,6 +292,8 @@ async def create_review_snapshot(
         "provider_job_id": None,
         "dispatched_at": None,
         "created_by": (_norm(created_by) or None),
+        "manifest_id": (_norm(manifest_id) or None),
+        "manifest_item_key": (_norm(manifest_item_key) or None),
         "created_at": now,
         "updated_at": now,
     }
@@ -389,13 +393,11 @@ async def invalidate_snapshot(
     )
 
 
-async def ensure_upstream_approved_snapshot(
+async def resolve_manifest_approved_snapshot(
     *,
+    manifest_id: str,
     mode: str,
     final_prompt_text: str,
-    surface: str,
-    provenance: str,
-    product_id: str | None = None,
     source_mode: str | None = None,
     model: str | None = None,
     aspect: str | None = None,
@@ -403,22 +405,18 @@ async def ensure_upstream_approved_snapshot(
     count: int | None = None,
     image_model: str | None = None,
     asset_media_ids: list[str] | None = None,
-    approved_by: str = "system:upstream-approval",
-) -> dict[str, Any]:
-    """Materialise an APPROVED snapshot for a NON-UI dispatch that fires an
-    already-approved package/plan (Production Queue, bulk, Production Studio
-    scheduler, Extend). The human review happened UPSTREAM at package/plan
-    approval; this records that lineage (``provenance`` -> ``created_by``) so the
-    enforced dispatch boundary passes for legitimately-approved production runs.
+) -> dict[str, Any] | None:
+    """RESOLVE / BIND (never manufacture) a human-approved manifest item whose
+    frozen execution-envelope SHA EXACTLY matches this dispatch.
 
-    Fail-closed guarantees preserved:
-      * Idempotent by envelope — reuses an existing APPROVED snapshot.
-      * A dirty prompt (failed safety scan) is NEVER auto-approved; it stays
-        REVIEW_REQUIRED so the dispatch blocks.
-      * Callers MUST pass this ONLY when a real upstream approval exists (e.g.
-        production_status == APPROVED). A path with no upstream approval must not
-        call it — that dispatch remains fail-closed.
-    """
+    This is the ONLY way a non-UI dispatch (queue / bulk / scheduler / Montage /
+    Extend) inherits approval — by referencing an already human-approved manifest
+    whose item hash matches. It NEVER creates or approves anything from the live
+    dispatch envelope. If no approved manifest item matches, returns None and the
+    dispatch stays fail-closed. (Corrective integrity invariant: no provenance
+    string manufactures human approval.)"""
+    if not _norm(manifest_id):
+        return None
     identity = compute_dispatch_identity(
         mode=mode,
         final_prompt_text=final_prompt_text,
@@ -430,26 +428,172 @@ async def ensure_upstream_approved_snapshot(
         image_model=image_model,
         asset_media_ids=asset_media_ids,
     )
-    existing = await _crud.find_approved_by_envelope(identity["execution_envelope_sha256"])
-    if existing:
-        return existing
-    snap = await create_review_snapshot(
-        surface=surface,
-        logical_mode=mode,
-        final_prompt_text=final_prompt_text,
-        product_id=product_id,
-        source_mode=source_mode,
-        model=model,
-        aspect=aspect,
-        duration_s=duration_s,
-        count=count,
-        image_model=image_model,
-        asset_media_ids=asset_media_ids,
-        created_by=_norm(provenance) or "upstream-approval",
+    return await _crud.find_approved_manifest_item(
+        _norm(manifest_id), identity["execution_envelope_sha256"],
     )
-    if not int(snap.get("scan_clean") or 0):
-        return snap  # dirty prompt -> not approved -> dispatch stays fail-closed
-    return await approve_snapshot(snap["snapshot_id"], approved_by=approved_by)
+
+
+# --------------------------------------------------------------------------- #
+# Approved Generation Manifest lifecycle (explicit multi-operation approval)
+# --------------------------------------------------------------------------- #
+
+async def create_manifest(
+    *,
+    surface: str,
+    items: list[dict[str, Any]],
+    product_id: str | None = None,
+    logical_mode: str | None = None,
+    run_ref: str | None = None,
+    created_by: str | None = None,
+) -> dict[str, Any]:
+    """Create an Approved Generation Manifest — one review snapshot per provider
+    operation. Each item freezes the exact provider-ready envelope of that op. The
+    operator reviews/edits, then approves the WHOLE manifest atomically."""
+    manifest_id = "eam_" + uuid.uuid4().hex[:16]
+    now = _now()
+    review_session_id = "rev_" + uuid.uuid4().hex[:12]
+    await _crud.create_manifest({
+        "manifest_id": manifest_id,
+        "surface": _norm(surface),
+        "product_id": product_id,
+        "logical_mode": (_norm(logical_mode).upper() or None),
+        "run_ref": (_norm(run_ref) or None),
+        "state": "REVIEW_REQUIRED",
+        "item_count": len(items),
+        "approved_version": 0,
+        "approved_by": None,
+        "approved_at": None,
+        "invalidation_reason": None,
+        "created_by": (_norm(created_by) or None),
+        "created_at": now,
+        "updated_at": now,
+    })
+    for idx, item in enumerate(items):
+        item_key = _norm(item.get("item_key")) or f"item_{idx:04d}"
+        await create_review_snapshot(
+            surface=surface,
+            logical_mode=item.get("mode") or logical_mode or "",
+            final_prompt_text=item.get("final_prompt_text") or "",
+            product_id=item.get("product_id", product_id),
+            source_mode=item.get("source_mode"),
+            model=item.get("model"),
+            aspect=item.get("aspect"),
+            duration_s=item.get("duration_s"),
+            count=item.get("count"),
+            image_model=item.get("image_model"),
+            asset_media_ids=item.get("asset_media_ids"),
+            review_session_id=review_session_id,
+            created_by=created_by,
+            manifest_id=manifest_id,
+            manifest_item_key=item_key,
+        )
+    return await get_manifest_with_items(manifest_id)
+
+
+async def get_manifest_with_items(manifest_id: str) -> dict[str, Any]:
+    manifest = await _crud.get_manifest(manifest_id)
+    if manifest is None:
+        raise ExecutionApprovalError(
+            "MANIFEST_NOT_FOUND",
+            f"Approval manifest {manifest_id} was not found.",
+            status_code=404,
+        )
+    manifest["items"] = await _crud.list_manifest_items(manifest_id)
+    return manifest
+
+
+async def edit_manifest_item(
+    manifest_id: str,
+    snapshot_id: str,
+    *,
+    edited_prompt_text: str,
+    editor_id: str | None = None,
+) -> dict[str, Any]:
+    manifest = await _crud.get_manifest(manifest_id)
+    if manifest is None:
+        raise ExecutionApprovalError("MANIFEST_NOT_FOUND", "manifest not found", status_code=404)
+    if manifest["state"] == "APPROVED":
+        raise ExecutionApprovalError(
+            "MANIFEST_IMMUTABLE",
+            "An APPROVED manifest is immutable; invalidate it to revise.",
+        )
+    snap = await _crud.get_snapshot(snapshot_id)
+    if snap is None or snap.get("manifest_id") != manifest_id:
+        raise ExecutionApprovalError(
+            "SNAPSHOT_NOT_IN_MANIFEST", "item not in manifest", status_code=404,
+        )
+    await apply_edit(snapshot_id, edited_prompt_text=edited_prompt_text, editor_id=editor_id)
+    await _crud.update_manifest(manifest_id, updated_at=_now())
+    return await get_manifest_with_items(manifest_id)
+
+
+async def approve_manifest(manifest_id: str, *, approved_by: str) -> dict[str, Any]:
+    """Approve the WHOLE manifest atomically. Every item must be scan-clean; a
+    single dirty item refuses the approval. On success each item snapshot becomes
+    APPROVED and the manifest is immutable — the exact human-approved authority
+    that dispatches resolve against."""
+    manifest = await _crud.get_manifest(manifest_id)
+    if manifest is None:
+        raise ExecutionApprovalError("MANIFEST_NOT_FOUND", "manifest not found", status_code=404)
+    if manifest["state"] == "APPROVED":
+        return await get_manifest_with_items(manifest_id)
+    items = await _crud.list_manifest_items(manifest_id)
+    if not items:
+        raise ExecutionApprovalError("MANIFEST_EMPTY", "manifest has no items")
+    dirty = [i["snapshot_id"] for i in items if not int(i.get("scan_clean") or 0)]
+    if dirty:
+        raise ExecutionApprovalError(
+            "MANIFEST_SCAN_NOT_CLEAN",
+            "One or more manifest items failed the safety scan; approval refused.",
+            details={"dirty_items": dirty},
+        )
+    for item in items:
+        await approve_snapshot(item["snapshot_id"], approved_by=approved_by)
+    now = _now()
+    await _crud.update_manifest(
+        manifest_id,
+        state="APPROVED",
+        approved_version=int(manifest.get("approved_version") or 0) + 1,
+        approved_by=_norm(approved_by) or "operator",
+        approved_at=now,
+        invalidation_reason=None,
+        updated_at=now,
+    )
+    return await get_manifest_with_items(manifest_id)
+
+
+async def invalidate_manifest(manifest_id: str, *, reason: str) -> dict[str, Any]:
+    manifest = await _crud.get_manifest(manifest_id)
+    if manifest is None:
+        raise ExecutionApprovalError("MANIFEST_NOT_FOUND", "manifest not found", status_code=404)
+    for item in await _crud.list_manifest_items(manifest_id):
+        if item.get("approval_state") in _INVALIDATABLE_FROM:
+            await invalidate_snapshot(item["snapshot_id"], reason=reason)
+    await _crud.update_manifest(
+        manifest_id,
+        state="INVALIDATED",
+        invalidation_reason=_norm(reason) or "INVALIDATED",
+        updated_at=_now(),
+    )
+    return await get_manifest_with_items(manifest_id)
+
+
+async def approved_manifest_id_for_run(
+    run_ref: str,
+    *,
+    surface: str | None = None,
+) -> str | None:
+    """Dispatch-side lookup: the APPROVED manifest_id for a multi-op run (Montage /
+    bulk / queue / Production Studio). A non-UI dispatch calls this with its run id
+    and threads the result into ``start_generate(manifest_id=...)``. Returns None
+    when no approved manifest exists yet — the dispatch then fails closed under
+    enforcement (nothing is auto-approved)."""
+    if not _norm(run_ref):
+        return None
+    manifest = await _crud.find_latest_approved_manifest_by_run_ref(
+        _norm(run_ref), surface=surface,
+    )
+    return manifest["manifest_id"] if manifest else None
 
 
 async def verify_and_bind_dispatch(
@@ -508,7 +652,7 @@ async def verify_and_bind_dispatch(
             if snapshot_id is None
             else "SNAPSHOT_ENVELOPE_MISMATCH_OR_NOT_APPROVED"
         )
-        if gate_enforced() and _norm(mode).upper() in _VIDEO_ENFORCED_MODES:
+        if gate_enforced():
             raise ExecutionApprovalError(
                 "DISPATCH_NOT_APPROVED",
                 "This generation was not covered by a matching APPROVED "

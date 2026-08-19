@@ -1761,6 +1761,14 @@ async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
             production_error=reason,
         )
         return {"ok": False, "error": reason}
+    from agent.services import execution_approval_service as _eas
+    # This package's human-approved final-prompt manifest (run_ref = wgp_id). The
+    # dispatch resolves its approved item by envelope hash; production-status
+    # APPROVED alone does NOT authorise the credit burn — the final prompt must be
+    # human-approved too. No approved manifest -> enforced gate blocks.
+    _manifest_id = await _eas.approved_manifest_id_for_run(
+        wgp_id, surface="production_queue",
+    )
     attempts = 0
     while True:
         result = await make_video.start_generate(
@@ -1770,7 +1778,7 @@ async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
             model=runtime_payload.get("model"),
             duration_s=runtime_payload.get("duration_s"),
             num_videos=runtime_payload.get("num_videos") or 1,
-            upstream_approved_provenance="production_queue",
+            manifest_id=_manifest_id,
         )
         if result.get("status") == "REJECTED" and result.get("error") == "VIDEO_JOB_IN_FLIGHT":
             attempts += 1

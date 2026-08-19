@@ -843,6 +843,14 @@ async def _dispatch_attempt(
                     ",".join(transport_blockers),
                     details={"blockers": transport_blockers},
                 )
+            from agent.services import execution_approval_service as _eas
+            # Production Studio plan's human-approved final-prompt manifest
+            # (run_ref = package id). Resolve this op's approved item by envelope
+            # hash; no approved manifest -> enforced gate blocks (fail-closed).
+            _manifest_id = await _eas.approved_manifest_id_for_run(
+                str(payload["workspace_generation_package_id"]),
+                surface="production_studio",
+            )
             result = await make_video.start_generate(
                 mode=runtime_payload["mode"],
                 prompt=runtime_payload["prompt"],
@@ -852,7 +860,7 @@ async def _dispatch_attempt(
                 duration_s=runtime_payload.get("duration_s"),
                 num_videos=int(runtime_payload.get("num_videos") or 1),
                 image_model=runtime_payload.get("image_model"),
-                upstream_approved_provenance="production_studio",
+                manifest_id=_manifest_id,
             )
     except Exception as exc:
         await p6db.update_attempt(
