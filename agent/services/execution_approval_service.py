@@ -246,6 +246,10 @@ async def resolve_canonical_asset_fingerprints(
       transport media UUIDs (newly uploaded during generation) do NOT participate
       in the logical approval hash.
 
+      FAIL-CLOSED: If canonical fingerprint resolution fails for a product-backed
+      HYBRID/F2V execution, this function MUST raise ExecutionApprovalError. It
+      must NEVER silently fall back to caller-supplied asset IDs or fingerprints.
+
     For manual frame lanes (source_mode == FRAMES) and explicit assets:
       Retain strict locking to the explicit frame/asset fingerprints/IDs.
     """
@@ -258,13 +262,26 @@ async def resolve_canonical_asset_fingerprints(
         )
         try:
             pv_fp = await get_canonical_product_visual_fingerprint(product_id, slot_key="start_frame")
+            if not pv_fp:
+                raise ExecutionApprovalError(
+                    "PRODUCT_VISUAL_REFERENCE_REQUIRED",
+                    f"PRODUCT_VISUAL_REFERENCE_REQUIRED: Canonical product visual fingerprint for product '{product_id}' resolved empty.",
+                    details={"product_id": product_id},
+                )
             return [pv_fp]
+        except ExecutionApprovalError:
+            raise
         except Exception as exc:
-            logger.warning(
-                "Could not resolve canonical product visual fingerprint for product %s: %s",
+            logger.error(
+                "Failed to resolve canonical product visual fingerprint for product %s: %s",
                 product_id,
                 exc,
             )
+            raise ExecutionApprovalError(
+                "PRODUCT_VISUAL_REFERENCE_REQUIRED",
+                f"PRODUCT_VISUAL_REFERENCE_REQUIRED: Failed to resolve canonical product visual fingerprint for product '{product_id}': {exc}",
+                details={"product_id": product_id, "error": str(exc)},
+            ) from exc
 
     if asset_fingerprints is not None:
         return sorted({_norm(f) for f in asset_fingerprints if _norm(f)})

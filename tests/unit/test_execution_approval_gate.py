@@ -22,6 +22,17 @@ import pytest
 from agent.services import execution_approval_service as eas
 
 
+@pytest.fixture(autouse=True)
+def _mock_canonical_pv(monkeypatch):
+    async def _mock_fp(product_id: str, slot_key: str = "start_frame"):
+        return f"PRODUCT_VISUAL|{product_id}|{slot_key}|fake_canonical_sha256"
+
+    monkeypatch.setattr(
+        "agent.services.product_visual_grounding_resolver.get_canonical_product_visual_fingerprint",
+        _mock_fp,
+    )
+
+
 _ASSET = "550e8400-e29b-41d4-a716-446655440000"
 
 
@@ -157,7 +168,7 @@ async def test_img_is_observe_only_even_when_enforced(monkeypatch):
         ("aspect", "16:9"),
         ("duration_s", 16),
         ("count", 2),
-        ("asset_media_ids", ["swapped-asset"]),
+        ("product_id", "prod_test_2"),
     ],
 )
 async def test_changed_field_after_approval_blocks(monkeypatch, field, value):
@@ -167,6 +178,18 @@ async def test_changed_field_after_approval_blocks(monkeypatch, field, value):
     await eas.approve_snapshot(snap["snapshot_id"], approved_by="faris")
     with pytest.raises(eas.ExecutionApprovalError) as exc:
         await eas.verify_and_bind_dispatch(**_dispatch(prompt, **{field: value}))
+    assert exc.value.code == "DISPATCH_NOT_APPROVED"
+
+
+async def test_changed_frame_asset_after_approval_blocks(monkeypatch):
+    monkeypatch.setenv("EXECUTION_APPROVAL_GATE_ENFORCED", "1")
+    prompt = "P_changed_frame — approved baseline"
+    snap = await eas.create_review_snapshot(**_spec(prompt, source_mode="FRAMES", product_id=None))
+    await eas.approve_snapshot(snap["snapshot_id"], approved_by="faris")
+    with pytest.raises(eas.ExecutionApprovalError) as exc:
+        await eas.verify_and_bind_dispatch(
+            **_dispatch(prompt, source_mode="FRAMES", product_id=None, asset_media_ids=["swapped-frame"])
+        )
     assert exc.value.code == "DISPATCH_NOT_APPROVED"
 
 

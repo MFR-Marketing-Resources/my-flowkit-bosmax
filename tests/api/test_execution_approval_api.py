@@ -3,8 +3,20 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+import pytest
 
 from agent.main import app
+
+
+@pytest.fixture(autouse=True)
+def _mock_canonical_pv(monkeypatch):
+    async def _mock_fp(product_id: str, slot_key: str = "start_frame"):
+        return f"PRODUCT_VISUAL|{product_id}|{slot_key}|fake_canonical_sha256"
+
+    monkeypatch.setattr(
+        "agent.services.product_visual_grounding_resolver.get_canonical_product_visual_fingerprint",
+        _mock_fp,
+    )
 
 
 def _client() -> TestClient:

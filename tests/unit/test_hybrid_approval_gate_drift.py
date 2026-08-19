@@ -454,3 +454,66 @@ async def test_envelope_v2_versioning_and_historical_v1():
     saved_env = json.loads(saved["execution_envelope_json"])
     assert saved_env["envelope_version"] == 1
     assert saved["approved_execution_envelope_sha256"] == v1_sha
+
+
+# --------------------------------------------------------------------------- #
+# Test 11: Fail-Closed on Canonical Product Visual Resolver Failure
+# --------------------------------------------------------------------------- #
+
+async def test_hybrid_product_visual_resolver_failure_fails_closed(monkeypatch):
+    """Proves that if canonical Product Visual resolution fails for product-backed HYBRID:
+    - create_review_snapshot fails closed (no fallback to caller media ID)
+    - verify_and_bind_dispatch fails closed
+    - zero unverified/fallback dispatch occurs.
+    """
+    # 1. Non-existent product ID
+    with pytest.raises(eas.ExecutionApprovalError) as exc_info:
+        await eas.create_review_snapshot(
+            surface="hybrid",
+            logical_mode="F2V",
+            final_prompt_text="Test prompt with missing product",
+            product_id="non_existent_product_9999",
+            source_mode="HYBRID",
+            model="Veo 3.1 - Lite",
+            aspect="9:16",
+            duration_s=8,
+            count=1,
+            asset_media_ids=["fallback-flow-uuid-1111"],
+            asset_fingerprints=["FALLBACK_FP_2222"],
+        )
+    assert exc_info.value.code == "PRODUCT_VISUAL_REFERENCE_REQUIRED"
+
+    # 2. Mocked exception in get_canonical_product_visual_fingerprint
+    async def _mock_fail(*args, **kwargs):
+        raise RuntimeError("Disk I/O failure loading product cutout")
+
+    monkeypatch.setattr(
+        "agent.services.product_visual_grounding_resolver.get_canonical_product_visual_fingerprint",
+        _mock_fail,
+    )
+
+    # Review snapshot MUST fail closed
+    with pytest.raises(eas.ExecutionApprovalError) as exc_info2:
+        await eas.create_review_snapshot(
+            surface="hybrid",
+            logical_mode="F2V",
+            final_prompt_text="Test prompt with erroring resolver",
+            product_id="prod_err_1",
+            source_mode="HYBRID",
+            model="Veo 3.1 - Lite",
+            asset_media_ids=["fallback-flow-uuid-3333"],
+        )
+    assert exc_info2.value.code == "PRODUCT_VISUAL_REFERENCE_REQUIRED"
+
+    # Dispatch verification MUST fail closed
+    with pytest.raises(eas.ExecutionApprovalError) as exc_info3:
+        await eas.verify_and_bind_dispatch(
+            mode="F2V",
+            final_prompt_text="Test prompt with erroring resolver",
+            source_mode="HYBRID",
+            product_id="prod_err_1",
+            model="Veo 3.1 - Lite",
+            asset_media_ids=["fallback-flow-uuid-3333"],
+        )
+    assert exc_info3.value.code in ("PRODUCT_VISUAL_REFERENCE_REQUIRED", "DISPATCH_NOT_APPROVED")
+
