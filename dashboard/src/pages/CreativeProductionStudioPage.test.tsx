@@ -23,6 +23,7 @@ const approveProductionPlan = vi.fn();
 const assignProductionWaves = vi.fn();
 const dryRunProductionPlan = vi.fn();
 const startProductionPlan = vi.fn();
+const materializeStudioPlanManifest = vi.fn();
 const controlProductionPlan = vi.fn();
 const reconcileAttempt = vi.fn();
 const retryAttempt = vi.fn();
@@ -50,12 +51,32 @@ vi.mock("../api/creativeProduction", () => ({
 	assignProductionWaves: (...args: unknown[]) => assignProductionWaves(...args),
 	dryRunProductionPlan: (...args: unknown[]) => dryRunProductionPlan(...args),
 	startProductionPlan: (...args: unknown[]) => startProductionPlan(...args),
+	materializeStudioPlanManifest: (...args: unknown[]) =>
+		materializeStudioPlanManifest(...args),
 	controlProductionPlan: (...args: unknown[]) => controlProductionPlan(...args),
 	reconcileAttempt: (...args: unknown[]) => reconcileAttempt(...args),
 	retryAttempt: (...args: unknown[]) => retryAttempt(...args),
 	decideItemQa: (...args: unknown[]) => decideItemQa(...args),
 	P6_LIVE_CONFIRMATION: "AUTHORIZE_P6_LIVE_CREDIT_SPEND",
 }));
+
+// The Final Prompt Approval Gate modal — stubbed to expose a one-click approve so
+// the live-dispatch tests can drive materialize -> approve -> dispatch.
+vi.mock("../components/execution-approval/ManifestApprovalModal", async () => {
+	const React = await import("react");
+	return {
+		ManifestApprovalModal: ({ onApproved }: { onApproved: () => void }) =>
+			React.createElement(
+				"button",
+				{
+					type: "button",
+					"data-testid": "mock-manifest-approve",
+					onClick: () => onApproved(),
+				},
+				"approve",
+			),
+	};
+});
 
 vi.mock("../api/productionQueue", () => ({
 	fetchVideoModels: (...args: unknown[]) => fetchVideoModels(...args),
@@ -562,6 +583,10 @@ function prime() {
 	);
 	listExecutionLanes.mockResolvedValue(HEALTHY_LANES);
 	startProductionPlan.mockResolvedValue({ plan_id: "plan-b" });
+	materializeStudioPlanManifest.mockResolvedValue({
+		manifest_id: "eam_test",
+		items: [],
+	});
 }
 
 async function selectPlan(planId: string) {
@@ -983,6 +1008,17 @@ describe("P6.3-R2 production plan state isolation", () => {
 			target: { value: "AUTHORIZE_P6_LIVE_CREDIT_SPEND" },
 		});
 		fireEvent.click(screen.getByTestId("p6-action-live-start"));
+		// Final Prompt Approval Gate: live dispatch first materialises the plan's
+		// per-item manifest for the EXACT plan + aspect, then requires approval.
+		await waitFor(() =>
+			expect(materializeStudioPlanManifest).toHaveBeenCalledWith(
+				"plan-b",
+				"p6-production-operator",
+				"16:9",
+			),
+		);
+		expect(startProductionPlan).not.toHaveBeenCalled();
+		fireEvent.click(await screen.findByTestId("mock-manifest-approve"));
 		await waitFor(() =>
 			expect(startProductionPlan).toHaveBeenCalledWith(
 				"plan-b",

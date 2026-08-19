@@ -40,6 +40,7 @@ import {
 	listExecutionLanes,
 	listProductionPlans,
 	materializeContentMatrix,
+	materializeStudioPlanManifest,
 	P6_LIVE_CONFIRMATION,
 	type PlanDetail,
 	type ProductionPlan,
@@ -53,6 +54,7 @@ import {
 } from "../api/creativeProduction";
 import { fetchVideoModels, type VideoModelInfo } from "../api/productionQueue";
 import { fetchProductDetail } from "../api/products";
+import { ManifestApprovalModal } from "../components/execution-approval/ManifestApprovalModal";
 import {
 	resolveProductDisplayName,
 	resolveProductPreviewUrl,
@@ -242,6 +244,12 @@ export default function CreativeProductionStudioPage() {
 	const [preflight, setPreflight] = useState<CapacityPreflight | null>(null);
 	const [busy, setBusy] = useState("");
 	const [error, setError] = useState("");
+	// Final Prompt Approval Gate — a LIVE plan dispatch first materialises the
+	// per-item manifest and requires human review+approval; the deferred dispatch
+	// runs on approval.
+	const [pendingLive, setPendingLive] = useState<
+		{ manifestId: string; action: () => Promise<unknown> } | null
+	>(null);
 	// Deep-link (product_id in the URL) resolution error — surfaced to the operator
 	// when the id can't be resolved; never silently swapped for another product.
 	const [deepLinkError, setDeepLinkError] = useState("");
@@ -775,7 +783,7 @@ export default function CreativeProductionStudioPage() {
 		}));
 	};
 
-	const execute = async (name: string, action: () => Promise<unknown>) => {
+	const runAction = async (name: string, action: () => Promise<unknown>) => {
 		setBusy(name);
 		setError("");
 		try {
@@ -787,6 +795,30 @@ export default function CreativeProductionStudioPage() {
 		} finally {
 			setBusy("");
 		}
+	};
+
+	const execute = async (name: string, action: () => Promise<unknown>) => {
+		// LIVE credit-spend goes through the Final Prompt Approval Gate: materialise
+		// the plan's per-item final prompts, then require human WYSIWYG approval
+		// before the deferred dispatch runs. Every other action runs directly.
+		if (name === "live" && detail) {
+			setBusy(name);
+			setError("");
+			try {
+				const manifest = await materializeStudioPlanManifest(
+					selectedPlanId,
+					operatorId,
+					detail.snapshot.aspect_ratio,
+				);
+				setPendingLive({ manifestId: manifest.manifest_id, action });
+			} catch (reason) {
+				setError(reason instanceof Error ? reason.message : String(reason));
+			} finally {
+				setBusy("");
+			}
+			return;
+		}
+		await runAction(name, action);
 	};
 
 	const create = async () => {
@@ -1445,6 +1477,19 @@ export default function CreativeProductionStudioPage() {
 					: "mx-auto max-w-[1680px] p-4 text-slate-100"
 			}
 		>
+			{pendingLive && (
+				<ManifestApprovalModal
+					manifestId={pendingLive.manifestId}
+					approvedBy={operatorId}
+					title="Review every item's final prompt"
+					onApproved={() => {
+						const deferred = pendingLive.action;
+						setPendingLive(null);
+						void runAction("live", deferred);
+					}}
+					onCancel={() => setPendingLive(null)}
+				/>
+			)}
 			{useV4 ? (
 				<header
 					data-testid="p6-v4-header"

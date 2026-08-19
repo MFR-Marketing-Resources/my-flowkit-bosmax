@@ -176,6 +176,27 @@ async def dry_run_plan(plan_id: str, body: DryRunRequest):
         raise _http(exc) from exc
 
 
+@router.post("/plans/{plan_id}/materialize-approval-manifest")
+async def materialize_plan_approval_manifest(plan_id: str, body: DryRunRequest):
+    """Freeze the plan's per-item FINAL prompts into an Approved Generation
+    Manifest (run_ref = plan id) for human WYSIWYG review before live dispatch.
+    ``aspect`` must be the SAME aspect the operator will start the plan with, so
+    each frozen item hash-matches its dispatch. Provider-free — nothing fires."""
+    from agent.services import execution_approval_service as _eas
+    try:
+        items = await scheduler.build_studio_plan_manifest_items(
+            plan_id, aspect=body.aspect,
+        )
+    except plans.CreativeProductionError as exc:
+        raise _http(exc) from exc
+    if not items:
+        raise HTTPException(422, detail={"error": "NO_DISPATCHABLE_ITEMS"})
+    return await _eas.create_manifest(
+        surface="production_studio", run_ref=plan_id,
+        logical_mode="VIDEO", items=items, created_by="operator",
+    )
+
+
 @router.post("/plans/{plan_id}/start")
 async def start_plan(plan_id: str, body: StartPlanRequest):
     try:

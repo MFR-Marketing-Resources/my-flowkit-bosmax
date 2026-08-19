@@ -795,6 +795,39 @@ async def _acquire_item_lease(
     )
 
 
+async def build_studio_plan_manifest_items(
+    plan_id: str, *, aspect: str,
+) -> list[dict[str, Any]]:
+    """Per-item Approved Generation Manifest items for a Production Studio PLAN,
+    derived by the SAME ``_build_item_payload`` the dispatch snapshot uses, so each
+    approved item's execution-envelope hash matches its dispatch EXACTLY. A studio
+    dispatch passes no product_id / source_mode and (as a manifest dispatch) binds
+    asset_fingerprints=[], so the items carry none of those. ``aspect`` is the same
+    per-request aspect the operator will start the plan with. Provider-free."""
+    plan = await _require_plan(plan_id)
+    rows = await p6db.list_items(
+        plan_id, statuses=["APPROVED", "WAVE_ASSIGNED", "QUEUED"],
+    )
+    items: list[dict[str, Any]] = []
+    for item in rows:
+        payload, blockers = await _build_item_payload(item, plan, aspect=aspect)
+        if blockers:
+            # An unbuildable item would block at dispatch anyway; don't freeze an
+            # unfireable manifest item for it.
+            continue
+        items.append({
+            "item_key": str(item["item_id"]),
+            "mode": payload["mode"],
+            "final_prompt_text": payload["prompt"],
+            "model": payload.get("model"),
+            "aspect": payload.get("aspect") or aspect,
+            "duration_s": payload.get("duration_s"),
+            "count": payload.get("num_videos") or 1,
+            "image_model": payload.get("image_model"),
+        })
+    return items
+
+
 async def _dispatch_attempt(
     item: dict[str, Any],
     attempt: dict[str, Any],
@@ -844,11 +877,12 @@ async def _dispatch_attempt(
                     details={"blockers": transport_blockers},
                 )
             from agent.services import execution_approval_service as _eas
-            # Production Studio plan's human-approved final-prompt manifest
-            # (run_ref = package id). Resolve this op's approved item by envelope
-            # hash; no approved manifest -> enforced gate blocks (fail-closed).
+            # Production Studio PLAN's human-approved final-prompt manifest
+            # (run_ref = plan id — the operator approves the whole plan once, then
+            # the scheduler fires its items; each resolves its own approved item by
+            # envelope hash). No approved manifest -> enforced gate blocks.
             _manifest_id = await _eas.approved_manifest_id_for_run(
-                str(payload["workspace_generation_package_id"]),
+                str(item["plan_id"]),
                 surface="production_studio",
             )
             result = await make_video.start_generate(
