@@ -68,3 +68,23 @@ def registration_media_path(draft_id: str, media_id: str, ext: str) -> Path:
     p = registration_media_dir() / safe_draft / f"{media_id}.{ext}"
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def prompt_library_attachments_dir() -> Path:
+    """Root dir for Prompt & SOP Library attachments — a DEDICATED store, never
+    reused by product image / registration media / creative-asset / generation
+    artifact lanes."""
+    from agent.config import BASE_DIR
+    return BASE_DIR / "data" / "prompt_library" / "attachments"
+
+
+def prompt_library_attachment_path(item_id: str, attachment_id: str, ext: str) -> Path:
+    """Local path for one library attachment, grouped per item. Both ids and the
+    ext are sanitized (path-traversal guard); the filename is the server-generated
+    attachment_id + validated ext — never the client-supplied filename."""
+    safe_item = "".join(c for c in str(item_id) if c.isalnum() or c in "-_")[:80] or "unknown"
+    safe_att = "".join(c for c in str(attachment_id) if c.isalnum() or c in "-_")[:80] or "unknown"
+    safe_ext = "".join(c for c in str(ext) if c.isalnum())[:10] or "bin"
+    p = prompt_library_attachments_dir() / safe_item / f"{safe_att}.{safe_ext}"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p

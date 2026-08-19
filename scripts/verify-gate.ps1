@@ -94,6 +94,10 @@ $SmokeTests = @(
     'tests/unit/test_canonical_runtime_lock.py',
     'tests/unit/test_scene_choreography_v2.py',
     'tests/unit/test_product_treatment_template_service.py',
+    # Product Mascot Key Visual + Montage Mascot Anchor + Prompt & SOP Library V1.
+    'tests/unit/test_product_mascot_service.py',
+    'tests/unit/test_montage_mascot_anchor.py',
+    'tests/unit/test_prompt_library_service.py',
     # Final Prompt Approval Gate (WYSIWYG per-dispatch execution approval).
     'tests/unit/test_execution_approval_gate.py',
     'tests/unit/test_execution_approval_backstop.py',

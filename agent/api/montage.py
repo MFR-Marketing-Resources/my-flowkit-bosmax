@@ -42,12 +42,57 @@ from agent.services.montage_scene_reference_policy import (
 from agent.services.workspace_execution_package_service import (
     create_workspace_execution_package,
 )
+from agent.services import product_mascot_service
 from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
     resolve_persisted_copy_execution_binding,
 )
 
 router = APIRouter(prefix="/montage", tags=["montage"])
+
+# Minimum mascot-specific context injected into the existing Montage scene/story
+# compiler — the current planner treats the supplied mascot as the recurring
+# on-screen product character. No new planner, no second engine.
+MASCOT_SCENE_CONTEXT = (
+    "PRODUCT MASCOT MODE: The supplied Product Mascot Key Visual is the recurring "
+    "on-screen product character/hero across every scene. Treat the mascot as the "
+    "consistent visual identity and the start-frame subject to animate from. "
+    "Presenter-free (faceless) — no human creator."
+)
+
+
+def _mascot_to_start_asset(mascot: dict[str, Any]) -> dict[str, Any]:
+    """Map a resolved Product Mascot Key Visual to a transportable start-asset."""
+    download = mascot.get("download_url") or mascot.get("preview_url")
+    return {
+        "assetId": mascot.get("asset_id"),
+        "mediaId": mascot.get("media_id"),
+        "downloadUrl": download,
+        "previewUrl": mascot.get("preview_url"),
+        "localFilePath": mascot.get("local_file_path"),
+        "fileName": mascot.get("display_name") or "product-mascot",
+        "label": mascot.get("display_name") or "Product Mascot Key Visual",
+        "assetSource": "PRODUCT_MASCOT_KEY_VISUAL",
+        "semanticRole": "COMPOSITE_FRAME_REFERENCE",
+        "localImagePathPresent": bool(mascot.get("local_file_path")),
+        "remoteImageUrlPresent": bool(download),
+    }
+
+
+async def _resolve_mascot_start_asset_or_409(product_id: str) -> dict[str, Any]:
+    """Fail-closed mascot resolution for the Montage lane.
+
+    Raises HTTP 409 PRODUCT_MASCOT_KEY_VISUAL_REQUIRED when no current mascot is
+    resolvable — never a silent fallback to the Official Product Visual.
+    """
+    try:
+        mascot = await product_mascot_service.resolve_mascot_for_montage(product_id)
+    except product_mascot_service.ProductMascotUnavailableError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": exc.code, "detail": str(exc), "product_id": product_id},
+        ) from exc
+    return _mascot_to_start_asset(mascot)
 
 
 class MontageBeatInput(BaseModel):
@@ -68,6 +113,10 @@ class MontagePlanRequest(BaseModel):
     model: str = Field(..., min_length=1)
     duration_seconds: int = Field(..., gt=0)
     copy_v2_context: dict[str, Any] | None = None
+    # Mascot Montage: resolve the product's current Product Mascot Key Visual and
+    # drive scenes as START_FRAME (F2V / FRAMES lineage) with the mascot as the
+    # start-frame visual. Fail-closed if no mascot (PRODUCT_MASCOT_KEY_VISUAL_REQUIRED).
+    use_product_mascot: bool = False
 
 
 class MontageExecuteRequest(MontagePlanRequest):
@@ -187,11 +236,15 @@ async def montage_plan(body: MontagePlanRequest) -> dict[str, Any]:
             status_code=exc.status_code,
             detail={"error": exc.code, "detail": exc.details or str(exc)},
         ) from exc
+    if body.use_product_mascot:
+        # Fail-closed mascot resolution; plan drives START_FRAME (F2V/FRAMES).
+        await _resolve_mascot_start_asset_or_409(body.product_id)
+        default_policy = SceneReferencePolicy.START_FRAME
     plans = plan_scenes_from_story(
         story_beats=beats,
         default_policy=default_policy,
         per_beat_policy=body.per_beat_policy,
-        product_media_id=body.product_media_id,
+        product_media_id=None if body.use_product_mascot else body.product_media_id,
     )
     return {
         "product_id": body.product_id,
@@ -245,19 +298,25 @@ async def montage_execute_scenes(body: MontageExecuteRequest) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     beats = body.beats or _default_beats()
+    mascot_start_asset = None
+    if body.use_product_mascot:
+        mascot_start_asset = await _resolve_mascot_start_asset_or_409(body.product_id)
+        default_policy = SceneReferencePolicy.START_FRAME
     report = await orchestrate_montage_scenes(
         product_id=body.product_id,
         story_beats=beats,
         package_factory=create_workspace_execution_package,
         default_policy=default_policy,
         per_beat_policy=body.per_beat_policy,
-        product_media_id=body.product_media_id,
+        product_media_id=None if body.use_product_mascot else body.product_media_id,
         generate_fn=None,
         scene_context_override=body.scene_context_override,
         copy_fallback_confirmed=body.copy_fallback_confirmed,
         model=model,
         duration_seconds=duration_seconds,
         copy_v2_context=body.copy_v2_context,
+        mascot_start_asset=mascot_start_asset,
+        mascot_scene_context=MASCOT_SCENE_CONTEXT if body.use_product_mascot else None,
     )
     payload = report.to_dict()
     payload["hook_id"] = body.hook_id
@@ -365,6 +424,10 @@ async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     beats = body.beats or _default_beats()
+    mascot_start_asset = None
+    if body.use_product_mascot:
+        mascot_start_asset = await _resolve_mascot_start_asset_or_409(body.product_id)
+        default_policy = SceneReferencePolicy.START_FRAME
     try:
         return await create_montage_discrete_run(
             product_id=body.product_id,
@@ -372,7 +435,7 @@ async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
             package_factory=create_workspace_execution_package,
             default_policy=default_policy,
             per_beat_policy=body.per_beat_policy,
-            product_media_id=body.product_media_id,
+            product_media_id=None if body.use_product_mascot else body.product_media_id,
             scene_context_override=body.scene_context_override,
             copy_fallback_confirmed=body.copy_fallback_confirmed,
             hook_id=body.hook_id,
@@ -380,6 +443,8 @@ async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
             model=body.model,
             duration_seconds=body.duration_seconds,
             copy_v2_context=body.copy_v2_context,
+            mascot_start_asset=mascot_start_asset,
+            mascot_scene_context=MASCOT_SCENE_CONTEXT if body.use_product_mascot else None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -590,6 +655,13 @@ async def montage_authorize_generation(
                 prompt=str(kwargs.get("prompt") or f"Montage scene {kwargs.get('scene_id')}"),
                 product_id=kwargs.get("product_id") or None,
                 aspect="9:16",
+                # Thread the source lineage + package id the run persisted. For a
+                # mascot START_FRAME scene source_mode="FRAMES" makes the global
+                # product-visual gate honor the mascot start asset (its existing
+                # FRAMES exemption) rather than replacing it with the Official
+                # Product Visual. The gate itself is unchanged.
+                source_mode=kwargs.get("source_mode") or None,
+                workspace_execution_package_id=kwargs.get("workspace_execution_package_id") or None,
                 model=kwargs.get("model") or None,
                 duration_s=kwargs.get("duration_s"),
                 generation_mode="SINGLE",
