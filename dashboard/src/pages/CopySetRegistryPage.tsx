@@ -48,6 +48,35 @@ function errorMessage(error: unknown): string {
 	return message;
 }
 
+// SINGLE AUTHORITY RULE (shared by Direct V2 Authoring + Authority Library):
+// a blueprint may be activated ONLY when the backend projects the CURRENT
+// authority as activatable. The persisted/historical status (PRODUCTION_VALID,
+// V2_APPROVED) is lineage history and NEVER independently authorizes activation —
+// treating a stale historical status as authority is exactly what produced the
+// COPY_V2_EVIDENCE_STALE activation-409 the operator reported. The activation
+// endpoint remains the final, fail-closed enforcement boundary; this only stops
+// the UI from offering an impossible action.
+function canActivateAuthority(blueprint: CopyBlueprintV2Record): boolean {
+	return blueprint.current_authority_activation_allowed === true;
+}
+
+// Render the backend-projected current-authority reason in operator-friendly form
+// without hiding the underlying authority code.
+function authorityReasonLabel(reason?: string | null): string {
+	if (!reason) return "Current production authority is not satisfied for this blueprint.";
+	const friendly: Record<string, string> = {
+		COPY_V2_EVIDENCE_STALE:
+			"The approved copy no longer matches the current Product Truth / evidence lineage.",
+		COPY_V2_TAXONOMY_AUTHORITY_STALE:
+			"The product's canonical taxonomy authority advanced after this copy was approved.",
+		STALE_AUTHORITY_LINEAGE:
+			"This approval's Product Truth lineage is stale versus the current product authority.",
+		EXPLICIT_HUMAN_APPROVAL_REQUIRED: "This blueprint has not been approved yet.",
+		BLUEPRINT_NOT_PRODUCTION_VALID: "This blueprint is not in a production-approved state.",
+	};
+	return friendly[reason] ?? reason;
+}
+
 function DisabledReasons({
 	reasons,
 	testId,
@@ -334,7 +363,21 @@ export default function CopySetRegistryPage() {
 				`V2 blueprint activated as the sole authority for all ${response.required_lane_count} copy-required lanes.`,
 			);
 		} catch (reason) {
+			// The backend is the final authority. If the current authority changed
+			// between page load and confirmation (e.g. COPY_V2_EVIDENCE_STALE), stay
+			// fail-closed: surface the failure AND refresh the current-authority
+			// projection so the card drops its now-impossible "Activate" affordance and
+			// shows the truthful stale state. Never hide or downgrade the backend error.
 			setError(errorMessage(reason));
+			if (selectedProduct) {
+				try {
+					const refreshed = await listCopyRegisterBlueprints(selectedProduct.id);
+					setBlueprints(refreshed.items ?? []);
+					setActivatedBlueprintId(refreshed.activation?.active_blueprint_id ?? "");
+				} catch {
+					// Keep the original activation failure visible.
+				}
+			}
 		} finally {
 			setBusy(false);
 		}
@@ -689,8 +732,8 @@ export default function CopySetRegistryPage() {
 							) : (
 								<div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
 									<HelperText className="text-emerald-300/80">Approved copy is immutable. Activation never changes its approved text.</HelperText>
-									{latestBlueprint.current_authority_activation_allowed === false ? <HelperText className="mt-2 text-amber-200/80">Activation disabled: {latestBlueprint.current_authority_reason ?? "current authority validation is not satisfied"}.</HelperText> : null}
-									<button type="button" data-testid="activate-v2-blueprint" disabled={busy || latestBlueprint.current_authority_activation_allowed !== true || activatedBlueprintId === latestBlueprint.blueprint_id} onClick={() => setPendingActivation(latestBlueprint)} className="mt-3 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{activatedBlueprintId === latestBlueprint.blueprint_id ? "ACTIVE · 8 REQUIRED LANES" : busy ? "Activating…" : "ACTIVATE FOR VIDEO + POSTER LANES"}</button>
+									{!canActivateAuthority(latestBlueprint) ? <HelperText className="mt-2 text-amber-200/80">Activation disabled: {authorityReasonLabel(latestBlueprint.current_authority_reason)}</HelperText> : null}
+									<button type="button" data-testid="activate-v2-blueprint" disabled={busy || !canActivateAuthority(latestBlueprint) || activatedBlueprintId === latestBlueprint.blueprint_id} onClick={() => setPendingActivation(latestBlueprint)} className="mt-3 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{activatedBlueprintId === latestBlueprint.blueprint_id ? "ACTIVE · 8 REQUIRED LANES" : busy ? "Activating…" : "ACTIVATE FOR VIDEO + POSTER LANES"}</button>
 								</div>
 							)}
 						</Section>
@@ -761,14 +804,46 @@ export default function CopySetRegistryPage() {
 								const body = extractBody(bp);
 								const cta = extractCta(bp);
 								const isCurrent = bp.blueprint_id === activatedBlueprintId;
+								// AUTHORITY RULE — identical to Direct V2 Authoring and the shared
+								// CopywritingSourceSelector: activation is permitted ONLY when the
+								// backend projects the CURRENT authority as activatable. Historical
+								// status === "PRODUCTION_VALID" is lineage history, never current
+								// production authority.
+								const canActivate = canActivateAuthority(bp);
+								const isDraft = bp.status === "DRAFT";
+								// Historically approved (PRODUCTION_VALID / V2_APPROVED) but no longer
+								// activatable against the current Product Truth => stale, needs revalidation.
+								const isStale = !canActivate && !isDraft;
+								const badge: { tone: BadgeTone; label: string } = isCurrent
+									? canActivate
+										? { tone: "success", label: "ACTIVE" }
+										: { tone: "warn", label: "ACTIVE · STALE — REVALIDATION REQUIRED" }
+									: canActivate
+										? { tone: "info", label: bp.status }
+										: isDraft
+											? { tone: "warn", label: bp.status }
+											: { tone: "warn", label: "STALE — REVALIDATION REQUIRED" };
+								const activateDisabled = busy || isCurrent || !canActivate;
+								const buttonLabel = isCurrent
+									? canActivate
+										? "Active in Creator"
+										: "Revalidation Required"
+									: canActivate
+										? "Activate Authority"
+										: isDraft
+											? "Approval Required"
+											: "Revalidation Required";
 
 								return (
 									<div
 										key={`${bp.blueprint_id}:${bp.revision}`}
+										data-testid={`library-card-${bp.blueprint_id}`}
 										className={`flex flex-col justify-between rounded-xl border p-4 transition-colors ${
-											isCurrent
+											isCurrent && canActivate
 												? "border-emerald-500/50 bg-emerald-500/10"
-												: "border-slate-800 bg-slate-950/70"
+												: isStale
+													? "border-amber-500/40 bg-amber-500/5"
+													: "border-slate-800 bg-slate-950/70"
 										}`}
 									>
 										<div className="space-y-3 text-xs">
@@ -776,9 +851,7 @@ export default function CopySetRegistryPage() {
 												<span className="rounded bg-slate-800 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-300">
 													{bp.angle?.definition || "General Angle"}
 												</span>
-												<Badge tone={isCurrent ? "success" : bp.status === "PRODUCTION_VALID" ? "info" : "warn"}>
-													{isCurrent ? "ACTIVE" : bp.status}
-												</Badge>
+												<Badge tone={badge.tone}>{badge.label}</Badge>
 											</div>
 
 											<div>
@@ -805,6 +878,32 @@ export default function CopySetRegistryPage() {
 													<p className="font-semibold text-blue-200">{cta}</p>
 												</div>
 											) : null}
+
+											{/* Truthful stale / revalidation surface — the persisted approval
+											    is history; current production authority is fail-closed. */}
+											{isStale ? (
+												<div
+													className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2"
+													data-testid={`library-stale-${bp.blueprint_id}`}
+												>
+													<p className="text-[11px] font-semibold text-amber-100">
+														{isCurrent
+															? "Active authority is stale — revalidation required."
+															: "Historical approval is stale — revalidation required."}
+													</p>
+													<p className="mt-1 text-[10px] text-amber-200/80">
+														{authorityReasonLabel(bp.current_authority_reason)}
+													</p>
+													<button
+														type="button"
+														data-testid={`library-revalidate-${bp.blueprint_id}`}
+														onClick={() => setActiveTab("GENERATOR")}
+														className="mt-2 rounded border border-amber-400/40 px-2 py-1 text-[10px] font-bold uppercase text-amber-100 hover:bg-amber-500/15"
+													>
+														Revalidate in Direct V2 Authoring
+													</button>
+												</div>
+											) : null}
 										</div>
 
 										<div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
@@ -816,17 +915,21 @@ export default function CopySetRegistryPage() {
 											<button
 												type="button"
 												data-testid={`library-activate-${bp.blueprint_id}`}
-												disabled={busy || isCurrent || bp.status !== "PRODUCTION_VALID"}
-												onClick={() => setPendingActivation(bp)}
+												disabled={activateDisabled}
+												aria-disabled={activateDisabled}
+												onClick={() => {
+													if (activateDisabled) return;
+													setPendingActivation(bp);
+												}}
 												className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
-													isCurrent
+													isCurrent && canActivate
 														? "bg-emerald-500/20 text-emerald-300"
-														: bp.status !== "PRODUCTION_VALID"
+														: activateDisabled
 															? "bg-slate-800 text-slate-500 cursor-not-allowed"
 															: "bg-blue-600 text-white hover:bg-blue-500"
 												}`}
 											>
-												{isCurrent ? "Active in Creator" : bp.status !== "PRODUCTION_VALID" ? "Approval Required" : "Activate Authority"}
+												{buttonLabel}
 											</button>
 										</div>
 									</div>
