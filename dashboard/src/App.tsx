@@ -48,6 +48,7 @@ import CreativeProductionStudioPage from "./pages/CreativeProductionStudioPage";
 import CreativeLibraryWorkspacePage from "./pages/CreativeLibraryWorkspacePage";
 import CockpitSettingsPage from "./pages/CockpitSettingsPage";
 import CopyIntelligencePage from "./pages/CopyIntelligencePage";
+import CopyReviewQueuePage from "./pages/CopyReviewQueuePage";
 import CopySetRegistryPage from "./pages/CopySetRegistryPage";
 import DeployFreshnessBanner from "./components/DeployFreshnessBanner";
 import StoryboardLandbankV3Page from "./pages/StoryboardLandbankV3Page";
@@ -184,6 +185,7 @@ const ALL_NAV_GROUPS = [
 				label: "Product Type Registry",
 			},
 			{ to: "/creative/copy-authority", icon: PenLine, label: "Copy Authority" },
+			{ to: "/creative/copy-review-queue", icon: PenLine, label: "Copy Draft Review Queue" },
 			{
 				to: "/creative/cockpit-settings",
 				icon: Gauge,
@@ -666,6 +668,10 @@ function Layout() {
 						<Route
 							path="/creative/copy-authority"
 							element={<CopySetRegistryPage />}
+						/>
+						<Route
+							path="/creative/copy-review-queue"
+							element={<CopyReviewQueuePage />}
 						/>
 						<Route
 							path="/creative/copy-registry"
