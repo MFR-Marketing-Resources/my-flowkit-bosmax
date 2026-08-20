@@ -7,6 +7,7 @@ Flow tab to the project + harvest the video media_id -> get_media returns the by
 """
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import re
@@ -263,6 +264,79 @@ async def _run_on_existing(job_id: str, project_id: str, image_media_id: str, pr
 
 _VIDEO_MODES = ("T2V", "I2V", "F2V")
 _ALL_MODES = ("IMG",) + _VIDEO_MODES
+ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL = (
+    "ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL"
+)
+
+
+def _build_reference_routing_receipt(
+    mode: str,
+    source_mode: str | None,
+    image_media_ids: list | None,
+    plan: dict | None,
+) -> dict:
+    """Build the provider-free routing proof for the one-door video service.
+
+    A reference-bearing request is safe only when the selected route is the
+    captured direct reference-aware lane.  The conversational agent does not
+    expose enough pre-approval protocol evidence to prove which generation tool
+    it will fire, so it is deliberately not an eligible fallback for references.
+    Pure T2V remains on the captured agent lane and explicitly permits its
+    text-only tool.
+    """
+    mode = (mode or "").upper()
+    normalized_source_mode = str(source_mode or "").strip().upper() or None
+    reference_media_ids = [str(media_id) for media_id in (image_media_ids or []) if media_id]
+    has_reference = bool(reference_media_ids)
+    reference_requested = mode in ("F2V", "I2V") or has_reference
+
+    from agent.services import flow_mode_reference_contract as _refc
+
+    contract_ok, contract_code, contract_detail = _refc.validate_reference_count(
+        mode, len(reference_media_ids), source_mode=normalized_source_mode
+    )
+    reference_contract = "valid" if contract_ok else "invalid"
+    direct_eligible = bool(plan and plan.get("eligible"))
+    text_only_allowed = not reference_requested
+    reference_mode_authorized = (
+        not reference_requested or (contract_ok and direct_eligible)
+    )
+    if reference_requested:
+        selected_route = "DIRECT_API" if direct_eligible and contract_ok else "BLOCKED_REFERENCE_ROUTE"
+    elif mode == "T2V":
+        selected_route = "AGENT_T2V"
+    else:
+        selected_route = "NON_VIDEO"
+
+    reference_fingerprint = None
+    if reference_media_ids:
+        reference_fingerprint = hashlib.sha256(
+            json.dumps(
+                reference_media_ids,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+    return {
+        "logical_mode": mode,
+        "source_mode": normalized_source_mode,
+        "reference_requested": reference_requested,
+        "has_reference": has_reference,
+        "reference_uploaded": has_reference,
+        "reference_count": len(reference_media_ids),
+        "reference_media_ids": reference_media_ids,
+        "reference_fingerprint": reference_fingerprint,
+        "reference_contract": reference_contract,
+        "reference_contract_code": contract_code,
+        "reference_contract_detail": contract_detail,
+        "reference_mode_authorized": reference_mode_authorized,
+        "selected_execution_route": selected_route,
+        "text_only_allowed": text_only_allowed,
+        "TEXT_ONLY_TOOL_ALLOWED": text_only_allowed,
+        "approval_allowed": reference_mode_authorized,
+        "route_reason": (plan or {}).get("reason"),
+    }
 
 
 async def _record_artifacts(job, mode, artifacts):
@@ -332,9 +406,9 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     source_mode (HYBRID | FRAMES | INGREDIENTS, optional) is the logical lane —
     it selects the direct-lane RPC (HYBRID composes references; FRAMES anchors
     start/end frames) and is recorded on the job. Under DIRECT_VIDEO_LANE_ENABLED
-    eligible video jobs run the DOM-free direct batchAsync lane; everything else
-    (and every declined job, with its reason recorded) keeps the locked agent
-    lane — never a silent downgrade."""
+    eligible reference-bearing video jobs run the DOM-free direct batchAsync
+    lane. A reference-bearing job that cannot prove that route is rejected before
+    provider approval; only pure T2V remains on the conversational agent lane."""
     global _VIDEO_LANE_JOB
     _gc_jobs()
     mode = (mode or "").upper()
@@ -354,6 +428,31 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     if mode in _VIDEO_MODES and _VIDEO_LANE_JOB and _job_active(_VIDEO_LANE_JOB):
         return {"status": "REJECTED", "error": "VIDEO_JOB_IN_FLIGHT",
                 "active_job": _VIDEO_LANE_JOB}
+    _direct_plan = None
+    _routing_receipt = None
+    if mode in _VIDEO_MODES:
+        _direct_plan = _direct_lane_plan(
+            mode, source_mode, model, duration_s, aspect,
+            ref_count=_ref_count, num_videos=num_videos,
+        )
+        _routing_receipt = _build_reference_routing_receipt(
+            mode, source_mode, image_media_ids, _direct_plan,
+        )
+        if (
+            _routing_receipt["reference_requested"]
+            and not _routing_receipt["reference_mode_authorized"]
+        ):
+            reason = (
+                _routing_receipt.get("reference_contract_detail")
+                or _routing_receipt.get("route_reason")
+                or "reference-aware execution route is not proven"
+            )
+            return {
+                "status": "REJECTED",
+                "error": ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL,
+                "detail": f"Reference-bearing video blocked before provider approval: {reason}",
+                "routing_receipt": _routing_receipt,
+            }
     # Final Prompt Approval Gate (WYSIWYG dispatch verification). Recompute this
     # dispatch's execution envelope and require a matching human-APPROVED snapshot.
     # For a non-UI multi-op run (queue / bulk / scheduler / Montage / Extend) the
@@ -406,14 +505,15 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                      "product_id": product_id, "source_mode": source_mode,
                      "execution_identity": execution_identity,
                      "error": None, "created": time.time()}
+    if _routing_receipt is not None:
+        _JOBS[job_id]["routing_receipt"] = _routing_receipt
     if copy_execution_binding is not None:
         _JOBS[job_id]["copy_execution_binding"] = copy_execution_binding
     if mode in _VIDEO_MODES:
         _VIDEO_LANE_JOB = job_id  # claim the lane synchronously to avoid a race
     lane = None
     if mode in _VIDEO_MODES:
-        plan = _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
-                                 ref_count=_ref_count, num_videos=num_videos)
+        plan = _direct_plan
         if plan["eligible"]:
             lane = "DIRECT_API"
             _JOBS[job_id]["lane"] = lane
@@ -422,19 +522,26 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                                      image_media_ids, aspect, tier, model,
                                      duration_s, num_videos, product_id, plan))
             return {"job_id": job_id, "status": "SUBMITTED", "mode": mode,
-                    "lane": lane}
+                    "lane": lane, "routing_receipt": _routing_receipt}
         lane = "AGENT"
         _JOBS[job_id]["lane"] = lane
         if direct_video_lane_enabled():
             # The flag is on but THIS job could not provably run direct — record
-            # why, so the routing decision is auditable per job.
+            # why, so the T2V routing decision is auditable per job. Reference
+            # jobs are rejected above instead of reaching this fallback.
             _JOBS[job_id]["direct_decline_reason"] = plan["reason"]
     _JOBS[job_id]["_task"] = asyncio.create_task(
         _run_generate(job_id, mode, prompt, project_id, image_media_ids, image_prompt,
                       aspect, tier, model, duration_s, num_videos, image_model,
                       max_image_attempts, collect_image_variants, product_id,
                       copy_execution_binding))
-    return {"job_id": job_id, "status": "SUBMITTED", "mode": mode, "lane": lane}
+    return {
+        "job_id": job_id,
+        "status": "SUBMITTED",
+        "mode": mode,
+        "lane": lane,
+        "routing_receipt": _routing_receipt,
+    }
 
 
 def _reference_run_dropped_reference(refs, model_used):
@@ -927,8 +1034,8 @@ def _identity_captured(identity) -> bool:
 # handle deterministically binds the output to THIS run (no prompt-matching
 # heuristics needed). Kill-switch defaults OFF; anything the direct lane cannot
 # PROVABLY honor (explicit model without a captured key, unproven count/duration)
-# declines to the locked agent lane — never a silent downgrade (USER SETTINGS
-# ARE LAW).
+# rejects a reference-bearing request before provider approval; pure T2V alone may
+# continue on the conversational lane (USER SETTINGS ARE LAW).
 
 def direct_video_lane_enabled() -> bool:
     """Kill-switch for routing canonical video jobs onto the direct lane
@@ -970,8 +1077,9 @@ def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
                       ref_count, num_videos, require_flag=True) -> dict:
     """Decide whether a job may run on the direct batchAsync lane.
 
-    Fail-closed: any setting the direct lane cannot PROVABLY honor declines to
-    the agent lane with an explicit reason (never a silent downgrade). Returns
+    Fail-closed: any setting the direct lane cannot PROVABLY honor returns an
+    explicit reason. ``start_generate`` rejects reference-bearing declines
+    before provider approval; only pure T2V may use the agent lane. Returns
     {"eligible": bool, "reason": str|None, "rpc": "r2v"|"start_frame",
      "gen_type": str, "aspect_enum": str, "video_model_key": str|None,
      "model_key_source": str}.
@@ -1008,7 +1116,8 @@ def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
         # F2V without a declared source_mode is ambiguous: a logical-HYBRID job
         # routed to the start-frame RPC would CHANGE semantics (the product
         # photo becomes frame 1 instead of a composed reference). Callers that
-        # do not thread source_mode (bulk/queue lanes) keep the agent lane.
+        # do not thread source_mode (bulk/queue lanes) are rejected before
+        # provider approval.
         return _decline("DIRECT_F2V_SOURCE_MODE_UNKNOWN")
     else:  # I2V — ingredient references compose the video (r2v)
         rpc, gen_type = "r2v", "reference_frame_2_video"
@@ -1018,8 +1127,8 @@ def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
         try:
             spec = video_models.resolve(model)
         except ValueError:
-            # Unknown model must surface through the canonical fail-closed path
-            # (agent lane raises ERR_UNKNOWN_MODEL semantics), never die here.
+            # Unknown model must surface through the canonical fail-closed path;
+            # never fire an unproven direct request.
             return _decline(f"DIRECT_MODEL_UNKNOWN:{model}")
         table = DIRECT_VIDEO_MODEL_KEYS.get(spec["key"]) or {}
         video_model_key = (table.get(gen_type) or {}).get(aspect_enum)
@@ -1033,8 +1142,8 @@ def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
             return _decline(f"DIRECT_DURATION_UNPROVEN:{duration_s}")
         if normalized_duration != 8:
             # The captured submit contract carries no duration field; only the
-            # Veo 8s default is provably delivered. Anything else keeps the
-            # agent lane.
+            # Veo 8s default is provably delivered. Anything else is rejected
+            # for a reference-bearing request before provider approval.
             return _decline(f"DIRECT_DURATION_UNPROVEN:{duration_s}")
     return {"eligible": True, "reason": None, "rpc": rpc, "gen_type": gen_type,
             "aspect_enum": aspect_enum, "video_model_key": video_model_key,

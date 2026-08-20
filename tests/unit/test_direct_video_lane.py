@@ -3,8 +3,8 @@
 Pure logic — no network, no credits. Exercises:
   * _direct_lane_plan eligibility (fail-closed: decline reasons, never a silent
     downgrade of model/count/duration/aspect);
-  * start_generate routing (flag off -> agent lane; eligible -> direct lane;
-    declined -> agent lane with the reason recorded on the job);
+  * start_generate routing (reference flag off -> pre-approval rejection;
+    eligible -> direct lane; pure T2V -> agent lane with an explicit receipt);
   * flow_client builder contract for the direct submits (videoModelKey override,
     explicit seed, models.json default resolution, fail-closed unknown slots);
   * the DOM-free submit -> poll -> retrieve -> persist pipeline end to end via a
@@ -297,26 +297,128 @@ def test_resolve_video_model_key_override_wins_and_uncaptured_is_none():
 
 # ── start_generate routing ──────────────────────────────────────────────────
 
-def test_routing_flag_off_keeps_agent_lane(monkeypatch):
+def test_reference_routing_flag_off_rejects_before_agent_lane(monkeypatch):
     _reset_lane()
     monkeypatch.delenv("DIRECT_VIDEO_LANE_ENABLED", raising=False)
     ran = {}
+    approval_calls = []
 
     async def fake_agent_run(job_id, *a, **kw):
         ran["agent"] = job_id
 
     monkeypatch.setattr(mv, "_run_generate", fake_agent_run)
 
+    async def fake_approval(**kwargs):
+        approval_calls.append(kwargs)
+
+    from agent.services import execution_approval_service as eas
+    monkeypatch.setattr(eas, "verify_and_bind_dispatch", fake_approval)
+
     async def go():
-        res = await mv.start_generate("F2V", "p", project_id="pid",
-                                      image_media_ids=["m1"], source_mode="HYBRID")
-        await mv._JOBS[res["job_id"]]["_task"]
-        return res
+        return await mv.start_generate(
+            "F2V", "p", project_id="pid",
+            image_media_ids=["m1"], source_mode="HYBRID",
+        )
 
     res = _run(go())
-    assert res["lane"] == "AGENT"
-    assert ran["agent"] == res["job_id"]
-    assert "direct_decline_reason" not in mv._JOBS[res["job_id"]]
+    assert res["status"] == "REJECTED"
+    assert res["error"] == mv.ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL
+    receipt = res["routing_receipt"]
+    assert receipt["logical_mode"] == "F2V"
+    assert receipt["source_mode"] == "HYBRID"
+    assert receipt["has_reference"] is True
+    assert receipt["reference_requested"] is True
+    assert receipt["reference_uploaded"] is True
+    assert receipt["reference_count"] == 1
+    assert receipt["reference_media_ids"] == ["m1"]
+    assert len(receipt["reference_fingerprint"]) == 64
+    assert receipt["reference_contract"] == "valid"
+    assert receipt["selected_execution_route"] == "BLOCKED_REFERENCE_ROUTE"
+    assert receipt["text_only_allowed"] is False
+    assert receipt["TEXT_ONLY_TOOL_ALLOWED"] is False
+    assert receipt["approval_allowed"] is False
+    assert receipt["reference_mode_authorized"] is False
+    assert not ran
+    assert not approval_calls
+    assert not mv._JOBS
+    _reset_lane()
+
+
+def test_captured_faceless_incident_cannot_approve_text_only_fallback(monkeypatch):
+    """Exact MWCB shape: reference + HYBRID + Veo Lite 8s is pre-paid blocked."""
+    _reset_lane()
+    monkeypatch.delenv("DIRECT_VIDEO_LANE_ENABLED", raising=False)
+    agent_calls = []
+
+    async def fake_agent_run(*args, **kwargs):
+        agent_calls.append(args)
+
+    async def fake_negotiate(*args, **kwargs):
+        raise AssertionError("reference incident must not enter agent negotiation")
+
+    monkeypatch.setattr(mv, "_run_generate", fake_agent_run)
+    monkeypatch.setattr(mv.agent_video, "negotiate_and_generate", fake_negotiate)
+
+    result = _run(
+        mv.start_generate(
+            "F2V",
+            "MWCB Faceless AUTO AESTHETIC_TABLE product video",
+            project_id="mwcb-project",
+            image_media_ids=["mwcb-reference-media-id"],
+            source_mode="HYBRID",
+            model="Veo 3.1 Lite",
+            duration_s=8,
+            product_id="MWCB",
+        )
+    )
+
+    assert result["status"] == "REJECTED"
+    assert result["error"] == mv.ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL
+    assert result["routing_receipt"]["reference_media_ids"] == [
+        "mwcb-reference-media-id"
+    ]
+    assert result["routing_receipt"]["route_reason"] == "DIRECT_LANE_DISABLED"
+    assert result["routing_receipt"]["TEXT_ONLY_TOOL_ALLOWED"] is False
+    assert not agent_calls
+    assert not mv._JOBS
+    _reset_lane()
+
+
+def test_reference_modes_never_fall_back_to_agent(monkeypatch):
+    _reset_lane()
+    monkeypatch.delenv("DIRECT_VIDEO_LANE_ENABLED", raising=False)
+    agent_calls = []
+
+    async def fake_agent_run(*args, **kwargs):
+        agent_calls.append(args)
+
+    monkeypatch.setattr(mv, "_run_generate", fake_agent_run)
+
+    async def go():
+        return [
+            await mv.start_generate(
+                mode, "p", image_media_ids=refs, source_mode=source,
+            )
+            for mode, source, refs in (
+                ("F2V", "HYBRID", ["product-ref"]),
+                ("F2V", "FRAMES", ["start-ref", "end-ref"]),
+                ("I2V", "INGREDIENTS", ["ingredient-a", "ingredient-b"]),
+            )
+        ]
+
+    results = _run(go())
+    assert all(result["status"] == "REJECTED" for result in results)
+    assert all(
+        result["error"] == mv.ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL
+        for result in results
+    )
+    assert [result["routing_receipt"]["reference_count"] for result in results] == [1, 2, 2]
+    assert all(
+        result["routing_receipt"]["TEXT_ONLY_TOOL_ALLOWED"] is False
+        for result in results
+    )
+    assert not agent_calls
+    assert not mv._JOBS
     _reset_lane()
 
 
@@ -340,6 +442,12 @@ def test_routing_flag_on_eligible_takes_direct_lane(monkeypatch):
     assert res["lane"] == "DIRECT_API"
     assert ran["direct"] == res["job_id"]
     assert mv._JOBS[res["job_id"]]["source_mode"] == "HYBRID"
+    receipt = res["routing_receipt"]
+    assert receipt["selected_execution_route"] == "DIRECT_API"
+    assert receipt["reference_media_ids"] == ["m1"]
+    assert receipt["reference_mode_authorized"] is True
+    assert receipt["text_only_allowed"] is False
+    assert receipt["approval_allowed"] is True
     _reset_lane()
 
 
@@ -360,6 +468,13 @@ def test_routing_flag_on_declined_records_reason(monkeypatch):
     res = _run(go())
     assert res["lane"] == "AGENT"
     assert mv._JOBS[res["job_id"]]["direct_decline_reason"] == "NO_DIRECT_T2V_RPC"
+    receipt = res["routing_receipt"]
+    assert receipt["logical_mode"] == "T2V"
+    assert receipt["reference_requested"] is False
+    assert receipt["reference_media_ids"] == []
+    assert receipt["text_only_allowed"] is True
+    assert receipt["TEXT_ONLY_TOOL_ALLOWED"] is True
+    assert receipt["approval_allowed"] is True
     _reset_lane()
 
 
@@ -387,6 +502,8 @@ def test_direct_lane_end_to_end_done_and_persisted(monkeypatch, tmp_path):
     assert job["lane"] == "DIRECT_API"
     assert job["provider_operation_ids"] == ["op-r2v-1"]
     assert job["credit_state"] == "MAY_HAVE_SPENT"
+    assert job["routing_receipt"]["reference_media_ids"] == ["ref-1"]
+    assert client.calls[0][1] == ["ref-1"]
     # bytes on disk, from the get_media fallback (untrusted fifeUrl host skipped)
     saved = tmp_path / "retrieved" / f"{_MID}.mp4"
     assert saved.read_bytes() == _VBYTES
