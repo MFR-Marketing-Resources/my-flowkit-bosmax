@@ -123,6 +123,61 @@ async def test_copywriting_coverage_active_vs_all():
     assert allp["products_missing_copy"] == 2      # P2, P3
 
 
+async def test_copywriting_coverage_tristate_current(monkeypatch):
+    """CURRENT: the covered product resolves a current-valid activation, so it counts
+    as production-ready and copy_classification_counts reconciles with the headline
+    (VALID + STALE + MISSING == total)."""
+    from agent.services import copy_register_v2_service as v2
+
+    async def fake(pid):
+        return {"active_blueprint_id": "bp1", "active_revision": 1}
+
+    monkeypatch.setattr(v2, "get_activation_status", fake)
+    await _seed()
+    cov = await svc.copywriting_coverage("ACTIVE")
+    counts = cov["copy_classification_counts"]
+    assert counts == {"APPROVED_COPY_VALID": 1, "APPROVED_COPY_STALE": 0, "MISSING_COPY": 1}
+    assert sum(counts.values()) == cov["total_products"] == 2
+    assert cov["products_with_valid_approved_copy"] == 1
+    assert cov["validity_evaluation_failed"] == 0
+    assert cov["valid_approved_coverage_pct"] == 50.0
+
+
+async def test_copywriting_coverage_tristate_reveals_stale(monkeypatch):
+    """STALE (the GAP-1 fix): the covered product has a BOUND authority but no
+    current-valid activation resolves, so it is reclassified STALE — the exact case
+    the binary EXISTS predicate previously hid as 'covered'/production-ready."""
+    from agent.services import copy_register_v2_service as v2
+
+    async def fake(pid):
+        return {"active_blueprint_id": None}
+
+    monkeypatch.setattr(v2, "get_activation_status", fake)
+    await _seed()
+    cov = await svc.copywriting_coverage("ACTIVE")
+    counts = cov["copy_classification_counts"]
+    assert counts == {"APPROVED_COPY_VALID": 0, "APPROVED_COPY_STALE": 1, "MISSING_COPY": 1}
+    # still 'covered' by the raw predicate, but NOT production-ready
+    assert cov["products_with_copy"] == 1
+    assert cov["products_with_valid_approved_copy"] == 0
+    assert cov["valid_approved_coverage_pct"] == 0.0
+
+
+async def test_classify_copy_authority_fails_closed(monkeypatch):
+    """An activation-check error fails closed to `failed` — never silently CURRENT."""
+    from agent.services import copy_register_v2_service as v2
+
+    async def boom(pid):
+        raise RuntimeError("lineage load failed")
+
+    monkeypatch.setattr(v2, "get_activation_status", boom)
+    assert await svc._classify_copy_authority(["x", "y"]) == {
+        "current": 0,
+        "stale": 0,
+        "failed": 2,
+    }
+
+
 async def test_copywriting_coverage_cluster_filter():
     await _seed()
     beauty = await svc.copywriting_coverage("ALL", cluster="beauty_makeup")
