@@ -7,7 +7,9 @@ import pytest
 from fastapi import HTTPException
 
 from agent.api import flow
+from agent.api import faceless
 from agent.services import product_visual_custody_service as custody
+from agent.services import product_visual_grounding_resolver as grounding
 
 
 PRODUCT_ID = "6483d624-a03d-4933-9bba-6ca2e5f7b6fd"
@@ -120,6 +122,89 @@ def test_official_existing_media_id_is_not_accepted_as_byte_custody(monkeypatch)
 
     assert media_id == "fresh-official-upload"
     assert calls == {"get_media": 0, "upload": 1}
+
+
+def test_faceless_exact_product_route_blocks_before_copy_package(monkeypatch):
+    calls = {"package": 0}
+
+    async def fake_product(_product_id):
+        return _product()
+
+    async def fake_scene_authority(**_kwargs):
+        return {}
+
+    def fake_resolution(**_kwargs):
+        return {
+            "source_mode": "HYBRID",
+            "actor_profile": {},
+            "opening_strategy": {},
+            "hook": {},
+            "background": {},
+            "scene_strategy": {},
+            "choreography": {},
+            "faceless_resolution": {},
+        }
+
+    async def should_not_create_package(**_kwargs):
+        calls["package"] += 1
+        raise AssertionError("exact-product route must block before package/compiler work")
+
+    custody_receipt = {
+        "exact_product_required": True,
+        "fidelity_policy": custody.EXACT_PRODUCT_REQUIRED,
+    }
+
+    monkeypatch.setattr(
+        faceless.fl,
+        "validate_faceless_inputs",
+        lambda **_kwargs: (True, None, None),
+    )
+    monkeypatch.setattr(
+        faceless.fl,
+        "resolve_faceless_video_configuration",
+        lambda **_kwargs: (
+            True,
+            None,
+            None,
+            {"engine_block_duration_seconds": 8, "generation_mode": "SINGLE"},
+        ),
+    )
+    monkeypatch.setattr(faceless.fl, "resolve_faceless_scene_authority", fake_scene_authority)
+    monkeypatch.setattr(faceless.fl, "build_faceless_resolution", fake_resolution)
+    monkeypatch.setattr(faceless.fl, "build_faceless_scene_context", lambda _resolution: "scene")
+    monkeypatch.setattr(faceless.crud, "get_product", fake_product)
+    monkeypatch.setattr(custody, "exact_product_required", lambda _product: True)
+    monkeypatch.setattr(
+        grounding,
+        "build_official_product_visual_asset",
+        lambda *_args, **_kwargs: {"official_visual": True},
+    )
+    monkeypatch.setattr(
+        custody,
+        "build_product_visual_custody_receipt",
+        lambda *_args, **_kwargs: custody_receipt,
+    )
+    monkeypatch.setattr(
+        faceless,
+        "create_workspace_execution_package",
+        should_not_create_package,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        _run(
+            faceless.faceless_prepare(
+                faceless.FacelessPrepareRequest(
+                    product_id=PRODUCT_ID,
+                    model="Veo 3.1 - Lite",
+                    duration_seconds=8,
+                )
+            )
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["error_code"] == custody.ERR_PRODUCT_FIDELITY_ROUTE_NOT_PROVEN
+    assert exc.value.detail["product_visual_custody"] == custody_receipt
+    assert calls == {"package": 0}
 
 
 async def _none():
