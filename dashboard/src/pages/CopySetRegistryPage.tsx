@@ -106,6 +106,15 @@ function draftBlockedReason(blueprint: CopyBlueprintV2Record): string {
 	return raw.map((code) => authorityReasonLabel(code)).join(" · ");
 }
 
+// Auto-anchor the evidence facts a chosen angle is already grounded in
+// (angle.evidence_fact_ids), capped at the 1–5 the blueprint generator accepts.
+// This removes the redundant manual fact-picking step — the same auto-map the
+// shared CopywritingSourceSelector already performs — while keeping the facts
+// fully adjustable for exception cases.
+function anchorFactsFromAngle(angle: CopyAngleOptionV2 | undefined | null): string[] {
+	return (angle?.evidence_fact_ids ?? []).slice(0, 5);
+}
+
 function DisabledReasons({
 	reasons,
 	testId,
@@ -555,9 +564,12 @@ export default function CopySetRegistryPage() {
 			});
 			setAngles(response.angles);
 			setFacts(response.facts);
-			setSelectedAngleId("");
-			setSelectedFactIds([]);
-			setSuccess("Grounded angle options generated from the approved Product Truth.");
+			// Auto-anchor the first angle and its grounded evidence facts so the
+			// operator can go straight to generation — no manual fact mapping.
+			const firstAngle = response.angles?.[0];
+			setSelectedAngleId(firstAngle?.angle_id ?? "");
+			setSelectedFactIds(anchorFactsFromAngle(firstAngle));
+			setSuccess("Grounded angle options generated; evidence facts auto-anchored from the top angle.");
 		} catch (reason) {
 			setError(errorMessage(reason));
 		} finally {
@@ -849,16 +861,25 @@ export default function CopySetRegistryPage() {
 					<Section title="4. Generate grounded angle options" helper="Derived from approved Product Truth facts." action={<Badge tone={textAssistReady ? "success" : "warn"}>Text Assist · {textAssistStatus?.status ?? "UNAVAILABLE"}</Badge>}>
 						<button type="button" data-testid="generate-angle-options" disabled={busy || angleDisabledReasons.length > 0} onClick={() => void handleGenerateAngles()} className="rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{busy ? "Generating…" : "Generate Angle Options"}</button>
 						<DisabledReasons reasons={angleDisabledReasons} testId="generate-angle-disabled-reasons" />
-						{angles.length ? <div className="mt-4 grid gap-2 md:grid-cols-2" data-testid="angle-options">{angles.map((angle) => <label key={angle.angle_id} className={`cursor-pointer rounded-lg border p-3 text-sm ${selectedAngleId === angle.angle_id ? "border-blue-400 bg-blue-500/10 text-blue-100" : "border-slate-800 text-slate-300"}`}><input type="radio" name="v2-angle" value={angle.angle_id} checked={selectedAngleId === angle.angle_id} onChange={() => setSelectedAngleId(angle.angle_id)} className="mr-2" />{angle.definition}</label>)}</div> : <p className="mt-3 text-xs text-slate-500">Press the button after selecting a formula.</p>}
+						{angles.length ? <div className="mt-4 grid gap-2 md:grid-cols-2" data-testid="angle-options">{angles.map((angle) => <label key={angle.angle_id} className={`cursor-pointer rounded-lg border p-3 text-sm ${selectedAngleId === angle.angle_id ? "border-blue-400 bg-blue-500/10 text-blue-100" : "border-slate-800 text-slate-300"}`}><input type="radio" name="v2-angle" value={angle.angle_id} checked={selectedAngleId === angle.angle_id} onChange={() => { setSelectedAngleId(angle.angle_id); setSelectedFactIds(anchorFactsFromAngle(angle)); }} className="mr-2" />{angle.definition}</label>)}</div> : <p className="mt-3 text-xs text-slate-500">Press the button after selecting a formula.</p>}
 					</Section>
 
-					{/* Section 5: Select Facts */}
-					<Section title="5. Select evidence-backed USP facts" helper="Select 1 to 5 facts to anchor the copy.">
-						<div className="space-y-2" data-testid="evidence-facts">
-							{facts.map((fact) => <label key={fact.fact_id} className="flex cursor-pointer gap-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-300"><input type="checkbox" checked={selectedFactIds.includes(fact.fact_id)} onChange={() => toggleFact(fact.fact_id)} disabled={!selectedFactIds.includes(fact.fact_id) && selectedFactIds.length >= 5} /><span className="flex-1"><span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] uppercase text-slate-400">{fact.fact_kind}</span><span className="mt-1 block">{fact.text}</span></span></label>)}
-							{facts.length === 0 ? <p className="text-xs text-slate-500">Generate angle options to load approved evidence facts.</p> : null}
-						</div>
-						<p className="mt-3 text-xs text-slate-500">Selected {selectedFactIds.length}/5</p>
+					{/* Section 5: Evidence facts — auto-anchored from the selected angle.
+					    The manual editor is tucked behind a collapsible so operators are
+					    not forced to map facts one-by-one; adjusting stays available. */}
+					<Section title="5. Evidence facts (auto-anchored)" helper="The evidence that grounds this copy is auto-selected from your chosen angle. Adjust only if you need to.">
+						<p className="text-xs text-slate-300" data-testid="evidence-facts-summary">
+							{selectedAngle
+								? `${selectedFactIds.length} evidence fact${selectedFactIds.length === 1 ? "" : "s"} auto-anchored from this angle.`
+								: "Select an angle above — its evidence facts anchor the copy automatically."}
+						</p>
+						<TechnicalDetails title="Adjust anchored facts" className="mt-2">
+							<div className="space-y-2" data-testid="evidence-facts">
+								{facts.map((fact) => <label key={fact.fact_id} className="flex cursor-pointer gap-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-sm text-slate-300"><input type="checkbox" checked={selectedFactIds.includes(fact.fact_id)} onChange={() => toggleFact(fact.fact_id)} disabled={!selectedFactIds.includes(fact.fact_id) && selectedFactIds.length >= 5} /><span className="flex-1"><span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] uppercase text-slate-400">{fact.fact_kind}</span><span className="mt-1 block">{fact.text}</span></span></label>)}
+								{facts.length === 0 ? <p className="text-xs text-slate-500">Generate angle options to load approved evidence facts.</p> : null}
+							</div>
+							<p className="mt-3 text-xs text-slate-500">Selected {selectedFactIds.length}/5</p>
+						</TechnicalDetails>
 					</Section>
 
 					{/* Section 6: Generate Blueprint */}

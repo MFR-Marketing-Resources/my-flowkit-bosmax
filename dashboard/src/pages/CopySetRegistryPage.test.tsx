@@ -248,8 +248,8 @@ describe("CopySetRegistryPage V2 cutover", () => {
 		fireEvent.change(await screen.findByTestId("v2-formula-picker"), { target: { value: "PAS" } });
 		fireEvent.click(await screen.findByTestId("generate-angle-options"));
 		await waitFor(() => expect(mockedAngles).toHaveBeenCalledWith({ product_id: "p1", formula_id: "PAS", objective: "conversion" }));
-		fireEvent.click(screen.getByRole("radio", { name: /formula ringan/ }));
-		fireEvent.click(screen.getByRole("checkbox"));
+		// The top angle and its evidence facts are auto-anchored; go straight to generate.
+		await waitFor(() => expect(screen.getByTestId("generate-new-formula-copy")).toBeEnabled());
 		fireEvent.click(screen.getByTestId("generate-new-formula-copy"));
 		await waitFor(() => expect(mockedGenerate).toHaveBeenCalled());
 		expect(await screen.findByTestId("v2-blueprint-card")).toHaveTextContent("bpv2_test");
@@ -272,6 +272,25 @@ describe("CopySetRegistryPage V2 cutover", () => {
 		fireEvent.click(await screen.findByTestId("activation-confirm"));
 		await waitFor(() => expect(mockedActivate).toHaveBeenCalledWith("bpv2_test"));
 		expect(await screen.findByText("ACTIVE · 8 REQUIRED LANES")).toBeInTheDocument();
+	});
+
+	// SMART auto-anchor: generating angles auto-selects the top angle AND its grounded
+	// evidence facts, so the operator never maps facts one-by-one. Generation uses the
+	// angle's facts; the manual editor stays available for adjustment.
+	it("auto-anchors the angle's evidence facts so generation needs no manual fact mapping", async () => {
+		renderPage();
+		fireEvent.click(await screen.findByTestId("tab-generator"));
+		await screen.findByTestId("product-truth-proof");
+		fireEvent.change(await screen.findByTestId("v2-formula-picker"), { target: { value: "PAS" } });
+		fireEvent.click(await screen.findByTestId("generate-angle-options"));
+		await waitFor(() => expect(mockedAngles).toHaveBeenCalled());
+		// Facts are auto-anchored from the top angle — the summary reflects it and
+		// generate is enabled with zero manual ticking.
+		expect(await screen.findByTestId("evidence-facts-summary")).toHaveTextContent(/auto-anchored/i);
+		await waitFor(() => expect(screen.getByTestId("generate-new-formula-copy")).toBeEnabled());
+		fireEvent.click(screen.getByTestId("generate-new-formula-copy"));
+		// Generation carries the angle's grounded evidence facts.
+		await waitFor(() => expect(mockedGenerate).toHaveBeenCalledWith(expect.objectContaining({ evidence_fact_ids: ["fact:p1:usp_json:0"] })));
 	});
 
 	it("shows exact fail-closed reasons and never enables authoring without text_assist", async () => {
