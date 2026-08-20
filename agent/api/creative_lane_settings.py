@@ -32,16 +32,36 @@ async def get_creative_lane_settings(
                 product_id=str(product_id).strip(),
                 background_id="AUTO",
             )
+            from agent.services import copy_register_v2_service as register_service
+
+            truth = await register_service.get_product_truth_proof(
+                str(product_id).strip()
+            )
+            payload["opening_strategy"]["options"] = (
+                cls.opening_strategy_options_for_truth(truth)
+            )
+            payload["hook"]["options"] = list(
+                payload["opening_strategy"]["options"]
+            )
             payload["background"]["options"] = authority["background_options"]
             payload["faceless_context"] = {
                 "scene_strategy_id": authority["scene_strategy"]["scene_strategy_id"],
                 "choreography_id": authority["choreography"]["choreography_id"],
                 "compatible_contexts": authority["compatible_contexts"],
                 "compatibility_status": "COMPATIBLE",
+                "opening_strategy_truth": authority.get("opening_strategy_truth"),
             }
-        except ValueError as exc:
+        except Exception as exc:  # noqa: BLE001 — settings remain fail-closed
             # Keep AUTO as the only safe choice when product context is not
             # resolvable. Prepare remains the authoritative server-side gate.
+            payload["opening_strategy"]["options"] = [
+                option
+                for option in payload["opening_strategy"]["options"]
+                if option["id"] == cls.AUTO_ID
+            ]
+            payload["hook"]["options"] = list(
+                payload["opening_strategy"]["options"]
+            )
             payload["background"]["options"] = [
                 option
                 for option in payload["background"]["options"]

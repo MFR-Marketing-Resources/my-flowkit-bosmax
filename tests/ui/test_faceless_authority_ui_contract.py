@@ -15,14 +15,17 @@ def test_faceless_ui_separates_copy_authority_from_opening_strategy():
 
     assert 'title="Opening Strategy"' in page
     assert 'data-testid="faceless-opening-strategy"' in page
+    assert 'data-testid="faceless-actor-profile"' in page
     assert 'data-wire-field="hook_id"' in page
     assert 'title="Hook & background"' not in page
     assert 'data-testid="copy-v2-approved-hook"' in card
     assert "projection.derived_copy" in card
     assert "Read-only projection from the production V2 binding" in card
     assert "opening_strategy" in api
+    assert "actor_profile" in api
     assert "lane=FACELESS" in api
     assert "product_id" in api
+    assert "execution_identity" in page
 
 
 def test_faceless_ui_filters_background_from_product_context_and_preserves_flow_order():
@@ -38,4 +41,5 @@ def test_faceless_ui_filters_background_from_product_context_and_preserves_flow_
     assert "settings.background.options.map" in page
     assert "useCreativeLaneSettings(selectedProduct?.id)" in page
     assert 'title="Generate video"' in page
+    assert 'key={selectedProduct?.id ?? "none"}' in page
     assert "avatar selector" not in page.casefold()

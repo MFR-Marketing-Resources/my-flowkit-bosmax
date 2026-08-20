@@ -293,6 +293,12 @@ export function buildFacelessGenerateBody(input: {
 	if (pkg?.prompt_fingerprint) {
 		body.prompt_fingerprint = pkg.prompt_fingerprint;
 	}
+	const facelessExecutionIdentity =
+		pkg?.faceless_execution_identity ??
+		pkg?.request_lineage_payload?.faceless_execution_identity;
+	if (facelessExecutionIdentity) {
+		body.execution_identity = facelessExecutionIdentity;
+	}
 
 	return body;
 }

@@ -3288,13 +3288,23 @@ def build_scene_strategy_context(
         *step_lines,
         f"Final-state lock: {variant.final_state_lock}",
         f"Camera route: {selected['camera_route']}.",
-        "Allowed character presence: "
-        + ", ".join(selected["allowed_character_presence"])
-        + ".",
-        f"Avatar hint: {selected['avatar_hint']}.",
-        f"Wardrobe hint: {selected['wardrobe_hint']}.",
         "Forbidden actions: " + "; ".join(strategy["forbidden_actions"]) + ".",
     ]
+    if str(character_presence or "").strip().upper() == "FACELESS":
+        parts.insert(
+            3,
+            "Use only the compatible faceless choreography: hands, forearms, and partial torso may enter; keep the head and face outside the frame for the entire clip.",
+        )
+    else:
+        parts.extend(
+            [
+                "Allowed character presence: "
+                + ", ".join(selected["allowed_character_presence"])
+                + ".",
+                f"Avatar hint: {selected['avatar_hint']}.",
+                f"Wardrobe hint: {selected['wardrobe_hint']}.",
+            ]
+        )
     if strategy["sensitive_handling_rules"]:
         parts.append(
             "Sensitive handling rules: "

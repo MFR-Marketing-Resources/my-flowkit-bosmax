@@ -13,6 +13,7 @@ export interface CreativeLaneSettings {
 	version: string;
 	auto: { id: string; label: string };
 	opening_strategy?: { default: string; options: CreativeLaneOption[] };
+	actor_profile?: { default: string; options: CreativeLaneOption[] };
 	/** Backward-compatible wire alias used by older Montage clients. */
 	hook: { default: string; options: CreativeLaneOption[] };
 	background: { default: string; options: CreativeLaneOption[] };
@@ -38,6 +39,7 @@ export const CREATIVE_LANE_SETTINGS_UNAVAILABLE: CreativeLaneSettings = {
 	opening_strategy: { default: "AUTO", options: [] },
 	hook: { default: "AUTO", options: [] },
 	background: { default: "AUTO", options: [] },
+	actor_profile: { default: "AUTO", options: [] },
 	source: "unavailable",
 };
 
@@ -76,6 +78,7 @@ export interface FacelessPrepareResponse {
 	duration_seconds?: number | null;
 	total_duration_seconds?: number | null;
 	character_presence?: string;
+	actor_profile?: Record<string, unknown> | null;
 	avatar_id?: null;
 	visual_law?: string;
 	copy_architecture_v2?: Record<string, unknown> | null;
@@ -125,6 +128,7 @@ export async function prepareFacelessPackage(input: {
 	end_frame_asset_id?: string | null;
 	copy_fallback_confirmed?: boolean;
 	copy_v2_context?: Record<string, unknown> | null;
+	actor_profile?: string | null;
 }): Promise<FacelessPrepareResponse> {
 	return postAPI("/api/faceless/prepare", {
 		product_id: input.product_id,
@@ -138,6 +142,7 @@ export async function prepareFacelessPackage(input: {
 		end_frame_asset_id: input.end_frame_asset_id ?? null,
 		copy_fallback_confirmed: false,
 		copy_v2_context: input.copy_v2_context ?? null,
+		actor_profile: input.actor_profile ?? "AUTO",
 	});
 }
 

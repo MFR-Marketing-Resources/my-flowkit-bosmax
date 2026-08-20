@@ -7,11 +7,20 @@
       "hook": "Backward-compatible wire alias for the Faceless Opening Strategy; creative strategy/category only. It is not the approved sales-copy Hook and does not authorize unsupported product claims, medical guarantees, fabricated discounts, or fake scarcity.",
       "opening_strategy": "Visual/narrative opening treatment only. Actual Hook, Body/USP, CTA, and approved execution text remain exclusively in Copy Register V2.",
       "background": "Scene/environment visual intent only. Does not override product truth, packaging, product scale, avatar/reference policies, scene continuity, or compliance. Example: Pharmacy is environment direction, not pharmacist endorsement."
-    }
+    },
+    "actor_profile": "Faceless-only adult hands/forearms/partial-torso continuity profile. This is not an avatar or face selector."
   },
   "auto": {
     "id": "AUTO",
     "label": "Auto (AI decided)"
+  },
+  "actor_profile": {
+    "default": "AUTO",
+    "options": [
+      { "id": "AUTO", "label": "Auto (consistent)" },
+      { "id": "MALE", "label": "Male profile" },
+      { "id": "FEMALE", "label": "Female profile" }
+    ]
   },
   "hook": {
     "default": "AUTO",
@@ -52,5 +61,31 @@
     "BARU_LAUNCH_DISCOUNT": "New-launch excitement framing — only use launch/discount facts present in product truth.",
     "DISKAUN_DISBELIEF": "Surprise-at-value tone — never fabricate discount percentages or scarcity.",
     "GENERAL_USP_PRODUCT": "Lead with approved product USP from product truth / approved copy only."
+  },
+  "hook_truth_requirements": {
+    "PENAT_KEJAR_PROMO": {
+      "fact_kinds": ["ALLOWED_CLAIM", "USP", "BENEFIT"],
+      "keywords": ["promo", "promosi", "discount", "diskaun", "sale", "offer", "jimat", "saving", "potongan", "harga"]
+    },
+    "FINALLY_DAPAT_LESS": {
+      "fact_kinds": ["ALLOWED_CLAIM", "USP", "BENEFIT"],
+      "keywords": ["discount", "diskaun", "sale", "offer", "jimat", "saving", "potongan", "harga", "less", "kurang"]
+    },
+    "NANGIS_MAK_MAK": {
+      "fact_kinds": ["PAIN_POINT", "BENEFIT"],
+      "keywords": []
+    },
+    "BARU_LAUNCH_DISCOUNT": {
+      "fact_kinds": ["ALLOWED_CLAIM", "USP", "BENEFIT"],
+      "keywords": ["launch", "launched", "baru", "new", "promo", "promosi", "discount", "diskaun", "sale", "offer"]
+    },
+    "DISKAUN_DISBELIEF": {
+      "fact_kinds": ["ALLOWED_CLAIM", "USP", "BENEFIT"],
+      "keywords": ["discount", "diskaun", "sale", "offer", "jimat", "saving", "potongan", "harga"]
+    },
+    "GENERAL_USP_PRODUCT": {
+      "fact_kinds": ["USP", "BENEFIT", "ALLOWED_CLAIM"],
+      "keywords": []
+    }
   }
 }

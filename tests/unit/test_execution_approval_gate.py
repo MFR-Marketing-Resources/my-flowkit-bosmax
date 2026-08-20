@@ -106,6 +106,26 @@ def test_any_provider_affecting_change_changes_the_hash(field, value):
     assert base["execution_envelope_sha256"] != changed["execution_envelope_sha256"]
 
 
+def test_faceless_execution_identity_is_provider_affecting():
+    identity = {
+        "identity_version": "FACELESS_EXECUTION_IDENTITY_V1",
+        "lane": "FACELESS",
+        "transport_mode": "F2V",
+        "product_id": "prod_test_1",
+        "actor_profile_resolved": "FEMALE",
+        "opening_strategy_resolved": "GENERAL_USP_PRODUCT",
+    }
+    changed = {**identity, "actor_profile_resolved": "MALE"}
+    first = eas.compute_dispatch_identity(
+        **_dispatch("faceless identity baseline", execution_identity=identity)
+    )
+    second = eas.compute_dispatch_identity(
+        **_dispatch("faceless identity baseline", execution_identity=changed)
+    )
+    assert first["execution_envelope"]["execution_identity"] == identity
+    assert first["execution_envelope_sha256"] != second["execution_envelope_sha256"]
+
+
 def test_seed_is_not_part_of_the_envelope():
     ident = eas.compute_dispatch_identity(**_dispatch("p"))
     assert "seed" not in ident["execution_envelope"]
@@ -184,6 +204,31 @@ async def test_changed_field_after_approval_blocks(monkeypatch, field, value):
     await eas.approve_snapshot(snap["snapshot_id"], approved_by="faris")
     with pytest.raises(eas.ExecutionApprovalError) as exc:
         await eas.verify_and_bind_dispatch(**_dispatch(prompt, **{field: value}))
+    assert exc.value.code == "DISPATCH_NOT_APPROVED"
+
+
+async def test_changed_faceless_execution_identity_after_approval_blocks(monkeypatch):
+    monkeypatch.setenv("EXECUTION_APPROVAL_GATE_ENFORCED", "1")
+    identity = {
+        "identity_version": "FACELESS_EXECUTION_IDENTITY_V1",
+        "lane": "FACELESS",
+        "transport_mode": "F2V",
+        "product_id": "prod_test_1",
+        "actor_profile_resolved": "FEMALE",
+        "opening_strategy_resolved": "GENERAL_USP_PRODUCT",
+    }
+    prompt = "P_faceless_identity — approved baseline"
+    snap = await eas.create_review_snapshot(
+        **_spec(prompt, execution_identity=identity)
+    )
+    await eas.approve_snapshot(snap["snapshot_id"], approved_by="faris")
+    with pytest.raises(eas.ExecutionApprovalError) as exc:
+        await eas.verify_and_bind_dispatch(
+            **_dispatch(
+                prompt,
+                execution_identity={**identity, "actor_profile_resolved": "MALE"},
+            )
+        )
     assert exc.value.code == "DISPATCH_NOT_APPROVED"
 
 

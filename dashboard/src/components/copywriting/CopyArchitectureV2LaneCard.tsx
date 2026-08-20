@@ -286,6 +286,9 @@ export default function CopyArchitectureV2LaneCard({
 			{/* Technical details collapsed drawer for developer/test diagnostics */}
 			<TechnicalDetails title="Technical details" className="mt-3">
 				<div className="space-y-2">
+					<p className="text-[10px] text-slate-500">
+						Read-only projection from the production V2 binding.
+					</p>
 					<div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
 						<span className="text-slate-400">Policy</span>
 						<span data-testid="copy-v2-policy" className="font-mono text-slate-200">

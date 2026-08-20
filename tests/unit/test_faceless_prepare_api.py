@@ -1,6 +1,7 @@
 """Faceless prepare API — product-first + model/duration propagation."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -252,10 +253,21 @@ def test_prepare_rejects_unknown_model_or_unsupported_duration(client: TestClien
 
 
 def test_validate_preview_no_package_write(client: TestClient) -> None:
-    with patch(
-        "agent.api.faceless.create_workspace_execution_package",
-        new_callable=AsyncMock,
-    ) as mock_create:
+    # This route test is about validation/resolution and must not depend on the
+    # optional legacy DB shell. The production route still resolves Copy V2;
+    # use an explicit maintenance-mode result here so the test remains hermetic.
+    fake_copy_resolution = SimpleNamespace(v2_enabled=False)
+    with (
+        patch(
+            "agent.api.faceless.resolve_persisted_copy_execution_binding",
+            new_callable=AsyncMock,
+            return_value=fake_copy_resolution,
+        ),
+        patch(
+            "agent.api.faceless.create_workspace_execution_package",
+            new_callable=AsyncMock,
+        ) as mock_create,
+    ):
         r = client.post(
             "/api/faceless/validate",
             json=_base_body(background_id="PHARMACY"),

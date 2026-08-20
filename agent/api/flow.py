@@ -825,6 +825,10 @@ class GenerateRequest(BaseModel):
     maximum_provider_operations: Optional[int] = None
     max_retry_operations: int = 0
     copy_v2_context: Optional[dict] = None
+    # Faceless V1: server-persisted actor/opening/choreography/product identity.
+    # The generate route compares this receipt with the referenced workspace
+    # execution package before any provider-adjacent work begins.
+    execution_identity: Optional[dict[str, Any]] = None
 
 
 @router.get("/video-models")
@@ -1403,6 +1407,83 @@ async def generate(body: GenerateRequest):
         raise HTTPException(422, f"unknown mode '{body.mode}' (use IMG/T2V/I2V/F2V)")
     if not body.prompt.strip():
         raise HTTPException(422, "prompt is required")
+    if body.execution_identity is not None:
+        if (
+            not isinstance(body.execution_identity, dict)
+            or str(body.execution_identity.get("lane") or "").upper() != "FACELESS"
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "FACELESS_EXECUTION_IDENTITY_INVALID",
+                    "detail": "Execution identity is reserved for the Faceless lane.",
+                },
+            )
+        if not body.workspace_execution_package_id:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "FACELESS_EXECUTION_IDENTITY_REQUIRED",
+                    "detail": "The Faceless execution identity must reference its prepared package.",
+                },
+            )
+    # Faceless packages carry a server-authoritative receipt that binds the exact
+    # product anchor, actor resolution, opening truth decision, choreography, and
+    # provider settings reviewed by the operator. Resolve it before Copy V2,
+    # connectivity, asset transport, credits, or the dispatch approval gate.
+    if mode == "F2V" and body.workspace_execution_package_id:
+        _package = await crud.get_workspace_execution_package(
+            body.workspace_execution_package_id
+        )
+        if _package is None:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "FACELESS_EXECUTION_IDENTITY_REQUIRED",
+                    "detail": "The Faceless workspace execution package was not found.",
+                },
+            )
+        _lineage = _package.get("request_lineage_payload") or {}
+        if isinstance(_lineage, str):
+            try:
+                _lineage = json.loads(_lineage)
+            except (TypeError, ValueError):
+                _lineage = {}
+        _expected_identity = (
+            _package.get("faceless_execution_identity")
+            or (
+                _lineage.get("faceless_execution_identity")
+                if isinstance(_lineage, dict)
+                else None
+            )
+        )
+        if _expected_identity is not None:
+            if body.execution_identity is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "FACELESS_EXECUTION_IDENTITY_REQUIRED",
+                        "detail": "The persisted Faceless execution identity is required for dispatch.",
+                    },
+                )
+            if json.dumps(
+                body.execution_identity,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ) != json.dumps(
+                _expected_identity,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "FACELESS_EXECUTION_IDENTITY_MISMATCH",
+                        "detail": "The Faceless execution identity no longer matches the prepared package.",
+                    },
+                )
     v2_resolution = None
     try:
         from agent.services.copy_execution_resolver import (
@@ -1606,6 +1687,7 @@ async def generate(body: GenerateRequest):
             ) if v2_resolution and v2_resolution.v2_enabled else None
         ),
         manifest_id=body.manifest_id,
+        execution_identity=body.execution_identity,
     )
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)
