@@ -1559,6 +1559,7 @@ def _default_shot_plan(
     angle_signal: str,
     trigger_id: str,
     cta_type: str,
+    character_presence: str = "VISIBLE_CREATOR",
 ) -> list[str]:
     pname = _product_visual_alias(product, family)
     focus = _family_focus_terms(family)
@@ -1566,6 +1567,21 @@ def _default_shot_plan(
     mode_polish = _mode_story_polish(source_mode)
     scene_native = _family_t2v_scene_clause(family)
     is_final = block_index == total_blocks
+    if str(character_presence or "").strip().upper() == "FACELESS":
+        faceless_templates = [
+            f"Product-first opening beat with {pname} already entering the frame in consistent hands, matching the uploaded product image exactly while the first spoken line lands inside a {focus['context']} setup driven by {story['opening']}; keep the head and face outside the frame.",
+            f"Tight hands-and-product close-up of {pname} with the label readable, controlled reflections, and {focus['detail']} supporting the {angle_hint or 'core commercial angle'} while the frame continues to {story['middle']}; keep the product at honest scale.",
+            f"Controlled hand interaction that keeps {pname} visible and lets the main benefit land naturally through {story['middle']}; preserve the same hands, forearms, product state, and environment without any head or face entering frame.",
+            f"Steady closing hold with {pname} supported in the same consistent hands, label readable, and enough stillness for {story['closing']} to land cleanly while the product remains the visual anchor.",
+        ]
+        if block_index > 1:
+            faceless_templates[0] = (
+                f"Continue immediately from the previous block with the same hands, forearms, grip on {pname}, lighting, and camera path already in progress; keep the head and face outside the frame and preserve {focus['context']}."
+            )
+        selected = faceless_templates[: max(1, shot_count)]
+        if is_final:
+            selected[-1] = faceless_templates[-1]
+        return selected
     if source_mode == "HYBRID":
         templates = [
             f"Creator-led opening beat with {pname} already in hand, matching the uploaded product image exactly while the first spoken hook lands inside a {focus['context']} setup driven by {story['opening']}; {mode_polish['opening']}.",
@@ -1636,11 +1652,32 @@ def _section_3_continuity(
     style_scene_source: str | None,
     is_continuation: bool,
     scene_context: str,
+    character_presence: str = "VISIBLE_CREATOR",
+    faceless_actor_profile: dict[str, Any] | None = None,
 ) -> str:
     """Naturalized source-mode prose — NO taxonomy labels, per retained law."""
     lines: list[str] = []
     pname = _product_line(product)
-    if source_mode == "HYBRID":
+    is_faceless = str(character_presence or "").strip().upper() == "FACELESS"
+    if is_faceless and source_mode in {"HYBRID", "FRAMES"}:
+        lines.append(
+            f"Use the uploaded product image as the exact visual reference for {pname}: match its colour, label, cap, shape, material, and scale precisely in every shot."
+        )
+        lines.append(
+            "Faceless continuity law: only hands, forearms, and partial torso may enter the frame. Keep the head and face completely outside the frame for the entire clip."
+        )
+        profile_cue = _clean((faceless_actor_profile or {}).get("cue"))
+        if profile_cue:
+            lines.append(profile_cue)
+        lines.append(
+            "Preserve the same hands, forearms, sleeve treatment, product grip, product position, camera distance, lighting, and voice profile across every shot."
+        )
+        if scene_context:
+            lines.append(_sanitize_faceless_provider_text(scene_context))
+        lines.append(
+            "Product handling may be demonstrated through controlled hand-object interaction; do not introduce a visible speaker, head, face, eye contact, facial expression, avatar, presenter, creator, or wardrobe direction."
+        )
+    elif source_mode == "HYBRID":
         lines.append(
             f"Use the uploaded product image as the exact visual reference for {pname}: "
             "match its colour, label, cap, shape, material, and scale precisely in every shot."
@@ -1698,7 +1735,11 @@ def _section_3_continuity(
         lines.append(_mode_story_polish(source_mode)["continuity"])
         if presenter_prose:
             lines.append(presenter_prose)
-    if is_continuation:
+    if is_continuation and is_faceless:
+        lines.append(
+            "This block continues the previous clip. Start from the exact final visible state: same hands and forearms, same grip and product position, same camera distance, same lighting, same environment, same voice profile, and same motion direction. The head and face remain outside the frame with no pause, dead air, or freeze."
+        )
+    elif is_continuation:
         lines.append(
             "This block continues the previous clip. Start from the exact final visible state "
             "of the previous block: same presenter, same grip on the product, same camera "
@@ -1738,9 +1779,18 @@ def _section_8_end_frame(
     angle_signal: str,
     trigger_id: str,
     cta_type: str,
+    character_presence: str = "VISIBLE_CREATOR",
 ) -> str:
     story = _visual_story_terms(family, angle_signal, trigger_id, cta_type)
     scene_native = _family_t2v_scene_clause(family)
+    if str(character_presence or "").strip().upper() == "FACELESS":
+        if not is_final:
+            return (
+                f"End on a seam-ready hold with {visual_name} in the same hands and product position, motion direction preserved, label readable, and the head and face outside the frame. Do not close the commercial arc yet."
+            )
+        return (
+            f"End on a stable product-forward hold: {visual_name} remains at honest scale with the label readable, the same hands and grip preserved, and the head and face outside the frame while the closing line lands."
+        )
     if mode == "IMAGES":
         return (
             f"The final composition holds {visual_name} clearly readable as the visual anchor, with "
@@ -1795,7 +1845,73 @@ def scrub_check(engine_text: str) -> list[str]:
     return violations
 
 
-def _allocation_state_text(state: Mapping[str, Any] | None) -> str:
+_FACELESS_PROVIDER_LEAK_PATTERNS = (
+    r"\bavatar\b",
+    r"\bpresenter\b",
+    r"\bcreator\b",
+    r"\beye[ -]?contact\b",
+    r"\bwardrobe\b",
+    r"\bfacial expression\b",
+    r"\bface(?: and mouth)? (?:clearly )?visible\b",
+    r"\bvisible (?:human )?(?:face|speaker)\b",
+    r"\bface-product co-presence\b",
+    r"\bsame (?:visible )?(?:presenter|creator|avatar)\b",
+    r"\b(?:creator|presenter)-led\b",
+)
+
+
+def _sanitize_faceless_provider_text(text: Any) -> str:
+    """Remove shared planner vocabulary that is unsafe in a Faceless prompt.
+
+    This is intentionally a narrow provider-facing scrub. It keeps product,
+    hand, camera, timing, and choreography instructions while replacing legacy
+    visible-person language and omitting registry metadata from the engine text.
+    """
+    value = _clean(text)
+    if not value:
+        return ""
+    replacements = (
+        (r"\bavatar hint\s*:\s*[^.]*\.?", ""),
+        (r"\bwardrobe hint\s*:\s*[^.]*\.?", ""),
+        (r"\ballowed character presence\s*:\s*[^.]*\.?", ""),
+        (r"\b(?:same )?(?:visible )?presenter\b", "same hands and forearms"),
+        (r"\b(?:same )?(?:visible )?creator\b", "same hands and forearms"),
+        (r"\bAI avatar\b", "faceless subject"),
+        (r"\bavatar\b", "faceless subject"),
+        (r"\beye[ -]?contact to camera\b", "product label oriented toward camera"),
+        (r"\beye[ -]?contact\b", "product-forward framing"),
+        (r"\bface and mouth (?:clearly )?visible and synchronized to every spoken word", "head and face outside the frame with no visible mouth"),
+        (r"\bface-product co-presence", "product-and-hands continuity"),
+        (r"\bfacial expression\b", "hand movement"),
+        (r"\bexpression\b", "hand movement"),
+        (r"\bwardrobe\b", "sleeve treatment"),
+        (r"\b(?:creator|presenter)-led\b", "product-first"),
+        (r"\b(?:creator|presenter) scene\b", "product scene"),
+        (r"\b(?:creator|presenter) camera\b", "handheld camera"),
+        (r"\b(?:creator|presenter) speaks\b", "the voiceover speaks"),
+        (r"\bvisible speaker\b", "on-camera speech"),
+    )
+    for pattern, replacement in replacements:
+        value = re.sub(pattern, replacement, value, flags=re.IGNORECASE)
+    # Remove empty metadata fragments and normalize punctuation left by a scrub.
+    value = re.sub(r"\s{2,}", " ", value)
+    value = re.sub(r"\s+([,.;])", r"\1", value)
+    return value.strip(" ;")
+
+
+def _faceless_provider_leaks(engine_text: str) -> list[str]:
+    return [
+        pattern
+        for pattern in _FACELESS_PROVIDER_LEAK_PATTERNS
+        if re.search(pattern, engine_text, flags=re.IGNORECASE)
+    ]
+
+
+def _allocation_state_text(
+    state: Mapping[str, Any] | None,
+    *,
+    faceless: bool = False,
+) -> str:
     """Naturalize a planner continuity state without exposing planner metadata."""
     if not state:
         return ""
@@ -1803,14 +1919,15 @@ def _allocation_state_text(state: Mapping[str, Any] | None) -> str:
         _clean(state.get("product_identity")),
         _clean(state.get("product_position")),
         _clean(state.get("product_grip")),
-        _clean(state.get("presenter_pose")),
-        _clean(state.get("wardrobe")),
+        "" if faceless else _clean(state.get("presenter_pose")),
+        "" if faceless else _clean(state.get("wardrobe")),
         _clean(state.get("environment")),
         _clean(state.get("lighting")),
         _clean(state.get("camera_framing")),
         _clean(state.get("motion_direction")),
     ]
-    return "; ".join(value for value in values if value)
+    result = "; ".join(value for value in values if value)
+    return _sanitize_faceless_provider_text(result) if faceless else result
 
 
 def _treatment_shot_lines(
@@ -1862,6 +1979,8 @@ def render_block(
     copy: dict[str, Any] | None = None,
     approved_dialogue: str | None = None,
     presenter_profile: dict | None = None,
+    character_presence: str = "VISIBLE_CREATOR",
+    faceless_actor_profile: dict[str, Any] | None = None,
     asset_role_map: dict | None = None,
     style_scene_source: str | None = None,
     target_language: str = "BM_MS",
@@ -1888,6 +2007,7 @@ def render_block(
         if int(allocation_data.get("duration_seconds") or 0) != block_seconds:
             raise ValueError("BLOCK_ALLOCATION_DURATION_MISMATCH")
     treatment = dict(creative_treatment or {})
+    is_faceless = str(character_presence or "").strip().upper() == "FACELESS"
     treatment_format = str(treatment.get("format") or "").upper()
     if treatment:
         if treatment_format not in {"UGC", "PGC", "CINEMATIC"}:
@@ -1929,9 +2049,10 @@ def render_block(
     presenter = None
     presenter_text = None
     family = _infer_product_family(product, norm_copy)
-    if (
-        mode in ("HYBRID", "T2V") and treatment_format != "PGC"
-    ) or (mode == "IMAGES" and presenter_profile):
+    if (not is_faceless) and (
+        (mode in ("HYBRID", "T2V") and treatment_format != "PGC")
+        or (mode == "IMAGES" and presenter_profile)
+    ):
         presenter = presenter_profile or avatar_registry.resolve_presenter(
             seed=_clean(product.get("id") or product.get("name") or "bosmax"),
         )
@@ -1971,6 +2092,11 @@ def render_block(
                 "motivated camera movement, lighting continuity, and visual rhythm."
             ),
         }[treatment_format]
+        if is_faceless:
+            format_objective = (
+                "Use a product-first faceless grammar with controlled hand interaction, "
+                "consistent forearms and torso styling, and no head or face in frame."
+            )
         s1 = (
             f"{s1} Approved Creative Treatment "
             f"{treatment.get('treatment_id')}: {format_objective}"
@@ -1996,6 +2122,8 @@ def render_block(
         mode, product=product, presenter_prose=presenter_text,
         asset_role_map=asset_role_map, style_scene_source=style_scene_source,
         is_continuation=is_continuation, scene_context=_clean(scene_context),
+        character_presence=character_presence,
+        faceless_actor_profile=faceless_actor_profile,
     )
     # Reference-image truth lock + per-frame persistence lock (video modes) so the
     # product cannot grow, round out, or morph across frames or away from the ref.
@@ -2028,14 +2156,14 @@ def render_block(
                     and step.get("end_time_seconds") is not None
                     else ""
                 )
-                + f": {_clean(step.get('action_text'))}; "
-                f"actor={_clean(step.get('actor_role'))}; "
+                + f": {(_sanitize_faceless_provider_text(step.get('action_text')) if is_faceless else _clean(step.get('action_text')))}; "
+                f"actor={('hands/forearms' if is_faceless else _clean(step.get('actor_role')))}; "
                 f"hands={_clean(step.get('support_hand'))}/{_clean(step.get('active_hand'))}; "
-                f"state={_clean(step.get('initial_state'))} -> "
-                f"{_clean(step.get('resulting_state'))}; "
+                f"state={(_sanitize_faceless_provider_text(step.get('initial_state')) if is_faceless else _clean(step.get('initial_state')))} -> "
+                f"{(_sanitize_faceless_provider_text(step.get('resulting_state')) if is_faceless else _clean(step.get('resulting_state')))}; "
                 "continuity="
                 + "; ".join(
-                    _clean(value)
+                    (_sanitize_faceless_provider_text(value) if is_faceless else _clean(value))
                     for value in step.get("continuity_requirements") or []
                 )
             )
@@ -2054,10 +2182,10 @@ def render_block(
         shots = _treatment_shot_lines(treatment)
         if allocation_data:
             entry_text = _allocation_state_text(
-                allocation_data.get("entry_continuity_state")
+                allocation_data.get("entry_continuity_state"), faceless=is_faceless
             )
             exit_text = _allocation_state_text(
-                allocation_data.get("exit_continuity_state")
+                allocation_data.get("exit_continuity_state"), faceless=is_faceless
             )
             if entry_text and exit_text:
                 s3 = "\n".join([
@@ -2070,17 +2198,18 @@ def render_block(
         if not allocated_beats:
             raise ValueError("BLOCK_ALLOCATION_STORY_BEATS_MISSING")
         shots = [
-            _clean(beat.get("visual_action"))
+            _sanitize_faceless_provider_text(beat.get("visual_action"))
+            if is_faceless else _clean(beat.get("visual_action"))
             for beat in allocated_beats
             if _clean(beat.get("visual_action"))
         ]
         if not shots:
             raise ValueError("BLOCK_ALLOCATION_STORY_BEATS_MISSING")
         entry_text = _allocation_state_text(
-            allocation_data.get("entry_continuity_state")
+            allocation_data.get("entry_continuity_state"), faceless=is_faceless
         )
         exit_text = _allocation_state_text(
-            allocation_data.get("exit_continuity_state")
+            allocation_data.get("exit_continuity_state"), faceless=is_faceless
         )
         if entry_text and exit_text:
             s3 = "\n".join([
@@ -2103,7 +2232,10 @@ def render_block(
             angle_signal=angle_signal,
             trigger_id=trigger_id,
             cta_type=cta_type,
+            character_presence=character_presence,
         )
+    if is_faceless:
+        shots = [_sanitize_faceless_provider_text(shot) for shot in shots]
     s4 = "\n".join(f"Shot {i + 1}: {s}" for i, s in enumerate(shots))
     if mode == "IMAGES":
         still_camera_note = (
@@ -2117,6 +2249,12 @@ def render_block(
         s5_lines = [
             "Clean commercial framing with the product sharply in focus.",
             f"{still_camera_note} {lens_note}",
+        ]
+    elif is_faceless:
+        s5_lines = [
+            "Product-first vertical 9:16 framing with controlled natural movement and honest product scale.",
+            camera_notes or "Medium close-up to close-up range; soft natural light; no flash, no hard fill.",
+            "Keep the same hands, forearms, sleeve treatment, product grip, and product position throughout. The head and face stay completely outside the frame; do not cut away to an isolated hero product beauty shot.",
         ]
     else:
         if not treatment:
@@ -2151,7 +2289,11 @@ def render_block(
                 camera_notes or "Eye-level medium close-up to close-up range; soft natural light; no flash, no hard fill.",
                 "Keep the product within the intended continuous creator scene at its true scale.",
             ]
-    if is_continuation:
+    if is_continuation and is_faceless:
+        s5_lines.append(
+            "For the first half second, continue the exact motion already in progress. Keep the same hands, forearms, product state, camera distance, and lighting; the head and face remain outside the frame and there is no product-only reset."
+        )
+    elif is_continuation:
         s5_lines.append(
             "For the first half second, continue the exact motion already in progress. For the "
             "first one to two seconds, keep the presenter's face and mouth clearly visible and "
@@ -2182,20 +2324,31 @@ def render_block(
         (
             f"Use the approved {treatment_format} audio grammar. "
             + (
-                f"The presenter speaks {lang} directly and naturally; no voice-over."
+                f"Use controlled {lang} voice-over/narration over the product handling; no visible mouth or on-camera speaker."
+                if is_faceless
+                else f"The presenter speaks {lang} directly and naturally; no voice-over."
                 if treatment_format == "UGC"
-                else f"Use a controlled {lang} product-led voice-over; no visible presenter speech."
+                else f"Use a controlled {lang} product-led voice-over; no visible speaker speech."
                 if treatment_format == "PGC"
                 else f"Deliver the approved {lang} dialogue with cinematic pacing and exact synchronization."
             )
         )
         if treatment
         else
-        f"The presenter speaks {lang} only, direct to camera, in short, natural, conversational phrasing — present in the moment, never narrating from outside it. "
-        f"{family_voice + ' ' if family_voice else ''}"
-        "No voice-over. No off-camera speech. No audio-only dialogue."
+        (
+            f"Use a controlled {lang} voice-over/narration in short, natural, conversational phrasing over the product handling. "
+            f"{family_voice + ' ' if family_voice else ''}"
+            "No visible mouth, no on-camera speaker, and no head or face entering frame."
+            if is_faceless
+            else
+            f"The presenter speaks {lang} only, direct to camera, in short, natural, conversational phrasing — present in the moment, never narrating from outside it. "
+            f"{family_voice + ' ' if family_voice else ''}"
+            "No voice-over. No off-camera speech. No audio-only dialogue."
+        )
     ) if mode != "IMAGES" else "Not applicable — still image output."
     s8 = _clean(allocation_data.get("end_frame_instruction")) if allocation_data else ""
+    if is_faceless and s8:
+        s8 = _sanitize_faceless_provider_text(s8)
     if not s8:
         s8 = _section_8_end_frame(
             mode=mode,
@@ -2207,6 +2360,7 @@ def render_block(
             angle_signal=angle_signal,
             trigger_id=trigger_id,
             cta_type=cta_type,
+            character_presence=character_presence,
         )
     # UI-chrome ban shared by both branches. Live leak (owner-reported): an
     # output rendered a social-app interface — like/comment/share icons, a
@@ -2239,11 +2393,25 @@ def render_block(
             "ONLY."
         )
 
+    if is_faceless:
+        s1 = _sanitize_faceless_provider_text(s1)
+        s2 = _sanitize_faceless_provider_text(s2)
+        s3 = _sanitize_faceless_provider_text(s3)
+        s4 = _sanitize_faceless_provider_text(s4)
+        s5 = _sanitize_faceless_provider_text(s5)
+        s7 = _sanitize_faceless_provider_text(s7)
+        s8 = _sanitize_faceless_provider_text(s8)
+        s9 = _sanitize_faceless_provider_text(s9)
     bodies = (s1, s2, s3, s4, s5, s6, s7, s8, s9)
     engine_text = "\n\n".join(
         f"{header}\n{body}" for header, body in zip(CANONICAL_SECTIONS, bodies)
     )
     violations = scrub_check(engine_text)
+    if is_faceless:
+        structural_text = "\n".join(
+            [s1, s2, s3, s4, s5, s7, s8, s9]
+        )
+        violations.extend(_faceless_provider_leaks(structural_text))
     return {
         "block_index": block_index,
         "block_seconds": block_seconds,
@@ -2273,6 +2441,8 @@ def compile_prompt_set(
     approved_dialogue: str | None = None,
     avatar_id: str | None = None,
     presenter_profile: dict | None = None,
+    character_presence: str = "VISIBLE_CREATOR",
+    faceless_actor_profile: dict[str, Any] | None = None,
     asset_role_map: dict | None = None,
     style_scene_source: str | None = None,
     target_language: str = "BM_MS",
@@ -2332,8 +2502,9 @@ def compile_prompt_set(
             duration_seconds,
             preferred_lane=preferred_lane,
         )
-    resolved_profile = presenter_profile
-    if mode in ("HYBRID", "T2V") and not resolved_profile:
+    is_faceless = str(character_presence or "").strip().upper() == "FACELESS"
+    resolved_profile = None if is_faceless else presenter_profile
+    if mode in ("HYBRID", "T2V") and not resolved_profile and not is_faceless:
         resolved_profile = avatar_registry.resolve_presenter(
             avatar_id,
             usage_context=_clean(product.get("category")),
@@ -2462,6 +2633,8 @@ def compile_prompt_set(
                 copy=copy,
                 approved_dialogue=block_dialogue,
                 presenter_profile=resolved_profile,
+                character_presence=character_presence,
+                faceless_actor_profile=faceless_actor_profile,
                 asset_role_map=asset_role_map,
                 style_scene_source=style_scene_source,
                 target_language=target_language,

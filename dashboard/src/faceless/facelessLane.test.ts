@@ -92,6 +92,11 @@ describe("facelessLane product-first", () => {
 			prompt_text: "hands hold product",
 			product_id: "p1",
 			aspect_ratio: "9:16",
+			faceless_execution_identity: {
+				identity_version: "FACELESS_EXECUTION_IDENTITY_V1",
+				lane: "FACELESS",
+				actor_profile_resolved: "FEMALE",
+			},
 			asset_slots: [
 				{
 					slot_key: "start_frame",
@@ -123,6 +128,9 @@ describe("facelessLane product-first", () => {
 		expect((body.startAsset as { assetId: string }).assetId).toBe("a_start");
 		expect(body.image_media_ids).toEqual(["m_start"]);
 		expect(body.workspace_execution_package_id).toBe("wep_1");
+		expect(body.execution_identity).toEqual(
+			pkg.faceless_execution_identity,
+		);
 	});
 
 	it("EXTEND cannot fall back to a base one-door submission", () => {

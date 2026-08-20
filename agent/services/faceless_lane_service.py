@@ -8,6 +8,8 @@ Visual law: no face; hands/arms/torso OK with face out of frame; product locked.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Optional
 
 from agent.db import crud
@@ -39,6 +41,22 @@ ERR_FACELESS_MODEL_DURATION_UNSUPPORTED = "ERR_FACELESS_MODEL_DURATION_UNSUPPORT
 ERR_FACELESS_EXTEND_TOTAL_REQUIRED = "ERR_FACELESS_EXTEND_TOTAL_REQUIRED"
 ERR_FACELESS_PRODUCT_NOT_FOUND = "ERR_FACELESS_PRODUCT_NOT_FOUND"
 ERR_FACELESS_SCENE_STRATEGY_REQUIRED = "ERR_FACELESS_SCENE_STRATEGY_REQUIRED"
+ERR_FACELESS_OPENING_STRATEGY_TRUTH_REQUIRED = (
+    cls.ERR_FACELESS_OPENING_STRATEGY_TRUTH_REQUIRED
+)
+ERR_FACELESS_ACTOR_PROFILE_INVALID = cls.ERR_FACELESS_ACTOR_PROFILE_INVALID
+FACELESS_ACTOR_PROFILE_VERSION = "FACELESS_ACTOR_PROFILE_V1"
+
+_FACELESS_ACTOR_PROFILE_CUES: dict[str, str] = {
+    "MALE": (
+        "Use a consistent adult male-coded hands/forearms/partial-torso styling "
+        "with restrained sleeve treatment and a steady neutral product-handling voice."
+    ),
+    "FEMALE": (
+        "Use a consistent adult female-coded hands/forearms/partial-torso styling "
+        "with restrained sleeve treatment and a steady neutral product-handling voice."
+    ),
+}
 
 
 def resolve_faceless_video_configuration(
@@ -111,6 +129,57 @@ FACELESS_VISUAL_LAW = (
     "Product identity and packaging remain locked and authoritative. "
     "No invented claims, endorsements, or medical authority."
 )
+FACELESS_PROVIDER_VISUAL_LAW = (
+    "VISUAL LAW (FACELESS): only hands, forearms, and partial torso may enter the frame. "
+    "Keep the head and face completely outside the frame for the entire clip. "
+    "Product identity, packaging, and scale remain locked and authoritative."
+)
+
+
+def resolve_faceless_actor_profile(
+    operator_selection: Optional[str],
+    *,
+    product_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Resolve AUTO/MALE/FEMALE to a stable Faceless continuity receipt.
+
+    The profile controls only visible hands/forearms/partial-torso styling and
+    voice continuity. It is deliberately separate from Avatar Registry and never
+    authorizes a face, head, identity, or on-camera presenter.
+    """
+    raw = str(operator_selection or "").strip().upper() or cls.actor_profile_default()
+    ok, code, detail = cls.validate_actor_profile(raw)
+    if not ok:
+        raise ValueError(f"{code}: {detail}")
+    if raw == "AUTO":
+        seed = f"{FACELESS_ACTOR_PROFILE_VERSION}|{str(product_id or '').strip()}"
+        digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+        resolved = "FEMALE" if int(digest[0], 16) % 2 else "MALE"
+        resolution = "AUTO_DETERMINISTIC"
+    else:
+        resolved = raw
+        resolution = "EXPLICIT"
+    cue = _FACELESS_ACTOR_PROFILE_CUES[resolved]
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "version": FACELESS_ACTOR_PROFILE_VERSION,
+                "resolved_profile": resolved,
+                "cue": cue,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "version": FACELESS_ACTOR_PROFILE_VERSION,
+        "operator_selection": raw,
+        "resolved_profile": resolved,
+        "display_label": cls.label_for_actor_profile(resolved),
+        "resolution": resolution,
+        "cue": cue,
+        "profile_fingerprint": fingerprint,
+    }
 
 
 def validate_faceless_inputs(
@@ -124,6 +193,7 @@ def validate_faceless_inputs(
     generation_mode: Optional[str] = None,
     duration_seconds: Optional[int] = None,
     total_duration_seconds: Optional[int] = None,
+    actor_profile: Optional[str] = None,
     require_model: bool = True,
     reference_override: bool = False,
 ) -> tuple[bool, Optional[str], Optional[str]]:
@@ -136,6 +206,10 @@ def validate_faceless_inputs(
         return False, ERR_FACELESS_PRODUCT_REQUIRED, (
             "Faceless requires a product — select a product before prepare/generate"
         )
+
+    ok_actor, code_actor, detail_actor = cls.validate_actor_profile(actor_profile)
+    if not ok_actor:
+        return False, code_actor, detail_actor
 
     gen_mode = str(generation_mode or "SINGLE").strip().upper()
     if gen_mode not in ("SINGLE", "EXTEND"):
@@ -212,8 +286,10 @@ def validate_faceless_inputs(
 
 def build_faceless_resolution(
     *,
+    product_id: Optional[str] = None,
     hook_id: Optional[str] = None,
     background_id: Optional[str] = None,
+    actor_profile: Optional[str] = None,
     product_cluster: Optional[str] = None,
     has_approved_usp: bool = False,
     scene_context_hint: Optional[str] = None,
@@ -249,11 +325,17 @@ def build_faceless_resolution(
     )
     scene_strategy = (scene_authority or {}).get("scene_strategy")
     choreography = (scene_authority or {}).get("choreography")
+    actor = (scene_authority or {}).get("actor_profile") or resolve_faceless_actor_profile(
+        actor_profile,
+        product_id=product_id or (scene_authority or {}).get("product", {}).get("id"),
+    )
     receipt = _faceless_resolution_receipt(
         opening_strategy=opening_strategy,
         background=background,
         scene_strategy=scene_strategy,
         choreography=choreography,
+        actor_profile=actor,
+        opening_strategy_truth=(scene_authority or {}).get("opening_strategy_truth"),
     )
     resolution = {
         "lane": FACELESS_SURFACE_MODE,
@@ -261,6 +343,7 @@ def build_faceless_resolution(
         "source_mode": source_mode,
         "character_presence": FACELESS_CHARACTER_PRESENCE,
         "avatar_id": None,
+        "actor_profile": actor,
         "opening_strategy": opening_strategy,
         # Backward-compatible response/wire alias. This is never Copy V2 text.
         "hook": opening_strategy,
@@ -288,10 +371,12 @@ def _faceless_resolution_receipt(
     background: dict[str, Any],
     scene_strategy: dict[str, Any] | None,
     choreography: dict[str, Any] | None,
+    actor_profile: dict[str, Any],
+    opening_strategy_truth: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     if not scene_strategy or not choreography:
         return None
-    return {
+    receipt = {
         "opening_strategy_operator": opening_strategy["operator_selection"],
         "opening_strategy_resolved": opening_strategy["setting_id"],
         "background_operator": background["operator_selection"],
@@ -305,7 +390,14 @@ def _faceless_resolution_receipt(
         "variation_index": int(choreography.get("variation_index") or 0),
         "character_presence": FACELESS_CHARACTER_PRESENCE,
         "compatibility_status": "COMPATIBLE",
+        "actor_profile_operator": actor_profile["operator_selection"],
+        "actor_profile_resolved": actor_profile["resolved_profile"],
+        "actor_profile_version": actor_profile["version"],
+        "actor_profile_fingerprint": actor_profile["profile_fingerprint"],
     }
+    if opening_strategy_truth:
+        receipt["opening_strategy_truth"] = opening_strategy_truth
+    return receipt
 
 
 async def resolve_faceless_scene_authority(
@@ -313,6 +405,7 @@ async def resolve_faceless_scene_authority(
     product_id: str,
     hook_id: Optional[str] = None,
     background_id: Optional[str] = None,
+    actor_profile: Optional[str] = None,
     product_cluster: Optional[str] = None,
     has_approved_usp: bool = False,
     scene_context_hint: Optional[str] = None,
@@ -335,6 +428,36 @@ async def resolve_faceless_scene_authority(
             "Product Truth did not resolve a production Scene Strategy"
         )
 
+    opening_strategy = cls.resolve_opening_strategy(
+        hook_id,
+        product_cluster=product_cluster,
+        has_approved_usp=has_approved_usp,
+    )
+    opening_truth: dict[str, Any] | None = None
+    if str(hook_id or "").strip().upper() not in {"", cls.AUTO_ID}:
+        from agent.services import copy_register_v2_service as register_service
+
+        try:
+            truth = await register_service.get_product_truth_proof(product_id)
+        except register_service.CopyRegisterV2Error as exc:
+            raise ValueError(
+                f"{ERR_FACELESS_OPENING_STRATEGY_TRUTH_REQUIRED}: "
+                f"Product Truth proof unavailable: {exc}"
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 — explicit strategy fails closed
+            raise ValueError(
+                f"{ERR_FACELESS_OPENING_STRATEGY_TRUTH_REQUIRED}: "
+                f"Product Truth proof unavailable: {exc}"
+            ) from exc
+        opening_truth = cls.opening_strategy_truth_gate(hook_id, truth)
+        if not opening_truth.get("ok"):
+            raise ValueError(
+                f"{opening_truth.get('code') or ERR_FACELESS_OPENING_STRATEGY_TRUTH_REQUIRED}: "
+                f"{opening_truth.get('detail') or 'explicit Product Truth evidence required'}"
+            )
+
+    actor = resolve_faceless_actor_profile(actor_profile, product_id=product_id)
+
     # Select through the compatible Scene Choreography V2 subset. The canonical
     # compiler uses the same explicit selector and variation index.
     selected = select_scene_strategy_variant(
@@ -355,11 +478,9 @@ async def resolve_faceless_scene_authority(
     )
     return {
         "product": product,
-        "opening_strategy": cls.resolve_opening_strategy(
-            hook_id,
-            product_cluster=product_cluster,
-            has_approved_usp=has_approved_usp,
-        ),
+        "opening_strategy": opening_strategy,
+        "opening_strategy_truth": opening_truth,
+        "actor_profile": actor,
         "background": background,
         "background_options": cls.background_options_for_contexts(
             compatible_contexts
@@ -383,7 +504,7 @@ def build_faceless_scene_context(resolution: dict[str, Any]) -> str:
     scene = resolution.get("scene_strategy") or {}
     choreography = resolution.get("choreography") or {}
     parts = [
-        FACELESS_VISUAL_LAW,
+        FACELESS_PROVIDER_VISUAL_LAW,
         (
             f"Opening strategy {opening_strategy['setting_id']}: {strategy}."
             if strategy
@@ -413,6 +534,7 @@ def build_faceless_package_fields(resolution: dict[str, Any]) -> dict[str, Any]:
         "source_mode": resolution["source_mode"],
         "character_presence": resolution["character_presence"],
         "avatar_id": None,
+        "actor_profile": resolution.get("actor_profile"),
         "scene_context_override": resolution.get("scene_context_override"),
         "faceless_lane": {
             "opening_strategy_operator": resolution["opening_strategy"][

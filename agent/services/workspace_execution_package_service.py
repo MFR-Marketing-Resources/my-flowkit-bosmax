@@ -103,6 +103,47 @@ def _workspace_execution_package_id(
     return f"wep_{digest[:16]}"
 
 
+def _faceless_execution_identity(
+    *,
+    product_id: str,
+    source_mode: str,
+    model: str,
+    duration_seconds: int,
+    aspect_ratio: str,
+    generation_mode: str,
+    faceless_resolution: dict[str, Any],
+    asset_fingerprints: list[str],
+) -> dict[str, Any]:
+    """Build the persisted provider-affecting Faceless identity receipt."""
+    actor = dict(faceless_resolution.get("actor_profile") or {})
+    return {
+        "identity_version": "FACELESS_EXECUTION_IDENTITY_V1",
+        "lane": "FACELESS",
+        "transport_mode": "F2V",
+        "source_mode": str(source_mode or "").upper() or None,
+        "product_id": product_id,
+        "product_anchor_fingerprint": (asset_fingerprints[0] if asset_fingerprints else None),
+        "model": model,
+        "duration_seconds": int(duration_seconds),
+        "aspect_ratio": aspect_ratio,
+        "generation_mode": str(generation_mode or "SINGLE").upper(),
+        "opening_strategy_operator": faceless_resolution.get("opening_strategy_operator"),
+        "opening_strategy_resolved": faceless_resolution.get("opening_strategy_resolved"),
+        "background_operator": faceless_resolution.get("background_operator"),
+        "background_resolved": faceless_resolution.get("background_resolved"),
+        "scene_strategy_id": faceless_resolution.get("scene_strategy_id"),
+        "choreography_id": faceless_resolution.get("choreography_id"),
+        "choreography_schema_version": faceless_resolution.get("choreography_schema_version"),
+        "choreography_sha256": faceless_resolution.get("choreography_sha256"),
+        "character_presence": "FACELESS",
+        "actor_profile_operator": actor.get("operator_selection") or faceless_resolution.get("actor_profile_operator"),
+        "actor_profile_resolved": actor.get("resolved_profile") or faceless_resolution.get("actor_profile_resolved"),
+        "actor_profile_version": actor.get("version") or faceless_resolution.get("actor_profile_version"),
+        "actor_profile_fingerprint": actor.get("profile_fingerprint") or faceless_resolution.get("actor_profile_fingerprint"),
+        "opening_strategy_truth": faceless_resolution.get("opening_strategy_truth"),
+    }
+
+
 def _resolved_assets(asset_slots: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [slot["resolved_asset"] for slot in asset_slots if slot.get("resolved_asset")]
 
@@ -398,6 +439,7 @@ async def create_workspace_execution_package(
         scene_template=scene_template,
         camera_preset=camera_preset,
         variation_index=variation_index,
+        faceless_actor_profile=(faceless_resolution or {}).get("actor_profile"),
     )
     copy_binding_lineage = compiler_result.get("copy_binding")
     # Explicit-Fallback-Confirmation V1: when the operator confirmed fallback
@@ -454,6 +496,20 @@ async def create_workspace_execution_package(
         for asset in resolved_assets
         if asset.get("asset_fingerprint")
     ]
+    faceless_execution_identity = (
+        _faceless_execution_identity(
+            product_id=product_id,
+            source_mode=resolved_source_mode,
+            model=resolved_model,
+            duration_seconds=total_duration_seconds,
+            aspect_ratio=aspect_ratio,
+            generation_mode=compiler_result["generation_mode"],
+            faceless_resolution=faceless_resolution,
+            asset_fingerprints=asset_fingerprints,
+        )
+        if faceless_resolution is not None
+        else None
+    )
     execution_package_id = _workspace_execution_package_id(
         product_id,
         normalized_mode,
@@ -504,6 +560,10 @@ async def create_workspace_execution_package(
     if faceless_resolution is not None:
         request_lineage_payload["faceless_resolution"] = copy.deepcopy(
             faceless_resolution
+        )
+    if faceless_execution_identity is not None:
+        request_lineage_payload["faceless_execution_identity"] = copy.deepcopy(
+            faceless_execution_identity
         )
     if creative_treatment:
         segment_plan = creative_treatment.get("segment_plan") or {}
@@ -615,6 +675,7 @@ async def create_workspace_execution_package(
         "blockers": all_blockers,
         "copy_binding": copy_binding_lineage,
         "request_lineage_payload": request_lineage_payload,
+        "faceless_execution_identity": faceless_execution_identity,
         "source_of_truth_notes": [
             *package["source_of_truth_notes"],
             *compiler_result["source_of_truth_notes"],
@@ -747,6 +808,7 @@ async def compile_workspace_prompt_preview(
     copy_v2_resolution: CopyExecutionResolution | None = None,
     approved_dialogue: str | None = None,
     copy_v2_context: dict[str, Any] | None = None,
+    faceless_actor_profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
     if copy_v2_resolution is None:
@@ -846,6 +908,7 @@ async def compile_workspace_prompt_preview(
             scene_context_override=scene_context_override,
             copy_intelligence=copy_binding["copy_intelligence"],
             approved_dialogue=approved_dialogue,
+            faceless_actor_profile=faceless_actor_profile,
             creative_treatment=creative_treatment,
             scene_template=scene_template,
             camera_preset=camera_preset,

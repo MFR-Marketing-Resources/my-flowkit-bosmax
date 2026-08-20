@@ -87,6 +87,33 @@ def test_invalid_hook_fails_closed():
     assert code is not None
 
 
+def test_actor_profile_auto_is_deterministic_and_explicit_profiles_are_separate():
+    first = fl.resolve_faceless_actor_profile("AUTO", product_id="prod-1")
+    second = fl.resolve_faceless_actor_profile("AUTO", product_id="prod-1")
+    explicit = fl.resolve_faceless_actor_profile("MALE", product_id="prod-1")
+
+    assert first == second
+    assert first["operator_selection"] == "AUTO"
+    assert first["resolved_profile"] in {"MALE", "FEMALE"}
+    assert first["profile_fingerprint"]
+    assert explicit["operator_selection"] == "MALE"
+    assert explicit["resolved_profile"] == "MALE"
+    assert explicit["profile_fingerprint"] != first["profile_fingerprint"]
+
+
+def test_invalid_actor_profile_fails_closed():
+    ok, code, detail = fl.validate_faceless_inputs(
+        product_id="prod-1",
+        model="Veo 3.1 - Lite",
+        generation_mode="SINGLE",
+        duration_seconds=8,
+        actor_profile="AVATAR_01",
+    )
+    assert not ok
+    assert code == fl.ERR_FACELESS_ACTOR_PROFILE_INVALID
+    assert "controlled vocabulary" in detail
+
+
 def test_resolution_defaults_hybrid_product_anchor_no_avatar():
     res = fl.build_faceless_resolution(hook_id="AUTO", background_id="KITCHEN")
     assert res["lane"] == "FACELESS"

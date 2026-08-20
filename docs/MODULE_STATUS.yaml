@@ -1703,6 +1703,7 @@ domains:
       - dashboard/src/pages/FacelessVideoPage.tsx
       - tests/ui/test_faceless_authority_ui_contract.py
       - tests/api/test_faceless_f05_start_frame_transport.py
+      - tests/api/test_faceless_execution_identity_api.py
       - dashboard/src/App.tsx
       - agent/main.py
       # FORMULA_STORYBOARD_LANDBANK_V3: provider-free Round 1 factory plus the

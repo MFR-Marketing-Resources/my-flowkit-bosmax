@@ -183,6 +183,7 @@ def compute_dispatch_identity(
     asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
     product_id: str | None = None,
+    execution_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """THE canonical envelope+hash builder (Envelope v2). Called with identical
     semantics at review time and at the dispatch boundary, so equal provider-affecting
@@ -232,6 +233,10 @@ def compute_dispatch_identity(
         # change (contract: "asset changed -> INVALIDATED -> REVIEW_REQUIRED").
         "asset_fingerprints": fps,
     }
+    if execution_identity is not None:
+        # Faceless V1 carries a structured, persisted receipt. Canonicalize it
+        # before hashing so key order cannot create a false approval mismatch.
+        envelope["execution_identity"] = json.loads(_stable_json(execution_identity))
     return {
         "prompt_sha256": prompt_sha256,
         "execution_envelope": envelope,
@@ -326,6 +331,7 @@ async def create_review_snapshot(
     image_model: str | None = None,
     asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
+    execution_identity: dict[str, Any] | None = None,
     review_session_id: str | None = None,
     created_by: str | None = None,
     manifest_id: str | None = None,
@@ -354,6 +360,7 @@ async def create_review_snapshot(
         image_model=image_model,
         asset_fingerprints=canonical_fps,
         product_id=product_id,
+        execution_identity=execution_identity,
     )
     scan = scan_prompt_text(final_prompt_text, product_id=product_id)
     scan_clean = not any(scan.values())
@@ -500,6 +507,7 @@ async def resolve_manifest_approved_snapshot(
     asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
     product_id: str | None = None,
+    execution_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """RESOLVE / BIND (never manufacture) a human-approved manifest item whose
     frozen execution-envelope SHA (canonical Envelope v2 identity — PR #815 server-
@@ -529,6 +537,7 @@ async def resolve_manifest_approved_snapshot(
         image_model=image_model,
         asset_fingerprints=canonical_fps,
         product_id=product_id,
+        execution_identity=execution_identity,
     )
     return await _crud.find_approved_manifest_item(
         _norm(manifest_id), identity["execution_envelope_sha256"],
@@ -629,6 +638,7 @@ async def create_manifest(
             count=item.get("count"),
             image_model=item.get("image_model"),
             asset_media_ids=item.get("asset_media_ids"),
+            execution_identity=item.get("execution_identity"),
             review_session_id=review_session_id,
             created_by=created_by,
             manifest_id=manifest_id,
@@ -758,6 +768,7 @@ async def verify_and_bind_dispatch(
     product_id: str | None = None,
     snapshot_id: str | None = None,
     provider_job_id: str | None = None,
+    execution_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """THE dispatch-boundary gate.
 
@@ -788,6 +799,7 @@ async def verify_and_bind_dispatch(
         image_model=image_model,
         asset_fingerprints=canonical_fps,
         product_id=product_id,
+        execution_identity=execution_identity,
     )
     dispatched_env_sha = identity["execution_envelope_sha256"]
     dispatched_prompt_sha = identity["prompt_sha256"]
@@ -877,5 +889,6 @@ def _recompute_from_snapshot(snap: dict[str, Any], *, final_prompt_text: str) ->
         # fixed (never re-resolve assets on an edit).
         asset_fingerprints=env.get("asset_fingerprints"),
         product_id=env.get("product_id") or snap.get("product_id"),
+        execution_identity=env.get("execution_identity"),
     )
 

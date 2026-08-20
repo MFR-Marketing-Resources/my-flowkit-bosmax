@@ -379,6 +379,7 @@ export interface WorkspaceExecutePayload {
 			copy_fallback_confirmed?: boolean;
 			copy_source?: string;
 		};
+		faceless_execution_identity?: Record<string, unknown> | null;
 	};
 	mode: WorkspaceMode;
 	// Strict extension execution lane. When set, the extension uploads the
@@ -602,6 +603,7 @@ export interface WorkspaceExecutionPackage {
 	copy_binding?: CopyBindingLineage | null;
 	copy_architecture_v2?: CopyArchitectureV2Metadata | null;
 	copy_execution_binding?: Record<string, unknown> | null;
+	faceless_execution_identity?: Record<string, unknown> | null;
 	request_lineage_payload: {
 		product_id: string;
 		mode: WorkspaceMode;
@@ -619,6 +621,7 @@ export interface WorkspaceExecutionPackage {
 		resolver_blockers?: string[];
 		semantic_slot_resolver?: I2VSemanticSlotResolverResponse;
 		compiler?: Record<string, unknown>;
+		faceless_execution_identity?: Record<string, unknown> | null;
 	};
 	source_of_truth_notes: string[];
 	prompt_preview?: string;

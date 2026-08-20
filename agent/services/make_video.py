@@ -324,7 +324,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          product_id: str = None, source_mode: str = None,
                          copy_execution_binding: dict | None = None,
                          manifest_id: str | None = None,
-                         asset_fingerprints: list[str] | None = None) -> dict:
+                         asset_fingerprints: list[str] | None = None,
+                         execution_identity: dict | None = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all.
@@ -379,7 +380,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 source_mode=source_mode, model=model, aspect=aspect,
                 duration_s=duration_s, count=num_videos, image_model=image_model,
                 asset_fingerprints=asset_fingerprints, asset_media_ids=_assets,
-                product_id=product_id,
+                product_id=product_id, execution_identity=execution_identity,
             )
             _pinned_snapshot_id = (_resolved or {}).get("snapshot_id")
         await _eas.verify_and_bind_dispatch(
@@ -388,6 +389,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
             count=num_videos, image_model=image_model,
             asset_fingerprints=asset_fingerprints, asset_media_ids=_assets,
             product_id=product_id, snapshot_id=_pinned_snapshot_id,
+            execution_identity=execution_identity,
         )
     except _eas.ExecutionApprovalError as _gate_err:
         return {"status": "REJECTED", "error": _gate_err.code,
@@ -402,6 +404,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                      "max_image_attempts": max_image_attempts,
                      "collect_image_variants": bool(collect_image_variants),
                      "product_id": product_id, "source_mode": source_mode,
+                     "execution_identity": execution_identity,
                      "error": None, "created": time.time()}
     if copy_execution_binding is not None:
         _JOBS[job_id]["copy_execution_binding"] = copy_execution_binding

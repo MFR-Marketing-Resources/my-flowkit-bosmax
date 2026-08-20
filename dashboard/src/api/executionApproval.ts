@@ -45,6 +45,7 @@ export interface ReviewEnvelope {
   image_model?: string | null;
   asset_fingerprints?: string[] | null;
   asset_media_ids?: string[] | null;
+  execution_identity?: Record<string, unknown> | null;
   created_by?: string | null;
 }
 
@@ -103,6 +104,7 @@ export interface PrepareDispatchRequest {
   count?: number | null;
   image_model?: string | null;
   asset_media_ids?: string[] | null;
+  execution_identity?: Record<string, unknown> | null;
   visual_lane_id?: string | null;
   reference_pack_id?: string | null;
   creative_mode?: string | null;

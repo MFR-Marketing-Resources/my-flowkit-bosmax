@@ -130,6 +130,33 @@ def test_hybrid_embeds_concrete_presenter_never_generic():
     assert result["presenter"]["avatar_code"], "resolved presenter must be a real registry profile"
 
 
+def test_faceless_provider_prompt_scrubs_visible_creator_and_keeps_actor_continuity():
+    result = _compile(
+        mode="HYBRID",
+        character_presence="FACELESS",
+        faceless_actor_profile={
+            "resolved_profile": "MALE",
+            "cue": "consistent adult male-coded hands and forearms with a neutral voice",
+        },
+    )
+    text = "\n".join(block["engine_prompt_text"] for block in result["blocks"])
+    lowered = text.lower()
+    for forbidden in (
+        "presenter",
+        "avatar",
+        "creator",
+        "eye contact",
+        "wardrobe",
+        "allowed character presence",
+        "avatar hint",
+    ):
+        assert forbidden not in lowered
+    assert "hands" in lowered
+    assert "head and face" in lowered
+    assert "adult male-coded" in lowered
+    assert result.get("presenter") is None
+
+
 def test_hybrid_presenter_is_deterministic_per_product():
     a = _compile(mode="HYBRID")["presenter"]["avatar_code"]
     b = _compile(mode="HYBRID")["presenter"]["avatar_code"]

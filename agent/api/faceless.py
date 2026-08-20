@@ -32,6 +32,7 @@ class FacelessPrepareRequest(BaseModel):
     end_frame_asset_id: Optional[str] = None
     hook_id: str = "AUTO"
     background_id: str = "AUTO"
+    actor_profile: str = "AUTO"
     # Canonical Hybrid-parity settings (no hardcoded 8s / empty model)
     model: str = Field(..., min_length=1, description="Canonical video model ui_label")
     generation_mode: str = "SINGLE"  # SINGLE | EXTEND
@@ -70,6 +71,7 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
         generation_mode=gen_mode,
         duration_seconds=body.duration_seconds,
         total_duration_seconds=body.total_duration_seconds,
+        actor_profile=body.actor_profile,
         require_model=True,
         reference_override=reference_override,
     )
@@ -98,13 +100,16 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
             product_id=body.product_id,
             hook_id=body.hook_id,
             background_id=body.background_id,
+            actor_profile=body.actor_profile,
             product_cluster=body.product_cluster,
             has_approved_usp=body.has_approved_usp,
             scene_context_hint=body.scene_context_hint,
         )
         resolution = fl.build_faceless_resolution(
+            product_id=body.product_id,
             hook_id=body.hook_id,
             background_id=body.background_id,
+            actor_profile=body.actor_profile,
             product_cluster=body.product_cluster,
             has_approved_usp=body.has_approved_usp,
             scene_context_hint=body.scene_context_hint,
@@ -242,6 +247,7 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
         "total_duration_seconds": body.total_duration_seconds,
         "character_presence": fl.FACELESS_CHARACTER_PRESENCE,
         "avatar_id": None,
+        "actor_profile": resolution.get("actor_profile"),
         "visual_law": fl.FACELESS_VISUAL_LAW,
         # Debug-only internals (still returned for audit, FE hides from normal UI)
         "debug": {
@@ -304,6 +310,7 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
         generation_mode=gen_mode,
         duration_seconds=body.duration_seconds,
         total_duration_seconds=body.total_duration_seconds,
+        actor_profile=body.actor_profile,
         require_model=True,
         reference_override=reference_override,
     )
@@ -340,13 +347,16 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
             product_id=body.product_id,
             hook_id=body.hook_id,
             background_id=body.background_id,
+            actor_profile=body.actor_profile,
             product_cluster=body.product_cluster,
             has_approved_usp=body.has_approved_usp,
             scene_context_hint=body.scene_context_hint,
         )
         resolution = fl.build_faceless_resolution(
+            product_id=body.product_id,
             hook_id=body.hook_id,
             background_id=body.background_id,
+            actor_profile=body.actor_profile,
             product_cluster=body.product_cluster,
             has_approved_usp=body.has_approved_usp,
             scene_context_hint=body.scene_context_hint,
@@ -374,6 +384,7 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
         "model": body.model,
         "duration_seconds": orchestration["engine_block_duration_seconds"],
         "total_duration_seconds": body.total_duration_seconds,
+        "actor_profile": resolution.get("actor_profile"),
         "resolution": {
             "opening_strategy": resolution["opening_strategy"],
             "hook": resolution["hook"],

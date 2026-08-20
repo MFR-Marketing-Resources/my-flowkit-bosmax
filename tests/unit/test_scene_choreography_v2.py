@@ -248,7 +248,7 @@ def test_traditional_herbal_oil_8s_fixture_reaches_compiled_prompt() -> None:
     assert compiled["scene_choreography"]["choreography_sha256"] == selected[
         "choreography_sha256"
     ]
-    for needle in (
+    context_needles = (
         "0.0-1.0s",
         "already present in the avatar's support hand",
         "rotates it exactly 90 degrees",
@@ -259,8 +259,23 @@ def test_traditional_herbal_oil_8s_fixture_reaches_compiled_prompt() -> None:
         "bottle remains stationary and visible on the table",
         "7.7-8.0s",
         "Hold the final state",
-    ):
+    )
+    for needle in context_needles:
         assert needle in context
+
+    prompt_needles = (
+        "0.0-1.0s",
+        "already present in the faceless subject's support hand",
+        "rotates it exactly 90 degrees",
+        "Do not fully unscrew or remove the cap",
+        "tilts the same bottle toward the same wrist/forearm",
+        "places it label-forward on the table",
+        "massages the same external wrist/forearm",
+        "bottle remains stationary and visible on the table",
+        "7.7-8.0s",
+        "Hold the final state",
+    )
+    for needle in prompt_needles:
         assert needle in prompt
     assert "Allowed product action:" not in prompt
 

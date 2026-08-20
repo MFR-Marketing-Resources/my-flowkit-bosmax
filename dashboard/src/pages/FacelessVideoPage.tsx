@@ -82,6 +82,10 @@ export default function FacelessVideoPage() {
 	const [resolvedBackground, setResolvedBackground] = useState<ResolvedLaneSetting | null>(
 		null,
 	);
+	const [actorProfile, setActorProfile] = useState("AUTO");
+	const [resolvedActorProfile, setResolvedActorProfile] = useState<Record<string, unknown> | null>(
+		null,
+	);
 	const [hookId, setHookId] = useState("AUTO");
 	const [backgroundId, setBackgroundId] = useState("AUTO");
 	const [showAdvancedRef, setShowAdvancedRef] = useState(false);
@@ -273,6 +277,11 @@ export default function FacelessVideoPage() {
 			: settings.hook.options;
 	const hookLabel = optionLabel(openingStrategyOptions, hookId);
 	const backgroundLabel = optionLabel(settings.background.options, backgroundId);
+	const actorProfileOptions =
+		settings.actor_profile?.options?.length
+			? settings.actor_profile.options
+			: [{ id: "AUTO", label: settings.auto.label }];
+	const actorProfileLabel = optionLabel(actorProfileOptions, actorProfile);
 
 	useEffect(() => {
 		if (!settings.background.options.length) return;
@@ -282,6 +291,16 @@ export default function FacelessVideoPage() {
 			setWorkspacePackage(null);
 		}
 	}, [settings.background.options, backgroundId]);
+
+	useEffect(() => {
+		if (!actorProfileOptions.length) return;
+		const validIds = new Set(actorProfileOptions.map((option) => option.id));
+		if (!validIds.has(actorProfile)) {
+			setActorProfile("AUTO");
+			setResolvedActorProfile(null);
+			setWorkspacePackage(null);
+		}
+	}, [actorProfileOptions, actorProfile]);
 
 	const durationLabel =
 		sceneMode === "EXTEND"
@@ -353,6 +372,7 @@ export default function FacelessVideoPage() {
 						: null,
 				copy_fallback_confirmed: false,
 				copy_v2_context: { lane: "FACELESS" },
+				actor_profile: actorProfile,
 			});
 			const pkg = (prepared.package || {}) as unknown as WorkspaceExecutionPackage;
 			if (!pkg.workspace_execution_package_id || !pkg.prompt_text) {
@@ -361,6 +381,7 @@ export default function FacelessVideoPage() {
 			setWorkspacePackage(pkg);
 			setResolvedHook(prepared.resolution?.hook ?? null);
 			setResolvedBackground(prepared.resolution?.background ?? null);
+			setResolvedActorProfile(prepared.actor_profile ?? null);
 			const h = prepared.resolution?.hook;
 			const b = prepared.resolution?.background;
 			setNotice({
@@ -514,6 +535,7 @@ export default function FacelessVideoPage() {
 					model?: string;
 					duration_s?: number;
 					image_media_ids?: string[];
+					execution_identity?: Record<string, unknown> | null;
 				};
 				setPendingApproval({
 					surface: "faceless",
@@ -526,6 +548,7 @@ export default function FacelessVideoPage() {
 					duration_s: gb.duration_s ?? null,
 					count: 1,
 					asset_media_ids: gb.image_media_ids ?? [],
+					execution_identity: gb.execution_identity ?? null,
 				});
 				return;
 			}
@@ -643,6 +666,14 @@ export default function FacelessVideoPage() {
 							onSelect={(p) => {
 								setSelectedProduct(p);
 								setWorkspacePackage(null);
+								setV2CopyReady(false);
+								setPendingApproval(null);
+								setHookId("AUTO");
+								setBackgroundId("AUTO");
+								setActorProfile("AUTO");
+								setResolvedHook(null);
+								setResolvedBackground(null);
+								setResolvedActorProfile(null);
 								setCompletedUrl(null);
 							}}
 						/>
@@ -666,9 +697,13 @@ export default function FacelessVideoPage() {
 								productId={selectedProduct?.id}
 								productName={selectedProduct?.raw_product_title}
 								lane="FACELESS"
-								onCopySelected={() => setWorkspacePackage(null)}
+								onCopySelected={() => {
+									setWorkspacePackage(null);
+									setV2CopyReady(false);
+								}}
 							/>
 							<CopyArchitectureV2LaneCard
+								key={selectedProduct?.id ?? "none"}
 								lane="FACELESS"
 								productId={selectedProduct?.id}
 								execution={workspacePackage?.copy_architecture_v2}
@@ -763,6 +798,26 @@ export default function FacelessVideoPage() {
 								))}
 							</select>
 						</label>
+						<label className="mt-3 block space-y-1">
+							<span className={labelClass}>Actor profile</span>
+							<select
+								className={selectClass}
+								value={actorProfile}
+								onChange={(e) => {
+									setActorProfile(e.target.value);
+									setResolvedActorProfile(null);
+									setWorkspacePackage(null);
+								}}
+								data-testid="faceless-actor-profile"
+								disabled={!settingsAvailable}
+							>
+								{actorProfileOptions.map((o) => (
+									<option key={o.id} value={o.id}>
+										{o.label}
+									</option>
+								))}
+							</select>
+						</label>
 						<div className="mt-3 flex flex-wrap gap-2">
 							<ResolvedChip
 								label="Background"
@@ -774,7 +829,19 @@ export default function FacelessVideoPage() {
 								auto={backgroundId === "AUTO"}
 							/>
 							<ResolvedChip label="Presence" value="Faceless" />
-							<ResolvedChip label="Avatar" value="None" />
+							<ResolvedChip
+								label="Actor profile"
+								value={
+									resolvedActorProfile
+										? String(
+												resolvedActorProfile.display_label ||
+													resolvedActorProfile.resolved_profile ||
+													actorProfileLabel,
+										  )
+										: actorProfileLabel
+								}
+								auto={actorProfile === "AUTO"}
+							/>
 						</div>
 					</WorkflowStep>
 
