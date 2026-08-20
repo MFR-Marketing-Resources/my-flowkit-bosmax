@@ -483,7 +483,7 @@ export default function CopySetRegistryPage() {
 		if (found) {
 			setDeepLinkError("");
 			setReviewBlueprintId(blueprintId);
-			setActiveTab("GENERATOR");
+			setActiveTab("LIBRARY");
 		} else {
 			setDeepLinkError(
 				`Blueprint ${blueprintId} was not found for this product. It may have been superseded, or the link points to a different product.`,
@@ -548,7 +548,9 @@ export default function CopySetRegistryPage() {
 	const reviewBlueprint = (blueprint: CopyBlueprintV2Record) => {
 		setReviewBlueprintId(blueprint.blueprint_id);
 		setDeepLinkError("");
-		setActiveTab("GENERATOR");
+		// Approval lives in the Authority Library tab now — stay here, do not bounce
+		// the operator into the generation flow.
+		setActiveTab("LIBRARY");
 	};
 
 	const handleGenerateAngles = async () => {
@@ -727,7 +729,7 @@ export default function CopySetRegistryPage() {
 						}`}
 					>
 						<Sparkles size={14} />
-						<span>Direct V2 Authoring (Advanced)</span>
+						<span>1 · Generate copy</span>
 					</button>
 
 					<button
@@ -744,7 +746,7 @@ export default function CopySetRegistryPage() {
 						}`}
 					>
 						<BookOpen size={14} />
-						<span>Authority Library</span>
+						<span>2 · Review, approve &amp; activate</span>
 						{blueprints.length ? (
 							<span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[10px] text-blue-300">
 								{blueprints.length}
@@ -889,27 +891,25 @@ export default function CopySetRegistryPage() {
 						<HelperText className="text-blue-300/80">This step makes one additional text-assist call; it does not spend video/image credits.</HelperText>
 					</Section>
 
-					{/* Section 7: Review & Approve */}
-					{reviewTarget ? (
-						<Section title="7. Review, approve, and activate" helper="Approved text is immutable. Select the exact blueprint to review; activation atomically makes it authoritative for all required lanes.">
-							{reviewTarget ? (
-								<p className="mb-2 text-xs text-blue-200/90" data-testid="review-target-indicator">
-									Reviewing blueprint <span className="font-mono">{reviewTarget.blueprint_id}</span> · revision {reviewTarget.revision} · {reviewTarget.status}
-								</p>
-							) : null}
-							<div className="space-y-3">
-								{blueprints.map((item) => (
-									<BlueprintCard
-										key={`${item.blueprint_id}:${item.revision}`}
-										blueprint={item}
-										onRegenerate={(stageKey) => void handleRegenerate(item.blueprint_id, stageKey)}
-										busy={busy}
-										allowRegenerate={item.blueprint_id === reviewTarget?.blueprint_id}
-										isReviewTarget={item.blueprint_id === reviewTarget?.blueprint_id}
-										onSelectReview={() => setReviewBlueprintId(item.blueprint_id)}
-									/>
-								))}
-							</div>
+					{blueprints.length ? (
+						<div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4" data-testid="generator-handoff">
+							<p className="text-sm text-emerald-100">{blueprints.length} copy blueprint{blueprints.length === 1 ? "" : "s"} for this product live in the Authority Library. Review, approve and activate them there.</p>
+							<button type="button" data-testid="go-to-authority-library" onClick={() => { setActiveTab("LIBRARY"); setLibraryPage(1); }} className="mt-3 inline-flex items-center gap-2 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100"><BookOpen size={14} />Go to Authority Library</button>
+						</div>
+					) : null}
+				</>
+			) : null}
+
+			{/* Authority Library approval — review, approve and activate live HERE, not in the generator. */}
+			{selectedProduct && activeTab === "LIBRARY" && reviewTarget ? (
+				<Section title="Review, approve, and activate" helper="Pick a blueprint from the library below, then approve or activate it here. Approved text is immutable.">
+					<div className="mb-3 flex items-center justify-between gap-2">
+						<p className="text-xs text-blue-200/90" data-testid="review-target-indicator">Reviewing <span className="font-mono">{reviewTarget.blueprint_id}</span> · rev {reviewTarget.revision} · {reviewTarget.status}</p>
+						<button type="button" data-testid="close-review" onClick={() => setReviewBlueprintId("")} className="rounded-lg border border-slate-700 px-3 py-1 text-[10px] font-bold uppercase text-slate-300 hover:bg-slate-800">Back to list</button>
+					</div>
+					<div className="mb-4">
+						<BlueprintCard blueprint={reviewTarget} onRegenerate={(stageKey) => void handleRegenerate(reviewTarget.blueprint_id, stageKey)} busy={busy} allowRegenerate={true} isReviewTarget={true} onSelectReview={() => {}} />
+					</div>
 							{reviewableBlueprint ? (
 								isDraftReviewable(reviewableBlueprint) ? (
 									<div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4" data-testid="v2-approval-panel">
@@ -930,6 +930,7 @@ export default function CopySetRegistryPage() {
 											))}
 										</div>
 										<button type="button" data-testid="approve-v2-blueprint" disabled={busy || !reviewer.trim() || !approvalReady} onClick={() => void handleApprove()} className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40">{busy ? "Approving…" : "Approve → PRODUCTION_VALID"}</button>
+										<DisabledReasons reasons={[...(!reviewer.trim() ? ["reviewer name required"] : []), ...(!approvalReady ? ["tick all 5 review checkboxes"] : [])]} testId="approve-disabled-reasons" />
 									</div>
 								) : (
 									<div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4" data-testid="v2-approval-blocked-panel">
@@ -945,13 +946,7 @@ export default function CopySetRegistryPage() {
 									<button type="button" data-testid="activate-v2-blueprint" disabled={busy || !canActivateAuthority(reviewTarget) || activatedBlueprintId === reviewTarget.blueprint_id} onClick={() => setPendingActivation(reviewTarget)} className="mt-3 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{activatedBlueprintId === reviewTarget.blueprint_id ? "ACTIVE · 8 REQUIRED LANES" : busy ? "Activating…" : "ACTIVATE FOR VIDEO + POSTER LANES"}</button>
 								</div>
 							)}
-						</Section>
-					) : (
-						<Section title="7. Review, approve, and activate" helper="Your new formula blueprint will appear here after generation.">
-							<p className="text-sm text-slate-500">No copy blueprint yet.</p>
-						</Section>
-					)}
-				</>
+				</Section>
 			) : null}
 
 			{/* VIEW 2: GENERATED COPY LIBRARY */}
@@ -1131,7 +1126,7 @@ export default function CopySetRegistryPage() {
 														onClick={() => reviewBlueprint(bp)}
 														className="mt-2 rounded border border-amber-400/40 px-2 py-1 text-[10px] font-bold uppercase text-amber-100 hover:bg-amber-500/15 disabled:opacity-40"
 													>
-														Revalidate in Direct V2 Authoring
+														Review / revalidate
 													</button>
 												</div>
 											) : null}
