@@ -390,6 +390,10 @@ def _faceless_resolution_receipt(
         "variation_index": int(choreography.get("variation_index") or 0),
         "character_presence": FACELESS_CHARACTER_PRESENCE,
         "compatibility_status": "COMPATIBLE",
+        # Keep the complete resolved actor contract in the receipt. The WEP
+        # compiler consumes this field to render the provider-facing cue;
+        # flattened fields alone are insufficient for prompt compilation.
+        "actor_profile": dict(actor_profile),
         "actor_profile_operator": actor_profile["operator_selection"],
         "actor_profile_resolved": actor_profile["resolved_profile"],
         "actor_profile_version": actor_profile["version"],
