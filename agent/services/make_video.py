@@ -28,6 +28,7 @@ _VIDEO_LANE_JOB = None
 _JOB_TTL = 1800  # seconds — GC finished jobs after this.
 _GENERATION_TERMINAL_STATUSES = frozenset({
     "DONE",
+    "PRODUCT_FIDELITY_REVIEW_REQUIRED",
     "FAILED",
     "REJECTED",
     "GENERATED_BUT_UNRETRIEVED",
@@ -362,6 +363,81 @@ async def _record_artifacts(job, mode, artifacts):
             job["artifact_persisted_count"] += 1
     except Exception as e:  # noqa: BLE001
         job["artifact_record_error"] = str(e)
+    custody = job.get("product_visual_custody")
+    if custody and mode in _VIDEO_MODES:
+        from agent.services.product_visual_custody_service import (
+            evaluate_product_fidelity_qc,
+            exact_output_ready,
+        )
+
+        evidence = job.get("product_fidelity_qc_evidence")
+        if evidence is None and artifacts:
+            # Reuse the existing Product Reference Pack machine check as an
+            # explicit review signal. It intentionally reports WARN/UNVERIFIED
+            # for generated pixels; it must never be promoted to PASS here.
+            evidence = {
+                "status": "REVIEW_REQUIRED",
+                "verified": False,
+                "dimensions": {},
+                "source": "product_reference_pack_machine_check",
+            }
+            try:
+                from agent.services.product_reference_pack_service import (
+                    get_reference_pack,
+                    machine_check_generated_output,
+                )
+
+                pack = await get_reference_pack(str(custody.get("product_id") or ""))
+                if pack is not None:
+                    evidence["machine_qa"] = [
+                        machine_check_generated_output(
+                            str(artifact.get("media_id") or ""), pack
+                        ).model_dump(mode="json")
+                        for artifact in artifacts
+                    ]
+            except Exception as exc:  # noqa: BLE001 - QC remains review-required
+                evidence["machine_qa_error"] = str(exc)
+
+        qc = evaluate_product_fidelity_qc(
+            custody,
+            evidence=evidence,
+            artifact_available=bool(artifacts),
+        )
+        job["product_fidelity_qc"] = qc
+        job["product_fidelity_qc_status"] = qc.get("status")
+        job["generated_output_review_state"] = qc.get("status")
+        custody_result = {
+            **custody,
+            "product_fidelity_qc": qc,
+            "product_fidelity_qc_status": qc.get("status"),
+        }
+        try:
+            from agent.db import crud
+
+            routing_receipt = job.get("routing_receipt") or {}
+            for artifact in artifacts:
+                await crud.insert_generation_result(
+                    artifact["media_id"],
+                    job_id=job.get("job_id"),
+                    mode=mode,
+                    artifact_kind="video",
+                    product_id=job.get("product_id") or custody.get("product_id"),
+                    product_name=custody.get("product_name"),
+                    final_prompt_text=job.get("prompt") or "",
+                    aspect_ratio=job.get("aspect"),
+                    model_label=job.get("model"),
+                    duration_s=job.get("duration_s"),
+                    count_setting=job.get("num_videos"),
+                    reference_media_ids=routing_receipt.get("reference_media_ids") or [],
+                    project_id=job.get("project_id"),
+                    product_visual_custody=custody_result,
+                )
+        except Exception as exc:  # noqa: BLE001 - lineage must not fail retrieval
+            job["product_visual_custody_record_error"] = str(exc)
+        if not exact_output_ready(custody, qc) and job.get("status") == "DONE":
+            # Keep a returned artifact auditable, but never expose an exact
+            # product as READY without explicit fidelity evidence.
+            job["status"] = "PRODUCT_FIDELITY_REVIEW_REQUIRED"
 
 
 def _image_provider_operation_reference(response: dict) -> dict[str, str | None]:
@@ -399,7 +475,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          copy_execution_binding: dict | None = None,
                          manifest_id: str | None = None,
                          asset_fingerprints: list[str] | None = None,
-                         execution_identity: dict | None = None) -> dict:
+                         execution_identity: dict | None = None,
+                         product_visual_custody: dict | None = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all.
@@ -438,6 +515,34 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
         _routing_receipt = _build_reference_routing_receipt(
             mode, source_mode, image_media_ids, _direct_plan,
         )
+        if product_visual_custody:
+            from agent.services.product_visual_custody_service import (
+                ProductVisualCustodyError,
+                validate_pre_dispatch_route,
+            )
+
+            selected_route = (
+                "DIRECT_API"
+                if _direct_plan.get("eligible")
+                else "API_FIRST_GENERATIVE_REFERENCE"
+            )
+            try:
+                validate_pre_dispatch_route(
+                    product_visual_custody,
+                    provider_route=selected_route,
+                    generation_type=str(
+                        (_direct_plan or {}).get("gen_type")
+                        or "reference_frame_2_video"
+                    ),
+                )
+            except ProductVisualCustodyError as exc:
+                return {
+                    "status": "REJECTED",
+                    "error": exc.code,
+                    "detail": exc.message,
+                    "routing_receipt": _routing_receipt,
+                    "product_visual_custody": product_visual_custody,
+                }
         if (
             _routing_receipt["reference_requested"]
             and not _routing_receipt["reference_mode_authorized"]
@@ -503,7 +608,9 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                      "max_image_attempts": max_image_attempts,
                      "collect_image_variants": bool(collect_image_variants),
                      "product_id": product_id, "source_mode": source_mode,
+                     "prompt": prompt, "aspect": aspect, "duration_s": duration_s,
                      "execution_identity": execution_identity,
+                     "product_visual_custody": product_visual_custody,
                      "error": None, "created": time.time()}
     if _routing_receipt is not None:
         _JOBS[job_id]["routing_receipt"] = _routing_receipt
@@ -522,7 +629,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                                      image_media_ids, aspect, tier, model,
                                      duration_s, num_videos, product_id, plan))
             return {"job_id": job_id, "status": "SUBMITTED", "mode": mode,
-                    "lane": lane, "routing_receipt": _routing_receipt}
+                    "lane": lane, "routing_receipt": _routing_receipt,
+                    "product_visual_custody": product_visual_custody}
         lane = "AGENT"
         _JOBS[job_id]["lane"] = lane
         if direct_video_lane_enabled():
@@ -541,6 +649,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
         "mode": mode,
         "lane": lane,
         "routing_receipt": _routing_receipt,
+        "product_visual_custody": product_visual_custody,
     }
 
 
@@ -1633,7 +1742,9 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
                                tier: str = "PAYGATE_TIER_ONE",
                                source_mode: str = None, model: str = None,
                                duration_s: int = None,
-                               confirm_live_credit_burn: bool = False) -> dict:
+                               confirm_live_credit_burn: bool = False,
+                               product_visual_custody: dict | None = None,
+                               execution_identity: dict | None = None) -> dict:
     """LIVE-CAPTURE GATE (owner-authorized, DIRECT_VIDEO_CAPTURE_ENABLED): fire
     ONE direct batchAsync submit, return the RAW submit response for contract
     capture, and poll/retrieve/persist in the background so the spent credit
@@ -1654,6 +1765,20 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
                              require_flag=False)
     if not plan["eligible"]:
         return {"ok": False, "error": f"DIRECT_CAPTURE_INELIGIBLE: {plan['reason']}"}
+    if product_visual_custody:
+        from agent.services.product_visual_custody_service import (
+            ProductVisualCustodyError,
+            validate_pre_dispatch_route,
+        )
+
+        try:
+            validate_pre_dispatch_route(
+                product_visual_custody,
+                provider_route="DIRECT_API",
+                generation_type=str(plan.get("gen_type") or "reference_frame_2_video"),
+            )
+        except ProductVisualCustodyError as exc:
+            return {"ok": False, "error": exc.code, "detail": exc.message}
     _gc_jobs()
     if _VIDEO_LANE_JOB and _job_active(_VIDEO_LANE_JOB):
         return {"ok": False, "error": "VIDEO_JOB_IN_FLIGHT",
@@ -1664,9 +1789,14 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
                      "local_path": None, "media_id": None, "size_mb": None,
                      "artifact": None, "approved": None, "binding": None,
                      "model": model, "duration_s": duration_s,
+                     "prompt": prompt, "aspect": aspect,
                      "num_videos": 1, "artifacts": [],
-                     "provider_operation_ids": [], "product_id": None,
+                     "provider_operation_ids": [], "product_id": (
+                         product_visual_custody or {}
+                     ).get("product_id"),
                      "lane": "DIRECT_CAPTURE", "source_mode": source_mode,
+                     "product_visual_custody": product_visual_custody,
+                     "execution_identity": execution_identity,
                      "error": None, "created": time.time()}
     _VIDEO_LANE_JOB = job_id
     job = _JOBS[job_id]

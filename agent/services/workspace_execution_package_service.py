@@ -44,6 +44,15 @@ from agent.services.creative_asset_service import (
 from agent.models.i2v_semantic_slot_resolver import (
     I2VSemanticSlotResolverRequest,
 )
+from agent.services.product_visual_custody_service import (
+    ERR_PRODUCT_FIDELITY_ROUTE_NOT_PROVEN,
+    ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED,
+    ProductVisualCustodyError,
+    build_product_visual_custody_receipt,
+    exact_product_required,
+    product_visual_custody_receipt_sha256,
+    validate_pre_dispatch_route,
+)
 
 
 def _fingerprint(*parts: str) -> str:
@@ -77,6 +86,7 @@ def _workspace_execution_package_id(
     character_presence: str,
     asset_fingerprints: list[str],
     faceless_resolution: dict[str, Any] | None = None,
+    product_visual_custody: dict[str, Any] | None = None,
 ) -> str:
     # asset_fingerprints are part of the package identity: two packages with
     # different operator-selected reference bindings must never share one id
@@ -99,6 +109,7 @@ def _workspace_execution_package_id(
         # byte-compatible while semantically different Faceless receipts cannot
         # reuse one WEP id.
         _stable_json(faceless_resolution) if faceless_resolution is not None else "",
+        _stable_json(product_visual_custody) if product_visual_custody is not None else "",
     )
     return f"wep_{digest[:16]}"
 
@@ -113,6 +124,7 @@ def _faceless_execution_identity(
     generation_mode: str,
     faceless_resolution: dict[str, Any],
     asset_fingerprints: list[str],
+    product_visual_custody: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the persisted provider-affecting Faceless identity receipt."""
     actor = dict(faceless_resolution.get("actor_profile") or {})
@@ -141,6 +153,9 @@ def _faceless_execution_identity(
         "actor_profile_version": actor.get("version") or faceless_resolution.get("actor_profile_version"),
         "actor_profile_fingerprint": actor.get("profile_fingerprint") or faceless_resolution.get("actor_profile_fingerprint"),
         "opening_strategy_truth": faceless_resolution.get("opening_strategy_truth"),
+        "product_visual_custody_receipt_sha256": (
+            product_visual_custody or {}
+        ).get("receipt_sha256"),
     }
 
 
@@ -175,7 +190,16 @@ def _merge_i2v_resolved_assets(
     for slot in merged:
         slot_key = slot.get("slot_key")
         if slot_key in resolved_by_slot:
-            slot["resolved_asset"] = resolved_by_slot[slot_key]
+            # The semantic resolver intentionally returns a compact transport
+            # shape. Preserve the package's server-owned Product Registration
+            # custody fields when it replaces the subject slot; dropping
+            # official_visual/SHA here made I2V look like an anonymous creative
+            # asset downstream and broke the visual-custody chain.
+            prior = slot.get("resolved_asset")
+            slot["resolved_asset"] = {
+                **(copy.deepcopy(prior) if isinstance(prior, dict) else {}),
+                **resolved_by_slot[slot_key],
+            }
             slot["default_source"] = resolved_by_slot[slot_key].get("asset_source") or slot.get("default_source")
     return merged
 
@@ -457,6 +481,9 @@ async def create_workspace_execution_package(
         }
     prompt_fingerprint = compiler_result["prompt_fingerprint"]
     total_duration_seconds = int(compiler_result["total_duration_seconds"])
+    effective_lineage_source_mode = (
+        compiler_result.get("source_mode") or resolved_source_mode
+    )
     semantic_slot_resolver: dict[str, Any] | None = None
     package_asset_slots = copy.deepcopy(package["asset_slots"])
     if normalized_mode == "F2V":
@@ -496,16 +523,111 @@ async def create_workspace_execution_package(
         for asset in resolved_assets
         if asset.get("asset_fingerprint")
     ]
-    faceless_execution_identity = (
+    faceless_execution_identity_seed = (
         _faceless_execution_identity(
             product_id=product_id,
-            source_mode=resolved_source_mode,
+            source_mode=effective_lineage_source_mode,
             model=resolved_model,
             duration_seconds=total_duration_seconds,
             aspect_ratio=aspect_ratio,
             generation_mode=compiler_result["generation_mode"],
             faceless_resolution=faceless_resolution,
             asset_fingerprints=asset_fingerprints,
+        )
+        if faceless_resolution is not None
+        else None
+    )
+    product_visual_custody: dict[str, Any] | None = None
+    custody_blockers: list[str] = []
+    # Product-aware video packages must carry the same server-owned visual
+    # custody proof that the dispatch seam consumes. T2V remains text-only and
+    # intentionally does not enter this visual gate. FRAMES is an explicit
+    # finished-frame continuation and keeps its selected composite; the normal
+    # FACELESS/HYBRID product path is always official-visual anchored.
+    if normalized_mode in {"F2V", "I2V"} and resolved_source_mode != "FRAMES":
+        product_row = await crud.get_product(product_id)
+        official_asset = next(
+            (
+                asset
+                for asset in resolved_assets
+                if isinstance(asset, dict)
+                and (
+                    asset.get("official_visual") is True
+                    or str(asset.get("asset_source") or "")
+                    .upper()
+                    .startswith("PRODUCT_VISUAL_OFFICIAL")
+                )
+            ),
+            None,
+        )
+        try:
+            if not product_row:
+                raise ProductVisualCustodyError(
+                    ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED,
+                    "Product row is unavailable for product-visual custody.",
+                )
+            product_visual_custody = build_product_visual_custody_receipt(
+                product_row,
+                official_asset,
+                mode=normalized_mode,
+                source_mode=effective_lineage_source_mode,
+                prompt=compiler_result.get("final_compiled_prompt_text"),
+                provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                generation_type=(
+                    "start_frame"
+                    if resolved_source_mode == "FRAMES"
+                    else "reference_frame_2_video"
+                ),
+                execution_identity=faceless_execution_identity_seed,
+            )
+            try:
+                validate_pre_dispatch_route(
+                    product_visual_custody,
+                    provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                    generation_type=product_visual_custody["generation_type"],
+                )
+            except ProductVisualCustodyError as exc:
+                custody_blockers.append(exc.code)
+            if (
+                exact_product_required(product_row)
+                and not product_visual_custody["prompt_lock"]
+                .get("all_required_markers_present")
+            ):
+                custody_blockers.append("ERR_PRODUCT_PROMPT_LOCK_INCOMPLETE")
+        except ProductVisualCustodyError as exc:
+            custody_blockers.append(exc.code)
+            product_visual_custody = {
+                "receipt_version": "PRODUCT_VISUAL_CUSTODY_V1",
+                "product_id": product_id,
+                "fidelity_policy": (
+                    "EXACT_PRODUCT_REQUIRED"
+                    if product_row and exact_product_required(product_row)
+                    else "REFERENCE_CONDITIONED"
+                ),
+                "exact_product_required": bool(
+                    product_row and exact_product_required(product_row)
+                ),
+                "product_fidelity_qc_required": True,
+                "product_fidelity_qc_status": "PRODUCT_FIDELITY_QC_PENDING",
+                "provider_route": "API_FIRST_GENERATIVE_REFERENCE",
+                "generation_type": "reference_frame_2_video",
+                "custody_error": exc.code,
+                "custody_error_detail": str(exc),
+            }
+            product_visual_custody["receipt_sha256"] = product_visual_custody_receipt_sha256(
+                product_visual_custody
+            )
+    faceless_execution_identity = (
+        _faceless_execution_identity(
+            product_id=product_id,
+            source_mode=effective_lineage_source_mode,
+            model=resolved_model,
+            duration_seconds=total_duration_seconds,
+            aspect_ratio=aspect_ratio,
+            generation_mode=compiler_result["generation_mode"],
+            faceless_resolution=faceless_resolution,
+            asset_fingerprints=asset_fingerprints,
+            product_visual_custody=product_visual_custody,
         )
         if faceless_resolution is not None
         else None
@@ -524,6 +646,7 @@ async def create_workspace_execution_package(
         compiler_result["character_presence"],
         asset_fingerprints,
         faceless_resolution,
+        product_visual_custody,
     )
     request_lineage_payload = {
         "product_id": product_id,
@@ -564,6 +687,10 @@ async def create_workspace_execution_package(
     if faceless_execution_identity is not None:
         request_lineage_payload["faceless_execution_identity"] = copy.deepcopy(
             faceless_execution_identity
+        )
+    if product_visual_custody is not None:
+        request_lineage_payload["product_visual_custody"] = copy.deepcopy(
+            product_visual_custody
         )
     if creative_treatment:
         segment_plan = creative_treatment.get("segment_plan") or {}
@@ -618,6 +745,7 @@ async def create_workspace_execution_package(
             if semantic_slot_resolver
             else []
         ),
+        *custody_blockers,
     ]
     readiness = "READY" if not all_blockers else "BLOCKED"
     execution_allowed = readiness == "READY"
@@ -676,6 +804,7 @@ async def create_workspace_execution_package(
         "copy_binding": copy_binding_lineage,
         "request_lineage_payload": request_lineage_payload,
         "faceless_execution_identity": faceless_execution_identity,
+        "product_visual_custody": product_visual_custody,
         "source_of_truth_notes": [
             *package["source_of_truth_notes"],
             *compiler_result["source_of_truth_notes"],

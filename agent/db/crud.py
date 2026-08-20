@@ -4708,6 +4708,7 @@ async def insert_generation_result(
     reference_media_ids: list = None,
     workspace_generation_package_id: str = None,
     project_id: str = None,
+    product_visual_custody: dict | None = None,
 ) -> None:
     """Persist a durable deliverable record for a finished generation. Idempotent
     on media_id; a re-write UPDATES the snapshot but PRESERVES the first
@@ -4720,8 +4721,9 @@ async def insert_generation_result(
                (media_id, job_id, request_id, mode, artifact_kind, product_id,
                 product_name, final_prompt_text, aspect_ratio, model_label,
                 duration_s, count_setting, reference_media_ids_json,
-                workspace_generation_package_id, project_id, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                workspace_generation_package_id, project_id,
+                product_visual_custody_json, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(media_id) DO UPDATE SET
                  job_id=excluded.job_id, request_id=excluded.request_id,
                  mode=excluded.mode, artifact_kind=excluded.artifact_kind,
@@ -4731,11 +4733,13 @@ async def insert_generation_result(
                  duration_s=excluded.duration_s, count_setting=excluded.count_setting,
                  reference_media_ids_json=excluded.reference_media_ids_json,
                  workspace_generation_package_id=excluded.workspace_generation_package_id,
-                 project_id=excluded.project_id""",
+                 project_id=excluded.project_id,
+                 product_visual_custody_json=excluded.product_visual_custody_json""",
             (media_id, job_id, request_id, mode, artifact_kind, product_id,
              product_name, final_prompt_text or "", aspect_ratio, model_label,
              duration_s, count_setting, _json.dumps(reference_media_ids or []),
-             workspace_generation_package_id, project_id, _now()),
+             workspace_generation_package_id, project_id,
+             _json.dumps(product_visual_custody or {}, ensure_ascii=False), _now()),
         )
         await db.commit()
 
