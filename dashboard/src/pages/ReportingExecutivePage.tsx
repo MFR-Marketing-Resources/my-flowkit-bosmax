@@ -62,22 +62,51 @@ function ExecutiveInner() {
 				.slice(0, 15)
 		: [];
 
-	// COPY-CORRECTIVE-B05: lead with STRICT production-readiness (a valid current
-	// approved Copy Set), NOT raw "has any copy row" — the latter counted generic /
-	// stale / unreviewed copy as covered.
+	// COPY-CORRECTIVE-B05 + Lapis-2 GAP-1: lead with STRICT production-readiness, then
+	// split the remainder into STALE (activated but lineage-drifted — revalidation
+	// required) vs no copy at all, so the stale class the old binary coverage hid is
+	// visible. Falls back to the two-slice view if the tri-state is unavailable.
+	const copyClasses = copy.data?.copy_classification_counts ?? null;
 	const copyDonut: DonutSlice[] = copy.data
-		? [
-				{
-					label: "Production-ready",
-					value: copy.data.products_with_valid_approved_copy,
-					color: "#10b981",
-				},
-				{
-					label: "Needs work",
-					value: copy.data.products_without_valid_approved_copy,
-					color: "#334155",
-				},
-			]
+		? copyClasses
+			? [
+					{
+						label: "Production-ready",
+						value: copyClasses.APPROVED_COPY_VALID ?? 0,
+						color: "#10b981",
+					},
+					{
+						label: "Stale — revalidate",
+						value: copyClasses.APPROVED_COPY_STALE ?? 0,
+						color: "#f59e0b",
+					},
+					{
+						label: "No copy",
+						value: copyClasses.MISSING_COPY ?? 0,
+						color: "#334155",
+					},
+					...(copyClasses.VALIDITY_EVALUATION_FAILED
+						? [
+								{
+									label: "Eval failed",
+									value: copyClasses.VALIDITY_EVALUATION_FAILED,
+									color: "#ef4444",
+								},
+							]
+						: []),
+				]
+			: [
+					{
+						label: "Production-ready",
+						value: copy.data.products_with_valid_approved_copy,
+						color: "#10b981",
+					},
+					{
+						label: "Needs work",
+						value: copy.data.products_without_valid_approved_copy,
+						color: "#334155",
+					},
+				]
 		: [];
 
 	const clusterCount = clusters.data
@@ -109,7 +138,7 @@ function ExecutiveInner() {
 				<KpiCard
 					label="Copy production-ready"
 					value={`${copy.data?.valid_approved_coverage_pct ?? 0}%`}
-					hint={`${(copy.data?.products_without_valid_approved_copy ?? 0).toLocaleString()} not strict-valid`}
+					hint={`${(copyClasses?.APPROVED_COPY_STALE ?? 0).toLocaleString()} stale · ${(copyClasses?.MISSING_COPY ?? copy.data?.products_missing_copy ?? 0).toLocaleString()} no copy`}
 					tone={
 						(copy.data?.valid_approved_coverage_pct ?? 0) >= 100
 							? "success"

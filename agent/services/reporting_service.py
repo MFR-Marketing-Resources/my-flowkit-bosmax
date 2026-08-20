@@ -316,6 +316,38 @@ async def catalog_population_summary() -> dict:
     }
 
 
+async def _classify_copy_authority(product_ids: list[str]) -> dict:
+    """Split products that ALREADY hold an active V2 copy-execution authority into
+    CURRENT vs STALE, reusing the canonical activation check — no new lineage logic.
+
+    `copy_register_v2_service.get_activation_status` resolves a fully-activated,
+    current-valid blueprint (it drops any binding whose stored product-truth lineage
+    has drifted from the live snapshot). So:
+      * a resolved `active_blueprint_id`     -> CURRENT (production-valid);
+      * an authority row with none resolved  -> STALE (activated but lineage-drifted,
+        or no single blueprint covers every REQUIRED lane);
+      * an evaluation error                  -> fails closed to `failed`, never CURRENT.
+
+    Only products already known to hold an authority row are passed in (a small set),
+    so the per-product call is bounded; it invents no fingerprint logic and cannot
+    widen coverage — it can only reclassify an already-covered product as STALE.
+    """
+    from agent.services import copy_register_v2_service as _v2
+
+    current = stale = failed = 0
+    for product_id in product_ids:
+        try:
+            status = await _v2.get_activation_status(product_id)
+        except Exception:  # noqa: BLE001 - authority resolution fails closed
+            failed += 1
+            continue
+        if status.get("active_blueprint_id"):
+            current += 1
+        else:
+            stale += 1
+    return {"current": current, "stale": stale, "failed": failed}
+
+
 async def copywriting_coverage(
     lifecycle_status: str = "ACTIVE",
     cluster: Optional[str] = None,
@@ -332,11 +364,24 @@ async def copywriting_coverage(
     # Production copy coverage = active V2 copy execution authority (single bulk
     # EXISTS per product, no N+1). Legacy copy_set history is retired; receipt
     # ledgers are historical lineage, never production coverage.
-    covered = await _scalar(
-        db,
-        f"SELECT COUNT(*) {_PRODUCT_BASE} WHERE 1=1{where} AND {_V2_COPY_AUTHORITY_EXISTS}",
+    #
+    # GAP-1 tri-state: the raw EXISTS predicate is binary (covered / missing) and
+    # cannot see STALE — an activated authority whose blueprint lineage has since
+    # drifted still matches EXISTS and was silently counted as covered. Fetch the
+    # covered ids and reclassify each as CURRENT vs STALE via the canonical
+    # activation check, so the executive view leads with true production-readiness.
+    authority_cur = await db.execute(
+        f"SELECT p.id {_PRODUCT_BASE} WHERE 1=1{where} AND {_V2_COPY_AUTHORITY_EXISTS}",
         params,
     )
+    authority_ids = [str(row[0]) for row in await authority_cur.fetchall()]
+    await authority_cur.close()
+    covered = len(authority_ids)
+    klass = await _classify_copy_authority(authority_ids)
+    current_valid = klass["current"]
+    stale = klass["stale"]
+    failed = klass["failed"]
+    missing = total - covered
 
     return {
         "scope": _scope(lifecycle_status, cluster, product_type_group),
@@ -344,19 +389,25 @@ async def copywriting_coverage(
         "products_with_copy": covered,
         "products_missing_copy": total - covered,
         "products_with_approved_copy": covered,
-        "products_with_valid_approved_copy": covered,
-        "products_without_valid_approved_copy": total - covered,
-        "validity_evaluation_failed": 0,
-        "copy_classification_counts": None,
+        "products_with_valid_approved_copy": current_valid,
+        "products_without_valid_approved_copy": total - current_valid,
+        "validity_evaluation_failed": failed,
+        "copy_classification_counts": {
+            "APPROVED_COPY_VALID": current_valid,
+            "APPROVED_COPY_STALE": stale,
+            "MISSING_COPY": missing,
+            **({"VALIDITY_EVALUATION_FAILED": failed} if failed else {}),
+        },
         "coverage_pct": round(100.0 * covered / total, 1) if total else 0.0,
-        "valid_approved_coverage_pct": round(100.0 * covered / total, 1) if total else 0.0,
+        "valid_approved_coverage_pct": round(100.0 * current_valid / total, 1) if total else 0.0,
         "total_copy_sets": None,
         "avg_sets_per_covered_product": None,
         "copy_set_by_status": None,
         "authority": "copy_execution_authority_v2",
         "notes": {
             "products_with_copy": "products with active V2 copy execution authority (BOUND, REQUIRED video lane) — replaces the retired copy_set metric",
-            "products_with_valid_approved_copy": "same V2 authority; activation implies an APPROVED/PRODUCTION_VALID blueprint",
+            "products_with_valid_approved_copy": "CURRENT class — an activated authority still valid across every REQUIRED lane (get_activation_status resolves a blueprint); EXCLUDES STALE lineage-drifted activations that the raw EXISTS predicate counts as covered",
+            "copy_classification_counts": "mutually-exclusive tri-state summing to total_products: APPROVED_COPY_VALID (CURRENT) + APPROVED_COPY_STALE + MISSING_COPY (+ VALIDITY_EVALUATION_FAILED)",
         },
     }
 
