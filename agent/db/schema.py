@@ -3778,12 +3778,26 @@ CREATE TABLE IF NOT EXISTS generation_result (
     reference_media_ids_json TEXT NOT NULL DEFAULT '[]',
     workspace_generation_package_id TEXT,
     project_id     TEXT,
+    product_visual_custody_json TEXT NOT NULL DEFAULT '{}',
     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_generation_result_created ON generation_result(created_at);
 CREATE INDEX IF NOT EXISTS idx_generation_result_kind ON generation_result(artifact_kind);
 CREATE INDEX IF NOT EXISTS idx_generation_result_product ON generation_result(product_id);
 """)
+        # Product visual custody is additive lineage. Existing result rows stay
+        # intact and receive an empty object; new product-aware outputs carry
+        # the byte/route/policy/QC receipt without changing product data.
+        _generation_result_columns = {
+            str(row[1])
+            for row in await (
+                await db.execute("PRAGMA table_info(generation_result)")
+            ).fetchall()
+        }
+        if "product_visual_custody_json" not in _generation_result_columns:
+            await db.execute(
+                "ALTER TABLE generation_result ADD COLUMN product_visual_custody_json TEXT NOT NULL DEFAULT '{}'"
+            )
         await db.commit()
 
         # Native Google Flow Extend LINEAGE — durable parent->child chain record,

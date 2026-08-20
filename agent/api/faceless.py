@@ -183,6 +183,11 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
                 "error_code": "ERR_FACELESS_PACKAGE_BLOCKED",
                 "message": "Workspace execution package is not execution-ready.",
                 "blockers": (pkg.get("blockers") if isinstance(pkg, dict) else None),
+                "product_visual_custody": (
+                    pkg.get("product_visual_custody")
+                    if isinstance(pkg, dict)
+                    else None
+                ),
             },
         )
 

@@ -69,6 +69,29 @@ def test_faceless_package_id_binds_structured_authority_receipt():
     assert id_a == id_a_again
 
 
+def test_package_id_changes_when_product_visual_custody_changes():
+    common = (
+        "prod-001", "F2V", "prompt_fp", 8, "9:16", "Veo 3.1 - Lite",
+        False, "SINGLE", "BM_MS", "UGC_IPHONE_RAW", "FACELESS",
+    )
+    custody_a = {
+        "receipt_version": "PRODUCT_VISUAL_CUSTODY_V1",
+        "product_id": "prod-001",
+        "official_visual_sha256": "a" * 64,
+        "receipt_sha256": "1" * 64,
+    }
+    custody_b = {**custody_a, "official_visual_sha256": "b" * 64, "receipt_sha256": "2" * 64}
+
+    id_a = _workspace_execution_package_id(
+        *common, ["asset_fp"], None, custody_a
+    )
+    id_b = _workspace_execution_package_id(
+        *common, ["asset_fp"], None, custody_b
+    )
+
+    assert id_a != id_b
+
+
 def _fake_asset(**overrides):
     fields = {
         "asset_id": "ca_ref",
