@@ -49,6 +49,7 @@ import CreativeLibraryWorkspacePage from "./pages/CreativeLibraryWorkspacePage";
 import CockpitSettingsPage from "./pages/CockpitSettingsPage";
 import CopyIntelligencePage from "./pages/CopyIntelligencePage";
 import CopySetRegistryPage from "./pages/CopySetRegistryPage";
+import DeployFreshnessBanner from "./components/DeployFreshnessBanner";
 import StoryboardLandbankV3Page from "./pages/StoryboardLandbankV3Page";
 import DashboardPage from "./pages/DashboardPage";
 import ReportingExecutivePage from "./pages/ReportingExecutivePage";
@@ -407,6 +408,7 @@ function Layout() {
 	return (
 		<div className="relative flex h-screen overflow-hidden bg-slate-950 text-slate-200">
 			<EmbeddedRouteReporter />
+			<DeployFreshnessBanner />
 			{isCompactNav && navOpen && (
 				<button
 					type="button"

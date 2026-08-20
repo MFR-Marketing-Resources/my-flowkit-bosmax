@@ -684,6 +684,8 @@ domains:
       - agent/api/flow.py
       - dashboard/src/pages/LibraryPage.tsx
       - dashboard/src/App.tsx
+      - dashboard/src/components/DeployFreshnessBanner.tsx
+      - dashboard/src/components/DeployFreshnessBanner.test.tsx
       - dashboard/src/deactivatedSurfaces.ts
       - dashboard/src/deactivatedSurfaces.test.ts
       - dashboard/src/pages/OperatorPage.tsx
