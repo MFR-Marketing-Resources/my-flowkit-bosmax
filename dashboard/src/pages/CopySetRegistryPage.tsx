@@ -1,5 +1,5 @@
 import { BookOpen, ChevronLeft, ChevronRight, Search, ShieldCheck, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
 	approveFormulaBlueprint,
@@ -22,6 +22,7 @@ import { TechnicalDetails } from "../components/ui/TechnicalDetails";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
 import { useProductCatalog } from "../hooks/useProductCatalog";
+import { fetchProductDetail } from "../api/products";
 
 const INPUT_CLASS =
 	"mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200";
@@ -328,6 +329,9 @@ export default function CopySetRegistryPage() {
 	// activateFormulaBlueprint (which changes the sole V2 authority for all creator
 	// lanes). Never auto-activate.
 	const [pendingActivation, setPendingActivation] = useState<CopyBlueprintV2Record | null>(null);
+	// Dedupes an in-flight by-id product resolution (cleared on settle) so the
+	// deep-link fetch is not fired twice for the same product id.
+	const productResolveRef = useRef("");
 
 	// Library view search & filter & pagination
 	const [librarySearch, setLibrarySearch] = useState("");
@@ -379,12 +383,52 @@ export default function CopySetRegistryPage() {
 			});
 	}, []);
 
+	// Resolve the ?product_id= deep-link to the EXACT product. Fast path: the product
+	// is inside the loaded catalog window (useProductCatalog(50)). An out-of-window
+	// product (e.g. beyond the first 50 — proven by canonical MWCB) resolves via the
+	// deterministic by-id product-detail seam (fetchProductDetail) — NO full-catalog
+	// eager load. An invalid product_id fails VISIBLY; another product is never
+	// silently substituted (the resolved row's id must equal the requested id).
 	useEffect(() => {
 		const productId = searchParams.get("product_id");
-		if (!productId || !products.length) return;
-		const product = products.find((item) => item.id === productId);
-		if (product && product.id !== selectedProduct?.id) setSelectedProduct(product);
-	}, [products, searchParams, selectedProduct?.id]);
+		if (!productId || selectedProduct?.id === productId) return;
+		const inWindow = products.find((item) => item.id === productId);
+		if (inWindow) {
+			setDeepLinkError("");
+			setSelectedProduct(inWindow);
+			return;
+		}
+		// Wait for the catalog window to finish loading before falling back to a
+		// by-id fetch, so an in-window product uses the fast path.
+		if (isLoadingProducts) return;
+		if (productResolveRef.current === productId) return; // resolution already in flight
+		productResolveRef.current = productId;
+		let cancelled = false;
+		void fetchProductDetail(productId)
+			.then((detail) => {
+				if (cancelled) return;
+				if (detail && detail.id === productId) {
+					setDeepLinkError("");
+					setSelectedProduct(detail);
+				} else {
+					// Defensive: never substitute a different product than the one requested.
+					setDeepLinkError(`Product ${productId} could not be resolved for this deep link.`);
+				}
+			})
+			.catch(() => {
+				if (!cancelled) {
+					setDeepLinkError(
+						`Product ${productId} was not found or could not be loaded. Check the link, or select a product above.`,
+					);
+				}
+			})
+			.finally(() => {
+				if (productResolveRef.current === productId) productResolveRef.current = "";
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [products, searchParams, selectedProduct?.id, isLoadingProducts]);
 
 	useEffect(() => {
 		if (!selectedProduct) {
@@ -440,6 +484,9 @@ export default function CopySetRegistryPage() {
 
 	const selectProduct = (product: Product | null) => {
 		setSelectedProduct(product);
+		// A manual selection resolves the product directly — mark it so the deep-link
+		// by-id effect does not fire a redundant fetch while the URL updates.
+		productResolveRef.current = product ? product.id : "";
 		setSearchParams(product ? { product_id: product.id } : {});
 		setBlueprints([]);
 		setFormulaId("");
