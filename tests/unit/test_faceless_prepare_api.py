@@ -156,6 +156,8 @@ def test_prepare_product_only_no_start_frame(client: TestClient) -> None:
     assert kwargs["duration_seconds"] == 8
     assert "VISUAL LAW" in (kwargs.get("scene_context_override") or "")
     assert kwargs["faceless_resolution"]["character_presence"] == "FACELESS"
+    assert kwargs["faceless_resolution"]["actor_profile"]["operator_selection"] == "AUTO"
+    assert kwargs["faceless_resolution"]["actor_profile"]["cue"]
 
 
 def test_prepare_extend_keeps_durable_multiblock_package_lineage(
