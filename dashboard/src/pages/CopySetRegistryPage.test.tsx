@@ -126,6 +126,21 @@ function blueprint(status: string = "DRAFT") {
 	};
 }
 
+// A blueprint whose PERSISTED status is historically approved (PRODUCTION_VALID)
+// but whose CURRENT authority projection is stale — the Product Truth / evidence
+// lineage advanced after approval. This is exactly the shape the backend returns
+// for the reported COPY_V2_EVIDENCE_STALE incident, and the shape the Authority
+// Library card must refuse to present as activatable.
+function staleHistoricalBlueprint() {
+	return {
+		...blueprint("PRODUCTION_VALID"),
+		current_authority_status: "STALE_AUTHORITY_LINEAGE",
+		current_authority_valid: false,
+		current_authority_activation_allowed: false,
+		current_authority_reason: "COPY_V2_EVIDENCE_STALE",
+	};
+}
+
 function renderPage() {
 	return render(
 		<MemoryRouter initialEntries={["/creative/copy-authority?product_id=p1"]}>
@@ -384,5 +399,195 @@ describe("Task B — Copy Authority surface consolidation", () => {
 		fireEvent.click(screen.getByTestId("library-activate-bpv2_test"));
 		fireEvent.click(await screen.findByTestId("activation-confirm"));
 		await waitFor(() => expect(mockedActivate).toHaveBeenCalledWith("bpv2_test"));
+	});
+});
+
+describe("Copy Authority Library — current-authority activation gate", () => {
+	afterEach(cleanup);
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockedCatalog.mockResolvedValue({ items: [product] } as never);
+		mockedFormulas.mockResolvedValue({
+			formulas: [{
+				formula_id: "PAS",
+				formula_version: "pas.v1",
+				display_name: "Problem Agitate Solution",
+				definition_status: "CANONICAL",
+				compiler_family: "PAS",
+				slots: [],
+				best_for: [],
+				unsuitable_for: [],
+			}],
+		});
+		mockedProviderStatus.mockResolvedValue({
+			lane: "text_assist",
+			status: "READY",
+			configured: true,
+			provider_id: "synthetic-test-provider",
+			model_id: "synthetic-test-model",
+			execution_enabled: true,
+			provider_calls: 0,
+		});
+		mockedTruth.mockResolvedValue(truth);
+		mockedActivate.mockResolvedValue({ blueprint_id: "bpv2_test", activated: true, bindings: [], required_lane_count: 8 });
+	});
+
+	function noActivation() {
+		return { active_blueprint_id: null, active_revision: null, active_lane_count: 0, required_lane_count: 8, activated_at: null };
+	}
+	function activeOn(blueprintId: string) {
+		return { active_blueprint_id: blueprintId, active_revision: 1, active_lane_count: 8, required_lane_count: 8, activated_at: "2026-08-15T00:00:00Z" };
+	}
+
+	// TEST 1 — a stale historical PRODUCTION_VALID blueprint must not be activatable.
+	it("TEST 1 — stale historical PRODUCTION_VALID cannot be activated from the Library", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [staleHistoricalBlueprint()], activation: noActivation() });
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+
+		const activate = await screen.findByTestId("library-activate-bpv2_test");
+		expect(activate).toBeDisabled();
+		expect(activate).toHaveTextContent("Revalidation Required");
+		// Truthful stale state + operator-friendly reason are surfaced.
+		const stale = screen.getByTestId("library-stale-bpv2_test");
+		expect(stale).toHaveTextContent(/revalidation required/i);
+		expect(stale).toHaveTextContent(/current Product Truth/i);
+		// Clicking the disabled control opens NO confirmation and calls NO activation.
+		fireEvent.click(activate);
+		expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument();
+		expect(mockedActivate).not.toHaveBeenCalled();
+	});
+
+	// TEST 2 — a stale historical V2_APPROVED blueprint is likewise non-activatable.
+	it("TEST 2 — stale historical V2_APPROVED also cannot be activated", async () => {
+		mockedList.mockResolvedValue({
+			product_id: "p1",
+			items: [{ ...staleHistoricalBlueprint(), status: "V2_APPROVED", current_authority_reason: "COPY_V2_TAXONOMY_AUTHORITY_STALE" }],
+			activation: noActivation(),
+		});
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+
+		const activate = await screen.findByTestId("library-activate-bpv2_test");
+		expect(activate).toBeDisabled();
+		expect(screen.getByTestId("library-stale-bpv2_test")).toBeInTheDocument();
+		fireEvent.click(activate);
+		expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument();
+		expect(mockedActivate).not.toHaveBeenCalled();
+	});
+
+	// TEST 3 — a current PRODUCTION_VALID blueprint activates via confirm-exactly-once.
+	it("TEST 3 — current PRODUCTION_VALID activates: confirm opens, cancel is a no-op, confirm activates once", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [blueprint("PRODUCTION_VALID")], activation: noActivation() });
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+
+		const activate = await screen.findByTestId("library-activate-bpv2_test");
+		expect(activate).toBeEnabled();
+		expect(activate).toHaveTextContent("Activate Authority");
+
+		// First click opens the confirmation only.
+		fireEvent.click(activate);
+		expect(await screen.findByTestId("activation-confirm-overlay")).toBeInTheDocument();
+		expect(mockedActivate).not.toHaveBeenCalled();
+
+		// Cancel performs zero activation.
+		fireEvent.click(screen.getByTestId("activation-cancel"));
+		await waitFor(() => expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument());
+		expect(mockedActivate).not.toHaveBeenCalled();
+
+		// Re-open and confirm activates exactly once.
+		fireEvent.click(screen.getByTestId("library-activate-bpv2_test"));
+		fireEvent.click(await screen.findByTestId("activation-confirm"));
+		await waitFor(() => expect(mockedActivate).toHaveBeenCalledWith("bpv2_test"));
+		expect(mockedActivate).toHaveBeenCalledTimes(1);
+	});
+
+	// TEST 4 — an active, current blueprint renders a truthful ACTIVE state, no redundant activation.
+	it("TEST 4 — active and current renders truthful ACTIVE with no redundant activation", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [blueprint("PRODUCTION_VALID")], activation: activeOn("bpv2_test") });
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+
+		const card = await screen.findByTestId("library-card-bpv2_test");
+		expect(card).toHaveTextContent("ACTIVE");
+		expect(card).not.toHaveTextContent("STALE");
+		const activate = screen.getByTestId("library-activate-bpv2_test");
+		expect(activate).toBeDisabled();
+		expect(activate).toHaveTextContent("Active in Creator");
+		expect(screen.queryByTestId("library-stale-bpv2_test")).not.toBeInTheDocument();
+		fireEvent.click(activate);
+		expect(mockedActivate).not.toHaveBeenCalled();
+	});
+
+	// TEST 5 — an active but now-stale blueprint must NOT render a clean ACTIVE state.
+	it("TEST 5 — active but stale renders a revalidation-required state, never a clean ACTIVE", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [staleHistoricalBlueprint()], activation: activeOn("bpv2_test") });
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+
+		const card = await screen.findByTestId("library-card-bpv2_test");
+		expect(card).toHaveTextContent("ACTIVE · STALE — REVALIDATION REQUIRED");
+		expect(screen.getByTestId("library-stale-bpv2_test")).toHaveTextContent(/Active authority is stale/i);
+		const activate = screen.getByTestId("library-activate-bpv2_test");
+		expect(activate).toBeDisabled();
+		fireEvent.click(activate);
+		expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument();
+		expect(mockedActivate).not.toHaveBeenCalled();
+	});
+
+	// TEST 6 — a DRAFT blueprint stays non-activatable and is not mislabelled as stale.
+	it("TEST 6 — DRAFT stays non-activatable (approval required), not treated as stale", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [blueprint("DRAFT")], activation: noActivation() });
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+
+		const activate = await screen.findByTestId("library-activate-bpv2_test");
+		expect(activate).toBeDisabled();
+		expect(activate).toHaveTextContent("Approval Required");
+		expect(screen.queryByTestId("library-stale-bpv2_test")).not.toBeInTheDocument();
+		fireEvent.click(activate);
+		expect(mockedActivate).not.toHaveBeenCalled();
+	});
+
+	// TEST 7 — a backend current-authority rejection stays fail-closed and refreshes the projection.
+	it("TEST 7 — backend stale rejection is surfaced and the projection refreshes to the truthful state", async () => {
+		// Page load sees an activatable blueprint; the post-failure refresh sees it stale.
+		mockedList
+			.mockResolvedValueOnce({ product_id: "p1", items: [blueprint("PRODUCTION_VALID")], activation: noActivation() })
+			.mockResolvedValue({ product_id: "p1", items: [staleHistoricalBlueprint()], activation: noActivation() });
+		mockedActivate.mockRejectedValue(
+			new Error('{"detail":{"error":"COPY_V2_EVIDENCE_STALE","detail":"V2 blueprint is not production-valid and cannot bind"}}'),
+		);
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+
+		const activate = await screen.findByTestId("library-activate-bpv2_test");
+		expect(activate).toBeEnabled();
+		fireEvent.click(activate);
+		fireEvent.click(await screen.findByTestId("activation-confirm"));
+		await waitFor(() => expect(mockedActivate).toHaveBeenCalledWith("bpv2_test"));
+
+		// The backend failure is surfaced, not hidden or downgraded.
+		expect(await screen.findByTestId("copy-registry-error")).toHaveTextContent(/COPY_V2_EVIDENCE_STALE/);
+		// The projection refreshed → the card is now stale and non-actionable.
+		expect(await screen.findByTestId("library-stale-bpv2_test")).toBeInTheDocument();
+		expect(screen.getByTestId("library-activate-bpv2_test")).toBeDisabled();
+	});
+
+	// TEST 8 — activation flows exclusively through the V2 authority contract (no legacy copy_set path).
+	it("TEST 8 — activation uses the V2 contract signature only (no legacy /api/copy-sets path)", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [blueprint("PRODUCTION_VALID")], activation: noActivation() });
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+
+		fireEvent.click(await screen.findByTestId("library-activate-bpv2_test"));
+		fireEvent.click(await screen.findByTestId("activation-confirm"));
+		await waitFor(() => expect(mockedActivate).toHaveBeenCalledWith("bpv2_test"));
+		// The V2 activation lane takes a bare blueprint_id; the retired copy_set
+		// authoring contract is never invoked.
+		expect(mockedActivate).toHaveBeenCalledTimes(1);
+		expect(mockedActivate.mock.calls[0]).toEqual(["bpv2_test"]);
 	});
 });
