@@ -501,8 +501,10 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		await screen.findByTestId("copy-library-view");
 
 		const activate = await screen.findByTestId("library-activate-bpv2_test");
-		expect(activate).toBeDisabled();
-		expect(activate).toHaveTextContent("Revalidation Required");
+		// The stale card is now actionable: it opens the review panel (regenerate /
+		// revalidate) instead of being a dead disabled control — it just never activates.
+		expect(activate).toBeEnabled();
+		expect(activate).toHaveTextContent("Review / revalidate");
 		// Truthful stale state + operator-friendly reason are surfaced.
 		const stale = screen.getByTestId("library-stale-bpv2_test");
 		expect(stale).toHaveTextContent(/revalidation required/i);
@@ -524,7 +526,8 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		await screen.findByTestId("copy-library-view");
 
 		const activate = await screen.findByTestId("library-activate-bpv2_test");
-		expect(activate).toBeDisabled();
+		expect(activate).toBeEnabled();
+		expect(activate).toHaveTextContent("Review / revalidate");
 		expect(screen.getByTestId("library-stale-bpv2_test")).toBeInTheDocument();
 		fireEvent.click(activate);
 		expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument();
@@ -585,7 +588,8 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		expect(card).toHaveTextContent("ACTIVE · STALE — REVALIDATION REQUIRED");
 		expect(screen.getByTestId("library-stale-bpv2_test")).toHaveTextContent(/Active authority is stale/i);
 		const activate = screen.getByTestId("library-activate-bpv2_test");
-		expect(activate).toBeDisabled();
+		expect(activate).toBeEnabled();
+		expect(activate).toHaveTextContent("Review / revalidate");
 		fireEvent.click(activate);
 		expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument();
 		expect(mockedActivate).not.toHaveBeenCalled();
@@ -636,7 +640,7 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		expect(await screen.findByTestId("copy-registry-error")).toHaveTextContent(/COPY_V2_EVIDENCE_STALE/);
 		// The projection refreshed → the card is now stale and non-actionable.
 		expect(await screen.findByTestId("library-stale-bpv2_test")).toBeInTheDocument();
-		expect(screen.getByTestId("library-activate-bpv2_test")).toBeDisabled();
+		expect(screen.getByTestId("library-activate-bpv2_test")).toHaveTextContent("Review / revalidate");
 	});
 
 	// TEST 8 — activation flows exclusively through the V2 authority contract (no legacy copy_set path).
@@ -726,8 +730,10 @@ describe("Copy Authority — module forensic closure (RULE 2 / RULE 3 / RULE 4)"
 		await screen.findByTestId("copy-library-view");
 
 		const btn = await screen.findByTestId("library-activate-bpv2_test");
-		expect(btn).toBeDisabled();
-		expect(btn).toHaveTextContent("Approval Blocked");
+		// The blocked draft is now openable (shows the blocker + regenerate) — never a
+		// dead button — but it still never exposes a working approve.
+		expect(btn).toBeEnabled();
+		expect(btn).toHaveTextContent("Open blocked draft");
 		const blocked = screen.getByTestId("library-blocked-bpv2_test");
 		expect(blocked).toHaveTextContent(/Product Truth is not approved/i);
 		expect(screen.queryByTestId("library-stale-bpv2_test")).not.toBeInTheDocument();
