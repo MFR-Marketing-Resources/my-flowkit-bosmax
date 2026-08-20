@@ -12,6 +12,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from agent.db import crud
 from agent.services import faceless_lane_service as fl
 from agent.services.workspace_execution_package_service import (
     create_workspace_execution_package,
@@ -134,6 +135,67 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
     source_mode = resolution["source_mode"]
     start_id = body.start_frame_asset_id if reference_override else None
     end_id = body.end_frame_asset_id if reference_override else None
+
+    # Exact-product Faceless requests must surface the product-fidelity route
+    # blocker before the Copy V2 compiler can fail for an unrelated reason.
+    # This is still credit-free and read-only: it resolves the server-owned
+    # Product Truth visual, builds the custody receipt, and performs only the
+    # pre-dispatch route check. FRAMES is an explicit finished-frame override
+    # and remains outside the product-anchor route.
+    if source_mode != "FRAMES":
+        from agent.services.product_visual_custody_service import (
+            ProductVisualCustodyError,
+            build_product_visual_custody_receipt,
+            exact_product_required,
+            validate_pre_dispatch_route,
+        )
+        from agent.services.product_visual_grounding_resolver import (
+            ProductVisualReferenceRequiredError,
+            build_official_product_visual_asset,
+        )
+
+        product_row = await crud.get_product(body.product_id)
+        if product_row and exact_product_required(product_row):
+            custody_receipt = None
+            try:
+                official_asset = build_official_product_visual_asset(
+                    product_row,
+                    slot_key="start_frame",
+                    label="Official product visual",
+                )
+                custody_receipt = build_product_visual_custody_receipt(
+                    product_row,
+                    official_asset,
+                    mode=fl.FACELESS_TRANSPORT_MODE,
+                    source_mode=source_mode,
+                    prompt="",
+                    provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                    generation_type="reference_frame_2_video",
+                )
+                validate_pre_dispatch_route(
+                    custody_receipt,
+                    provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                    generation_type="reference_frame_2_video",
+                )
+            except ProductVisualReferenceRequiredError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error_code": "ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED",
+                        "message": str(exc),
+                        "product_visual_custody": custody_receipt,
+                    },
+                ) from exc
+            except ProductVisualCustodyError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error_code": exc.code,
+                        "message": exc.message,
+                        "details": exc.details,
+                        "product_visual_custody": custody_receipt,
+                    },
+                ) from exc
 
     try:
         pkg = await create_workspace_execution_package(
