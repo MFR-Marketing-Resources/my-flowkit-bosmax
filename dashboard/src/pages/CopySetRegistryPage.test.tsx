@@ -5,7 +5,23 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import CopySetRegistryPage from "./CopySetRegistryPage";
 
 vi.mock("../components/workspace/SearchableProductSelect", () => ({
-	default: () => <div data-testid="product-picker">Product picker</div>,
+	default: ({ onSelect }: { onSelect: (p: unknown) => void }) => (
+		<div data-testid="product-picker">
+			Product picker
+			<button
+				type="button"
+				data-testid="mock-select-p2"
+				onClick={() =>
+					onSelect({ id: "p2", raw_product_title: "Second Product", product_display_name: "Second Product", source: "MANUAL", category: "Skincare" })
+				}
+			>
+				select p2
+			</button>
+			<button type="button" data-testid="mock-clear-product" onClick={() => onSelect(null)}>
+				clear
+			</button>
+		</div>
+	),
 }));
 
 vi.mock("../api/products", () => ({ fetchProductCatalog: vi.fn() }));
@@ -120,9 +136,23 @@ function blueprint(status: string = "DRAFT") {
 		estimated_word_count: 4,
 		v2_badge: status === "PRODUCTION_VALID" ? "V2 PRODUCTION_VALID" : null,
 		current_authority_status: status === "PRODUCTION_VALID" ? "CURRENT · PRODUCTION_VALID" : "DRAFT",
-		current_authority_valid: status === "PRODUCTION_VALID",
+		// A healthy DRAFT (product truth ready + lineage matching) is current-authority
+		// VALID — only the human approval step is outstanding. This mirrors the backend
+		// projection (get_blueprint_current_authority_validation), where `valid` is
+		// truth-readiness-based and independent of the DRAFT/approved status.
+		current_authority_valid: status === "PRODUCTION_VALID" || status === "DRAFT",
 		current_authority_activation_allowed: status === "PRODUCTION_VALID",
 		current_authority_reason: status === "PRODUCTION_VALID" ? null : "EXPLICIT_HUMAN_APPROVAL_REQUIRED",
+	};
+}
+
+// A DRAFT whose current authority is NOT valid (product truth stale/incomplete):
+// it cannot be approved as-is and must render "Approval Blocked" with the reason.
+function blockedDraftBlueprint() {
+	return {
+		...blueprint("DRAFT"),
+		current_authority_valid: false,
+		current_authority_reason: "V2_PRODUCT_TRUTH_APPROVAL_REQUIRED, EXPLICIT_HUMAN_APPROVAL_REQUIRED",
 	};
 }
 
@@ -537,17 +567,26 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		expect(mockedActivate).not.toHaveBeenCalled();
 	});
 
-	// TEST 6 — a DRAFT blueprint stays non-activatable and is not mislabelled as stale.
-	it("TEST 6 — DRAFT stays non-activatable (approval required), not treated as stale", async () => {
+	// TEST 6 — a reviewable DRAFT offers an ACTIONABLE "Review & Approve" (never a
+	// dead "Approval Required"), routes into the review workflow for THAT exact
+	// blueprint, and never auto-approves or auto-activates.
+	it("TEST 6 — reviewable DRAFT offers actionable Review & Approve and routes to the review workflow", async () => {
 		mockedList.mockResolvedValue({ product_id: "p1", items: [blueprint("DRAFT")], activation: noActivation() });
 		renderPage();
 		await screen.findByTestId("copy-library-view");
 
-		const activate = await screen.findByTestId("library-activate-bpv2_test");
-		expect(activate).toBeDisabled();
-		expect(activate).toHaveTextContent("Approval Required");
+		const reviewBtn = await screen.findByTestId("library-activate-bpv2_test");
+		expect(reviewBtn).toBeEnabled();
+		expect(reviewBtn).toHaveTextContent("Review & Approve");
+		// A reviewable DRAFT is neither stale nor blocked.
 		expect(screen.queryByTestId("library-stale-bpv2_test")).not.toBeInTheDocument();
-		fireEvent.click(activate);
+		expect(screen.queryByTestId("library-blocked-bpv2_test")).not.toBeInTheDocument();
+		// Clicking routes to the Direct V2 Authoring review workflow for THIS blueprint.
+		fireEvent.click(reviewBtn);
+		expect(await screen.findByTestId("v2-approval-panel")).toBeInTheDocument();
+		expect(screen.getByTestId("review-target-indicator")).toHaveTextContent("bpv2_test");
+		// It NEVER auto-approves or auto-activates.
+		expect(mockedApprove).not.toHaveBeenCalled();
 		expect(mockedActivate).not.toHaveBeenCalled();
 	});
 
@@ -589,5 +628,155 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		// authoring contract is never invoked.
 		expect(mockedActivate).toHaveBeenCalledTimes(1);
 		expect(mockedActivate.mock.calls[0]).toEqual(["bpv2_test"]);
+	});
+});
+
+describe("Copy Authority — module forensic closure (RULE 2 / RULE 3 / RULE 4)", () => {
+	afterEach(cleanup);
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockedCatalog.mockResolvedValue({ items: [product] } as never);
+		mockedFormulas.mockResolvedValue({
+			formulas: [{ formula_id: "PAS", formula_version: "pas.v1", display_name: "Problem Agitate Solution", definition_status: "CANONICAL", compiler_family: "PAS", slots: [], best_for: [], unsuitable_for: [] }],
+		});
+		mockedProviderStatus.mockResolvedValue({ lane: "text_assist", status: "READY", configured: true, provider_id: "p", model_id: "m", execution_enabled: true, provider_calls: 0 });
+		mockedTruth.mockResolvedValue(truth);
+		mockedActivate.mockResolvedValue({ blueprint_id: "bpv2_test", activated: true, bindings: [], required_lane_count: 8 });
+		mockedApprove.mockResolvedValue({ blueprint: blueprint("PRODUCTION_VALID"), production_valid: true, badge: "V2 PRODUCTION_VALID" });
+	});
+
+	function noActivation() {
+		return { active_blueprint_id: null, active_revision: null, active_lane_count: 0, required_lane_count: 8, activated_at: null };
+	}
+	function draftWith(id: string, angleDef: string) {
+		return { ...blueprint("DRAFT"), blueprint_id: id, angle: { angle_id: `angle:${id}`, definition: angleDef } };
+	}
+	function renderAt(search: string) {
+		return render(
+			<MemoryRouter initialEntries={[`/creative/copy-authority${search}`]}>
+				<Routes>
+					<Route path="/creative/copy-authority" element={<CopySetRegistryPage />} />
+				</Routes>
+			</MemoryRouter>,
+		);
+	}
+
+	// RULE 3 — the operator approves the EXACT non-latest DRAFT they selected, never blueprints[0].
+	it("approves the exact selected non-latest DRAFT, not blueprints[0]", async () => {
+		// items[0] is the newest (bp-new); the operator deliberately selects the older bp-old.
+		mockedList.mockResolvedValue({ product_id: "p1", items: [draftWith("bp-new", "Newest angle"), draftWith("bp-old", "Older angle")], activation: noActivation() });
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+
+		fireEvent.click(await screen.findByTestId("library-activate-bp-old"));
+		expect(await screen.findByTestId("review-target-indicator")).toHaveTextContent("bp-old");
+		for (const key of ["semantic", "provenance", "safety", "bridge", "duration"]) {
+			fireEvent.click(screen.getByTestId(`approval-check-${key}`));
+		}
+		fireEvent.click(screen.getByTestId("approve-v2-blueprint"));
+		await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith(expect.objectContaining({ blueprint_id: "bp-old" })));
+		expect(mockedApprove).toHaveBeenCalledTimes(1);
+	});
+
+	// RULE 3 — "Select for review" on a non-target card re-points the approval workflow.
+	it("re-selects the review target via Select for review, retargeting approval", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [draftWith("bp-new", "Newest angle"), draftWith("bp-old", "Older angle")], activation: noActivation() });
+		renderPage();
+		fireEvent.click(await screen.findByTestId("tab-generator"));
+		// Default review target is the newest (bp-new); switch it to bp-old.
+		expect(await screen.findByTestId("review-target-indicator")).toHaveTextContent("bp-new");
+		fireEvent.click(await screen.findByTestId("select-review-bp-old"));
+		expect(await screen.findByTestId("review-target-indicator")).toHaveTextContent("bp-old");
+		for (const key of ["semantic", "provenance", "safety", "bridge", "duration"]) {
+			fireEvent.click(screen.getByTestId(`approval-check-${key}`));
+		}
+		fireEvent.click(screen.getByTestId("approve-v2-blueprint"));
+		await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith(expect.objectContaining({ blueprint_id: "bp-old" })));
+	});
+
+	// RULE 2 — a blocked DRAFT is non-actionable, with the authoritative reason + corrective path.
+	it("renders a blocked DRAFT as Approval Blocked with reason, never a working approve", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [blockedDraftBlueprint()], activation: noActivation() });
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+
+		const btn = await screen.findByTestId("library-activate-bpv2_test");
+		expect(btn).toBeDisabled();
+		expect(btn).toHaveTextContent("Approval Blocked");
+		const blocked = screen.getByTestId("library-blocked-bpv2_test");
+		expect(blocked).toHaveTextContent(/Product Truth is not approved/i);
+		expect(screen.queryByTestId("library-stale-bpv2_test")).not.toBeInTheDocument();
+		fireEvent.click(btn);
+		expect(mockedApprove).not.toHaveBeenCalled();
+		expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument();
+	});
+
+	// RULE 3 — a blueprint_id deep-link resolves to the EXACT blueprint and opens review.
+	it("resolves a blueprint_id deep-link to the exact blueprint and opens the review workflow", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [blueprint("DRAFT")], activation: noActivation() });
+		renderAt("?product_id=p1&blueprint_id=bpv2_test");
+
+		expect(await screen.findByTestId("review-target-indicator")).toHaveTextContent("bpv2_test");
+		expect(screen.getByTestId("v2-approval-panel")).toBeInTheDocument();
+		expect(screen.queryByTestId("copy-registry-deeplink-error")).not.toBeInTheDocument();
+	});
+
+	// RULE 3 — an unresolvable blueprint_id deep-link fails VISIBLY (no silent fallback).
+	it("fails visibly when a blueprint_id deep-link cannot be resolved", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [blueprint("DRAFT")], activation: noActivation() });
+		renderAt("?product_id=p1&blueprint_id=bp-does-not-exist");
+
+		expect(await screen.findByTestId("copy-registry-deeplink-error")).toHaveTextContent("bp-does-not-exist");
+	});
+
+	// RULE 4 — switching product clears stale library search and never hides the new product's copy.
+	it("clears stale library search when the product is switched", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [blueprint("PRODUCTION_VALID")], activation: noActivation() });
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+
+		const searchInput = screen.getByPlaceholderText(/Search copy/i);
+		fireEvent.change(searchInput, { target: { value: "zzz-no-match" } });
+		expect(screen.queryByTestId("library-card-bpv2_test")).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByTestId("mock-select-p2"));
+		await waitFor(() => expect((screen.getByPlaceholderText(/Search copy/i) as HTMLInputElement).value).toBe(""));
+		expect(await screen.findByTestId("library-card-bpv2_test")).toBeInTheDocument();
+	});
+
+	// GOVERNANCE — human approval gates remain required (no auto-approval).
+	it("keeps the approve action gated on reviewer + all human review checks", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [blueprint("DRAFT")], activation: noActivation() });
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+		fireEvent.click(await screen.findByTestId("library-activate-bpv2_test"));
+
+		const approve = await screen.findByTestId("approve-v2-blueprint");
+		expect(approve).toBeDisabled();
+		for (const key of ["semantic", "provenance", "safety", "bridge"]) {
+			fireEvent.click(screen.getByTestId(`approval-check-${key}`));
+		}
+		expect(approve).toBeDisabled(); // one check still missing
+		fireEvent.click(screen.getByTestId("approval-check-duration"));
+		expect(approve).toBeEnabled();
+		fireEvent.change(screen.getByTestId("v2-reviewer-input"), { target: { value: "" } });
+		expect(approve).toBeDisabled();
+		expect(mockedApprove).not.toHaveBeenCalled();
+	});
+
+	// RULE 4 — a successful approval refreshes the exact target to its approved state.
+	it("refreshes to the approved state after a successful approval", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [blueprint("DRAFT")], activation: noActivation() });
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+		fireEvent.click(await screen.findByTestId("library-activate-bpv2_test"));
+		for (const key of ["semantic", "provenance", "safety", "bridge", "duration"]) {
+			fireEvent.click(await screen.findByTestId(`approval-check-${key}`));
+		}
+		fireEvent.click(screen.getByTestId("approve-v2-blueprint"));
+		await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith(expect.objectContaining({ blueprint_id: "bpv2_test", approved_by: "operator" })));
+		expect(await screen.findByTestId("copy-registry-success")).toHaveTextContent(/PRODUCTION_VALID/i);
+		expect(await screen.findByTestId("activate-v2-blueprint")).toBeInTheDocument();
 	});
 });
