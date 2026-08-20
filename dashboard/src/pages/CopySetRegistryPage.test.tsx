@@ -24,7 +24,7 @@ vi.mock("../components/workspace/SearchableProductSelect", () => ({
 	),
 }));
 
-vi.mock("../api/products", () => ({ fetchProductCatalog: vi.fn() }));
+vi.mock("../api/products", () => ({ fetchProductCatalog: vi.fn(), fetchProductDetail: vi.fn() }));
 vi.mock("../api/copyRegisterV2", () => ({
 	fetchCopyRegisterFormulas: vi.fn(),
 	fetchCopyRegisterProviderStatus: vi.fn(),
@@ -37,7 +37,7 @@ vi.mock("../api/copyRegisterV2", () => ({
 	activateFormulaBlueprint: vi.fn(),
 }));
 
-import { fetchProductCatalog } from "../api/products";
+import { fetchProductCatalog, fetchProductDetail } from "../api/products";
 import {
 	approveFormulaBlueprint,
 	activateFormulaBlueprint,
@@ -50,6 +50,7 @@ import {
 } from "../api/copyRegisterV2";
 
 const mockedCatalog = vi.mocked(fetchProductCatalog);
+const mockedProductDetail = vi.mocked(fetchProductDetail);
 const mockedFormulas = vi.mocked(fetchCopyRegisterFormulas);
 const mockedProviderStatus = vi.mocked(fetchCopyRegisterProviderStatus);
 const mockedTruth = vi.mocked(fetchCopyRegisterTruth);
@@ -778,5 +779,72 @@ describe("Copy Authority — module forensic closure (RULE 2 / RULE 3 / RULE 4)"
 		await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith(expect.objectContaining({ blueprint_id: "bpv2_test", approved_by: "operator" })));
 		expect(await screen.findByTestId("copy-registry-success")).toHaveTextContent(/PRODUCTION_VALID/i);
 		expect(await screen.findByTestId("activate-v2-blueprint")).toBeInTheDocument();
+	});
+});
+
+describe("Copy Authority — product deep-link by-id resolution (out-of-window)", () => {
+	afterEach(cleanup);
+
+	// A product that is NOT in the first-50 catalog window (mockedCatalog returns
+	// only p1) — it must resolve via the deterministic by-id product-detail seam.
+	const outProduct = { id: "p-out", raw_product_title: "Out Of Window Product", product_display_name: "Out Of Window Product", source: "MANUAL", category: "Skincare" };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		mockedCatalog.mockResolvedValue({ items: [product] } as never); // window excludes p-out
+		mockedFormulas.mockResolvedValue({
+			formulas: [{ formula_id: "PAS", formula_version: "pas.v1", display_name: "Problem Agitate Solution", definition_status: "CANONICAL", compiler_family: "PAS", slots: [], best_for: [], unsuitable_for: [] }],
+		});
+		mockedProviderStatus.mockResolvedValue({ lane: "text_assist", status: "READY", configured: true, provider_id: "p", model_id: "m", execution_enabled: true, provider_calls: 0 });
+		mockedTruth.mockResolvedValue(truth);
+		mockedList.mockResolvedValue({ product_id: "p-out", items: [], activation: { active_blueprint_id: null, active_revision: null, active_lane_count: 0, required_lane_count: 8, activated_at: null } });
+	});
+
+	function renderAt(search: string) {
+		return render(
+			<MemoryRouter initialEntries={[`/creative/copy-authority${search}`]}>
+				<Routes>
+					<Route path="/creative/copy-authority" element={<CopySetRegistryPage />} />
+				</Routes>
+			</MemoryRouter>,
+		);
+	}
+
+	// first-50 MISS — an out-of-window product_id resolves via fetchProductDetail (no eager catalog load).
+	it("resolves an out-of-window product_id via the by-id seam (no full-catalog load)", async () => {
+		mockedProductDetail.mockResolvedValue(outProduct as never);
+		renderAt("?product_id=p-out");
+		await waitFor(() => expect(mockedProductDetail).toHaveBeenCalledWith("p-out"));
+		// The deep-linked product resolves and its library renders — no manual selection.
+		expect(await screen.findByTestId("copy-library-view")).toBeInTheDocument();
+		expect(screen.queryByTestId("copy-registry-deeplink-error")).not.toBeInTheDocument();
+	});
+
+	// FAST PATH — an in-window product must NOT trigger a by-id fetch.
+	it("uses the fast path for an in-window product and never calls the by-id seam", async () => {
+		mockedProductDetail.mockResolvedValue(outProduct as never);
+		renderAt("?product_id=p1"); // p1 is in the catalog window
+		expect(await screen.findByTestId("copy-library-view")).toBeInTheDocument();
+		expect(mockedProductDetail).not.toHaveBeenCalled();
+	});
+
+	// INVALID id — fails VISIBLY, never substitutes another product.
+	it("fails visibly when an out-of-window product_id cannot be resolved", async () => {
+		mockedProductDetail.mockRejectedValue(new Error("PRODUCT_NOT_FOUND"));
+		renderAt("?product_id=p-bad");
+		expect(await screen.findByTestId("copy-registry-deeplink-error")).toHaveTextContent("p-bad");
+		// No product resolved → no library rendered, and no substitute was selected.
+		expect(screen.queryByTestId("copy-library-view")).not.toBeInTheDocument();
+	});
+
+	// product_id + blueprint_id (both out-of-window) — resolve the EXACT product first,
+	// then the EXACT blueprint. This is also the refresh case (fresh mount, full deep link).
+	it("resolves product_id then blueprint_id for an out-of-window deep link (refresh-safe)", async () => {
+		mockedProductDetail.mockResolvedValue(outProduct as never);
+		mockedList.mockResolvedValue({ product_id: "p-out", items: [blueprint("PRODUCTION_VALID")], activation: { active_blueprint_id: null, active_revision: null, active_lane_count: 0, required_lane_count: 8, activated_at: null } });
+		renderAt("?product_id=p-out&blueprint_id=bpv2_test");
+		await waitFor(() => expect(mockedProductDetail).toHaveBeenCalledWith("p-out"));
+		expect(await screen.findByTestId("review-target-indicator")).toHaveTextContent("bpv2_test");
+		expect(screen.queryByTestId("copy-registry-deeplink-error")).not.toBeInTheDocument();
 	});
 });
