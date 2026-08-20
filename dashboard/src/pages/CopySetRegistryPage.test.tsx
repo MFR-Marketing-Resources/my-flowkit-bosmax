@@ -252,6 +252,8 @@ describe("CopySetRegistryPage V2 cutover", () => {
 		await waitFor(() => expect(screen.getByTestId("generate-new-formula-copy")).toBeEnabled());
 		fireEvent.click(screen.getByTestId("generate-new-formula-copy"));
 		await waitFor(() => expect(mockedGenerate).toHaveBeenCalled());
+		// Generation lands a DRAFT; approval now lives in the Authority Library tab.
+		fireEvent.click(screen.getByTestId("tab-library"));
 		expect(await screen.findByTestId("v2-blueprint-card")).toHaveTextContent("bpv2_test");
 		expect(screen.getByTestId("v2-approval-panel")).toBeInTheDocument();
 
@@ -348,7 +350,9 @@ describe("CopySetRegistryPage V2 cutover", () => {
 			},
 		});
 		renderPage();
-		fireEvent.click(await screen.findByTestId("tab-generator"));
+		// Activation lives in the default Authority Library tab; the latest blueprint
+		// is the review target on load.
+		await screen.findByTestId("copy-library-view");
 
 		expect(await screen.findByText("ACTIVE · 8 REQUIRED LANES")).toBeInTheDocument();
 		expect(screen.getByTestId("activate-v2-blueprint")).toBeDisabled();
@@ -699,14 +703,14 @@ describe("Copy Authority — module forensic closure (RULE 2 / RULE 3 / RULE 4)"
 		expect(mockedApprove).toHaveBeenCalledTimes(1);
 	});
 
-	// RULE 3 — "Select for review" on a non-target card re-points the approval workflow.
-	it("re-selects the review target via Select for review, retargeting approval", async () => {
+	// RULE 3 — selecting a non-latest card in the Authority Library re-points approval.
+	it("re-selects the review target via the library card, retargeting approval", async () => {
 		mockedList.mockResolvedValue({ product_id: "p1", items: [draftWith("bp-new", "Newest angle"), draftWith("bp-old", "Older angle")], activation: noActivation() });
 		renderPage();
-		fireEvent.click(await screen.findByTestId("tab-generator"));
-		// Default review target is the newest (bp-new); switch it to bp-old.
+		await screen.findByTestId("copy-library-view");
+		// Default review target is the newest (bp-new); the library card retargets to bp-old.
 		expect(await screen.findByTestId("review-target-indicator")).toHaveTextContent("bp-new");
-		fireEvent.click(await screen.findByTestId("select-review-bp-old"));
+		fireEvent.click(await screen.findByTestId("library-activate-bp-old"));
 		expect(await screen.findByTestId("review-target-indicator")).toHaveTextContent("bp-old");
 		for (const key of ["semantic", "provenance", "safety", "bridge", "duration"]) {
 			fireEvent.click(screen.getByTestId(`approval-check-${key}`));
