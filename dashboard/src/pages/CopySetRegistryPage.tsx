@@ -955,6 +955,12 @@ export default function CopySetRegistryPage() {
 									<HelperText className="text-emerald-300/80">Approved copy is immutable. Activation never changes its approved text.</HelperText>
 									{!canActivateAuthority(reviewTarget) ? <HelperText className="mt-2 text-amber-200/80">Activation disabled: {authorityReasonLabel(reviewTarget.current_authority_reason)}</HelperText> : null}
 									<button type="button" data-testid="activate-v2-blueprint" disabled={busy || !canActivateAuthority(reviewTarget) || activatedBlueprintId === reviewTarget.blueprint_id} onClick={() => setPendingActivation(reviewTarget)} className="mt-3 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{activatedBlueprintId === reviewTarget.blueprint_id ? "ACTIVE · 8 REQUIRED LANES" : busy ? "Activating…" : "ACTIVATE FOR VIDEO + POSTER LANES"}</button>
+									{!canActivateAuthority(reviewTarget) ? (
+										<div className="mt-3" data-testid="stale-corrective-path">
+											<HelperText className="text-emerald-200/80">Approved copy is immutable and can't be revalidated in place. Generate a fresh version grounded on the current Product Truth, then approve and activate that.</HelperText>
+											<button type="button" data-testid="generate-fresh-copy" onClick={() => { setFormulaId(reviewTarget.formula_id); setSelectedAngleId(""); setAngles([]); setSelectedFactIds([]); setReviewBlueprintId(""); setActiveTab("GENERATOR"); }} className="mt-2 rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100">Generate fresh copy →</button>
+										</div>
+									) : null}
 								</div>
 							)}
 				</Section>
@@ -1051,8 +1057,11 @@ export default function CopySetRegistryPage() {
 								let cardDisabled: boolean;
 								let onCardAction: (() => void) | null = null;
 								if (isCurrent && canActivate) {
-									cardLabel = "Active in Creator";
-									cardDisabled = true;
+									// Active + current: terminal, but still openable so the operator can
+									// view the live copy in the panel — never a dead button.
+									cardLabel = "Active — view";
+									cardDisabled = busy;
+									onCardAction = () => reviewBlueprint(bp);
 								} else if (canActivate) {
 									cardLabel = "Activate Authority";
 									cardDisabled = busy;
