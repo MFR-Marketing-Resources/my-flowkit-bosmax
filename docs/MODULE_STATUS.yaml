@@ -196,9 +196,14 @@ domains:
       # V2 generate flow; never approves, activates, or spends credit.
       - agent/services/copy_formula_recommender.py
       - agent/services/copy_register_bulk_service.py
+      - agent/services/copy_register_review_queue_service.py
       - agent/api/copy_bulk.py
       - tests/unit/test_copy_register_bulk_service.py
+      - tests/unit/test_copy_register_review_queue_service.py
+      - tests/api/test_copy_register_review_queue_api.py
       - dashboard/src/api/copyRegisterV2.ts
+      - dashboard/src/pages/CopyReviewQueuePage.tsx
+      - dashboard/src/pages/CopyReviewQueuePage.test.tsx
       - dashboard/src/api/posterV2.ts
       - scripts/migrate_copy_register_v2_only.py
       - tests/api/test_copy_register_v2_api.py

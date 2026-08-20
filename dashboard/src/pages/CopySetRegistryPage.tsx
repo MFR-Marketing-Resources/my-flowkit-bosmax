@@ -764,6 +764,13 @@ export default function CopySetRegistryPage() {
 						) : null}
 					</button>
 				</div>
+				<a
+					href="/creative/copy-review-queue"
+					data-testid="open-copy-review-queue"
+					className="inline-flex items-center rounded-lg border border-emerald-500/40 bg-emerald-600/15 px-3 py-2 text-xs font-bold uppercase text-emerald-100 hover:bg-emerald-600/25"
+				>
+					Batch review queue
+				</a>
 			</header>
 
 			{/* Task B §2: Copy Authority is the ADVANCED console. Normal campaign copy
