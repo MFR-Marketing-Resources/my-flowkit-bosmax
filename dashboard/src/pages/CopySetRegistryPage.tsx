@@ -330,6 +330,7 @@ export default function CopySetRegistryPage() {
 	// target, set by: "Review & Approve"/"Revalidate" from the Library, a
 	// blueprint_id deep-link, or a fresh generation.
 	const [reviewBlueprintId, setReviewBlueprintId] = useState("");
+	const reviewPanelRef = useRef<HTMLDivElement>(null);
 	// RULE 3: a blueprint_id deep-link that cannot be resolved fails VISIBLY here;
 	// it never silently falls back to another blueprint.
 	const [deepLinkError, setDeepLinkError] = useState("");
@@ -490,6 +491,15 @@ export default function CopySetRegistryPage() {
 			);
 		}
 	}, [blueprints, searchParams, selectedProduct, reviewBlueprintId]);
+
+	// When a blueprint is picked for review, bring the approval panel into view — it
+	// renders above the library cards, so a click on a lower card must scroll to it,
+	// otherwise the panel updates off-screen and the action looks like it did nothing.
+	useEffect(() => {
+		if (reviewBlueprintId && activeTab === "LIBRARY") {
+			reviewPanelRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+		}
+	}, [reviewBlueprintId, activeTab]);
 
 	const selectProduct = (product: Product | null) => {
 		setSelectedProduct(product);
@@ -902,6 +912,7 @@ export default function CopySetRegistryPage() {
 
 			{/* Authority Library approval — review, approve and activate live HERE, not in the generator. */}
 			{selectedProduct && activeTab === "LIBRARY" && reviewTarget ? (
+				<div ref={reviewPanelRef} data-testid="review-approve-panel">
 				<Section title="Review, approve, and activate" helper="Pick a blueprint from the library below, then approve or activate it here. Approved text is immutable.">
 					<div className="mb-3 flex items-center justify-between gap-2">
 						<p className="text-xs text-blue-200/90" data-testid="review-target-indicator">Reviewing <span className="font-mono">{reviewTarget.blueprint_id}</span> · rev {reviewTarget.revision} · {reviewTarget.status}</p>
@@ -947,6 +958,7 @@ export default function CopySetRegistryPage() {
 								</div>
 							)}
 				</Section>
+				</div>
 			) : null}
 
 			{/* VIEW 2: GENERATED COPY LIBRARY */}
@@ -1050,11 +1062,18 @@ export default function CopySetRegistryPage() {
 									cardDisabled = busy;
 									onCardAction = () => reviewBlueprint(bp);
 								} else if (isDraft) {
-									cardLabel = "Approval Blocked";
-									cardDisabled = true;
+									// A blocked draft is still openable — the panel shows the exact
+									// blocker and lets the operator regenerate a stage against current
+									// truth. Never a silent dead button.
+									cardLabel = "Open blocked draft";
+									cardDisabled = busy;
+									onCardAction = () => reviewBlueprint(bp);
 								} else {
-									cardLabel = "Revalidation Required";
-									cardDisabled = true;
+									// Stale historical approval: open the panel to see the reason and
+									// regenerate fresh copy (approved text is immutable).
+									cardLabel = "Review / revalidate";
+									cardDisabled = busy;
+									onCardAction = () => reviewBlueprint(bp);
 								}
 
 								return (
