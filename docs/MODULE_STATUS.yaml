@@ -191,6 +191,13 @@ domains:
       - agent/authority/copy_register_product_truth_authority.py
       - agent/authority/copy_register_product_identity_authority.py
       - agent/services/copy_register_v2_service.py
+      # Lapis 2 Phase 1 — bulk DRAFT copy generation (credit-free, DRAFT-only): an
+      # explicit-formula recommender + a dedicated cohort driver over the per-product
+      # V2 generate flow; never approves, activates, or spends credit.
+      - agent/services/copy_formula_recommender.py
+      - agent/services/copy_register_bulk_service.py
+      - agent/api/copy_bulk.py
+      - tests/unit/test_copy_register_bulk_service.py
       - dashboard/src/api/copyRegisterV2.ts
       - dashboard/src/api/posterV2.ts
       - scripts/migrate_copy_register_v2_only.py

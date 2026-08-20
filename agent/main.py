@@ -79,6 +79,7 @@ from agent.api.copy_sets import router as copy_sets_router
 from agent.api.copywriting import router as copywriting_router
 from agent.api.copy_architecture_v2 import router as copy_architecture_v2_router
 from agent.api.copy_register_v2 import router as copy_register_v2_router
+from agent.api.copy_bulk import router as copy_bulk_router
 from agent.api.storyboard_landbank_v3 import router as storyboard_landbank_v3_router
 from agent.api.product_asset_generator import router as product_asset_generator_router
 from agent.api.product_image_analysis import router as product_image_analysis_router
@@ -407,6 +408,7 @@ app.include_router(copy_signals_router, prefix="/api")
 app.include_router(copy_sets_router, prefix="/api")
 app.include_router(copy_architecture_v2_router, prefix="/api")
 app.include_router(copy_register_v2_router, prefix="/api")
+app.include_router(copy_bulk_router, prefix="/api")
 app.include_router(storyboard_landbank_v3_router, prefix="/api")
 app.include_router(copy_components_router, prefix="/api")
 app.include_router(creative_supply_router, prefix="/api")
