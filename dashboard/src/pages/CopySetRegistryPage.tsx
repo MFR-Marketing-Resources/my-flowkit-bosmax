@@ -952,15 +952,18 @@ export default function CopySetRegistryPage() {
 								)
 							) : (
 								<div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
-									<HelperText className="text-emerald-300/80">Approved copy is immutable. Activation never changes its approved text.</HelperText>
-									{!canActivateAuthority(reviewTarget) ? <HelperText className="mt-2 text-amber-200/80">Activation disabled: {authorityReasonLabel(reviewTarget.current_authority_reason)}</HelperText> : null}
-									<button type="button" data-testid="activate-v2-blueprint" disabled={busy || !canActivateAuthority(reviewTarget) || activatedBlueprintId === reviewTarget.blueprint_id} onClick={() => setPendingActivation(reviewTarget)} className="mt-3 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{activatedBlueprintId === reviewTarget.blueprint_id ? "ACTIVE · 8 REQUIRED LANES" : busy ? "Activating…" : "ACTIVATE FOR VIDEO + POSTER LANES"}</button>
-									{!canActivateAuthority(reviewTarget) ? (
-										<div className="mt-3" data-testid="stale-corrective-path">
-											<HelperText className="text-emerald-200/80">Approved copy is immutable and can't be revalidated in place. Generate a fresh version grounded on the current Product Truth, then approve and activate that.</HelperText>
+									{canActivateAuthority(reviewTarget) || activatedBlueprintId === reviewTarget.blueprint_id ? (
+										<>
+											<HelperText className="text-emerald-300/80">Approved copy is immutable. Activation never changes its approved text.</HelperText>
+											<button type="button" data-testid="activate-v2-blueprint" disabled={busy || !canActivateAuthority(reviewTarget) || activatedBlueprintId === reviewTarget.blueprint_id} onClick={() => setPendingActivation(reviewTarget)} className="mt-3 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{activatedBlueprintId === reviewTarget.blueprint_id ? "ACTIVE · 8 REQUIRED LANES" : busy ? "Activating…" : "ACTIVATE FOR VIDEO + POSTER LANES"}</button>
+										</>
+									) : (
+										<div data-testid="stale-corrective-path">
+											<HelperText className="text-amber-200/80">Activation disabled: {authorityReasonLabel(reviewTarget.current_authority_reason)}</HelperText>
+											<HelperText className="mt-2 text-emerald-200/80">Approved copy is immutable and can't be revalidated in place. Generate a fresh version grounded on the current Product Truth, then approve and activate that.</HelperText>
 											<button type="button" data-testid="generate-fresh-copy" onClick={() => { setFormulaId(reviewTarget.formula_id); setSelectedAngleId(""); setAngles([]); setSelectedFactIds([]); setReviewBlueprintId(""); setActiveTab("GENERATOR"); }} className="mt-2 rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100">Generate fresh copy →</button>
 										</div>
-									) : null}
+									)}
 								</div>
 							)}
 				</Section>

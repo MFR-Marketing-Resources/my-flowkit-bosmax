@@ -524,6 +524,9 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		fireEvent.click(await screen.findByTestId("library-activate-bpv2_test"));
 		const fresh = await screen.findByTestId("generate-fresh-copy");
 		expect(fresh).toBeEnabled();
+		// #830 — the stale panel must NOT render a disabled ACTIVATE dead button;
+		// the only forward action is Generate-fresh-copy.
+		expect(screen.queryByTestId("activate-v2-blueprint")).not.toBeInTheDocument();
 		fireEvent.click(fresh);
 		// Routed into the generator (its Product Truth proof renders there).
 		expect(await screen.findByTestId("product-truth-proof")).toBeInTheDocument();
