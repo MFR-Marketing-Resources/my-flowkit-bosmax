@@ -60,6 +60,17 @@ function canActivateAuthority(blueprint: CopyBlueprintV2Record): boolean {
 	return blueprint.current_authority_activation_allowed === true;
 }
 
+// A DRAFT is REVIEWABLE (eligible for the human approval workflow) when the
+// backend projects the current authority as valid — i.e. the product truth is
+// ready and the blueprint's lineage matches it, so only the explicit human
+// approval step is outstanding. A DRAFT whose current authority is NOT valid is
+// BLOCKED (stale/incomplete product truth): it cannot be approved as-is and must
+// be revalidated/regrounded first. This never auto-approves — it only decides
+// whether to route the operator into the (still fully-gated) approval workflow.
+function isDraftReviewable(blueprint: CopyBlueprintV2Record): boolean {
+	return blueprint.status === "DRAFT" && blueprint.current_authority_valid === true;
+}
+
 // Render the backend-projected current-authority reason in operator-friendly form
 // without hiding the underlying authority code.
 function authorityReasonLabel(reason?: string | null): string {
@@ -73,8 +84,25 @@ function authorityReasonLabel(reason?: string | null): string {
 			"This approval's Product Truth lineage is stale versus the current product authority.",
 		EXPLICIT_HUMAN_APPROVAL_REQUIRED: "This blueprint has not been approved yet.",
 		BLUEPRINT_NOT_PRODUCTION_VALID: "This blueprint is not in a production-approved state.",
+		V2_PRODUCT_TRUTH_APPROVAL_REQUIRED: "The product's Product Truth is not approved yet.",
+		V2_PRODUCT_TRUTH_TAXONOMY_DRIFT: "The product's canonical taxonomy drifted from the approved authority.",
+		PRODUCT_IDENTITY_STALE: "The product identity in this copy no longer matches the approved product.",
 	};
 	return friendly[reason] ?? reason;
+}
+
+// A DRAFT's authority reason carries the always-present EXPLICIT_HUMAN_APPROVAL_REQUIRED
+// note plus any genuine blocking codes. When surfacing WHY a draft is blocked, strip
+// the redundant "not approved yet" note so the operator sees the real corrective cause.
+function draftBlockedReason(blueprint: CopyBlueprintV2Record): string {
+	const raw = (blueprint.current_authority_reason ?? "")
+		.split(",")
+		.map((code) => code.trim())
+		.filter((code) => code && code !== "EXPLICIT_HUMAN_APPROVAL_REQUIRED");
+	if (!raw.length) {
+		return "The current Product Truth is not ready for this draft.";
+	}
+	return raw.map((code) => authorityReasonLabel(code)).join(" · ");
 }
 
 function DisabledReasons({
@@ -146,11 +174,15 @@ function BlueprintCard({
 	onRegenerate,
 	busy,
 	allowRegenerate,
+	isReviewTarget,
+	onSelectReview,
 }: {
 	blueprint: CopyBlueprintV2Record;
 	onRegenerate: (stageKey: string) => void;
 	busy: boolean;
 	allowRegenerate: boolean;
+	isReviewTarget: boolean;
+	onSelectReview: () => void;
 }) {
 	const authorityStatus = blueprint.current_authority_status ?? (
 		blueprint.status === "DRAFT" ? "DRAFT" : "STALE_AUTHORITY_LINEAGE"
@@ -170,7 +202,7 @@ function BlueprintCard({
 
 	return (
 		<div
-			className="rounded-xl border border-slate-800 bg-slate-950/70 p-4"
+			className={`rounded-xl border p-4 ${isReviewTarget ? "border-blue-500/50 bg-blue-500/5" : "border-slate-800 bg-slate-950/70"}`}
 			data-testid="v2-blueprint-card"
 		>
 			<div className="flex flex-wrap items-start justify-between gap-3">
@@ -182,11 +214,31 @@ function BlueprintCard({
 						<span className="text-xs text-slate-500">
 							{blueprint.formula_id} · {blueprint.estimated_word_count} words
 						</span>
+						{isReviewTarget ? (
+							<span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[10px] font-bold uppercase text-blue-200" data-testid={`review-target-${blueprint.blueprint_id}`}>
+								Reviewing
+							</span>
+						) : null}
 					</div>
 				</div>
-				<Badge tone={authorityStatus === "CURRENT · PRODUCTION_VALID" || authorityCurrent ? "success" : "warn"}>
-					{authorityStatus}
-				</Badge>
+				<div className="flex items-center gap-2">
+					{/* RULE 3: an operator selects the EXACT blueprint to review; the
+					    approval workflow acts on this selection, never blueprints[0]. */}
+					{!isReviewTarget ? (
+						<button
+							type="button"
+							data-testid={`select-review-${blueprint.blueprint_id}`}
+							disabled={busy}
+							onClick={onSelectReview}
+							className="rounded border border-slate-600 px-2 py-1 text-[10px] font-bold uppercase text-slate-200 hover:bg-slate-800 disabled:opacity-40"
+						>
+							Select for review
+						</button>
+					) : null}
+					<Badge tone={authorityStatus === "CURRENT · PRODUCTION_VALID" || authorityCurrent ? "success" : "warn"}>
+						{authorityStatus}
+					</Badge>
+				</div>
 			</div>
 
 			{blueprint.current_authority_reason ? (
@@ -263,6 +315,14 @@ export default function CopySetRegistryPage() {
 	const [reviewer, setReviewer] = useState("operator");
 	const [approvalChecks, setApprovalChecks] = useState(EMPTY_APPROVAL_CHECKS);
 	const [activatedBlueprintId, setActivatedBlueprintId] = useState("");
+	// RULE 3: the operator acts on the EXACT blueprint they selected — never a
+	// silent blueprints[0] substitution. This holds the explicitly selected review
+	// target, set by: "Review & Approve"/"Revalidate" from the Library, a
+	// blueprint_id deep-link, or a fresh generation.
+	const [reviewBlueprintId, setReviewBlueprintId] = useState("");
+	// RULE 3: a blueprint_id deep-link that cannot be resolved fails VISIBLY here;
+	// it never silently falls back to another blueprint.
+	const [deepLinkError, setDeepLinkError] = useState("");
 	// Task B §4: global activation is an advanced, high-consequence action. Hold the
 	// target blueprint here and require explicit confirmation before calling
 	// activateFormulaBlueprint (which changes the sole V2 authority for all creator
@@ -280,7 +340,16 @@ export default function CopySetRegistryPage() {
 		[angles, selectedAngleId],
 	);
 	const latestBlueprint = blueprints[0] ?? null;
-	const reviewableBlueprint = latestBlueprint?.status !== "PRODUCTION_VALID" ? latestBlueprint : null;
+	// RULE 3: resolve the EXACT selected blueprint. Only when nothing is explicitly
+	// selected (fresh authoring) does this fall back to the newest blueprint.
+	const reviewTarget = useMemo(() => {
+		if (reviewBlueprintId) {
+			const selected = blueprints.find((b) => b.blueprint_id === reviewBlueprintId);
+			if (selected) return selected;
+		}
+		return latestBlueprint;
+	}, [blueprints, reviewBlueprintId, latestBlueprint]);
+	const reviewableBlueprint = reviewTarget && reviewTarget.status !== "PRODUCTION_VALID" ? reviewTarget : null;
 	const approvalReady = Object.values(approvalChecks).every(Boolean);
 	const textAssistReady = textAssistStatus?.configured === true && textAssistStatus.status === "READY";
 	const angleDisabledReasons = [
@@ -328,6 +397,14 @@ export default function CopySetRegistryPage() {
 		}
 		setError("");
 		setSuccess("");
+		setDeepLinkError("");
+		// RULE 4: a product switch clears stale library UI + the prior selection so
+		// the new product's blueprints are never hidden behind a stale filter and no
+		// action can target a previous product's blueprint.
+		setLibrarySearch("");
+		setLibraryAngleFilter("ALL");
+		setLibraryPage(1);
+		setReviewBlueprintId("");
 		void Promise.all([
 			fetchCopyRegisterTruth(selectedProduct.id),
 			listCopyRegisterBlueprints(selectedProduct.id),
@@ -341,15 +418,41 @@ export default function CopySetRegistryPage() {
 			.catch((reason) => setError(errorMessage(reason)));
 	}, [selectedProduct]);
 
+	// RULE 3: resolve a blueprint_id deep-link to the EXACT blueprint — select it
+	// and route into the review workflow — or fail visibly. Never silently ignore
+	// the parameter or substitute another blueprint. Runs once the product's
+	// blueprints have loaded.
+	useEffect(() => {
+		const blueprintId = searchParams.get("blueprint_id");
+		if (!blueprintId || !selectedProduct || !blueprints.length) return;
+		if (reviewBlueprintId === blueprintId) return; // already resolved
+		const found = blueprints.find((b) => b.blueprint_id === blueprintId);
+		if (found) {
+			setDeepLinkError("");
+			setReviewBlueprintId(blueprintId);
+			setActiveTab("GENERATOR");
+		} else {
+			setDeepLinkError(
+				`Blueprint ${blueprintId} was not found for this product. It may have been superseded, or the link points to a different product.`,
+			);
+		}
+	}, [blueprints, searchParams, selectedProduct, reviewBlueprintId]);
+
 	const selectProduct = (product: Product | null) => {
 		setSelectedProduct(product);
 		setSearchParams(product ? { product_id: product.id } : {});
+		setBlueprints([]);
 		setFormulaId("");
 		setSelectedAngleId("");
 		setAngles([]);
 		setSelectedFactIds([]);
 		setApprovalChecks(EMPTY_APPROVAL_CHECKS);
 		setActivatedBlueprintId("");
+		setReviewBlueprintId("");
+		setDeepLinkError("");
+		setLibrarySearch("");
+		setLibraryAngleFilter("ALL");
+		setLibraryPage(1);
 	};
 
 	const handleActivate = async (blueprint: CopyBlueprintV2Record) => {
@@ -381,6 +484,15 @@ export default function CopySetRegistryPage() {
 		} finally {
 			setBusy(false);
 		}
+	};
+
+	// Route the operator to review a specific existing blueprint (RULE 2 + RULE 3):
+	// select that EXACT blueprint and open the Direct V2 Authoring review workflow.
+	// This NEVER approves — the fully-gated human approval panel still applies.
+	const reviewBlueprint = (blueprint: CopyBlueprintV2Record) => {
+		setReviewBlueprintId(blueprint.blueprint_id);
+		setDeepLinkError("");
+		setActiveTab("GENERATOR");
 	};
 
 	const handleGenerateAngles = async () => {
@@ -430,6 +542,8 @@ export default function CopySetRegistryPage() {
 				evidence_fact_ids: selectedFactIds,
 			});
 			setBlueprints((current) => [response.blueprint, ...current.filter((item) => item.blueprint_id !== response.blueprint.blueprint_id)]);
+			// RULE 3: the freshly authored DRAFT becomes the EXPLICIT review target.
+			setReviewBlueprintId(response.blueprint.blueprint_id);
 			setApprovalChecks(EMPTY_APPROVAL_CHECKS);
 			setSuccess(`New copy set ${response.blueprint.blueprint_id} created as DRAFT. Review is still required.`);
 		} catch (reason) {
@@ -439,13 +553,15 @@ export default function CopySetRegistryPage() {
 		}
 	};
 
-	const handleRegenerate = async (stageKey: string) => {
-		if (!reviewableBlueprint) return;
+	const handleRegenerate = async (blueprintId: string, stageKey: string) => {
+		if (!blueprintId) return;
 		setBusy(true);
 		setError("");
 		try {
-			const response = await regenerateFormulaStage(reviewableBlueprint.blueprint_id, stageKey);
+			const response = await regenerateFormulaStage(blueprintId, stageKey);
 			setBlueprints((current) => [response.blueprint, ...current.filter((item) => item.blueprint_id !== response.blueprint.blueprint_id)]);
+			// Keep reviewing the same (now-regenerated) blueprint.
+			setReviewBlueprintId(response.blueprint.blueprint_id);
 			setApprovalChecks(EMPTY_APPROVAL_CHECKS);
 			setSuccess(`Stage regenerated as revision ${response.new_revision}; parent remains immutable.`);
 		} catch (reason) {
@@ -478,6 +594,9 @@ export default function CopySetRegistryPage() {
 				},
 			});
 			setBlueprints((current) => [response.blueprint, ...current.filter((item) => !(item.blueprint_id === response.blueprint.blueprint_id && item.revision === response.blueprint.revision))]);
+			// Keep the approved blueprint as the explicit target so the operator can
+			// proceed to activation on the exact blueprint they just approved.
+			setReviewBlueprintId(response.blueprint.blueprint_id);
 			setApprovalChecks(EMPTY_APPROVAL_CHECKS);
 			setSuccess("Explicit approval recorded. Blueprint is now PRODUCTION_VALID.");
 		} catch (reason) {
@@ -599,6 +718,7 @@ export default function CopySetRegistryPage() {
 			</div>
 
 			{error ? <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100" data-testid="copy-registry-error">{error}</p> : null}
+			{deepLinkError ? <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100" data-testid="copy-registry-deeplink-error">{deepLinkError}</p> : null}
 			{success ? <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100" data-testid="copy-registry-success">{success}</p> : null}
 
 			{/* Section 1: Always Select Product */}
@@ -702,38 +822,59 @@ export default function CopySetRegistryPage() {
 					</Section>
 
 					{/* Section 7: Review & Approve */}
-					{latestBlueprint ? (
-						<Section title="7. Review, approve, and activate" helper="Approved text is immutable. Activation atomically makes this blueprint authoritative for all required lanes.">
+					{reviewTarget ? (
+						<Section title="7. Review, approve, and activate" helper="Approved text is immutable. Select the exact blueprint to review; activation atomically makes it authoritative for all required lanes.">
+							{reviewTarget ? (
+								<p className="mb-2 text-xs text-blue-200/90" data-testid="review-target-indicator">
+									Reviewing blueprint <span className="font-mono">{reviewTarget.blueprint_id}</span> · revision {reviewTarget.revision} · {reviewTarget.status}
+								</p>
+							) : null}
 							<div className="space-y-3">
-								{blueprints.map((item, index) => (
-									<BlueprintCard key={`${item.blueprint_id}:${item.revision}`} blueprint={item} onRegenerate={(stageKey) => void handleRegenerate(stageKey)} busy={busy} allowRegenerate={index === 0} />
+								{blueprints.map((item) => (
+									<BlueprintCard
+										key={`${item.blueprint_id}:${item.revision}`}
+										blueprint={item}
+										onRegenerate={(stageKey) => void handleRegenerate(item.blueprint_id, stageKey)}
+										busy={busy}
+										allowRegenerate={item.blueprint_id === reviewTarget?.blueprint_id}
+										isReviewTarget={item.blueprint_id === reviewTarget?.blueprint_id}
+										onSelectReview={() => setReviewBlueprintId(item.blueprint_id)}
+									/>
 								))}
 							</div>
 							{reviewableBlueprint ? (
-								<div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4" data-testid="v2-approval-panel">
-									<div className="flex items-center gap-2 text-sm font-semibold text-amber-100"><ShieldCheck size={16} />Explicit human approval</div>
-									<FormField label="Reviewer" className="mt-3 max-w-sm"><input className={INPUT_CLASS} value={reviewer} onChange={(event) => setReviewer(event.target.value)} /></FormField>
-									<div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
-										{[
-											["semantic", "I reviewed every authored stage against Product Truth."],
-											["provenance", "Product Truth and evidence lineage match the selected product."],
-											["safety", "Allowed claims and warnings were reviewed; no unsafe claim was added."],
-											["bridge", "Formula order and bridge continuity are coherent."],
-											["duration", "Word count and target-lane duration readiness were reviewed."],
-										].map(([key, label]) => (
-											<label key={key} className="flex cursor-pointer items-start gap-2 rounded border border-slate-800 p-2">
-												<input type="checkbox" data-testid={`approval-check-${key}`} checked={approvalChecks[key as keyof typeof approvalChecks]} onChange={(event) => setApprovalChecks((current) => ({ ...current, [key]: event.target.checked }))} />
-												<span>{label}</span>
-											</label>
-										))}
+								isDraftReviewable(reviewableBlueprint) ? (
+									<div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4" data-testid="v2-approval-panel">
+										<div className="flex items-center gap-2 text-sm font-semibold text-amber-100"><ShieldCheck size={16} />Explicit human approval</div>
+										<FormField label="Reviewer" className="mt-3 max-w-sm"><input className={INPUT_CLASS} data-testid="v2-reviewer-input" value={reviewer} onChange={(event) => setReviewer(event.target.value)} /></FormField>
+										<div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
+											{[
+												["semantic", "I reviewed every authored stage against Product Truth."],
+												["provenance", "Product Truth and evidence lineage match the selected product."],
+												["safety", "Allowed claims and warnings were reviewed; no unsafe claim was added."],
+												["bridge", "Formula order and bridge continuity are coherent."],
+												["duration", "Word count and target-lane duration readiness were reviewed."],
+											].map(([key, label]) => (
+												<label key={key} className="flex cursor-pointer items-start gap-2 rounded border border-slate-800 p-2">
+													<input type="checkbox" data-testid={`approval-check-${key}`} checked={approvalChecks[key as keyof typeof approvalChecks]} onChange={(event) => setApprovalChecks((current) => ({ ...current, [key]: event.target.checked }))} />
+													<span>{label}</span>
+												</label>
+											))}
+										</div>
+										<button type="button" data-testid="approve-v2-blueprint" disabled={busy || !reviewer.trim() || !approvalReady} onClick={() => void handleApprove()} className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40">{busy ? "Approving…" : "Approve → PRODUCTION_VALID"}</button>
 									</div>
-									<button type="button" data-testid="approve-v2-blueprint" disabled={busy || !reviewer.trim() || !approvalReady} onClick={() => void handleApprove()} className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40">{busy ? "Approving…" : "Approve → PRODUCTION_VALID"}</button>
-								</div>
+								) : (
+									<div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4" data-testid="v2-approval-blocked-panel">
+										<div className="flex items-center gap-2 text-sm font-semibold text-amber-100"><ShieldCheck size={16} />Approval blocked</div>
+										<HelperText tone="warn" className="mt-2">This draft cannot be approved as-is: {draftBlockedReason(reviewableBlueprint)}</HelperText>
+										<HelperText className="mt-2 text-amber-200/80">Corrective path: regenerate a stage against the current Product Truth (below), or fix the product's Product Truth, then review again. Approval is never automatic.</HelperText>
+									</div>
+								)
 							) : (
 								<div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
 									<HelperText className="text-emerald-300/80">Approved copy is immutable. Activation never changes its approved text.</HelperText>
-									{!canActivateAuthority(latestBlueprint) ? <HelperText className="mt-2 text-amber-200/80">Activation disabled: {authorityReasonLabel(latestBlueprint.current_authority_reason)}</HelperText> : null}
-									<button type="button" data-testid="activate-v2-blueprint" disabled={busy || !canActivateAuthority(latestBlueprint) || activatedBlueprintId === latestBlueprint.blueprint_id} onClick={() => setPendingActivation(latestBlueprint)} className="mt-3 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{activatedBlueprintId === latestBlueprint.blueprint_id ? "ACTIVE · 8 REQUIRED LANES" : busy ? "Activating…" : "ACTIVATE FOR VIDEO + POSTER LANES"}</button>
+									{!canActivateAuthority(reviewTarget) ? <HelperText className="mt-2 text-amber-200/80">Activation disabled: {authorityReasonLabel(reviewTarget.current_authority_reason)}</HelperText> : null}
+									<button type="button" data-testid="activate-v2-blueprint" disabled={busy || !canActivateAuthority(reviewTarget) || activatedBlueprintId === reviewTarget.blueprint_id} onClick={() => setPendingActivation(reviewTarget)} className="mt-3 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{activatedBlueprintId === reviewTarget.blueprint_id ? "ACTIVE · 8 REQUIRED LANES" : busy ? "Activating…" : "ACTIVATE FOR VIDEO + POSTER LANES"}</button>
 								</div>
 							)}
 						</Section>
@@ -811,6 +952,7 @@ export default function CopySetRegistryPage() {
 								// production authority.
 								const canActivate = canActivateAuthority(bp);
 								const isDraft = bp.status === "DRAFT";
+								const draftReviewable = isDraftReviewable(bp);
 								// Historically approved (PRODUCTION_VALID / V2_APPROVED) but no longer
 								// activatable against the current Product Truth => stale, needs revalidation.
 								const isStale = !canActivate && !isDraft;
@@ -820,19 +962,37 @@ export default function CopySetRegistryPage() {
 										: { tone: "warn", label: "ACTIVE · STALE — REVALIDATION REQUIRED" }
 									: canActivate
 										? { tone: "info", label: bp.status }
-										: isDraft
-											? { tone: "warn", label: bp.status }
-											: { tone: "warn", label: "STALE — REVALIDATION REQUIRED" };
-								const activateDisabled = busy || isCurrent || !canActivate;
-								const buttonLabel = isCurrent
-									? canActivate
-										? "Active in Creator"
-										: "Revalidation Required"
-									: canActivate
-										? "Activate Authority"
-										: isDraft
-											? "Approval Required"
-											: "Revalidation Required";
+										: draftReviewable
+											? { tone: "info", label: "DRAFT · REVIEW REQUIRED" }
+											: isDraft
+												? { tone: "warn", label: "DRAFT · APPROVAL BLOCKED" }
+												: { tone: "warn", label: "STALE — REVALIDATION REQUIRED" };
+								// The single primary action for this card. RULE 2: a reviewable DRAFT
+								// routes into the (fully-gated) human approval workflow; a blocked
+								// DRAFT is non-actionable with a truthful reason; activation is offered
+								// only when current authority allows it. Never a dead button that looks
+								// actionable but does nothing.
+								let cardLabel: string;
+								let cardDisabled: boolean;
+								let onCardAction: (() => void) | null = null;
+								if (isCurrent && canActivate) {
+									cardLabel = "Active in Creator";
+									cardDisabled = true;
+								} else if (canActivate) {
+									cardLabel = "Activate Authority";
+									cardDisabled = busy;
+									onCardAction = () => setPendingActivation(bp);
+								} else if (draftReviewable) {
+									cardLabel = "Review & Approve";
+									cardDisabled = busy;
+									onCardAction = () => reviewBlueprint(bp);
+								} else if (isDraft) {
+									cardLabel = "Approval Blocked";
+									cardDisabled = true;
+								} else {
+									cardLabel = "Revalidation Required";
+									cardDisabled = true;
+								}
 
 								return (
 									<div
@@ -843,7 +1003,9 @@ export default function CopySetRegistryPage() {
 												? "border-emerald-500/50 bg-emerald-500/10"
 												: isStale
 													? "border-amber-500/40 bg-amber-500/5"
-													: "border-slate-800 bg-slate-950/70"
+													: draftReviewable
+														? "border-blue-500/40 bg-blue-500/5"
+														: "border-slate-800 bg-slate-950/70"
 										}`}
 									>
 										<div className="space-y-3 text-xs">
@@ -897,10 +1059,36 @@ export default function CopySetRegistryPage() {
 													<button
 														type="button"
 														data-testid={`library-revalidate-${bp.blueprint_id}`}
-														onClick={() => setActiveTab("GENERATOR")}
-														className="mt-2 rounded border border-amber-400/40 px-2 py-1 text-[10px] font-bold uppercase text-amber-100 hover:bg-amber-500/15"
+														disabled={busy}
+														onClick={() => reviewBlueprint(bp)}
+														className="mt-2 rounded border border-amber-400/40 px-2 py-1 text-[10px] font-bold uppercase text-amber-100 hover:bg-amber-500/15 disabled:opacity-40"
 													>
 														Revalidate in Direct V2 Authoring
+													</button>
+												</div>
+											) : null}
+
+											{/* Truthful blocked-draft surface — cannot be approved as-is; give
+											    the authoritative reason and a corrective path (RULE 2). */}
+											{isDraft && !draftReviewable ? (
+												<div
+													className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2"
+													data-testid={`library-blocked-${bp.blueprint_id}`}
+												>
+													<p className="text-[11px] font-semibold text-amber-100">
+														Approval blocked — cannot be approved as-is.
+													</p>
+													<p className="mt-1 text-[10px] text-amber-200/80">
+														{draftBlockedReason(bp)}
+													</p>
+													<button
+														type="button"
+														data-testid={`library-fix-draft-${bp.blueprint_id}`}
+														disabled={busy}
+														onClick={() => reviewBlueprint(bp)}
+														className="mt-2 rounded border border-amber-400/40 px-2 py-1 text-[10px] font-bold uppercase text-amber-100 hover:bg-amber-500/15 disabled:opacity-40"
+													>
+														Open to revalidate / regenerate
 													</button>
 												</div>
 											) : null}
@@ -915,21 +1103,23 @@ export default function CopySetRegistryPage() {
 											<button
 												type="button"
 												data-testid={`library-activate-${bp.blueprint_id}`}
-												disabled={activateDisabled}
-												aria-disabled={activateDisabled}
+												disabled={cardDisabled}
+												aria-disabled={cardDisabled}
 												onClick={() => {
-													if (activateDisabled) return;
-													setPendingActivation(bp);
+													if (cardDisabled || !onCardAction) return;
+													onCardAction();
 												}}
 												className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${
 													isCurrent && canActivate
 														? "bg-emerald-500/20 text-emerald-300"
-														: activateDisabled
+														: cardDisabled
 															? "bg-slate-800 text-slate-500 cursor-not-allowed"
-															: "bg-blue-600 text-white hover:bg-blue-500"
+															: draftReviewable
+																? "bg-amber-500 text-slate-950 hover:bg-amber-400"
+																: "bg-blue-600 text-white hover:bg-blue-500"
 												}`}
 											>
-												{buttonLabel}
+												{cardLabel}
 											</button>
 										</div>
 									</div>
