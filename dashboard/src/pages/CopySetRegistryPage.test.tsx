@@ -515,6 +515,20 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		expect(mockedActivate).not.toHaveBeenCalled();
 	});
 
+	// A stale approved blueprint is never a dead end — it offers a Generate-fresh-copy
+	// corrective path (approved text is immutable, so it can only be replaced).
+	it("stale approved offers a Generate fresh copy path into the generator", async () => {
+		mockedList.mockResolvedValue({ product_id: "p1", items: [staleHistoricalBlueprint()], activation: noActivation() });
+		renderPage();
+		await screen.findByTestId("copy-library-view");
+		fireEvent.click(await screen.findByTestId("library-activate-bpv2_test"));
+		const fresh = await screen.findByTestId("generate-fresh-copy");
+		expect(fresh).toBeEnabled();
+		fireEvent.click(fresh);
+		// Routed into the generator (its Product Truth proof renders there).
+		expect(await screen.findByTestId("product-truth-proof")).toBeInTheDocument();
+	});
+
 	// TEST 2 — a stale historical V2_APPROVED blueprint is likewise non-activatable.
 	it("TEST 2 — stale historical V2_APPROVED also cannot be activated", async () => {
 		mockedList.mockResolvedValue({
@@ -571,8 +585,10 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		expect(card).toHaveTextContent("ACTIVE");
 		expect(card).not.toHaveTextContent("STALE");
 		const activate = screen.getByTestId("library-activate-bpv2_test");
-		expect(activate).toBeDisabled();
-		expect(activate).toHaveTextContent("Active in Creator");
+		// Active + current is openable (view the live copy) — never a dead button — but
+		// clicking it opens the review panel, never a redundant activation.
+		expect(activate).toBeEnabled();
+		expect(activate).toHaveTextContent("Active — view");
 		expect(screen.queryByTestId("library-stale-bpv2_test")).not.toBeInTheDocument();
 		fireEvent.click(activate);
 		expect(mockedActivate).not.toHaveBeenCalled();
