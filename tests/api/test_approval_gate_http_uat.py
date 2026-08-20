@@ -10,12 +10,12 @@ the FlowClient runs disconnected/mock.
 
 Proves the whole contract directly:
 
-    NO-APPROVAL           -> BLOCK   (DISPATCH_NOT_APPROVED)     [video + IMG]
-    APPROVED-EXACT        -> PASS    (SUBMITTED)
+    REFERENCE ROUTE       -> BLOCK   (before provider approval)
+    NO-APPROVAL           -> BLOCK   (DISPATCH_NOT_APPROVED)     [IMG]
     CHANGED-PROMPT        -> BLOCK
     CHANGED-SETTING       -> BLOCK
     STALE (invalidated)   -> BLOCK
-    MANIFEST (unapproved) -> BLOCK ; (approved) -> PASS
+    MANIFEST (any state)  -> BLOCK   (reference route not proven)
     PROVIDER BACKSTOP     -> unauthorised video _send is refused, never reaching
                              the transport, even if a lane forgot the gate.
 
@@ -92,14 +92,28 @@ async def _dispatch_video(prompt: str, **ov) -> dict:
     return await make_video.start_generate(**kw)
 
 
+def _assert_reference_route_blocked(res: dict):
+    assert res["status"] == "REJECTED"
+    assert res["error"] == make_video.ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL
+    receipt = res["routing_receipt"]
+    assert receipt["logical_mode"] == "F2V"
+    assert receipt["has_reference"] is True
+    assert receipt["reference_uploaded"] is True
+    assert receipt["reference_mode_authorized"] is False
+    assert receipt["selected_execution_route"] == "BLOCKED_REFERENCE_ROUTE"
+    assert receipt["TEXT_ONLY_TOOL_ALLOWED"] is False
+    assert receipt["approval_allowed"] is False
+
+
 # --------------------------------------------------------------------------- #
 # Single-dispatch matrix at the real boundary
 # --------------------------------------------------------------------------- #
 
 async def test_uat_no_approval_blocks_video():
     res = await _dispatch_video("UAT_noapproval a clean video prompt")
-    assert res["status"] == "REJECTED"
-    assert res["error"] == "DISPATCH_NOT_APPROVED"
+    # The reference route is blocked even earlier than the local prompt
+    # approval gate: no agent permission can be approved for an unproven route.
+    _assert_reference_route_blocked(res)
 
 
 async def test_uat_no_approval_blocks_img():
@@ -112,19 +126,17 @@ async def test_uat_no_approval_blocks_img():
     assert res["error"] == "DISPATCH_NOT_APPROVED"
 
 
-async def test_uat_approved_exact_passes():
+async def test_uat_approved_exact_still_blocks_unproven_reference_route():
     prompt = "UAT_exact an approved clean video prompt"
     await _review_video(prompt)
     res = await _dispatch_video(prompt)
-    await asyncio.sleep(0)
-    assert res["status"] == "SUBMITTED"
+    _assert_reference_route_blocked(res)
 
 
 async def test_uat_changed_prompt_blocks():
     await _review_video("UAT_cp approved baseline video prompt")
     res = await _dispatch_video("UAT_cp a DIFFERENT prompt never approved")
-    assert res["status"] == "REJECTED"
-    assert res["error"] == "DISPATCH_NOT_APPROVED"
+    _assert_reference_route_blocked(res)
 
 
 async def test_uat_changed_setting_blocks():
@@ -167,18 +179,18 @@ def test_uat_manifest_unapproved_blocks_then_approved_passes():
             manifest_id=mid,
         )
 
-    # Manifest created but NOT approved -> dispatch by manifest_id BLOCKS.
+    # Manifest created but NOT approved -> the reference route blocks before
+    # dispatch approval can be considered.
     eas._DISPATCH_AUTH.set(None)
     blocked = asyncio.get_event_loop().run_until_complete(_fire())
-    assert blocked["status"] == "REJECTED"
-    assert blocked["error"] == "DISPATCH_NOT_APPROVED"
+    _assert_reference_route_blocked(blocked)
 
     # Human approves the manifest over HTTP -> the exact item resolves by hash.
     assert client.post(
         f"/api/execution-approval/manifest/{mid}/approve", json={"approved_by": "uat"}
     ).status_code == 200
-    ok = asyncio.get_event_loop().run_until_complete(_fire())
-    assert ok["status"] == "SUBMITTED"
+    still_blocked = asyncio.get_event_loop().run_until_complete(_fire())
+    _assert_reference_route_blocked(still_blocked)
 
 
 # --------------------------------------------------------------------------- #

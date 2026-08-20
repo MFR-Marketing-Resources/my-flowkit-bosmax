@@ -333,7 +333,8 @@ async def test_start_generate_blocks_unapproved_video_when_enforced(monkeypatch)
         aspect="9:16", num_videos=1, model="Veo 3.1 Lite", duration_s=8,
     )
     assert result["status"] == "REJECTED"
-    assert result["error"] == "DISPATCH_NOT_APPROVED"
+    assert result["error"] == make_video.ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL
+    assert result["routing_receipt"]["TEXT_ONLY_TOOL_ALLOWED"] is False
 
 
 async def test_start_generate_img_blocks_unapproved_when_enforced(monkeypatch):

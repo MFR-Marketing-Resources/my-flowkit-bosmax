@@ -1692,13 +1692,20 @@ async def generate(body: GenerateRequest):
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)
         error = result.get("error") or "rejected"
+        content = {
+            "detail": result.get("detail") or error,
+            "error": error,
+            "active_job": result.get("active_job"),
+        }
+        if result.get("routing_receipt") is not None:
+            # Keep the provider-free routing proof visible to the operator. In
+            # particular, a Faceless reference request must show that it was
+            # blocked before provider approval rather than silently entering the
+            # text-only agent lane.
+            content["routing_receipt"] = result["routing_receipt"]
         return JSONResponse(
             status_code=409,
-            content={
-                "detail": error,
-                "error": error,
-                "active_job": result.get("active_job"),
-            },
+            content=content,
         )
     if v2_resolution is not None and v2_resolution.v2_enabled:
         result["copy_architecture_v2"] = v2_resolution.to_metadata(

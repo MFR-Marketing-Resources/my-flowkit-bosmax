@@ -172,6 +172,47 @@ def test_generate_busy_response_preserves_error_and_exposes_active_job(monkeypat
     }
 
 
+def test_generate_reference_rejection_exposes_routing_receipt(monkeypatch):
+    class _C:
+        connected = True
+
+        async def get_credits(self):
+            return {"data": {"userPaygateTier": "PAYGATE_TIER_ONE"}}
+
+    receipt = {
+        "logical_mode": "F2V",
+        "selected_execution_route": "BLOCKED_REFERENCE_ROUTE",
+        "text_only_allowed": False,
+        "TEXT_ONLY_TOOL_ALLOWED": False,
+        "reference_media_ids": ["ref-1"],
+    }
+
+    async def fake_start_generate(*args, **kwargs):
+        return {
+            "status": "REJECTED",
+            "error": "ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL",
+            "detail": "blocked before provider approval",
+            "routing_receipt": receipt,
+        }
+
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _C())
+    from agent.services import make_video as mv
+    from agent.services import copy_execution_resolver as cer
+    monkeypatch.setattr(mv, "start_generate", fake_start_generate)
+
+    async def fake_resolve(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(cer, "resolve_persisted_copy_execution_binding", fake_resolve)
+
+    response = _run(flow.generate(flow.GenerateRequest(mode="T2V", prompt="safe prompt")))
+    assert response.status_code == 409
+    payload = json.loads(response.body)
+    assert payload["error"] == "ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL"
+    assert payload["detail"] == "blocked before provider approval"
+    assert payload["routing_receipt"] == receipt
+
+
 def test_generate_blocks_stale_creator_byline_package_before_provider(monkeypatch):
     calls = {"start_generate": 0}
 
