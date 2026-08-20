@@ -1734,6 +1734,13 @@ domains:
       - tests/unit/test_storyboard_landbank_v3_round1_factory.py
       - tests/unit/test_storyboard_landbank_v3_round2_copy_register.py
       - tests/unit/test_storyboard_landbank_v3_validators.py
+      # Additive Reporting/database maintenance console over the same canonical
+      # V3 Master Storyboard tables; no generation or production authority change.
+      - agent/services/storyboard_landbank_v3_maintenance.py
+      - dashboard/src/api/copywritingLandbankMaintenance.ts
+      - dashboard/src/pages/CopywritingLandbankDatabasePage.tsx
+      - dashboard/src/pages/CopywritingLandbankDatabasePage.test.tsx
+      - tests/unit/test_storyboard_landbank_v3_maintenance.py
       # Macro Round 3 production integration: V3 approved supply -> deterministic
       # V2 materialization + carry-forward link -> production copy supply manifest
       # -> P6 per-item selection + append-only usage ledger.  Adds no parallel

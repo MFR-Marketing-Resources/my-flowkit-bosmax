@@ -21,10 +21,14 @@ from agent.services.storyboard_landbank_v3_factory import (
 )
 from agent.services.storyboard_landbank_v3_materializer import MaterializationError
 from agent.services.storyboard_landbank_v3_round2 import round2_service
+from agent.services.storyboard_landbank_v3_maintenance import (
+    V3CopywritingLandbankMaintenanceService,
+)
 
 
 router = APIRouter(prefix="/storyboard-landbank/v3", tags=["storyboard-landbank-v3"])
 service = V3CopyFactoryService()
+maintenance_service = V3CopywritingLandbankMaintenanceService(factory=service)
 
 
 def _error(exc: V3FactoryError) -> HTTPException:
@@ -592,6 +596,104 @@ async def get_v3_copy_register_landbank(
     # Read-only enrichment: report truthful V2 materialization status per
     # projection.  Opening the landbank NEVER materializes and NEVER approves.
     return await supply_service.enrich_landbank_payload(payload)
+
+
+@router.get("/copy-register/maintenance")
+async def get_v3_copy_register_maintenance(
+    product_id: str | None = None,
+    status: str | None = None,
+    formula_id: str | None = None,
+    angle_id: str | None = None,
+    search: str | None = None,
+    production_ready: bool | None = None,
+    stale: bool | None = None,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    """Authoritative all-product Reporting view over exact V3 Master revisions."""
+
+    try:
+        return await maintenance_service.list_records(
+            product_id=product_id,
+            status=status,
+            formula_id=formula_id,
+            angle_id=angle_id,
+            search=search,
+            production_ready=production_ready,
+            stale=stale,
+            limit=limit,
+            offset=offset,
+        )
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.get("/copy-register/maintenance/{master_id}")
+async def get_v3_copy_register_maintenance_detail(
+    master_id: str,
+    revision: int = Query(..., ge=1),
+):
+    """Return one exact Master Storyboard revision; never silently resolve latest."""
+
+    try:
+        return await maintenance_service.get_detail(master_id, revision)
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/copy-register/maintenance/{master_id}/revisions", status_code=201)
+async def create_v3_copy_register_maintenance_revision(
+    master_id: str,
+    request: Request,
+    payload: dict[str, Any],
+):
+    """Save stage text as a new DRAFT revision with optimistic concurrency."""
+
+    try:
+        actor_id, request_id, _source = _meta(request, payload)
+        raw_source_revision = payload.get("source_revision")
+        if raw_source_revision is None:
+            raw_source_revision = payload.get("expected_revision")
+        if raw_source_revision is None:
+            raise V3FactoryError(
+                "SOURCE_REVISION_REQUIRED",
+                "source_revision is required for a safe maintenance save.",
+                status_code=422,
+            )
+        return await maintenance_service.create_manual_revision(
+            master_id,
+            source_revision=int(raw_source_revision),
+            stages=payload.get("stages") or [],
+            actor_id=actor_id,
+            request_id=request_id,
+            reason=str(payload.get("reason") or "").strip() or None,
+        )
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
+
+
+@router.delete("/copy-register/maintenance/{master_id}/{revision}")
+async def delete_v3_copy_register_maintenance_draft(
+    master_id: str,
+    revision: int,
+    request: Request,
+):
+    """Delete only an unreferenced exact DRAFT Master revision."""
+
+    try:
+        actor_id, request_id, _source = _meta(request, {})
+        return {
+            "deleted": await maintenance_service.delete_draft(
+                master_id,
+                revision,
+                actor_id=actor_id,
+                request_id=request_id,
+            ),
+            "provider_calls": 0,
+            "mutations": 1,
+        }
+    except V3FactoryError as exc:
+        raise _error(exc) from exc
 
 
 @router.post("/copy-register/materialize")

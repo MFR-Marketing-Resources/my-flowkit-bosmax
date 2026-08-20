@@ -202,6 +202,12 @@ describe("Copywriting Landbank operator wizard", () => {
 
 	afterEach(() => cleanup());
 
+	it("opens the Reporting Landbank Database without changing the generation workflow", async () => {
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=SETUP");
+		fireEvent.click(await screen.findByTestId("v3-open-landbank-database"));
+		expect(mockNavigate).toHaveBeenCalledWith("/reporting/copywriting-landbank?product_id=p1");
+	});
+
 	// A + J: Setup exposes only business fields; technical settings live under Advanced.
 	it("shows only business fields in Setup and keeps recipe id / WPS under Advanced", async () => {
 		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=SETUP");

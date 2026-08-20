@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, CheckCircle2, ChevronRight, Film, PencilLine, Sparkles, Wand2 } from "lucide-react";
+import { ArrowRight, BookOpen, CheckCircle2, ChevronRight, Database, Film, PencilLine, Sparkles, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -786,7 +786,7 @@ export default function StoryboardLandbankV3Page() {
 			<header className="border-b border-slate-800 pb-5">
 				<div className="flex items-center gap-2 text-violet-300"><Sparkles size={18} /><span className="text-[10px] font-bold uppercase tracking-[0.2em]">Copy supply</span></div>
 				<h1 className="mt-1 text-2xl font-bold text-slate-100">Copywriting Landbank</h1>
-				<p className="mt-1 text-sm text-slate-400" data-testid="v3-product-name">{selectedProduct ? productName(selectedProduct) : "Select a product to begin."}</p>
+				<div className="flex flex-wrap items-center justify-between gap-3"><p className="mt-1 text-sm text-slate-400" data-testid="v3-product-name">{selectedProduct ? productName(selectedProduct) : "Select a product to begin."}</p><button type="button" className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-300 hover:border-slate-500 hover:text-white" onClick={() => navigate(selectedProduct ? `/reporting/copywriting-landbank?product_id=${encodeURIComponent(selectedProduct.id)}` : "/reporting/copywriting-landbank")} data-testid="v3-open-landbank-database"><Database size={14} />Open Landbank Database</button></div>
 			</header>
 
 			{error ? <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100" data-testid="v3-error">{error}</p> : null}
