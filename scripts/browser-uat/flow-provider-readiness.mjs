@@ -418,6 +418,12 @@ export async function collectFlowProviderReadiness(config = {}) {
 		transportProjectId === projectId &&
 		projectUrlMatches(statusFlowUrl, projectTarget?.url);
 	const flowTransportConnected = status.connected === true;
+	const observedExtensionBuild = extensionIdentityProof
+		? asString(status.extension_build) ||
+			asString(status.background_build_id) ||
+			asString(smoke.background_build_id) ||
+			null
+		: null;
 	const flowTransportBound =
 		browserReady &&
 		extensionLoaded &&
@@ -467,11 +473,7 @@ export async function collectFlowProviderReadiness(config = {}) {
 		extension_loaded: extensionLoaded,
 		extension_id: extensionId,
 		extension_version: asString(status.extension_version) || null,
-		extension_build:
-			asString(status.extension_build) ||
-			asString(status.background_build_id) ||
-			asString(smoke.background_build_id) ||
-			null,
+		extension_build: observedExtensionBuild,
 		extension_build_expected: expectedBuild,
 		extension_service_worker_alive: serviceWorkers.length > 0,
 		extension_service_worker_target_count: serviceWorkers.length,
