@@ -78,6 +78,14 @@ const _API_KEY = "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY";
 const EXTENSION_PROTOCOL_VERSION = "FLOWKIT_EXTENSION_V1";
 const FLOW_DOM_PROTOCOL_VERSION = "FLOWKIT_DOM_V1";
 const FLOW_PROJECT_URL_STORAGE_KEY = "flow_project_url";
+const EXTENSION_SESSION_ID = (() => {
+	try {
+		if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+	} catch (_err) {
+		// The fallback is only a process-local correlation value; it is not auth.
+	}
+	return `flowkit-sw-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+})();
 
 let ws = null;
 let flowKey = null;
@@ -6499,6 +6507,7 @@ function backgroundCanonicalModeOf(job) {
 function buildBackgroundStatusResponse() {
 	const buildId = BUILD_ID;
 	const runtimeReady = true;
+	const manifest = chrome.runtime.getManifest();
 	return {
 		connected: ws?.readyState === WebSocket.OPEN,
 		agentConnected: ws?.readyState === WebSocket.OPEN,
@@ -6530,6 +6539,12 @@ function buildBackgroundStatusResponse() {
 		build_stamped: Boolean(BOSMAX_BUILD_PROOF.stamped),
 		build_dirty: BOSMAX_BUILD_PROOF.dirty ?? null,
 		build_branch: BOSMAX_BUILD_PROOF.branch ?? null,
+		extension_id: chrome.runtime.id,
+		extension_name: manifest.name || null,
+		extension_version: manifest.version || null,
+		extension_session_id: EXTENSION_SESSION_ID,
+		extension_build: buildId,
+		extension_root_url: chrome.runtime.getURL(""),
 		runtimeReady,
 		runtime_ready: runtimeReady,
 		build_match: true,
