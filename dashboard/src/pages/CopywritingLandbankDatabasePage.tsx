@@ -21,12 +21,23 @@ import {
 	type MaintenanceListResponse,
 	type MaintenanceRecord,
 	type MaintenanceStage,
+	type MaintenanceSortBy,
+	type MaintenanceSortDir,
 } from "../api/copywritingLandbankMaintenance";
 import { reviewV3Entity } from "../api/storyboardLandbankV3Round2";
 import { Badge, ConfirmActionModal, Section, TechnicalDetails } from "../components/ui";
 import type { BadgeTone } from "../components/ui";
 
 const PAGE_SIZE = 25;
+const DEFAULT_SORT_BY: MaintenanceSortBy = "created_at";
+const DEFAULT_SORT_DIR: MaintenanceSortDir = "desc";
+const SORT_BY_OPTIONS: Array<{ value: MaintenanceSortBy; label: string }> = [
+	{ value: "created_at", label: "Created" },
+	{ value: "product_name", label: "Product name" },
+	{ value: "status", label: "Status" },
+	{ value: "formula", label: "Formula" },
+	{ value: "revision", label: "Revision" },
+];
 const INPUT_CLASS = "w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500";
 const BUTTON_CLASS = "inline-flex items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40";
 
@@ -88,6 +99,14 @@ function productWorkflowPath(productId: string) {
 	return productId ? `/creative/storyboard-landbank-v3?product_id=${encodeURIComponent(productId)}` : "/creative/storyboard-landbank-v3";
 }
 
+function isSortBy(value: string): value is MaintenanceSortBy {
+	return SORT_BY_OPTIONS.some((option) => option.value === value);
+}
+
+function isSortDir(value: string): value is MaintenanceSortDir {
+	return value === "asc" || value === "desc";
+}
+
 export default function CopywritingLandbankDatabasePage() {
 	const navigate = useNavigate();
 	const [searchParams, setSearchParams] = useSearchParams();
@@ -98,6 +117,10 @@ export default function CopywritingLandbankDatabasePage() {
 	const search = searchParams.get("search") || "";
 	const productionFilter = searchParams.get("production_ready") || "";
 	const staleFilter = searchParams.get("stale") || "";
+	const rawSortBy = searchParams.get("sort_by") || "";
+	const rawSortDir = searchParams.get("sort_dir") || "";
+	const sortBy: MaintenanceSortBy = isSortBy(rawSortBy) ? rawSortBy : DEFAULT_SORT_BY;
+	const sortDir: MaintenanceSortDir = isSortDir(rawSortDir) ? rawSortDir : DEFAULT_SORT_DIR;
 	const offset = Math.max(0, Number(searchParams.get("offset") || 0));
 	const masterId = searchParams.get("master_id") || "";
 	const revision = Number(searchParams.get("revision") || 0);
@@ -131,6 +154,8 @@ export default function CopywritingLandbankDatabasePage() {
 			search: search || undefined,
 			production_ready: productionFilter === "" ? undefined : productionFilter === "true",
 			stale: staleFilter === "" ? undefined : staleFilter === "true",
+			sort_by: sortBy,
+			sort_dir: sortDir,
 			limit: PAGE_SIZE,
 			offset,
 		})
@@ -146,7 +171,7 @@ export default function CopywritingLandbankDatabasePage() {
 		return () => {
 			active = false;
 		};
-	}, [productId, status, formulaId, angleId, search, productionFilter, staleFilter, offset, reloadToken]);
+	}, [productId, status, formulaId, angleId, search, productionFilter, staleFilter, sortBy, sortDir, offset, reloadToken]);
 
 	useEffect(() => {
 		if (!masterId || !Number.isInteger(revision) || revision < 1) {
@@ -187,6 +212,31 @@ export default function CopywritingLandbankDatabasePage() {
 	function updateFilter(key: string, value: string) {
 		updateQuery({ [key]: value || null, offset: 0, master_id: null, revision: null });
 		setSuccess("");
+	}
+
+	function clearFilters() {
+		setSearchDraft("");
+		setDetail(null);
+		setEditing(false);
+		updateQuery({
+			product_id: null,
+			status: null,
+			formula_id: null,
+			angle_id: null,
+			production_ready: null,
+			stale: null,
+			search: null,
+			offset: 0,
+			master_id: null,
+			revision: null,
+			sort_by: DEFAULT_SORT_BY,
+			sort_dir: DEFAULT_SORT_DIR,
+		});
+		setSuccess("");
+	}
+
+	function viewProductRecords(nextProductId: string) {
+		updateFilter("product_id", nextProductId);
 	}
 
 	function openDetail(item: MaintenanceRecord) {
@@ -278,6 +328,21 @@ export default function CopywritingLandbankDatabasePage() {
 				</div>
 			</header>
 
+			<Section title="Filter and sort records" helper="Every control is URL-backed and applied by the authoritative Reporting API before pagination.">
+				<div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
+					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 md:col-span-3"><span>Search</span><span className="relative block"><Search size={14} className="absolute left-3 top-2.5 text-slate-600" /><input className={`${INPUT_CLASS} pl-9`} value={searchDraft} onChange={(event) => { setSearchDraft(event.target.value); updateFilter("search", event.target.value); }} placeholder="Search product, Master ID, formula, angle, storyline, or authored text" data-testid="maintenance-search" /></span></label>
+					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Product</span><select className={INPUT_CLASS} value={productId} onChange={(event) => updateFilter("product_id", event.target.value)} data-testid="maintenance-product-filter"><option value="">All products</option>{data?.product_coverage.map((product) => <option key={product.product_id} value={product.product_id}>{product.product_name}</option>)}</select></label>
+					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Status</span><select className={INPUT_CLASS} value={status} onChange={(event) => updateFilter("status", event.target.value)} data-testid="maintenance-status-filter"><option value="">All statuses</option><option value="DRAFT">DRAFT</option><option value="REVIEW_REQUIRED">REVIEW_REQUIRED</option><option value="VALIDATED">VALIDATED</option><option value="APPROVED">APPROVED</option><option value="REJECTED">REJECTED</option><option value="BLOCKED">BLOCKED</option></select></label>
+					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Formula</span><select className={INPUT_CLASS} value={formulaId} onChange={(event) => updateFilter("formula_id", event.target.value)} data-testid="maintenance-formula-filter"><option value="">All formulas</option>{data?.filter_options.formulas.map((formula) => <option key={formula} value={formula}>{formula}</option>)}</select></label>
+					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Angle</span><select className={INPUT_CLASS} value={angleId} onChange={(event) => updateFilter("angle_id", event.target.value)} data-testid="maintenance-angle-filter"><option value="">All angles</option>{data?.filter_options.angles.map((angle) => <option key={angle} value={angle}>{angle}</option>)}</select></label>
+					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Production readiness</span><select className={INPUT_CLASS} value={productionFilter} onChange={(event) => updateFilter("production_ready", event.target.value)} data-testid="maintenance-production-filter"><option value="">All readiness</option><option value="true">Production ready</option><option value="false">Not production ready</option></select></label>
+					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Truth state</span><select className={INPUT_CLASS} value={staleFilter} onChange={(event) => updateFilter("stale", event.target.value)} data-testid="maintenance-stale-filter"><option value="">All truth states</option><option value="true">Stale / revalidation</option><option value="false">Current</option></select></label>
+					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Sort by</span><select className={INPUT_CLASS} value={sortBy} onChange={(event) => updateQuery({ sort_by: event.target.value, offset: 0, master_id: null, revision: null })} data-testid="maintenance-sort-by">{SORT_BY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Sort direction</span><select className={INPUT_CLASS} value={sortDir} onChange={(event) => updateQuery({ sort_dir: event.target.value, offset: 0, master_id: null, revision: null })} data-testid="maintenance-sort-direction"><option value="desc">Descending</option><option value="asc">Ascending</option></select></label>
+					<div className="flex items-end"><button type="button" className={`${BUTTON_CLASS} w-full`} onClick={clearFilters} data-testid="maintenance-clear-filters"><X size={14} />Clear Filters</button></div>
+				</div>
+			</Section>
+
 			{error ? <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100" data-testid="maintenance-error">{error}</p> : null}
 			{success ? <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100" data-testid="maintenance-success">{success}</p> : null}
 
@@ -301,29 +366,20 @@ export default function CopywritingLandbankDatabasePage() {
 			<Section title="Product coverage" helper="All products are included, including products with no canonical V3 Master copy yet.">
 				<div className="overflow-x-auto">
 					<table className="w-full min-w-[900px] text-left text-xs" data-testid="maintenance-product-coverage">
-						<thead className="border-b border-slate-800 text-[10px] uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-3 py-2">Product</th><th className="px-3 py-2">Copy sets</th><th className="px-3 py-2">Angles</th><th className="px-3 py-2">Hooks</th><th className="px-3 py-2">Body/Core</th><th className="px-3 py-2">CTA</th><th className="px-3 py-2">Approved</th><th className="px-3 py-2">Ready</th><th className="px-3 py-2">Stale</th></tr></thead>
-						<tbody>{data?.product_coverage.map((product) => <tr key={product.product_id} className="border-b border-slate-900 hover:bg-slate-800/40"><td className="px-3 py-3"><button type="button" className="text-left font-semibold text-cyan-200 hover:text-cyan-100" onClick={() => updateFilter("product_id", product.product_id)}>{product.product_name}<span className="mt-0.5 block font-mono text-[10px] text-slate-600">{product.product_id}</span></button></td><td className="px-3 py-3 text-slate-300">{product.copy_sets}</td><td className="px-3 py-3 text-slate-300">{product.angles}</td><td className="px-3 py-3 text-slate-300">{product.hooks}</td><td className="px-3 py-3 text-slate-300">{product.body_core}</td><td className="px-3 py-3 text-slate-300">{product.cta}</td><td className="px-3 py-3"><Badge tone={product.approved ? "success" : "neutral"}>{product.approved}</Badge></td><td className="px-3 py-3"><Badge tone={product.production_ready ? "success" : "neutral"}>{product.production_ready}</Badge></td><td className="px-3 py-3"><Badge tone={product.stale ? "warn" : "neutral"}>{product.stale}</Badge></td></tr>)}</tbody>
+						<thead className="border-b border-slate-800 text-[10px] uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-3 py-2">Product</th><th className="px-3 py-2">Copy sets</th><th className="px-3 py-2">Angles</th><th className="px-3 py-2">Hooks</th><th className="px-3 py-2">Body/Core</th><th className="px-3 py-2">CTA</th><th className="px-3 py-2">Approved</th><th className="px-3 py-2">Ready</th><th className="px-3 py-2">Stale</th><th className="px-3 py-2">Action</th></tr></thead>
+						<tbody>{data?.product_coverage.map((product) => <tr key={product.product_id} className="border-b border-slate-900 hover:bg-slate-800/40"><td className="px-3 py-3"><a href={productWorkflowPath(product.product_id)} className="text-left font-semibold text-cyan-200 hover:text-cyan-100" onClick={(event) => event.stopPropagation()}>{product.product_name}<span className="mt-0.5 block font-mono text-[10px] text-slate-600">{product.product_id}</span></a></td><td className="px-3 py-3 text-slate-300">{product.copy_sets}</td><td className="px-3 py-3 text-slate-300">{product.angles}</td><td className="px-3 py-3 text-slate-300">{product.hooks}</td><td className="px-3 py-3 text-slate-300">{product.body_core}</td><td className="px-3 py-3 text-slate-300">{product.cta}</td><td className="px-3 py-3"><Badge tone={product.approved ? "success" : "neutral"}>{product.approved}</Badge></td><td className="px-3 py-3"><Badge tone={product.production_ready ? "success" : "neutral"}>{product.production_ready}</Badge></td><td className="px-3 py-3"><Badge tone={product.stale ? "warn" : "neutral"}>{product.stale}</Badge></td><td className="px-3 py-3"><button type="button" className="text-xs font-semibold text-cyan-200 hover:text-cyan-100" onClick={() => viewProductRecords(product.product_id)} data-testid={`maintenance-view-records-${product.product_id}`}>View Records</button></td></tr>)}</tbody>
 					</table>
 				</div>
 			</Section>
 
 			<Section title="Master Storyboard records" helper="Search, filters, and pagination are server-side. Each row is one exact canonical Master ID + revision.">
-				<div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
-					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Product</span><select className={INPUT_CLASS} value={productId} onChange={(event) => updateFilter("product_id", event.target.value)} data-testid="maintenance-product-filter"><option value="">All products</option>{data?.product_coverage.map((product) => <option key={product.product_id} value={product.product_id}>{product.product_name}</option>)}</select></label>
-					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Status</span><select className={INPUT_CLASS} value={status} onChange={(event) => updateFilter("status", event.target.value)} data-testid="maintenance-status-filter"><option value="">All statuses</option><option value="DRAFT">DRAFT</option><option value="REVIEW_REQUIRED">REVIEW_REQUIRED</option><option value="VALIDATED">VALIDATED</option><option value="APPROVED">APPROVED</option><option value="REJECTED">REJECTED</option><option value="BLOCKED">BLOCKED</option></select></label>
-					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Formula</span><select className={INPUT_CLASS} value={formulaId} onChange={(event) => updateFilter("formula_id", event.target.value)} data-testid="maintenance-formula-filter"><option value="">All formulas</option>{data?.filter_options.formulas.map((formula) => <option key={formula} value={formula}>{formula}</option>)}</select></label>
-					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Angle</span><select className={INPUT_CLASS} value={angleId} onChange={(event) => updateFilter("angle_id", event.target.value)} data-testid="maintenance-angle-filter"><option value="">All angles</option>{data?.filter_options.angles.map((angle) => <option key={angle} value={angle}>{angle}</option>)}</select></label>
-					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Production</span><select className={INPUT_CLASS} value={productionFilter} onChange={(event) => updateFilter("production_ready", event.target.value)} data-testid="maintenance-production-filter"><option value="">All readiness</option><option value="true">Production ready</option><option value="false">Not production ready</option></select></label>
-					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Truth state</span><select className={INPUT_CLASS} value={staleFilter} onChange={(event) => updateFilter("stale", event.target.value)} data-testid="maintenance-stale-filter"><option value="">All truth states</option><option value="true">Stale / revalidation</option><option value="false">Current</option></select></label>
-				</div>
-				<div className="mt-3 flex flex-col gap-2 sm:flex-row"><label className="relative flex-1"><Search size={14} className="absolute left-3 top-2.5 text-slate-600" /><input className={`${INPUT_CLASS} pl-9`} value={searchDraft} onChange={(event) => { setSearchDraft(event.target.value); updateFilter("search", event.target.value); }} placeholder="Search product, Master ID, formula, angle, storyline, or authored text" data-testid="maintenance-search" /></label><button type="button" className={BUTTON_CLASS} onClick={() => { setSearchDraft(""); updateQuery({ search: null, offset: 0, master_id: null, revision: null }); }}><X size={14} />Clear filters</button></div>
 				<div className="mt-4 overflow-x-auto">
 					<table className="w-full min-w-[1500px] text-left text-xs" data-testid="maintenance-record-table">
 						<thead className="border-b border-slate-800 text-[10px] uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-3 py-2">Product</th><th className="px-3 py-2">Master / rev</th><th className="px-3 py-2">Formula</th><th className="px-3 py-2">Angle</th><th className="px-3 py-2">Hook</th><th className="px-3 py-2">Body/Core</th><th className="px-3 py-2">CTA</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Quality</th><th className="px-3 py-2">Production</th><th className="px-3 py-2">Action</th></tr></thead>
 						<tbody>
 							{loading ? <tr><td colSpan={11} className="px-3 py-10 text-center text-slate-500">Loading authoritative records…</td></tr> : null}
 							{!loading && data?.items.length === 0 ? <tr><td colSpan={11} className="px-3 py-10 text-center text-slate-500">No canonical Master revisions match these filters.</td></tr> : null}
-							{!loading && data?.items.map((item) => <tr key={`${item.master_id}:${item.revision}`} className="cursor-pointer border-b border-slate-900 align-top hover:bg-slate-800/40" onClick={() => openDetail(item)} data-testid={`maintenance-row-${item.master_id}-${item.revision}`}><td className="px-3 py-3"><span className="font-semibold text-slate-200">{item.product.name}</span><span className="mt-0.5 block font-mono text-[10px] text-slate-600">{item.product.id}</span></td><td className="px-3 py-3"><span className="font-mono text-cyan-200">{item.master_id}</span><span className="mt-1 block"><Badge tone="neutral">REV {item.revision}</Badge></span></td><td className="px-3 py-3 text-slate-300">{item.formula.formula_id}</td><td className="px-3 py-3 font-mono text-slate-400">{item.angle.entity_id}</td><td className="px-3 py-3"><Preview text={item.previews.HOOK} /></td><td className="px-3 py-3"><Preview text={item.previews.BODY_CORE} /></td><td className="px-3 py-3"><Preview text={item.previews.CTA} /></td><td className="px-3 py-3"><Badge tone={statusTone(item.status)}>{item.status}</Badge>{item.stale ? <span className="mt-1 block"><Badge tone="warn">STALE</Badge></span> : null}</td><td className="px-3 py-3"><span className="font-semibold text-slate-200">{Math.round((item.quality.quality_score || 0) * 100)}%</span><span className="mt-1 block text-[10px] text-slate-500">{item.quality.hard_pass ? "hard pass" : "review gates"}</span></td><td className="px-3 py-3"><Badge tone={productionTone(item.production_ready ? "MATERIALIZED" : item.projection_status)}>{item.production_ready ? "MATERIALIZED" : item.projection_status}</Badge></td><td className="px-3 py-3"><button type="button" className="text-xs font-semibold text-cyan-200 hover:text-cyan-100" onClick={(event) => { event.stopPropagation(); openDetail(item); }}>Open exact</button></td></tr>)}
+							{!loading && data?.items.map((item) => <tr key={`${item.master_id}:${item.revision}`} className="cursor-pointer border-b border-slate-900 align-top hover:bg-slate-800/40" onClick={() => openDetail(item)} data-testid={`maintenance-row-${item.master_id}-${item.revision}`}><td className="px-3 py-3"><a href={productWorkflowPath(item.product.id)} className="font-semibold text-cyan-200 hover:text-cyan-100" onClick={(event) => event.stopPropagation()}>{item.product.name}<span className="mt-0.5 block font-mono text-[10px] text-slate-600">{item.product.id}</span></a></td><td className="px-3 py-3"><span className="font-mono text-cyan-200">{item.master_id}</span><span className="mt-1 block"><Badge tone="neutral">REV {item.revision}</Badge></span></td><td className="px-3 py-3 text-slate-300">{item.formula.formula_id}</td><td className="px-3 py-3 font-mono text-slate-400">{item.angle.entity_id}</td><td className="px-3 py-3"><Preview text={item.previews.HOOK} /></td><td className="px-3 py-3"><Preview text={item.previews.BODY_CORE} /></td><td className="px-3 py-3"><Preview text={item.previews.CTA} /></td><td className="px-3 py-3"><Badge tone={statusTone(item.status)}>{item.status}</Badge>{item.stale ? <span className="mt-1 block"><Badge tone="warn">STALE</Badge></span> : null}</td><td className="px-3 py-3"><span className="font-semibold text-slate-200">{Math.round((item.quality.quality_score || 0) * 100)}%</span><span className="mt-1 block text-[10px] text-slate-500">{item.quality.hard_pass ? "hard pass" : "review gates"}</span></td><td className="px-3 py-3"><Badge tone={productionTone(item.production_ready ? "MATERIALIZED" : item.projection_status)}>{item.production_ready ? "MATERIALIZED" : item.projection_status}</Badge></td><td className="px-3 py-3"><button type="button" className="text-xs font-semibold text-cyan-200 hover:text-cyan-100" onClick={(event) => { event.stopPropagation(); openDetail(item); }}>Open exact</button></td></tr>)}
 						</tbody>
 					</table>
 				</div>

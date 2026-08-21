@@ -36,6 +36,16 @@ MAINTENANCE_MAX_PAGE = 100
 _EDITABLE_STATUSES = {"DRAFT", "REVIEW_REQUIRED", "VALIDATED", "APPROVED"}
 _REJECTABLE_STATUSES = {"DRAFT", "REVIEW_REQUIRED", "VALIDATED"}
 _ACTIVE_COMPONENT_STATUSES = {"DRAFT", "REVIEW_REQUIRED", "VALIDATED", "APPROVED", "FROZEN"}
+_DEFAULT_SORT_BY = "created_at"
+_DEFAULT_SORT_DIR = "desc"
+_SORT_COLUMNS = {
+    "created_at": "m.created_at",
+    "product_name": "LOWER(COALESCE(p.product_display_name, p.raw_product_title, p.id))",
+    "status": "m.status",
+    "formula": "m.formula_id",
+    "revision": "m.revision",
+}
+_SORT_DIRECTIONS = {"asc": "ASC", "desc": "DESC"}
 
 
 def _now() -> str:
@@ -186,6 +196,32 @@ class V3CopywritingLandbankMaintenanceService:
         elif stale is False:
             clauses.append(f"NOT {self._stale_sql()}")
         return clauses, params
+
+    @staticmethod
+    def _order_by(sort_by: str | None, sort_dir: str | None) -> tuple[str, str, str]:
+        normalized_sort_by = str(sort_by or _DEFAULT_SORT_BY).strip().lower()
+        normalized_sort_dir = str(sort_dir or _DEFAULT_SORT_DIR).strip().lower()
+        if normalized_sort_by not in _SORT_COLUMNS:
+            raise V3FactoryError(
+                "MAINTENANCE_SORT_INVALID",
+                "sort_by must be one of: created_at, product_name, status, formula, revision.",
+                status_code=422,
+                details={"sort_by": normalized_sort_by, "allowed": sorted(_SORT_COLUMNS)},
+            )
+        if normalized_sort_dir not in _SORT_DIRECTIONS:
+            raise V3FactoryError(
+                "MAINTENANCE_SORT_DIRECTION_INVALID",
+                "sort_dir must be asc or desc.",
+                status_code=422,
+                details={"sort_dir": normalized_sort_dir, "allowed": sorted(_SORT_DIRECTIONS)},
+            )
+        # Every SQL fragment here is selected from the constants above. Query
+        # values never enter ORDER BY directly.
+        order_by = (
+            f"{_SORT_COLUMNS[normalized_sort_by]} {_SORT_DIRECTIONS[normalized_sort_dir]}, "
+            "m.created_at DESC, m.master_id DESC, m.revision DESC"
+        )
+        return normalized_sort_by, normalized_sort_dir, order_by
 
     async def _projection_rows(self, product_id: str, master_id: str, revision: int) -> list[Any]:
         rows = await self.factory.repository.list(
@@ -476,11 +512,14 @@ class V3CopywritingLandbankMaintenanceService:
         search: str | None = None,
         production_ready: bool | None = None,
         stale: bool | None = None,
+        sort_by: str = _DEFAULT_SORT_BY,
+        sort_dir: str = _DEFAULT_SORT_DIR,
         limit: int = 25,
         offset: int = 0,
     ) -> dict[str, Any]:
         limit = min(MAINTENANCE_MAX_PAGE, max(1, int(limit)))
         offset = max(0, int(offset))
+        normalized_sort_by, normalized_sort_dir, order_by = self._order_by(sort_by, sort_dir)
         clauses, params = self._where(
             product_id=product_id,
             status=status,
@@ -514,7 +553,7 @@ class V3CopywritingLandbankMaintenanceService:
             cte + "SELECT m.* FROM master_storyboard_v3 m "
             "LEFT JOIN product p ON p.id=m.product_id "
             "LEFT JOIN current_truth truth ON truth.product_id=m.product_id WHERE " + where +
-            " ORDER BY m.created_at DESC, m.master_id DESC, m.revision DESC LIMIT ? OFFSET ?",
+            f" ORDER BY {order_by} LIMIT ? OFFSET ?",
             [*params, limit, offset],
         )
         products = await self._products()
@@ -544,6 +583,8 @@ class V3CopywritingLandbankMaintenanceService:
             "total": total,
             "limit": limit,
             "offset": offset,
+            "sort_by": normalized_sort_by,
+            "sort_dir": normalized_sort_dir,
             "has_more": offset + len(items) < total,
             "summary": {
                 "total_products": len(products),
