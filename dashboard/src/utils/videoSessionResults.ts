@@ -1,6 +1,56 @@
 import type { PlanDetail } from "../api/creativeProduction";
 import type { SessionResult } from "../components/workspace/ResultsSidebar";
 
+export interface PersistedGenerationJob {
+	job_id: string;
+	request_id?: string | null;
+	mode?: string | null;
+	created_at: number;
+}
+
+const GENERATION_JOBS_STORAGE_KEY = "bosmax.generation-jobs.v1";
+
+function readStoredJobs(): PersistedGenerationJob[] {
+	try {
+		const raw = window.sessionStorage.getItem(GENERATION_JOBS_STORAGE_KEY);
+		const parsed = raw ? JSON.parse(raw) : [];
+		if (!Array.isArray(parsed)) return [];
+		return parsed.filter(
+			(item): item is PersistedGenerationJob =>
+				Boolean(item && typeof item.job_id === "string" && item.job_id.trim()),
+		);
+	} catch {
+		return [];
+	}
+}
+
+function writeStoredJobs(jobs: PersistedGenerationJob[]) {
+	try {
+		window.sessionStorage.setItem(
+			GENERATION_JOBS_STORAGE_KEY,
+			JSON.stringify(jobs.slice(0, 32)),
+		);
+	} catch {
+		// Private browsing/storage-disabled mode: in-memory polling remains valid.
+	}
+}
+
+export function rememberGenerationJob(
+	job: Omit<PersistedGenerationJob, "created_at"> & { created_at?: number },
+): void {
+	const jobs = readStoredJobs().filter((item) => item.job_id !== job.job_id);
+	jobs.unshift({ ...job, created_at: job.created_at ?? Date.now() });
+	writeStoredJobs(jobs);
+}
+
+export function readGenerationJobs(): PersistedGenerationJob[] {
+	return readStoredJobs();
+}
+
+export function forgetGenerationJob(jobId: string): void {
+	writeStoredJobs(readStoredJobs().filter((item) => item.job_id !== jobId));
+}
+
 function uniqueVideoResults(candidates: string[]): SessionResult[] {
 	const seen = new Set<string>();
 	return candidates.flatMap((candidate) => {

@@ -778,6 +778,8 @@ async def video_job(job_id: str):
     from agent.services import make_video as _mv
     j = _mv.get_job(job_id)
     if not j:
+        j = await _mv.get_durable_job(job_id)
+    if not j:
         raise HTTPException(404, "job not found")
     return j
 
@@ -819,6 +821,9 @@ async def make_video_existing(body: MakeVideoExistingRequest):
 class GenerateRequest(BaseModel):
     mode: str                                  # IMG | T2V | I2V | F2V
     prompt: str
+    # Stable client identity for retry/reload recovery. When omitted, the
+    # server creates one for this accepted dispatch and returns it to the UI.
+    request_id: Optional[str] = None
     project_id: Optional[str] = None
     # Product identity is resolved server-side.  It is a lineage key, never a
     # client-authorized image path/hash or truth status.
@@ -890,6 +895,39 @@ async def video_capability_matrix():
     """
     from agent.services import video_capability_matrix as _cm
     return _cm.public_matrix()
+
+
+@router.get("/direct-video-readiness")
+async def direct_video_readiness(
+    mode: str = "F2V",
+    source_mode: str | None = None,
+    model: str | None = None,
+    duration_s: int | None = None,
+    aspect: str = "9:16",
+    ref_count: int = 1,
+    count: int = 1,
+):
+    """Provider-free direct-lane readiness and certification state.
+
+    This route is intentionally independent from extension connectivity and
+    credit authorization.  It gives the UI a stable machine-readable blocker
+    for unproven settings, including the explicit 10-second pre-certification
+    state, without inventing a model key or treating an 8-second capture as 10s.
+    """
+    from agent.services import make_video as _mv
+
+    try:
+        return _mv.direct_video_readiness(
+            mode,
+            source_mode=source_mode,
+            model=model,
+            duration_s=duration_s,
+            aspect=aspect,
+            ref_count=ref_count,
+            num_videos=count,
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, f"DIRECT_READINESS_INPUT_INVALID:{exc}") from exc
 
 
 # Canonical reference-slot ORDER for the execution lane. The engine receives
@@ -1445,6 +1483,7 @@ async def generate(body: GenerateRequest):
     """THE one door for all four modes. mode = IMG | T2V | I2V | F2V → job_id.
     Poll GET /api/flow/generate-job/{id}."""
     from agent.services import make_video as _mv
+    request_id = body.request_id or f"generate_{uuid4().hex[:24]}"
     mode = (body.mode or "").upper()
     if mode not in ("IMG", "T2V", "I2V", "F2V"):
         raise HTTPException(422, f"unknown mode '{body.mode}' (use IMG/T2V/I2V/F2V)")
@@ -1925,6 +1964,8 @@ async def generate(body: GenerateRequest):
         collect_image_variants=creative_campaign,
         product_id=body.product_id,
         source_mode=effective_source_mode,
+        request_id=request_id,
+        idempotency_key=request_id,
         product_visual_custody=product_visual_custody,
         copy_execution_binding=(
             v2_resolution.to_metadata(
@@ -1954,6 +1995,8 @@ async def generate(body: GenerateRequest):
             status_code=409,
             content=content,
         )
+    if isinstance(result, dict):
+        result.setdefault("request_id", request_id)
     if v2_resolution is not None and v2_resolution.v2_enabled:
         result["copy_architecture_v2"] = v2_resolution.to_metadata(
             consumer_context=body.copy_v2_context
@@ -1968,8 +2011,23 @@ async def generate_job(job_id: str):
     from agent.services import make_video as _mv
     j = _mv.get_job(job_id)
     if not j:
+        j = await _mv.get_durable_job(job_id)
+    if not j:
         raise HTTPException(404, "job not found")
     return j
+
+
+@router.post("/generate-job/{job_id}/retry-artifact-delivery")
+async def retry_generate_artifact_delivery(job_id: str):
+    """Retry local artifact/Results registration only; never resubmit Flow."""
+    from agent.services import make_video as _mv
+
+    try:
+        return await _mv.retry_artifact_delivery(job_id)
+    except KeyError as exc:
+        raise HTTPException(404, "job not found") from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.post("/direct-capture/recover")
@@ -3038,6 +3096,8 @@ async def _resume_initial_generation(job: dict) -> dict:
         return {"state": "INFLIGHT"}  # submit not yet durably recorded; caller waits
     lane = _mv.get_job(lane_job_id)
     if lane is None:
+        lane = await _mv.get_durable_job(lane_job_id)
+    if lane is None:
         return {"state": "RECOVERY",
                 "detail": f"initial lane {lane_job_id} lost after restart "
                           f"(project {job.get('initial_lane_project_id') or job.get('project_id')})"}
@@ -3223,13 +3283,37 @@ async def finalize_video_job(job_id: str, body: VideoJobFinalizeRequest):
                     _ft.FINAL_DUPLICATE_SUBMISSION_BLOCKED}
         raise HTTPException(409 if exc.code in code_409 else 422, str(exc))
     if not body.dry_run and result.get("status") == _ft.JOB_COMPLETE:
-        # Register the ONE final deliverable in the system library so the existing
-        # /retrieved/{media_id} route serves it (per-block files stay diagnostics).
-        await crud.insert_generated_artifact(
-            result["final_media_id"], job_id=job_id, mode="EXTEND",
-            artifact_kind="video", local_path=result["local_path"],
-            size_mb=result.get("size_mb"), project_id=job.get("project_id"),
-            duration_used=int(result.get("measured_duration_s") or 0))
+        # Register the ONE final deliverable in the system library and Results
+        # Hub. A rendered provider result is not a delivered result until this
+        # boundary succeeds; failed writes remain locally retryable and never
+        # masquerade as a green COMPLETE lifecycle.
+        try:
+            from agent.services.video_artifact_delivery_service import (
+                register_final_video_artifact,
+            )
+
+            await register_final_video_artifact(
+                result,
+                job_id=job_id,
+                mode="EXTEND",
+                project_id=job.get("project_id"),
+                product_id=job.get("product_id"),
+            )
+        except Exception as exc:  # noqa: BLE001 — delivery failure is explicit
+            await crud.update_video_production_job_full(
+                job_id,
+                status="FINAL_ARTIFACT_DELIVERY_FAILED",
+                error_code="FINAL_ARTIFACT_DELIVERY_FAILED",
+            )
+            raise HTTPException(
+                502,
+                {
+                    "error": "FINAL_ARTIFACT_DELIVERY_FAILED",
+                    "detail": str(exc),
+                    "provider_resubmission_allowed": False,
+                    "retry": "local_artifact_delivery_only",
+                },
+            ) from exc
     return result
 
 
@@ -3549,7 +3633,9 @@ async def _bridge_generate_job_telemetry(request_id: str, job_id: str,
     from agent.services import make_video as _mv
     last_stage = None
     for _ in range(240):  # up to ~40 min
-        job = _mv.get_job(job_id) or {}
+        job = _mv.get_job(job_id)
+        if not job:
+            job = await _mv.get_durable_job(job_id) or {}
         stage = str(job.get("stage") or "")
         status = str(job.get("status") or "")
         if stage and stage != last_stage:
@@ -4217,6 +4303,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             confirm_live_credit_burn=bool(body.get("confirm_live_credit_burn")),
             product_visual_custody=body.get("product_visual_custody"),
             execution_identity=body.get("execution_identity"),
+            request_id=request_id,
         )
         await crud.add_stage_event(
             request_id,
@@ -4240,6 +4327,8 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         image_model=body.get("image_model") if creative_campaign else None,
         product_id=body.get("product_id"),
         source_mode=_authority_source_mode,
+        request_id=request_id,
+        idempotency_key=request_id,
         product_visual_custody=body.get("product_visual_custody"),
         execution_identity=body.get("execution_identity"),
         copy_execution_binding=(
