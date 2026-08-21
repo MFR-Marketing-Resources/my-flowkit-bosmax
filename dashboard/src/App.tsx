@@ -3,6 +3,7 @@ import {
 	Bot,
 	Briefcase,
 	ChevronDown,
+	Database,
 	Film,
 	FolderOpen,
 	Gauge,
@@ -52,6 +53,7 @@ import CopyReviewQueuePage from "./pages/CopyReviewQueuePage";
 import CopySetRegistryPage from "./pages/CopySetRegistryPage";
 import DeployFreshnessBanner from "./components/DeployFreshnessBanner";
 import StoryboardLandbankV3Page from "./pages/StoryboardLandbankV3Page";
+import CopywritingLandbankDatabasePage from "./pages/CopywritingLandbankDatabasePage";
 import DashboardPage from "./pages/DashboardPage";
 import ReportingExecutivePage from "./pages/ReportingExecutivePage";
 import ReportingOperationsPage from "./pages/ReportingOperationsPage";
@@ -151,6 +153,7 @@ const ALL_NAV_GROUPS = [
 		items: [
 			{ to: "/reporting/executive", icon: Gauge, label: "Executive" },
 			{ to: "/reporting/operations", icon: Siren, label: "Operations" },
+			{ to: "/reporting/copywriting-landbank", icon: Database, label: "Copywriting Landbank DB" },
 		],
 	},
 	{
@@ -610,6 +613,10 @@ function Layout() {
 						<Route
 							path="/reporting/operations"
 							element={<ReportingOperationsPage />}
+						/>
+						<Route
+							path="/reporting/copywriting-landbank"
+							element={<CopywritingLandbankDatabasePage />}
 						/>
 						<Route path="/operator/faceless" element={<FacelessVideoPage />} />
 						<Route path="/operator/montage" element={<MontagePage />} />

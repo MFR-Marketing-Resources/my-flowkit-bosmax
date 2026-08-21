@@ -30,6 +30,10 @@ def test_v3_api_matrix_includes_round3_materialize_without_activation():
     assert "/api/storyboard-landbank/v3/copy-register/assistant/plans/{plan_id}/prompt-preview" in paths
     assert "/api/storyboard-landbank/v3/copy-register/assistant/plans/{plan_id}/execute" in paths
     assert "/api/storyboard-landbank/v3/copy-register/landbank" in paths
+    assert "/api/storyboard-landbank/v3/copy-register/maintenance" in paths
+    assert "/api/storyboard-landbank/v3/copy-register/maintenance/{master_id}" in paths
+    assert "/api/storyboard-landbank/v3/copy-register/maintenance/{master_id}/revisions" in paths
+    assert "/api/storyboard-landbank/v3/copy-register/maintenance/{master_id}/{revision}" in paths
     assert "/api/storyboard-landbank/v3/copy-register/review-queue" in paths
     assert "/api/storyboard-landbank/v3/copy-register/approval/master/{master_id}" in paths
     assert "/api/storyboard-landbank/v3/copy-register/approval/batch" in paths

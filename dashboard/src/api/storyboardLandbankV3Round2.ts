@@ -242,10 +242,11 @@ export async function deriveV3AiAssistedProjection(input: {
 	});
 }
 
-export async function reviewV3Entity(action: "validate" | "submit" | "reject" | "archive", entityType: string, entityId: string, revision: number): Promise<Record<string, unknown>> {
+export async function reviewV3Entity(action: "validate" | "submit" | "reject" | "archive", entityType: string, entityId: string, revision: number, reason?: string): Promise<Record<string, unknown>> {
 	// `revision` is honoured as a query param (validate) and in the body (submit/reject/archive).
 	return postAPI(`/api/storyboard-landbank/v3/review/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/${action}?revision=${revision}`, {
 		revision,
+		...(reason ? { reason } : {}),
 		actor_id: "dashboard-operator",
 		request_id: requestId(`v3-${action}`),
 	});
