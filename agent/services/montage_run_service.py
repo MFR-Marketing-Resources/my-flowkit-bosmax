@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional, Sequence
 
 from agent.db import crud
@@ -478,14 +478,16 @@ async def authorize_montage_run_generation(
     generate_fn: Optional[Callable[..., Awaitable[dict[str, Any]]]] = None,
     poll_fn: Optional[Callable[..., Awaitable[dict[str, Any]]]] = None,
     max_polls: int = 120,
-    poll_interval_s: float = 0.0,
+    poll_interval_s: float = 5.0,
+    async_worker: bool = False,
 ) -> dict[str, Any]:
     """M-04: explicit operator-authorized multi-scene generation.
 
-    Single-flight serial loop:
-      authorize → next pending scene → submit ONE video → persist job_id →
-      poll to terminal → bind media → only then next scene.
-    Fail-closed on scene failure (no skip). Resume skips already-bound scenes.
+    Single-flight serial loop. With ``async_worker=True`` it submits at most one
+    scene, persists its poll lease/backoff/deadline, and returns immediately;
+    ``resume_montage_run`` performs one poll-only reconciliation later. This
+    prevents a request from holding a tight provider polling loop or resubmitting
+    a job after a process restart.
     """
     if not confirm_credit_burn:
         raise ValueError("ERR_MONTAGE_CREDIT_CONFIRM_REQUIRED")
@@ -654,7 +656,59 @@ async def authorize_montage_run_generation(
                 scene_id,
                 status="VIDEO_SUBMITTED",
                 video_job_id=job_id,
+                provider_job_id=job_id,
+                provider_identity={
+                    "provider_job_id": job_id,
+                    "provider_calls": 1,
+                    "generation_resubmission_allowed": False,
+                },
             )
+
+            if async_worker and not media_id and job_id:
+                deadline = datetime.now(timezone.utc) + timedelta(minutes=30)
+                await _mark_scene(
+                    scene_id,
+                    status="VIDEO_SUBMITTED",
+                    video_job_id=job_id,
+                    provider_job_id=job_id,
+                    async_worker=True,
+                    poll_attempts=0,
+                    next_poll_at=_now(),
+                    poll_deadline_at=deadline.replace(microsecond=0).isoformat().replace(
+                        "+00:00", "Z"
+                    ),
+                    poll_backoff_s=max(5.0, float(poll_interval_s or 5.0)),
+                    next_action="POLL",
+                    resubmission_allowed=False,
+                )
+                entry.update({
+                    "status": "VIDEO_SUBMITTED",
+                    "async_worker": True,
+                    "next_action": "POLL",
+                    "resubmission_allowed": False,
+                    "next_poll_at": _now(),
+                })
+                dispatched.append(entry)
+                await crud.update_bulk_generation_run(
+                    run_id, status="GENERATING", updated_at=_now()
+                )
+                final = await get_montage_discrete_run(run_id)
+                return {
+                    **estimate,
+                    "ok": True,
+                    "authorized": True,
+                    "dry_run": False,
+                    "credit_spend": True,
+                    "provider_generation_submits": 1,
+                    "async_worker": True,
+                    "next_action": "POLL",
+                    "dispatched": dispatched,
+                    "run": final,
+                    "detail": (
+                        f"Scene {scene_id} submitted once; durable worker will poll "
+                        "without resubmission."
+                    ),
+                }
 
             # Async semantics: if no immediate media, poll to terminal before next scene
             if not media_id and job_id and poll_fn is not None:
@@ -781,6 +835,186 @@ async def authorize_montage_run_generation(
             f"Serial dispatch {len(dispatched)} scene(s) after operator credit confirm "
             f"({estimate['summary']})."
         ),
+    }
+
+
+async def resume_montage_run(
+    run_id: str,
+    *,
+    poll_fn: Callable[[str], Awaitable[dict[str, Any]]],
+    max_items: int = 1,
+) -> dict[str, Any]:
+    """Reconcile active Montage scene jobs with poll-only provider calls.
+
+    The durable item already owns the provider job id. This function never calls
+    ``generate_fn`` and never creates a new provider job; a pending response only
+    advances the persisted backoff lease.
+    """
+    if poll_fn is None:
+        raise ValueError("ERR_MONTAGE_POLL_BOUNDARY_REQUIRED")
+    state = await get_montage_discrete_run(run_id)
+    items = await crud.list_bulk_generation_items(run_id)
+    now_dt = datetime.now(timezone.utc)
+    reconciled: list[dict[str, Any]] = []
+    provider_calls = 0
+
+    for item in items:
+        if len(reconciled) >= max(1, int(max_items or 1)):
+            break
+        status = str(item.get("status") or "").upper()
+        payload = _loads(item.get("payload_json"), {})
+        if status not in ("VIDEO_SUBMITTED", "GENERATING", "VIDEO_POLLING"):
+            continue
+        job_id = str(
+            payload.get("provider_job_id")
+            or payload.get("video_job_id")
+            or item.get("job_id")
+            or ""
+        ).strip()
+        scene_id = str(payload.get("scene_id") or item.get("source_ref") or "")
+        if not job_id:
+            await crud.update_bulk_generation_item(
+                item["bulk_item_id"],
+                status="GENERATE_FAILED",
+                error="ERR_MONTAGE_PROVIDER_JOB_ID_MISSING",
+                updated_at=_now(),
+            )
+            reconciled.append({
+                "scene_id": scene_id,
+                "status": "GENERATE_FAILED",
+                "error": "ERR_MONTAGE_PROVIDER_JOB_ID_MISSING",
+            })
+            continue
+
+        next_poll_raw = payload.get("next_poll_at")
+        if next_poll_raw:
+            try:
+                next_poll_dt = datetime.fromisoformat(
+                    str(next_poll_raw).replace("Z", "+00:00")
+                )
+                if next_poll_dt > now_dt:
+                    continue
+            except (TypeError, ValueError):
+                pass
+        deadline_raw = payload.get("poll_deadline_at")
+        if deadline_raw:
+            try:
+                deadline_dt = datetime.fromisoformat(
+                    str(deadline_raw).replace("Z", "+00:00")
+                )
+                if deadline_dt <= now_dt:
+                    await crud.update_bulk_generation_item(
+                        item["bulk_item_id"],
+                        status="GENERATE_FAILED",
+                        error="ERR_MONTAGE_POLL_DEADLINE_EXPIRED",
+                        updated_at=_now(),
+                    )
+                    reconciled.append({
+                        "scene_id": scene_id,
+                        "status": "GENERATE_FAILED",
+                        "error": "ERR_MONTAGE_POLL_DEADLINE_EXPIRED",
+                    })
+                    continue
+            except (TypeError, ValueError):
+                pass
+
+        polled = await poll_fn(job_id)
+        provider_calls += 1
+        polled = polled if isinstance(polled, dict) else {}
+        polled_status = str(
+            polled.get("status") or polled.get("state") or ""
+        ).upper()
+        media_id = str(
+            polled.get("media_id")
+            or polled.get("video_media_id")
+            or ""
+        ).strip() or None
+        if polled_status in ("DONE", "COMPLETED", "SUCCESS") and media_id:
+            await bind_montage_scene_result(
+                run_id,
+                scene_id=scene_id,
+                media_id=media_id,
+                result_kind="video",
+                job_id=job_id,
+            )
+            reconciled.append({
+                "scene_id": scene_id,
+                "job_id": job_id,
+                "status": "RESULT_BOUND",
+                "media_id": media_id,
+                "resubmission_allowed": False,
+            })
+        elif polled_status in ("FAILED", "ERROR", "GENERATED_BUT_UNRETRIEVED"):
+            error = str(polled.get("error") or polled_status)[:400]
+            await crud.update_bulk_generation_item(
+                item["bulk_item_id"],
+                status="GENERATE_FAILED",
+                error=error,
+                payload_json=json.dumps({**payload, "last_poll_status": polled_status}),
+                updated_at=_now(),
+            )
+            reconciled.append({
+                "scene_id": scene_id,
+                "job_id": job_id,
+                "status": "GENERATE_FAILED",
+                "error": error,
+                "resubmission_allowed": False,
+            })
+        else:
+            attempts = int(payload.get("poll_attempts") or 0) + 1
+            backoff = min(60.0, max(5.0, float(payload.get("poll_backoff_s") or 5.0) * 2))
+            next_poll = now_dt + timedelta(seconds=backoff)
+            next_poll_text = next_poll.replace(microsecond=0).isoformat().replace(
+                "+00:00", "Z"
+            )
+            updated_payload = {
+                **payload,
+                "status": "VIDEO_SUBMITTED",
+                "provider_job_id": job_id,
+                "poll_attempts": attempts,
+                "poll_backoff_s": backoff,
+                "next_poll_at": next_poll_text,
+                "last_poll_status": polled_status or "PENDING",
+                "resubmission_allowed": False,
+            }
+            await crud.update_bulk_generation_item(
+                item["bulk_item_id"],
+                status="VIDEO_SUBMITTED",
+                job_id=job_id,
+                payload_json=json.dumps(updated_payload),
+                updated_at=_now(),
+            )
+            reconciled.append({
+                "scene_id": scene_id,
+                "job_id": job_id,
+                "status": "VIDEO_SUBMITTED",
+                "last_poll_status": polled_status or "PENDING",
+                "next_poll_at": next_poll_text,
+                "resubmission_allowed": False,
+            })
+
+    refreshed = await get_montage_discrete_run(run_id)
+    scene_rows = refreshed.get("scenes") or []
+    if scene_rows and all(
+        str(s.get("status") or "").upper() in ("RESULT_BOUND", "VIDEO_READY")
+        for s in scene_rows
+    ):
+        run_status = "COMPLETE"
+    elif any(str(s.get("status") or "").upper() == "GENERATE_FAILED" for s in scene_rows):
+        run_status = "PARTIAL"
+    else:
+        run_status = "GENERATING"
+    await crud.update_bulk_generation_run(run_id, status=run_status, updated_at=_now())
+    refreshed = await get_montage_discrete_run(run_id)
+    return {
+        "ok": not any(r.get("status") == "GENERATE_FAILED" for r in reconciled),
+        "montage_run_id": run_id,
+        "run": refreshed,
+        "reconciled": reconciled,
+        "provider_calls": provider_calls,
+        "provider_generation_submits": 0,
+        "resubmission_allowed": False,
+        "next_action": "POLL" if run_status == "GENERATING" else None,
     }
 
 
@@ -1000,6 +1234,15 @@ def _item_to_public(item: dict[str, Any]) -> dict[str, Any]:
         "image_job_id": payload.get("image_job_id"),
         "image_media_id": image_media,
         "video_job_id": payload.get("video_job_id") or item.get("job_id"),
+        "provider_job_id": payload.get("provider_job_id"),
+        "provider_identity": payload.get("provider_identity") or {},
+        "async_worker": bool(payload.get("async_worker")),
+        "poll_attempts": int(payload.get("poll_attempts") or 0),
+        "next_poll_at": payload.get("next_poll_at"),
+        "poll_deadline_at": payload.get("poll_deadline_at"),
+        "poll_backoff_s": payload.get("poll_backoff_s"),
+        "next_action": payload.get("next_action"),
+        "resubmission_allowed": payload.get("resubmission_allowed", True),
         "video_media_id": video_media,
         "error_code": item.get("error") or payload.get("error_code"),
         "detail": payload.get("detail") or "",

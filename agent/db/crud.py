@@ -4,7 +4,7 @@ import asyncio
 import logging
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from agent.config import DB_PATH
 from agent.db.schema import get_db, _db_lock
@@ -4193,19 +4193,31 @@ async def get_bulk_queue_stats() -> dict:
 async def insert_generated_artifact(media_id: str, job_id: str = None, mode: str = None,
                                     artifact_kind: str = "video", local_path: str = None,
                                     size_mb: float = None, project_id: str = None,
-                                    model_used: str = None, duration_used: int = None) -> None:
+                                    model_used: str = None, duration_used: int = None,
+                                    file_size_bytes: int = None, file_sha256: str = None,
+                                    delivery_status: str = "REGISTERED",
+                                    readback_verified: bool = False) -> dict | None:
     """Register a finished generation in the system library (idempotent on media_id)."""
     db = await get_db()
     async with _db_lock:
         await db.execute(
             """INSERT OR REPLACE INTO generated_artifact
                (media_id, job_id, mode, artifact_kind, local_path, size_mb,
+                file_size_bytes, file_sha256, delivery_status, readback_verified,
                 project_id, model_used, duration_used, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (media_id, job_id, mode, artifact_kind, local_path, size_mb,
+             file_size_bytes, file_sha256, delivery_status, int(bool(readback_verified)),
              project_id, model_used, duration_used, _now()),
         )
         await db.commit()
+        cur = await db.execute(
+            "SELECT * FROM generated_artifact WHERE media_id=?", (media_id,)
+        )
+        row = await cur.fetchone()
+    if row is None:
+        raise RuntimeError(f"GENERATED_ARTIFACT_READBACK_MISSING:{media_id}")
+    return dict(row)
 
 
 async def get_generated_artifact(media_id: str) -> dict | None:
@@ -4279,6 +4291,8 @@ async def create_video_production_job_full(job_id: str, *, logical_job_key: str,
         "initial_mode", "initial_prompt_text", "initial_prompt_fingerprint",
         "initial_asset_media_id", "initial_reference_media_ids_json",
         "initial_source_mode",
+        "initial_lane_job_id", "initial_lane_project_id",
+        "stage_state_json", "initial_correlation_json",
         "continuation_prompts_json",
     }
     cols.update({k: v for k, v in fields.items() if k in allowed})
@@ -4424,6 +4438,90 @@ async def increment_side_effect_submit_count(idempotency_key: str) -> int:
             (idempotency_key,))
         r = await cur.fetchone()
     return int(r[0]) if r else 0
+
+
+async def acquire_video_generation_lane_lease(
+    job_id: str,
+    *,
+    lane_id: str = "SINGLE_VIDEO",
+    lease_seconds: int = 1800,
+) -> dict:
+    """Acquire the cross-process SINGLE video lane before provider work.
+
+    The process-local pointer in ``make_video`` is only a fast path.  This
+    row is the durable race/restart guard: an active, unexpired owner blocks a
+    different logical job, while an expired/released owner can be reclaimed.
+    """
+    now = _now()
+    expires = (
+        datetime.now(timezone.utc)
+        + timedelta(seconds=max(60, int(lease_seconds or 1800)))
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    token = "vll_" + uuid.uuid4().hex[:24]
+    db = await get_db()
+    acquired = False
+    async with _db_lock:
+        await db.execute(
+            """INSERT OR IGNORE INTO video_generation_lane_lease
+               (lane_id, job_id, lease_token, status, lease_expires_at,
+                created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (lane_id, job_id, token, "ACTIVE", expires, now, now),
+        )
+        cur = await db.execute(
+            "SELECT * FROM video_generation_lane_lease WHERE lane_id=?",
+            (lane_id,),
+        )
+        row = await cur.fetchone()
+        if row is not None and row["job_id"] == job_id:
+            acquired = True
+            await db.execute(
+                "UPDATE video_generation_lane_lease SET status='ACTIVE', "
+                "lease_expires_at=?, updated_at=? WHERE lane_id=? AND job_id=?",
+                (expires, now, lane_id, job_id),
+            )
+        elif row is not None and (
+            str(row["status"] or "").upper() != "ACTIVE"
+            or str(row["lease_expires_at"] or "") <= now
+        ):
+            replaced = await db.execute(
+                """UPDATE video_generation_lane_lease
+                   SET job_id=?, lease_token=?, status='ACTIVE',
+                       lease_expires_at=?, updated_at=?
+                   WHERE lane_id=?
+                     AND (status <> 'ACTIVE' OR lease_expires_at <= ?)""",
+                (job_id, token, expires, now, lane_id, now),
+            )
+            acquired = replaced.rowcount == 1
+        await db.commit()
+        cur = await db.execute(
+            "SELECT * FROM video_generation_lane_lease WHERE lane_id=?",
+            (lane_id,),
+        )
+        row = await cur.fetchone()
+    return {
+        "acquired": acquired,
+        "row": dict(row) if row else None,
+        "provider_calls": 0,
+    }
+
+
+async def release_video_generation_lane_lease(
+    job_id: str,
+    *,
+    lane_id: str = "SINGLE_VIDEO",
+    detail: str | None = None,
+) -> None:
+    """Release only the lease owned by ``job_id`` after local completion/failure."""
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            """UPDATE video_generation_lane_lease
+               SET status='RELEASED', lease_expires_at=?, updated_at=?
+               WHERE lane_id=? AND job_id=?""",
+            (_now(), _now(), lane_id, job_id),
+        )
+        await db.commit()
 
 
 async def list_non_terminal_authorized_jobs() -> list[dict]:
@@ -4754,7 +4852,8 @@ async def get_generation_result(media_id: str) -> dict | None:
 
 
 async def list_generation_results(limit: int = 60, mode: str = None,
-                                  kind: str = None) -> list:
+                                  kind: str = None, request_id: str = None,
+                                  job_id: str = None) -> list:
     """Newest-first durable deliverable records for the Results Hub."""
     db = await get_db()
     query = "SELECT * FROM generation_result"
@@ -4765,6 +4864,12 @@ async def list_generation_results(limit: int = 60, mode: str = None,
     if kind:
         clauses.append("artifact_kind=?")
         params.append(kind)
+    if request_id:
+        clauses.append("request_id=?")
+        params.append(request_id)
+    if job_id:
+        clauses.append("job_id=?")
+        params.append(job_id)
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
     query += " ORDER BY created_at DESC LIMIT ?"

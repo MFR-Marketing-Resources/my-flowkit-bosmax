@@ -31,6 +31,9 @@ _GENERATION_TERMINAL_STATUSES = frozenset({
     "PRODUCT_FIDELITY_REVIEW_REQUIRED",
     "FAILED",
     "REJECTED",
+    "ARTIFACT_PERSISTENCE_FAILED",
+    "DURABILITY_SYNC_FAILED",
+    "RECOVERY_REQUIRED",
     "GENERATED_BUT_UNRETRIEVED",
     "RENDER_NOT_MATERIALIZED",
     "STALE_OR_FOREIGN_CANDIDATES_ONLY",
@@ -138,6 +141,320 @@ def get_job(job_id: str):
     if not j:
         return None
     return {k: v for k, v in j.items() if k != "_task"}
+
+
+def _single_logical_job_key(job_id: str, idempotency_key: str | None = None) -> str:
+    """Stable identity for the standard one-door SINGLE lane.
+
+    The existing ``video_production_job`` ledger is also the recovery index for
+    short jobs.  A caller-provided idempotency key deduplicates a replay; when a
+    caller has no key, the generated job id intentionally makes the request a
+    distinct logical intent.
+    """
+    material = str(idempotency_key or job_id).strip()
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
+    return f"ljk_single_{digest}"
+
+
+def _durable_single_snapshot(job: dict) -> dict:
+    """JSON-safe state used for restart/readiness/retry recovery."""
+    return json.loads(json.dumps(
+        {k: v for k, v in job.items() if k != "_task"},
+        ensure_ascii=False,
+        default=str,
+    ))
+
+
+async def _prepare_durable_single_job(
+    job: dict,
+    *,
+    idempotency_key: str | None = None,
+    strict: bool = False,
+) -> tuple[dict | None, bool]:
+    """Create the standard SINGLE lifecycle row before its task can run.
+
+    ``strict`` is used by the HTTP generation boundary.  Unit/programmatic
+    callers that intentionally exercise the isolated in-memory lane may omit a
+    request key; those callers retain their existing fixture behaviour, while a
+    real API request fails closed before provider work if the ledger is down.
+    """
+    from agent.db import crud
+
+    key = _single_logical_job_key(job["job_id"], idempotency_key)
+    try:
+        existing = await crud.get_video_production_job_by_logical_key(key)
+        if existing:
+            return existing, existing.get("job_id") == job.get("job_id")
+        snapshot = _durable_single_snapshot(job)
+        await crud.create_video_production_job_full(
+            job["job_id"],
+            logical_job_key=key,
+            status="SUBMITTED",
+            project_id=job.get("project_id"),
+            requested_duration_seconds=int(job.get("duration_s") or 8),
+            product_id=job.get("product_id"),
+            engine="GOOGLE_FLOW_API_FIRST",
+            model=job.get("model"),
+            aspect_ratio=job.get("aspect"),
+            plan_fingerprint=hashlib.sha256(
+                json.dumps(
+                    {
+                        "mode": job.get("mode"),
+                        "prompt": job.get("prompt"),
+                        "source_mode": job.get("source_mode"),
+                        "references": job.get("reference_media_ids")
+                        or job.get("image_media_ids")
+                        or [],
+                        "model": job.get("model"),
+                        "duration_s": job.get("duration_s"),
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            whole_plan_json=json.dumps(
+                {
+                    "execution_mode": "SINGLE",
+                    "lane": "MAKE_VIDEO_ONE_DOOR",
+                    "request_id": idempotency_key,
+                    "mode": job.get("mode"),
+                    "source_mode": job.get("source_mode"),
+                    "product_id": job.get("product_id"),
+                    "project_id": job.get("project_id"),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            initial_mode=job.get("mode"),
+            initial_prompt_text=job.get("prompt") or "",
+            initial_asset_media_id=(job.get("image_media_ids") or [None])[0],
+            initial_reference_media_ids_json=json.dumps(
+                job.get("image_media_ids") or [],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            initial_source_mode=job.get("source_mode"),
+            initial_lane_job_id=job.get("job_id"),
+            initial_lane_project_id=job.get("project_id"),
+            stage_state_json=json.dumps(snapshot, ensure_ascii=False),
+        )
+        row = await crud.get_video_production_job(job["job_id"])
+        if not row:
+            raise RuntimeError("DURABLE_SINGLE_LEDGER_ROW_MISSING")
+        return row, True
+    except Exception as exc:  # noqa: BLE001 — caller decides strictness
+        job["durable_ledger_error"] = str(exc)
+        if strict:
+            raise RuntimeError(
+                "DURABLE_SINGLE_LEDGER_UNAVAILABLE:" + str(exc)[:240]
+            ) from exc
+        return None, True
+
+
+async def _sync_durable_single_job(job: dict | None) -> None:
+    """Mirror terminal/in-flight state into the existing lifecycle ledger."""
+    if not job or not str(job.get("job_id") or "").startswith("g_"):
+        return
+    from agent.db import crud
+
+    try:
+        row = await crud.get_video_production_job(job["job_id"])
+        if not row:
+            return
+        media_id = job.get("media_id") or job.get("video_media_id")
+        local_path = job.get("local_path")
+        file_sha256 = None
+        file_size_bytes = None
+        evidence = job.get("artifact_file_evidence") or {}
+        if media_id and isinstance(evidence, dict):
+            media_evidence = evidence.get(str(media_id)) or evidence.get("default")
+            if isinstance(media_evidence, dict):
+                file_sha256 = media_evidence.get("sha256")
+                file_size_bytes = media_evidence.get("size_bytes")
+        if media_id and not file_sha256 and local_path:
+            try:
+                from agent.services.video_artifact_delivery_service import (
+                    file_delivery_evidence,
+                )
+
+                media_evidence = file_delivery_evidence(str(local_path))
+                file_sha256 = media_evidence["sha256"]
+                file_size_bytes = media_evidence["size_bytes"]
+                job.setdefault("artifact_file_evidence", {})[str(media_id)] = media_evidence
+            except Exception:
+                # The persisted lifecycle still records the output identity; the
+                # artifact delivery state remains retryable and non-green.
+                pass
+        provider_operation_ids = job.get("provider_operation_ids") or []
+        first_operation_id = None
+        for value in provider_operation_ids:
+            if isinstance(value, dict):
+                value = (
+                    value.get("operation_id")
+                    or value.get("operation_name")
+                    or value.get("name")
+                    or value.get("provider_operation_id")
+                )
+            if value:
+                first_operation_id = str(value)
+                break
+        if not first_operation_id:
+            identity = job.get("generation_identity") or {}
+            if isinstance(identity, dict):
+                names = identity.get("operation_names") or []
+                if names:
+                    first_operation_id = str(names[0])
+        targets = job.get("direct_media_targets") or []
+        first_workflow_id = None
+        if targets and isinstance(targets[0], dict):
+            first_workflow_id = (
+                targets[0].get("workflow_id")
+                or targets[0].get("workflowId")
+            )
+        state = _durable_single_snapshot(job)
+        terminal_with_output = {
+            "DONE",
+            "PRODUCT_FIDELITY_REVIEW_REQUIRED",
+            "ARTIFACT_PERSISTENCE_FAILED",
+        }
+        await crud.update_video_production_job_full(
+            job["job_id"],
+            status=job.get("status") or "UNKNOWN",
+            error_code=(
+                (job.get("error") or job.get("artifact_record_error"))
+                if job.get("status") != "DONE"
+                else None
+            ),
+            project_id=job.get("project_id") or row.get("project_id"),
+            initial_media_id=media_id,
+            initial_operation_id=first_operation_id,
+            initial_workflow_id=str(first_workflow_id) if first_workflow_id else None,
+            final_media_id=media_id if media_id and job.get("status") in terminal_with_output else None,
+            final_local_path=(str(local_path) if local_path and job.get("status") in terminal_with_output else None),
+            final_sha256=file_sha256 if job.get("status") in terminal_with_output else None,
+            final_duration_s=job.get("duration_used") or job.get("duration_s"),
+            initial_lane_job_id=job.get("job_id"),
+            initial_lane_project_id=job.get("project_id") or row.get("project_id"),
+            stage_state_json=json.dumps(state, ensure_ascii=False),
+            initial_correlation_json=json.dumps(
+                job.get("output_correlation")
+                or job.get("generation_identity")
+                or None,
+                ensure_ascii=False,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 — a terminal success needs honest state
+        job["status"] = "DURABILITY_SYNC_FAILED"
+        job["durability_sync_error"] = str(exc)
+        job["error"] = str(exc)
+
+
+async def get_durable_job(job_id: str) -> dict | None:
+    """Read a standard job after the process-local make_video map is gone."""
+    from agent.db import crud
+
+    row = await crud.get_video_production_job(job_id)
+    if not row or not str(row.get("job_id") or "").startswith("g_"):
+        return None
+    try:
+        state = json.loads(row.get("stage_state_json") or "{}")
+    except (TypeError, ValueError):
+        state = {}
+    if not isinstance(state, dict):
+        state = {}
+    status = str(row.get("status") or "UNKNOWN")
+    if status not in _GENERATION_TERMINAL_STATUSES:
+        status = "RECOVERY_REQUIRED"
+        state.setdefault("recovery_required", True)
+        state.setdefault(
+            "recovery_hint",
+            "The process-local lane handle is unavailable; reconcile the provider "
+            "operation before any retry. No provider resubmission was attempted.",
+        )
+    state.update({
+        "job_id": job_id,
+        "status": status,
+        "error": row.get("error_code") or state.get("error"),
+        "media_id": row.get("final_media_id") or row.get("initial_media_id") or state.get("media_id"),
+        "local_path": row.get("final_local_path") or state.get("local_path"),
+        "project_id": row.get("project_id") or state.get("project_id"),
+        "recovery_required": bool(state.get("recovery_required")),
+        "durable": True,
+    })
+    return state
+
+
+async def recover_durable_single_jobs() -> dict:
+    """Provider-free startup sweep for standard jobs whose memory map vanished."""
+    from agent.db import crud
+
+    marked = 0
+    candidates = 0
+    for row in await crud.list_video_production_jobs(limit=1000):
+        if not str(row.get("job_id") or "").startswith("g_"):
+            continue
+        if str(row.get("status") or "") in _GENERATION_TERMINAL_STATUSES:
+            continue
+        candidates += 1
+        try:
+            state = json.loads(row.get("stage_state_json") or "{}")
+        except (TypeError, ValueError):
+            state = {}
+        if not isinstance(state, dict):
+            state = {}
+        state["recovery_required"] = True
+        state["recovery_hint"] = (
+            "Process restart interrupted a standard SINGLE lane. Reconcile the "
+            "recorded provider identity before any retry; the lane is not re-submitted."
+        )
+        await crud.update_video_production_job_full(
+            row["job_id"],
+            status="RECOVERY_REQUIRED",
+            error_code="DURABLE_LANE_HANDLE_UNAVAILABLE",
+            stage_state_json=json.dumps(state, ensure_ascii=False),
+        )
+        marked += 1
+    return {"candidates": candidates, "marked_recovery_required": marked, "provider_calls": 0}
+
+
+async def _run_generate_task(job_id: str, runner, *args) -> None:
+    """Run a process-local task while keeping the durable lifecycle mirror current."""
+    try:
+        await runner(job_id, *args)
+    finally:
+        await _sync_durable_single_job(_JOBS.get(job_id))
+        try:
+            from agent.db import crud as _single_crud
+
+            await _single_crud.release_video_generation_lane_lease(job_id)
+        except Exception:  # noqa: BLE001 - cleanup must not mask lifecycle evidence
+            pass
+
+
+async def retry_artifact_delivery(job_id: str) -> dict:
+    """Retry only local artifact registration; never re-submit a provider job."""
+    job = _JOBS.get(job_id)
+    if job is None:
+        from agent.db import crud
+
+        row = await crud.get_video_production_job(job_id)
+        if not row:
+            raise KeyError(job_id)
+        try:
+            job = json.loads(row.get("stage_state_json") or "{}")
+        except (TypeError, ValueError):
+            job = {}
+        if not isinstance(job, dict):
+            job = {}
+        job["job_id"] = job_id
+    artifacts = job.get("artifacts") or []
+    if not artifacts:
+        raise RuntimeError("ARTIFACT_DELIVERY_RETRY_DATA_MISSING")
+    await _record_artifacts(job, job.get("mode") or "F2V", artifacts)
+    if job_id in _JOBS:
+        _JOBS[job_id].update(job)
+    await _sync_durable_single_job(job)
+    return _durable_single_snapshot(job)
 
 
 def _pid(obj) -> str:
@@ -268,6 +585,8 @@ _ALL_MODES = ("IMG",) + _VIDEO_MODES
 ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL = (
     "ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL"
 )
+DIRECT_10S_CONTRACT_NOT_CERTIFIED = "DIRECT_10S_CONTRACT_NOT_CERTIFIED"
+DIRECT_VIDEO_READINESS_CONTRACT_VERSION = "direct-video-readiness-v1"
 
 
 def _build_reference_routing_receipt(
@@ -337,15 +656,40 @@ def _build_reference_routing_receipt(
         "TEXT_ONLY_TOOL_ALLOWED": text_only_allowed,
         "approval_allowed": reference_mode_authorized,
         "route_reason": (plan or {}).get("reason"),
+        "pre_provider": {
+            "classification": "READY" if reference_mode_authorized else "BLOCKED",
+            "provider_calls": 0,
+            "credit_spend": False,
+            "selected_route": selected_route,
+            "blocker_code": (
+                None
+                if reference_mode_authorized
+                else (
+                    contract_code
+                    or (plan or {}).get("reason")
+                    or ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL
+                )
+            ),
+        },
     }
 
 
 async def _record_artifacts(job, mode, artifacts):
     """Persist every finished artifact into the system library (generated_artifact
-    table) so completed videos/images survive restarts and are listable/downloadable
-    from the dashboard. Best-effort: a DB hiccup must never fail a finished job."""
+    table) and durable Results Hub so completed videos/images survive restarts and
+    are listable/downloadable from the dashboard. A delivery failure is terminal
+    and retryable locally; it must never be reported as a provider-complete DONE."""
     job["artifact_persist_attempted"] = True
     job["artifact_persisted_count"] = 0
+    prior_status = job.get("status")
+    delivery_retry = prior_status in {
+        "DONE",
+        "ARTIFACT_PERSISTING",
+        "ARTIFACT_PERSISTENCE_FAILED",
+        "RETRIEVED_NOT_REGISTERED",
+    }
+    if delivery_retry:
+        job["status"] = "ARTIFACT_PERSISTING"
     custody = job.get("product_visual_custody")
     exact_route = bool(
         isinstance(custody, dict)
@@ -413,8 +757,37 @@ async def _record_artifacts(job, mode, artifacts):
             return
     try:
         from agent.db import crud
+        from agent.services.video_artifact_delivery_service import file_delivery_evidence
+
+        artifact_evidence: dict[str, dict] = {}
+        strict_delivery = bool(
+            job.get("strict_artifact_delivery")
+            or job.get("request_id")
+            or job.get("durable")
+        )
         for art in artifacts:
-            await crud.insert_generated_artifact(
+            media_id = str(art.get("media_id") or "").strip()
+            if not media_id:
+                raise RuntimeError("ARTIFACT_MEDIA_ID_MISSING")
+            local_path = str(art.get("local_path") or "").strip()
+            try:
+                evidence = file_delivery_evidence(local_path)
+            except Exception:
+                if strict_delivery:
+                    raise
+                # Legacy unit/programmatic callers may use a synthetic path;
+                # real API jobs always carry strict_artifact_delivery/request_id.
+                evidence = {
+                    "local_path": local_path,
+                    "size_bytes": None,
+                    "sha256": None,
+                    "unverified": True,
+                }
+            artifact_evidence[media_id] = evidence
+        job["artifact_file_evidence"] = artifact_evidence
+        for art in artifacts:
+            evidence = artifact_evidence[str(art["media_id"])]
+            readback = await crud.insert_generated_artifact(
                 media_id=art["media_id"],
                 job_id=job.get("job_id"),
                 mode=mode,
@@ -422,12 +795,51 @@ async def _record_artifacts(job, mode, artifacts):
                 local_path=art.get("local_path"),
                 size_mb=art.get("size_mb"),
                 project_id=job.get("project_id"),
-                model_used=job.get("model_used"),
-                duration_used=job.get("duration_used"),
+                model_used=job.get("model_used") or job.get("model"),
+                duration_used=job.get("duration_used") or job.get("duration_s"),
+                file_size_bytes=evidence["size_bytes"],
+                file_sha256=evidence["sha256"],
+                delivery_status="REGISTERED",
+                readback_verified=True,
             )
+            if readback is not None and str(readback.get("local_path") or "") != str(art.get("local_path") or ""):
+                raise RuntimeError(
+                    f"ARTIFACT_READBACK_PATH_MISMATCH:{art['media_id']}"
+                )
             job["artifact_persisted_count"] += 1
-    except Exception as e:  # noqa: BLE001
+        # The generated_artifact row is the file/library index; generation_result
+        # is the durable operator recovery record. Both are idempotent on media_id.
+        for art in artifacts:
+            await crud.insert_generation_result(
+                art["media_id"],
+                job_id=job.get("job_id"),
+                request_id=job.get("request_id"),
+                mode=mode,
+                artifact_kind=("image" if mode == "IMG" else "video"),
+                product_id=job.get("product_id"),
+                final_prompt_text=job.get("prompt") or "",
+                aspect_ratio=job.get("aspect"),
+                model_label=job.get("model_used") or job.get("model"),
+                duration_s=job.get("duration_used") or job.get("duration_s"),
+                count_setting=job.get("num_videos"),
+                reference_media_ids=(job.get("routing_receipt") or {}).get(
+                    "reference_media_ids"
+                ) or [],
+                project_id=job.get("project_id"),
+                product_visual_custody=job.get("product_visual_custody") or {},
+            )
+    except Exception as e:  # noqa: BLE001 — delivery must be honest and retryable
         job["artifact_record_error"] = str(e)
+        job["artifact_delivery_failed"] = True
+        job["recovery_required"] = True
+        job["recovery_hint"] = (
+            "Provider output was retrieved but local artifact delivery failed. "
+            "Retry artifact registration only; do not resubmit the provider job."
+        )
+        job["status"] = "ARTIFACT_PERSISTENCE_FAILED"
+        return
+    if delivery_retry:
+        job["status"] = "DONE"
     custody = job.get("product_visual_custody") or custody
     if custody and mode in _VIDEO_MODES:
         from agent.services.product_visual_custody_service import (
@@ -490,6 +902,7 @@ async def _record_artifacts(job, mode, artifacts):
                 await crud.insert_generation_result(
                     artifact["media_id"],
                     job_id=job.get("job_id"),
+                    request_id=job.get("request_id"),
                     mode=mode,
                     artifact_kind="video",
                     product_id=job.get("product_id") or custody.get("product_id"),
@@ -547,7 +960,9 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          manifest_id: str | None = None,
                          asset_fingerprints: list[str] | None = None,
                          execution_identity: dict | None = None,
-                         product_visual_custody: dict | None = None) -> dict:
+                         product_visual_custody: dict | None = None,
+                         request_id: str | None = None,
+                         idempotency_key: str | None = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all.
@@ -560,6 +975,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     global _VIDEO_LANE_JOB
     _gc_jobs()
     mode = (mode or "").upper()
+    idempotency_key = idempotency_key or request_id
+    strict_durable = bool(request_id or idempotency_key)
     num_videos = max(1, min(4, int(num_videos or 1)))
     max_image_attempts = max(1, min(8, int(max_image_attempts or 1)))
     # ONE-DOOR reference contract (transport hard caps): T2V is text-only —
@@ -571,7 +988,47 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     _ref_count = len([m for m in (image_media_ids or []) if m])
     _violation = _refc.service_hard_violation(mode, _ref_count)
     if _violation:
-        return {"status": "REJECTED", "error": _violation}
+        return {
+            "status": "REJECTED",
+            "error": _violation,
+            "pre_provider": {
+                "classification": "BLOCKED",
+                "provider_calls": 0,
+                "credit_spend": False,
+                "blocker_code": _violation.split(":", 1)[0],
+            },
+        }
+    # A replay must resolve to the existing logical job before the process-local
+    # single-flight check.  This is a read-only DB lookup and never resubmits a
+    # provider operation, even when the old process-local map has been cleared.
+    if idempotency_key:
+        from agent.db import crud as _single_crud
+
+        try:
+            _existing = await _single_crud.get_video_production_job_by_logical_key(
+                _single_logical_job_key("pending", idempotency_key)
+            )
+        except Exception as _exc:  # noqa: BLE001 — API callers fail closed
+            if strict_durable:
+                return {
+                    "status": "REJECTED",
+                    "error": "DURABLE_SINGLE_LEDGER_UNAVAILABLE",
+                    "detail": str(_exc),
+                    "pre_provider": {
+                        "classification": "BLOCKED",
+                        "provider_calls": 0,
+                        "credit_spend": False,
+                        "blocker_code": "DURABLE_SINGLE_LEDGER_UNAVAILABLE",
+                    },
+                }
+            _existing = None
+        if _existing:
+            _memory_existing = get_job(_existing.get("job_id"))
+            if _memory_existing:
+                return {**_memory_existing, "request_id": request_id, "durable": True}
+            _recovered_existing = await get_durable_job(_existing["job_id"])
+            if _recovered_existing:
+                return {**_recovered_existing, "request_id": request_id, "durable": True}
     # Single-flight (patch H): one video job at a time on the shared Flow tab. IMG exempt.
     if mode in _VIDEO_MODES and _VIDEO_LANE_JOB and _job_active(_VIDEO_LANE_JOB):
         return {"status": "REJECTED", "error": "VIDEO_JOB_IN_FLIGHT",
@@ -657,6 +1114,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 "error": ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL,
                 "detail": f"Reference-bearing video blocked before provider approval: {reason}",
                 "routing_receipt": _routing_receipt,
+                "pre_provider": (_routing_receipt or {}).get("pre_provider"),
             }
     # Final Prompt Approval Gate (WYSIWYG dispatch verification). Recompute this
     # dispatch's execution envelope and require a matching human-APPROVED snapshot.
@@ -711,13 +1169,78 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                      "prompt": prompt, "aspect": aspect, "duration_s": duration_s,
                      "execution_identity": execution_identity,
                      "product_visual_custody": product_visual_custody,
-                     "error": None, "created": time.time()}
+                     "error": None, "created": time.time(),
+                     "request_id": request_id, "idempotency_key": idempotency_key,
+                     "durable": False}
     if _routing_receipt is not None:
         _JOBS[job_id]["routing_receipt"] = _routing_receipt
     if copy_execution_binding is not None:
         _JOBS[job_id]["copy_execution_binding"] = copy_execution_binding
+    try:
+        _durable_row, _durable_owner = await _prepare_durable_single_job(
+            _JOBS[job_id], idempotency_key=idempotency_key, strict=strict_durable
+        )
+    except RuntimeError as _exc:
+        _JOBS.pop(job_id, None)
+        return {
+            "status": "REJECTED",
+            "error": "DURABLE_SINGLE_LEDGER_UNAVAILABLE",
+            "detail": str(_exc),
+            "pre_provider": {
+                "classification": "BLOCKED",
+                "provider_calls": 0,
+                "credit_spend": False,
+                "blocker_code": "DURABLE_SINGLE_LEDGER_UNAVAILABLE",
+            },
+        }
+    if _durable_row and not _durable_owner:
+        _JOBS.pop(job_id, None)
+        _recovered = await get_durable_job(_durable_row["job_id"])
+        return {
+            **(_recovered or {"job_id": _durable_row["job_id"], "status": "RECOVERY_REQUIRED"}),
+            "request_id": request_id,
+            "durable": True,
+        }
+    if _durable_row:
+        _JOBS[job_id]["durable"] = True
+        _JOBS[job_id]["logical_job_key"] = _durable_row.get("logical_job_key")
     if mode in _VIDEO_MODES:
-        _VIDEO_LANE_JOB = job_id  # claim the lane synchronously to avoid a race
+        from agent.db import crud as _lane_crud
+
+        try:
+            _lane_lease = await _lane_crud.acquire_video_generation_lane_lease(job_id)
+        except Exception as _exc:  # noqa: BLE001 - real API requests fail closed
+            if strict_durable:
+                _JOBS.pop(job_id, None)
+                return {
+                    "status": "REJECTED",
+                    "error": "DURABLE_SINGLE_LANE_UNAVAILABLE",
+                    "detail": str(_exc),
+                    "pre_provider": {
+                        "classification": "BLOCKED",
+                        "provider_calls": 0,
+                        "credit_spend": False,
+                        "blocker_code": "DURABLE_SINGLE_LANE_UNAVAILABLE",
+                    },
+                }
+            _lane_lease = None
+        if _lane_lease is not None and not _lane_lease.get("acquired"):
+            _owner_row = _lane_lease.get("row") or {}
+            _JOBS.pop(job_id, None)
+            return {
+                "status": "REJECTED",
+                "error": "VIDEO_JOB_IN_FLIGHT",
+                "active_job": _owner_row.get("job_id"),
+                "pre_provider": {
+                    "classification": "BLOCKED",
+                    "provider_calls": 0,
+                    "credit_spend": False,
+                    "blocker_code": "VIDEO_JOB_IN_FLIGHT",
+                },
+            }
+        if _lane_lease is not None:
+            _JOBS[job_id]["lane_lease"] = _lane_lease.get("row")
+        _VIDEO_LANE_JOB = job_id  # cache; the DB lease is the source of truth
     lane = None
     if mode in _VIDEO_MODES:
         plan = _direct_plan
@@ -725,12 +1248,16 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
             lane = "DIRECT_API"
             _JOBS[job_id]["lane"] = lane
             _JOBS[job_id]["_task"] = asyncio.create_task(
-                _run_generate_direct(job_id, mode, prompt, project_id,
-                                     image_media_ids, aspect, tier, model,
-                                     duration_s, num_videos, product_id, plan))
+                _run_generate_task(
+                    job_id, _run_generate_direct, mode, prompt, project_id,
+                    image_media_ids, aspect, tier, model, duration_s, num_videos,
+                    product_id, plan,
+                )
+            )
             return {"job_id": job_id, "status": "SUBMITTED", "mode": mode,
                     "lane": lane, "routing_receipt": _routing_receipt,
-                    "product_visual_custody": product_visual_custody}
+                    "product_visual_custody": product_visual_custody,
+                    "request_id": request_id, "durable": bool(_durable_row)}
         lane = "AGENT"
         _JOBS[job_id]["lane"] = lane
         if direct_video_lane_enabled():
@@ -739,10 +1266,13 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
             # jobs are rejected above instead of reaching this fallback.
             _JOBS[job_id]["direct_decline_reason"] = plan["reason"]
     _JOBS[job_id]["_task"] = asyncio.create_task(
-        _run_generate(job_id, mode, prompt, project_id, image_media_ids, image_prompt,
-                      aspect, tier, model, duration_s, num_videos, image_model,
-                      max_image_attempts, collect_image_variants, product_id,
-                      copy_execution_binding))
+        _run_generate_task(
+            job_id, _run_generate, mode, prompt, project_id, image_media_ids,
+            image_prompt, aspect, tier, model, duration_s, num_videos, image_model,
+            max_image_attempts, collect_image_variants, product_id,
+            copy_execution_binding,
+        )
+    )
     return {
         "job_id": job_id,
         "status": "SUBMITTED",
@@ -750,6 +1280,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
         "lane": lane,
         "routing_receipt": _routing_receipt,
         "product_visual_custody": product_visual_custody,
+        "request_id": request_id,
+        "durable": bool(_durable_row),
     }
 
 
@@ -1296,10 +1828,19 @@ def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
     def _decline(reason):
         return {"eligible": False, "reason": reason}
 
-    if require_flag and not direct_video_lane_enabled():
-        return _decline("DIRECT_LANE_DISABLED")
     if mode not in _VIDEO_MODES:
         return _decline("NOT_A_VIDEO_MODE")
+    if mode in ("F2V", "I2V") and ref_count >= 1:
+        try:
+            if int(duration_s) == 10:
+                # Certification truth must win over the feature flag: a 10s
+                # reference request is never allowed to degrade to an 8s
+                # agent/default route when direct transport is disabled.
+                return _decline(DIRECT_10S_CONTRACT_NOT_CERTIFIED)
+        except (TypeError, ValueError):
+            pass
+    if require_flag and not direct_video_lane_enabled():
+        return _decline("DIRECT_LANE_DISABLED")
     if mode == "T2V":
         # No direct text-only RPC has been captured (no batchAsync T2V endpoint
         # exists in config); T2V stays on the conversational agent lane.
@@ -1349,6 +1890,11 @@ def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
             normalized_duration = int(duration_s)
         except (TypeError, ValueError):
             return _decline(f"DIRECT_DURATION_UNPROVEN:{duration_s}")
+        if normalized_duration == 10:
+            # The direct submit contract has never captured a 10s request.  Keep
+            # this as a stable machine-readable readiness blocker instead of
+            # treating the provider's 8s default as a silent 10s success.
+            return _decline(DIRECT_10S_CONTRACT_NOT_CERTIFIED)
         if normalized_duration != 8:
             # The captured submit contract carries no duration field; only the
             # Veo 8s default is provably delivered. Anything else is rejected
@@ -1357,6 +1903,92 @@ def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
     return {"eligible": True, "reason": None, "rpc": rpc, "gen_type": gen_type,
             "aspect_enum": aspect_enum, "video_model_key": video_model_key,
             "model_key_source": model_key_source}
+
+
+def direct_video_readiness(
+    mode: str | None = None,
+    *,
+    source_mode: str | None = None,
+    model: str | None = None,
+    duration_s: int | None = None,
+    aspect: str = "9:16",
+    ref_count: int = 1,
+    num_videos: int = 1,
+) -> dict:
+    """Return the provider-free direct-lane contract decision.
+
+    This is deliberately a pure readiness surface: it does not bind Flow,
+    inspect the extension, resolve a project, or call a provider.  A readiness
+    response may therefore be safely shown before approval.  Unknown model keys,
+    unproven durations, and a disabled lane remain explicit blockers; no value is
+    guessed from the registry or from the provider's default duration.
+    """
+    normalized_mode = (mode or "F2V").strip().upper()
+    normalized_duration = duration_s
+    plan = _direct_lane_plan(
+        normalized_mode,
+        source_mode,
+        model,
+        normalized_duration,
+        aspect,
+        ref_count=max(0, int(ref_count or 0)),
+        num_videos=max(1, int(num_videos or 1)),
+        require_flag=False,
+    )
+    blockers: list[dict[str, str]] = []
+    reason = str(plan.get("reason") or "")
+    if reason:
+        blockers.append({
+            "code": reason.split(":", 1)[0],
+            "detail": reason,
+            "stage": "PRE_PROVIDER",
+        })
+    if not direct_video_lane_enabled():
+        blockers.append({
+            "code": "DIRECT_LANE_DISABLED",
+            "detail": "DIRECT_VIDEO_LANE_ENABLED is not enabled",
+            "stage": "PRE_PROVIDER",
+        })
+    # Always publish the independent 10s certification state.  A caller asking
+    # for another duration must not make the 10s contract appear certified.
+    ten_second_plan = _direct_lane_plan(
+        normalized_mode,
+        source_mode,
+        model,
+        10,
+        aspect,
+        ref_count=max(0, int(ref_count or 0)),
+        num_videos=max(1, int(num_videos or 1)),
+        require_flag=False,
+    )
+    # This is an explicit certification boundary, independent of incidental
+    # input validation (missing source mode, disabled flag, etc.). The captured
+    # direct submit contract contains no 10s request, so 10s stays blocked until
+    # a future owner-authorized capture records it.
+    ten_second_blocker = DIRECT_10S_CONTRACT_NOT_CERTIFIED
+    return {
+        "contract_version": DIRECT_VIDEO_READINESS_CONTRACT_VERSION,
+        "provider_calls": 0,
+        "credit_spend": False,
+        "live_capture_required": True,
+        "mode": normalized_mode,
+        "source_mode": str(source_mode or "").strip().upper() or None,
+        "model": model,
+        "duration_s": normalized_duration,
+        "aspect": aspect,
+        "reference_count": max(0, int(ref_count or 0)),
+        "num_videos": max(1, int(num_videos or 1)),
+        "eligible": bool(plan.get("eligible")) and direct_video_lane_enabled(),
+        "selected_route": "DIRECT_API" if plan.get("eligible") and direct_video_lane_enabled() else "BLOCKED",
+        "plan": plan,
+        "blockers": blockers,
+        "ten_second": {
+            "duration_s": 10,
+            "status": "NOT_CERTIFIED",
+            "blocker_code": ten_second_blocker,
+            "provider_calls": 0,
+        },
+    }
 
 
 async def _direct_submit(client, plan, refs, prompt, project_id, tier, seed,
@@ -1814,6 +2446,8 @@ async def _run_generate_direct(job_id, mode, prompt, project_id, image_media_ids
             "operation_names": op_names,
         }
         job["identity_captured"] = True  # the operation handle IS the binding
+        # Provider identity is durable before the long poll/retrieval window.
+        await _sync_durable_single_job(job)
         if media_targets:
             await _direct_media_poll_retrieve_finish(
                 job, client, mode, media_targets, plan, seed, num_videos)
@@ -1844,7 +2478,8 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
                                duration_s: int = None,
                                confirm_live_credit_burn: bool = False,
                                product_visual_custody: dict | None = None,
-                               execution_identity: dict | None = None) -> dict:
+                               execution_identity: dict | None = None,
+                               request_id: str | None = None) -> dict:
     """LIVE-CAPTURE GATE (owner-authorized, DIRECT_VIDEO_CAPTURE_ENABLED): fire
     ONE direct batchAsync submit, return the RAW submit response for contract
     capture, and poll/retrieve/persist in the background so the spent credit
@@ -1884,6 +2519,24 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
         return {"ok": False, "error": "VIDEO_JOB_IN_FLIGHT",
                 "active_job": _VIDEO_LANE_JOB}
     job_id = "g_" + uuid4().hex[:12]
+    from agent.db import crud as _capture_crud
+
+    try:
+        _capture_lease = await _capture_crud.acquire_video_generation_lane_lease(job_id)
+    except Exception as exc:  # noqa: BLE001 - capture must fail closed
+        return {
+            "ok": False,
+            "error": "DURABLE_SINGLE_LANE_UNAVAILABLE",
+            "detail": str(exc),
+            "provider_submit": False,
+        }
+    if not _capture_lease.get("acquired"):
+        return {
+            "ok": False,
+            "error": "VIDEO_JOB_IN_FLIGHT",
+            "active_job": (_capture_lease.get("row") or {}).get("job_id"),
+            "provider_submit": False,
+        }
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "mode": mode,
                      "stage": "direct capture submit", "project_id": project_id,
                      "local_path": None, "media_id": None, "size_mb": None,
@@ -1897,7 +2550,36 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
                      "lane": "DIRECT_CAPTURE", "source_mode": source_mode,
                      "product_visual_custody": product_visual_custody,
                      "execution_identity": execution_identity,
+                     "request_id": request_id,
+                     "idempotency_key": request_id or job_id,
+                     "strict_artifact_delivery": True,
                      "error": None, "created": time.time()}
+    try:
+        _durable_row, _durable_owner = await _prepare_durable_single_job(
+            _JOBS[job_id],
+            idempotency_key=request_id or job_id,
+            strict=True,
+        )
+    except RuntimeError as exc:
+        _JOBS.pop(job_id, None)
+        await _capture_crud.release_video_generation_lane_lease(job_id)
+        return {
+            "ok": False,
+            "error": "DURABLE_SINGLE_LEDGER_UNAVAILABLE",
+            "detail": str(exc),
+            "provider_submit": False,
+        }
+    if _durable_row and not _durable_owner:
+        _JOBS.pop(job_id, None)
+        await _capture_crud.release_video_generation_lane_lease(job_id)
+        return {
+            **(await get_durable_job(_durable_row["job_id"]) or {}),
+            "ok": True,
+            "provider_submit": False,
+            "request_id": request_id,
+            "replayed": True,
+        }
+    _JOBS[job_id]["durable"] = bool(_durable_row)
     _VIDEO_LANE_JOB = job_id
     job = _JOBS[job_id]
     client = get_flow_client()
@@ -1920,6 +2602,7 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
         _stamp_credit(job, CREDIT_NOT_SPENT)
         if _VIDEO_LANE_JOB == job_id:
             _VIDEO_LANE_JOB = None
+        await _capture_crud.release_video_generation_lane_lease(job_id)
         return {"ok": False, "job_id": job_id, "error": str(e)}
     fired = {"rpc": plan["rpc"], "gen_type": plan["gen_type"],
              "aspect_enum": plan["aspect_enum"], "video_model_key": fired_model_key,
@@ -1933,6 +2616,7 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
         _stamp_credit(job, CREDIT_NOT_SPENT)
         if _VIDEO_LANE_JOB == job_id:
             _VIDEO_LANE_JOB = None
+        await _capture_crud.release_video_generation_lane_lease(job_id)
         return {"ok": False, "job_id": job_id, "fired": fired,
                 "submit_response": submit, "error": job["error"]}
     operations, media_targets, op_names = _direct_submit_handles(
@@ -1944,6 +2628,7 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
     job["generation_identity"] = {"seed": seed, "expected_model": fired_model_key,
                                   "operation_names": op_names}
     job["identity_captured"] = bool(op_names)
+    await _sync_durable_single_job(job)
 
     async def _finish():
         global _VIDEO_LANE_JOB
@@ -1968,6 +2653,7 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
         finally:
             if _VIDEO_LANE_JOB == job_id:
                 _VIDEO_LANE_JOB = None
+            await _capture_crud.release_video_generation_lane_lease(job_id)
 
     job["_task"] = asyncio.create_task(_finish())
     return {"ok": True, "job_id": job_id, "fired": fired,
@@ -2024,6 +2710,7 @@ async def start_direct_media_recovery(
         "product_id": None,
         "lane": "DIRECT_CAPTURE_RECOVERY",
         "direct_recovery": True,
+        "strict_artifact_delivery": True,
         "recovery_of": recovery_of,
         "generation_identity": {
             "seed": seed,
@@ -2311,6 +2998,9 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         job["gen_tool_matched"] = bool(nres.get("gen_tool_matched"))
         if not job["identity_captured"]:
             job["identity_gap_sse"] = _last_approve_sse(nres)
+        # Persist the approved provider/correlation envelope before any long
+        # render wait. A restart can therefore reconcile this same attempt.
+        await _sync_durable_single_job(job)
         # Post-approve verification (Layer A): a CONFIRMED model OR duration mismatch hard-fails.
         if nres.get("model_ok") is False:
             raise RuntimeError(

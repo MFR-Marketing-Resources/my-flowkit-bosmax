@@ -63,6 +63,7 @@ S_INITIAL_RECOVERY = "INITIAL_RECOVERY_REQUIRED"  # in-flight lane lost after re
 F_INITIAL = "INITIAL_FAILED"
 F_EXTEND = "EXTEND_FAILED"
 F_FINAL = "FINAL_RENDER_FAILED"
+F_FINAL_ARTIFACT = "FINAL_ARTIFACT_DELIVERY_FAILED"
 F_AUTH = "AUTHORIZATION_INVALID"
 OWNER_RECOVERY_HOLD_CODE = "OWNER_AUTHORIZED_RECOVERY_HOLD"
 OWNER_RECOVERY_HOLD_VERSION = 1
@@ -496,6 +497,37 @@ async def advance_job(
     job = await _crud.get_video_production_job(job_id)
     if not job:
         raise OrchestratorError("VIDEO_JOB_NOT_FOUND", job_id)
+    # A final render can be durable while the local library write was
+    # interrupted. Repair only that local delivery boundary; never re-enter a
+    # provider submit just because the artifact row is missing.
+    if job.get("final_media_id") and job.get("final_local_path"):
+        existing_artifact = await _crud.get_generated_artifact(job["final_media_id"])
+        if existing_artifact is None:
+            try:
+                from agent.services.video_artifact_delivery_service import (
+                    register_final_video_artifact,
+                )
+
+                await register_final_video_artifact(
+                    {
+                        "final_media_id": job["final_media_id"],
+                        "local_path": job["final_local_path"],
+                        "measured_duration_s": job.get("final_duration_s"),
+                    },
+                    job_id=job_id,
+                    mode="EXTEND",
+                    project_id=job.get("project_id"),
+                    product_id=job.get("product_id"),
+                )
+                await _crud.update_video_production_job_full(
+                    job_id, status=S_COMPLETE, error_code=None
+                )
+                job = await _crud.get_video_production_job(job_id)
+            except Exception as exc:  # noqa: BLE001 — remain retryable, not green
+                await _crud.update_video_production_job_full(
+                    job_id, status=F_FINAL_ARTIFACT, error_code=F_FINAL_ARTIFACT
+                )
+                return await get_job_status(job_id)
     if job.get("status") == S_COMPLETE:
         return await get_job_status(job_id)
 
@@ -699,14 +731,21 @@ async def advance_job(
         r = await _reserve_or_resume(idem, job_id, "CONCAT")
         if not r["reserved"]:
             row = r["row"] or {}
-            if row.get("submission_state") == SUB_TERMINAL and job.get("final_media_id"):
+            refreshed = await _crud.get_video_production_job(job_id) or job
+            if refreshed.get("final_media_id"):
                 return await get_job_status(job_id)
-            # a concat is SUBMITTED/UNCERTAIN elsewhere — resume via finalize's own
-            # persisted job-name (never a second concat submit).
-        await _crud.increment_side_effect_submit_count(idem)
-        await _crud.update_video_job_side_effect(
-            idem, submission_state=SUB_SUBMITTED, credit_state=CR_UNKNOWN,
-            retry_safety=RS_RESUME_ONLY)
+            # A concat is already owned by another caller/process. The final
+            # timeline runtime can resume polling only when its provider job
+            # name was durably captured. If it was not captured, do not guess
+            # or re-submit: leave the record visible for reconciliation.
+            if not refreshed.get("final_concat_job_name"):
+                return await get_job_status(job_id)
+            job = refreshed
+        if r["reserved"]:
+            await _crud.increment_side_effect_submit_count(idem)
+            await _crud.update_video_job_side_effect(
+                idem, submission_state=SUB_SUBMITTED, credit_state=CR_UNKNOWN,
+                retry_safety=RS_RESUME_ONLY)
         try:
             done = await _ft.finalize_timeline(
                 client, job_id=job_id, segment_media_ids=segments,
@@ -725,15 +764,23 @@ async def advance_job(
         await _crud.update_video_job_side_effect(
             idem, submission_state=SUB_TERMINAL, credit_state=CR_UNKNOWN,
             retry_safety=RS_RESUME_ONLY, operation_ref=done.get("final_concat_job_name"))
-        # register the ONE deliverable in the library
         try:
-            await _crud.insert_generated_artifact(
-                done["final_media_id"], job_id=job_id, mode="EXTEND",
-                artifact_kind="video", local_path=done["local_path"],
-                size_mb=done.get("size_mb"), project_id=job.get("project_id"),
-                duration_used=int(done.get("measured_duration_s") or 0))
-        except Exception:  # noqa: BLE001
-            pass
+            from agent.services.video_artifact_delivery_service import (
+                register_final_video_artifact,
+            )
+
+            await register_final_video_artifact(
+                done,
+                job_id=job_id,
+                mode="EXTEND",
+                project_id=job.get("project_id"),
+                product_id=job.get("product_id"),
+            )
+        except Exception as exc:  # noqa: BLE001 — provider output is not delivery
+            await _crud.update_video_production_job_full(
+                job_id, status=F_FINAL_ARTIFACT, error_code=F_FINAL_ARTIFACT
+            )
+            raise OrchestratorError(F_FINAL_ARTIFACT, str(exc)[:200]) from exc
 
     return await get_job_status(job_id)
 
@@ -789,6 +836,7 @@ _HUMAN = {
     F_INITIAL: "The first part could not be completed.",
     F_EXTEND: "The continuation could not be completed safely.",
     F_FINAL: "The final video could not be prepared.",
+    F_FINAL_ARTIFACT: "The final video rendered, but its local delivery needs retry.",
     F_AUTH: "Please review and confirm the video again.",
 }
 

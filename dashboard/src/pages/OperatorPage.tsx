@@ -76,6 +76,7 @@ import type {
 } from "../types";
 import { useProductCatalog } from "../hooks/useProductCatalog";
 import { resolvePromptRepresentationPresentation } from "../utils/promptRepresentationUi";
+import { forgetGenerationJob, rememberGenerationJob } from "../utils/videoSessionResults";
 import {
 	getEngine,
 	modelsForSingle,
@@ -1307,6 +1308,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						window.open(job.url, "_blank", "noopener");
 					}
 					if (mediaId) {
+						forgetGenerationJob(jobId);
 						setCompletedArtifact({
 							mediaId,
 							url: `/api/flow/retrieved/${mediaId}`,
@@ -1340,6 +1342,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						"STALE_OR_FOREIGN_CANDIDATES_ONLY",
 					].includes(status)
 				) {
+					forgetGenerationJob(jobId);
 					setNotice({
 						tone: "error",
 						title: `${noticeModeLabel(mode, data.mode)} failed`,
@@ -1424,43 +1427,43 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					"Waiting for extension telemetry.";
 
 				if (status === "COMPLETED") {
-					// The API lane's COMPLETED stage carries "media_id=<uuid> size_mb=<n>" —
-					// surface the finished video inline so the operator sees it HERE, now.
-					const completedStage = stages.find(
-						(s) => String(s?.stage || "") === "COMPLETED",
+					// Resolve the durable Results Hub by request id. Telemetry text is
+					// progress evidence only; it is not an artifact identity source.
+					const recoveryResponse = await fetch(
+						`/api/results/recover?request_id=${encodeURIComponent(manualRequestId)}`,
 					);
-					const completedMsg = String(
-						completedStage?.message || stageMessage || "",
-					);
-					const mediaMatch = completedMsg.match(
-						/media_id=([0-9a-fA-F]{8}-[0-9a-fA-F-]{27})/,
-					);
-					const allMediaMatch = completedMsg.match(
-						/all_media_ids=([0-9a-fA-F-]+(?:,[0-9a-fA-F-]+)*)/,
-					);
-					const sizeMatch = completedMsg.match(/size_mb=([\d.]+)/);
-					const mediaIds = Array.from(
+					const recoveryPayload = recoveryResponse.ok
+						? await recoveryResponse.json()
+						: { results: [] };
+					const durableResults: Array<{ media_id?: unknown; size_mb?: unknown }> =
+						Array.isArray(recoveryPayload.results)
+							? recoveryPayload.results
+							: [];
+					const mediaIds: string[] = Array.from(
 						new Set(
-							[
-								...(allMediaMatch?.[1]?.split(",") ?? []),
-								...(mediaMatch ? [mediaMatch[1]] : []),
-							].filter((id) => /^[0-9a-fA-F-]{20,}$/.test(id)),
+							durableResults
+								.map((result: { media_id?: unknown }) => String(result.media_id || "").trim())
+								.filter(Boolean),
 						),
 					);
-					const primaryMediaId = mediaIds[0] || mediaMatch?.[1] || "";
+					const primaryMediaId = mediaIds[0] || "";
+					const primaryResult = durableResults.find(
+						(result: { media_id?: unknown }) => String(result.media_id || "") === primaryMediaId,
+					);
+					const durableSizeMb = primaryResult?.size_mb;
 					if (primaryMediaId) {
 						setCompletedArtifact({
 							mediaId: primaryMediaId,
 							url: `/api/flow/retrieved/${primaryMediaId}`,
 							kind: "video",
-							sizeMb: sizeMatch ? sizeMatch[1] : null,
+							sizeMb: durableSizeMb != null ? String(durableSizeMb) : null,
 						});
 						setSessionResults((prev) => [
 							...mediaIds.map((media_id) => ({
 								media_id,
 								kind: "video" as const,
-								size_mb: media_id === primaryMediaId && sizeMatch
-									? Number(sizeMatch[1])
+								size_mb: media_id === primaryMediaId && durableSizeMb != null
+									? Number(durableSizeMb)
 									: null,
 								url: `/api/flow/retrieved/${encodeURIComponent(media_id)}`,
 							})),
@@ -1604,6 +1607,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
+					request_id: requestId,
 					mode: data.mode,
 					prompt: data.prompt,
 					product_id: data.product_id,
@@ -1660,10 +1664,15 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				);
 			}
 
-			const result = await response.json();
-			if (!result.job_id) {
-				throw new Error("no job_id returned");
-			}
+				const result = await response.json();
+				if (!result.job_id) {
+					throw new Error("no job_id returned");
+				}
+				rememberGenerationJob({
+					job_id: String(result.job_id),
+					request_id: result.request_id ?? requestId,
+					mode: data.mode,
+				});
 			setNotice({
 				tone: "info",
 				title: `${data.mode} accepted`,

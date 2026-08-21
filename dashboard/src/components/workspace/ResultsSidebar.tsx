@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { deleteImageArtifact } from "../../api/imgFactory";
+import {
+	forgetGenerationJob,
+	readGenerationJobs,
+} from "../../utils/videoSessionResults";
 
 export interface SessionResult {
 	media_id: string;
@@ -25,6 +29,19 @@ interface ResultsSidebarProps {
 	mediaKind?: "image" | "video";
 }
 
+function sessionStartFor(kind: "image" | "video"): number {
+	const key = `bosmax.results-session-started.${kind}`;
+	try {
+		const existing = Number(window.sessionStorage.getItem(key));
+		if (Number.isFinite(existing) && existing > 0) return existing;
+		const now = Date.now();
+		window.sessionStorage.setItem(key, String(now));
+		return now;
+	} catch {
+		return Date.now();
+	}
+}
+
 /**
  * Persistent, docked results panel. Shows ONLY the artifacts produced in the
  * current session (prop-driven, so it auto-updates the moment a job finishes).
@@ -42,7 +59,7 @@ export default function ResultsSidebar({
 	const [busyId, setBusyId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [recoveredResults, setRecoveredResults] = useState<SessionResult[]>([]);
-	const sessionStartedAtRef = useRef(Date.now());
+	const sessionStartedAtRef = useRef<number>(sessionStartFor(mediaKind));
 	const primaryIsVideoLibrary = libraryHref.startsWith("/library/videos");
 
 	// A retrieval recovery may register the video after the original job poll has
@@ -61,8 +78,7 @@ export default function ResultsSidebar({
 			inFlight = true;
 			try {
 				const response = await fetch("/api/flow/artifacts?limit=20&kind=video");
-				if (!response.ok) return;
-				const payload = await response.json();
+				const payload = response.ok ? await response.json() : { artifacts: [] };
 				const sessionFloor = sessionStartedAtRef.current - 1000;
 				const current = (Array.isArray(payload.artifacts) ? payload.artifacts : [])
 					.filter((item: { media_id?: unknown; created_at?: unknown }) => {
@@ -74,7 +90,54 @@ export default function ResultsSidebar({
 						kind: "video" as const,
 						size_mb: item.size_mb ?? null,
 					}));
-				if (alive) setRecoveredResults(current);
+
+				const durableRecovered: SessionResult[] = [];
+				for (const tracked of readGenerationJobs()) {
+					if (String(tracked.mode || "").toUpperCase() === "IMG") continue;
+					let jobResponse = await fetch(
+						`/api/flow/generate-job/${encodeURIComponent(tracked.job_id)}`,
+					);
+					if (jobResponse.ok) {
+						const job = await jobResponse.json();
+						const status = String(job.status || "").toUpperCase();
+						const mediaId = String(job.media_id || job.video_media_id || "").trim();
+						if (mediaId && status === "DONE") {
+							durableRecovered.push({
+								media_id: mediaId,
+								kind: "video",
+								size_mb: job.size_mb ?? null,
+							});
+							forgetGenerationJob(tracked.job_id);
+						} else if (["FAILED", "REJECTED", "GENERATED_BUT_UNRETRIEVED"].includes(status)) {
+							forgetGenerationJob(tracked.job_id);
+						}
+						continue;
+					}
+					if (jobResponse.status !== 404) continue;
+					// The process-local map may be gone after a restart. Query the
+					// durable Results Hub by job id; this is read-only and contains
+					// no regex extraction from telemetry text.
+					jobResponse = await fetch(
+						`/api/results/recover?job_id=${encodeURIComponent(tracked.job_id)}`,
+					);
+					if (!jobResponse.ok) continue;
+					const durable = await jobResponse.json();
+					for (const result of Array.isArray(durable.results) ? durable.results : []) {
+						const mediaId = String(result.media_id || "").trim();
+						if (mediaId) {
+							durableRecovered.push({
+								media_id: mediaId,
+								kind: "video",
+								size_mb: result.size_mb ?? null,
+								url: result.retrieved_url || undefined,
+							});
+						}
+					}
+					if (Array.isArray(durable.results) && durable.results.length) {
+						forgetGenerationJob(tracked.job_id);
+					}
+				}
+				if (alive) setRecoveredResults([...current, ...durableRecovered]);
 			} catch {
 				// Best-effort discovery only; the normal prop-driven completion path remains primary.
 			} finally {

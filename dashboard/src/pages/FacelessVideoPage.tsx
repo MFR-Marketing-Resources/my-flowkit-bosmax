@@ -54,6 +54,7 @@ import {
 	singleDurations,
 	type VideoCapabilityMatrix,
 } from "../utils/videoCapability";
+import { forgetGenerationJob, rememberGenerationJob } from "../utils/videoSessionResults";
 
 type NoticeTone = "info" | "success" | "warning" | "error";
 
@@ -422,6 +423,7 @@ export default function FacelessVideoPage() {
 			const status = job.status as string;
 			if (status === "DONE") {
 				const mediaId = job.media_id ?? job.video_media_id ?? "";
+				forgetGenerationJob(jobId);
 				if (mediaId) setCompletedUrl(`/api/flow/retrieved/${mediaId}`);
 				if (mediaId)
 					setSessionResults((prev) => [{ media_id: mediaId, kind: "video" }, ...prev]);
@@ -448,6 +450,7 @@ export default function FacelessVideoPage() {
 					"STALE_OR_FOREIGN_CANDIDATES_ONLY",
 				].includes(status)
 			) {
+				forgetGenerationJob(jobId);
 				setNotice({
 					tone: "error",
 					title: "Faceless generation failed",
@@ -573,7 +576,7 @@ export default function FacelessVideoPage() {
 			const response = await fetch("/api/flow/generate", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(generateBody),
+				body: JSON.stringify({ ...generateBody, request_id: requestId }),
 			});
 			if (!response.ok) {
 				const err = await response.json().catch(() => ({}));
@@ -600,6 +603,11 @@ export default function FacelessVideoPage() {
 			const data = await response.json();
 			const jobId = data.job_id || data.id;
 			if (!jobId) throw new Error("No job_id returned");
+			rememberGenerationJob({
+				job_id: String(jobId),
+				request_id: data.request_id ?? requestId,
+				mode: String(generateBody.mode || "F2V"),
+			});
 			void pollJob(String(jobId), requestId);
 		} catch (err: unknown) {
 			setNotice({

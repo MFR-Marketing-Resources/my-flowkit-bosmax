@@ -1226,6 +1226,10 @@ CREATE TABLE IF NOT EXISTS generated_artifact (
     artifact_kind  TEXT NOT NULL DEFAULT 'video' CHECK(artifact_kind IN ('video','image')),
     local_path     TEXT,
     size_mb        REAL,
+    file_size_bytes INTEGER,
+    file_sha256    TEXT,
+    delivery_status TEXT NOT NULL DEFAULT 'REGISTERED',
+    readback_verified INTEGER NOT NULL DEFAULT 0 CHECK(readback_verified IN (0,1)),
     project_id     TEXT,
     model_used     TEXT,
     duration_used  INTEGER,
@@ -3887,6 +3891,21 @@ CREATE TABLE IF NOT EXISTS video_job_side_effect (
     updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_video_side_effect_job ON video_job_side_effect(job_id, stage);
+
+-- Durable process-independent single-video lane lease.  The in-memory lane
+-- pointer remains a fast-path cache, but this row is the cross-process source
+-- of truth that prevents a second Flow submit after a restart or race.
+CREATE TABLE IF NOT EXISTS video_generation_lane_lease (
+    lane_id             TEXT PRIMARY KEY,
+    job_id              TEXT NOT NULL,
+    lease_token         TEXT NOT NULL UNIQUE,
+    status              TEXT NOT NULL DEFAULT 'ACTIVE',
+    lease_expires_at    TEXT NOT NULL,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_video_generation_lane_lease_status
+    ON video_generation_lane_lease(status, lease_expires_at);
 """)
         await db.commit()
 
@@ -3955,6 +3974,17 @@ CREATE INDEX IF NOT EXISTS idx_video_side_effect_job ON video_job_side_effect(jo
         if "scene_id" not in columns:
             await db.execute("ALTER TABLE generated_artifact ADD COLUMN scene_id TEXT")
             logger.info("Migrated: added scene_id column to generated_artifact")
+        for col, decl in (
+            ("file_size_bytes", "INTEGER"),
+            ("file_sha256", "TEXT"),
+            ("delivery_status", "TEXT NOT NULL DEFAULT 'REGISTERED'"),
+            ("readback_verified", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if col not in columns:
+                await db.execute(
+                    f"ALTER TABLE generated_artifact ADD COLUMN {col} {decl}"
+                )
+                logger.info("Migrated: added %s column to generated_artifact", col)
         await db.commit()
 
         # COPYWRITING HUB seed ledger. This is intentionally separate from
@@ -5364,6 +5394,13 @@ CREATE TABLE IF NOT EXISTS creative_generation_attempt (
     provider_job_id            TEXT,
     provider_project_id        TEXT,
     provider_correlation_id    TEXT,
+    source_mode                TEXT,
+    product_id                 TEXT,
+    project_id                 TEXT,
+    provider_targets_json      TEXT NOT NULL DEFAULT '[]',
+    provider_identity_json     TEXT NOT NULL DEFAULT '{}',
+    source_mode_certification  TEXT NOT NULL DEFAULT 'LEGACY_UNTYPED',
+    provider_touch_classification TEXT NOT NULL DEFAULT 'UNKNOWN',
     provider_snapshot_json     TEXT NOT NULL DEFAULT '{}',
     provider_snapshot_updated_at TEXT,
     artifact_media_id          TEXT,
@@ -5654,6 +5691,13 @@ CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_event_plan ON product_t
         attempt_observation_columns = {
             "provider_project_id": "TEXT",
             "provider_correlation_id": "TEXT",
+            "source_mode": "TEXT",
+            "product_id": "TEXT",
+            "project_id": "TEXT",
+            "provider_targets_json": "TEXT NOT NULL DEFAULT '[]'",
+            "provider_identity_json": "TEXT NOT NULL DEFAULT '{}'",
+            "source_mode_certification": "TEXT NOT NULL DEFAULT 'LEGACY_UNTYPED'",
+            "provider_touch_classification": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
             "provider_snapshot_json": "TEXT NOT NULL DEFAULT '{}'",
             "provider_snapshot_updated_at": "TEXT",
         }

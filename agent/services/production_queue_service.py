@@ -543,6 +543,11 @@ async def build_execution_payload(pkg: dict, run_config: dict | None = None) -> 
         except ValueError as exc:
             blockers.append(f"ENGINE_VALIDATION:{exc}")
 
+    declared_source_mode = str(
+        pkg.get("source_mode") or pkg.get("source_lane") or ""
+    ).strip().upper() or None
+    if not declared_source_mode and logical_mode == "HYBRID":
+        declared_source_mode = "HYBRID"
     payload = {
         "mode": engine_mode,
         "prompt": prompt,
@@ -554,6 +559,12 @@ async def build_execution_payload(pkg: dict, run_config: dict | None = None) -> 
         "num_videos": cfg.get("count") or 1,
         "logical_mode": logical_mode,
         "execution_lane": planner.EXECUTION_LANES.get(logical_mode, engine_mode),
+        "source_mode": declared_source_mode,
+        "product_id": str(pkg.get("product_id") or "").strip() or None,
+        "project_id": str(
+            pkg.get("project_id") or pkg.get("flow_project_id") or ""
+        ).strip() or None,
+        "provider_targets": list(image_media_ids),
     }
     if v2_handoff.get("v2_enabled"):
         payload["copy_architecture_v2"] = v2_handoff
@@ -927,7 +938,10 @@ async def _persist_generation_identity(wgp_id: str, job_id: str) -> dict:
 
     identity: dict = {}
     try:
-        job = make_video.get_job(job_id) or {}
+        job = make_video.get_job(job_id)
+        if job is None:
+            job = await make_video.get_durable_job(job_id)
+        job = job or {}
         row = await crud.get_workspace_generation_package(wgp_id) or {}
         identity = _loads(row.get("generation_identity_json"), {}) or {}
         identity.update({
@@ -989,7 +1003,10 @@ async def _persist_binding_outcome(wgp_id: str, job_id: str) -> None:
     from agent.services import make_video
 
     try:
-        job = make_video.get_job(job_id) or {}
+        job = make_video.get_job(job_id)
+        if job is None:
+            job = await make_video.get_durable_job(job_id)
+        job = job or {}
         row = await crud.get_workspace_generation_package(wgp_id) or {}
         identity = _loads(row.get("generation_identity_json"), {}) or {}
         # Refresh the anchors. The submission snapshot is taken the instant
@@ -1856,7 +1873,10 @@ async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
 
     waited = 0
     while waited < _JOB_TIMEOUT_SECONDS:
-        job = make_video.get_job(job_id) or {}
+        job = make_video.get_job(job_id)
+        if job is None:
+            job = await make_video.get_durable_job(job_id)
+        job = job or {}
         status = job.get("status")
         if status in ("DONE", "FAILED", "REJECTED", "GENERATED_BUT_UNRETRIEVED",
                       "RENDER_NOT_MATERIALIZED", "STALE_OR_FOREIGN_CANDIDATES_ONLY"):
@@ -1873,7 +1893,10 @@ async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
         )
         return {"ok": False, "error": "JOB_TIMEOUT"}
 
-    job = make_video.get_job(job_id) or {}
+        job = make_video.get_job(job_id)
+        if job is None:
+            job = await make_video.get_durable_job(job_id)
+        job = job or {}
     status = job.get("status")
     # Durably record what happened to the candidates BEFORE branching on status,
     # so a refusal leaves the same audit trail as an acceptance.

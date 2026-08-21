@@ -149,6 +149,52 @@ async def list_results(
     }
 
 
+@router.get("/recover")
+async def recover_results(
+    request_id: str | None = None,
+    job_id: str | None = None,
+    limit: int = 60,
+):
+    """Reload-safe lookup for a generation request/job.
+
+    This endpoint is deliberately read-only. It lets an operator recover a
+    durable media id after the browser or backend process lost its in-memory
+    polling state; it never starts or retries a provider operation.
+    """
+    if not request_id and not job_id:
+        raise HTTPException(422, "RECOVERY_FILTER_REQUIRED")
+    rows = await crud.list_generation_results(
+        limit=max(1, min(200, int(limit or 60))),
+        request_id=request_id,
+        job_id=job_id,
+    )
+    entries = []
+    for row in rows:
+        artifact = await crud.get_generated_artifact(row["media_id"])
+        entry = _entry_from_record(row, artifact)
+        entry.update({
+            "request_id": row.get("request_id"),
+            "job_id": row.get("job_id"),
+            "snapshot": {
+                "final_prompt_text": row.get("final_prompt_text") or "",
+                "mode": row.get("mode"),
+                "model_label": row.get("model_label"),
+                "aspect_ratio": row.get("aspect_ratio"),
+                "duration_s": row.get("duration_s"),
+                "count_setting": row.get("count_setting"),
+                "project_id": row.get("project_id"),
+            },
+        })
+        entries.append(entry)
+    return {
+        "results": entries,
+        "count": len(entries),
+        "request_id": request_id,
+        "job_id": job_id,
+        "provider_calls": 0,
+    }
+
+
 @router.get("/{media_id}")
 async def get_result(media_id: str):
     """Full deliverable detail: the durable prompt/settings snapshot (manual Flow
