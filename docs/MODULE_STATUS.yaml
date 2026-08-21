@@ -196,9 +196,14 @@ domains:
       # V2 generate flow; never approves, activates, or spends credit.
       - agent/services/copy_formula_recommender.py
       - agent/services/copy_register_bulk_service.py
+      - agent/services/copy_register_review_queue_service.py
       - agent/api/copy_bulk.py
       - tests/unit/test_copy_register_bulk_service.py
+      - tests/unit/test_copy_register_review_queue_service.py
+      - tests/api/test_copy_register_review_queue_api.py
       - dashboard/src/api/copyRegisterV2.ts
+      - dashboard/src/pages/CopyReviewQueuePage.tsx
+      - dashboard/src/pages/CopyReviewQueuePage.test.tsx
       - dashboard/src/api/posterV2.ts
       - scripts/migrate_copy_register_v2_only.py
       - tests/api/test_copy_register_v2_api.py
@@ -714,6 +719,7 @@ domains:
       - agent/services/product_preflight.py
       - agent/services/product_physics.py
       - agent/services/workspace_execution_package_service.py
+      - agent/services/product_visual_custody_service.py
       - agent/services/flow_client.py
       - agent/services/agent_video.py
       - agent/services/make_video.py
@@ -1011,6 +1017,8 @@ domains:
       - tests/unit/test_product_physics.py
       - tests/unit/test_workspace_image_preview_contract_service.py
       - tests/unit/test_workspace_execution_package_service.py
+      - tests/unit/test_product_visual_custody_service.py
+      - tests/api/test_product_visual_custody_gate.py
       - tests/unit/test_creative_asset_service.py
       - tests/unit/test_i2v_semantic_slot_resolver_service.py
       - tests/unit/test_img_asset_lane_config.py

@@ -155,6 +155,50 @@ export interface CopyRegisterActivationStatusV2 {
 	activated_at: string | null;
 }
 
+export interface CopyReviewQueueRowV2 {
+	blueprint_id: string;
+	revision: number;
+	product_id: string;
+	product_name: string;
+	formula_id: string;
+	claim_safe_copy_status: string | null;
+	claim_risk_level: string | null;
+	truth_status: string | null;
+	truth_current: boolean;
+	batch_approvable: boolean;
+	draft_blocked_reason: string | null;
+	current_authority_reason: string | null;
+	current_authority_mismatches: Array<Record<string, unknown>>;
+	draft_preview: {
+		angle: { angle_id: string; definition: string };
+		stages: Array<{
+			stage_key: string;
+			formula_stage_key: string;
+			text: string;
+			claim_bearing: boolean;
+		}>;
+	} | null;
+	individual_review_path: string | null;
+	error_detail?: string;
+}
+
+export interface CopyReviewQueueResponseV2 {
+	items: CopyReviewQueueRowV2[];
+	total: number;
+	filters: { only_claim_safe: boolean; product_id: string | null };
+	provider_calls: 0;
+	credit_spend: 0;
+	activation_mutations: 0;
+}
+
+export interface CopyBatchApprovalResultV2 {
+	blueprint_id: string;
+	status: "APPROVED" | "FAILED";
+	production_status?: string | null;
+	error_code?: string | null;
+	error_detail?: string;
+}
+
 export async function fetchCopyRegisterFormulas(): Promise<{ formulas: CopyFormulaV2[] }> {
 	return getAPI<{ formulas: CopyFormulaV2[] }>("/api/copy-register/v2/formulas");
 }
@@ -166,6 +210,46 @@ export async function fetchCopyRegisterProviderStatus(): Promise<TextAssistLaneS
 export async function fetchCopyRegisterTruth(productId: string): Promise<CopyTruthProofV2> {
 	return getAPI<CopyTruthProofV2>(
 		`/api/copy-register/v2/product/${encodeURIComponent(productId)}/truth`,
+	);
+}
+
+export async function fetchCopyReviewQueue(filters?: {
+	only_claim_safe?: boolean;
+	product_id?: string;
+}): Promise<CopyReviewQueueResponseV2> {
+	const params = new URLSearchParams();
+	if (filters?.only_claim_safe) params.set("only_claim_safe", "true");
+	if (filters?.product_id) params.set("product_id", filters.product_id);
+	const query = params.toString();
+	return getAPI<CopyReviewQueueResponseV2>(
+		`/api/copy-register/v2/bulk/review-queue${query ? `?${query}` : ""}`,
+	);
+}
+
+export async function batchApproveCopyDrafts(input: {
+	blueprint_ids: string[];
+	reviewer: string;
+	rationale: string;
+	readiness_proof: {
+		readiness_validated: boolean;
+		provenance_validated: boolean;
+		safety_validated: boolean;
+		bridge_validated: boolean;
+		duration_validated: boolean;
+	};
+	confirmation_phrase: string;
+}): Promise<{
+	results: CopyBatchApprovalResultV2[];
+	approved_count: number;
+	failed_count: number;
+	automatic_approval: false;
+	activation_mutations: 0;
+	provider_calls: 0;
+	credit_spend: 0;
+}> {
+	return postAPI(
+		"/api/copy-register/v2/bulk/review-queue/approve",
+		input,
 	);
 }
 

@@ -1608,6 +1608,71 @@ async def generate(body: GenerateRequest):
             request_refs=request_refs,
             start_asset=body.startAsset,
         )
+    else:
+        effective_source_mode = body.source_mode
+
+    product_visual_custody = None
+    if (
+        mode in ("I2V", "F2V")
+        and body.product_id
+        and effective_source_mode != "FRAMES"
+    ):
+        from agent.services.product_visual_custody_service import (
+            ProductVisualCustodyError,
+            build_product_visual_custody_receipt,
+            exact_product_required,
+            validate_pre_dispatch_route,
+        )
+
+        product_row = await crud.get_product(str(body.product_id))
+        official_asset = (
+            effective_start_asset
+            if isinstance(effective_start_asset, dict)
+            else (request_refs.get("productAsset") if isinstance(request_refs, dict) else None)
+        )
+        try:
+            if not product_row:
+                raise ProductVisualCustodyError(
+                    "ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED",
+                    "The product row is unavailable for product-visual custody.",
+                )
+            product_visual_custody = build_product_visual_custody_receipt(
+                product_row,
+                official_asset,
+                mode=mode,
+                source_mode=effective_source_mode,
+                prompt=body.prompt,
+                provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                generation_type="reference_frame_2_video",
+                execution_identity=body.execution_identity,
+            )
+            validate_pre_dispatch_route(
+                product_visual_custody,
+                provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                generation_type=product_visual_custody["generation_type"],
+            )
+            if (
+                exact_product_required(product_row)
+                and not product_visual_custody["prompt_lock"].get(
+                    "all_required_markers_present"
+                )
+            ):
+                raise ProductVisualCustodyError(
+                    "ERR_PRODUCT_PROMPT_LOCK_INCOMPLETE",
+                    "Exact-product video prompt is missing one or more required Product Lock sections.",
+                )
+        except ProductVisualCustodyError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error_code": exc.code,
+                    "message": exc.message,
+                    "details": {
+                        **(exc.details or {}),
+                        "product_visual_custody": product_visual_custody,
+                    },
+                },
+            ) from exc
     # Validate model+duration BEFORE connectivity so 422 stays deterministic (patch I2a);
     # always resolve against the EFFECTIVE model (defaults to Lite) so a bad duration_s with
     # no model (e.g. 10s on default Lite) is caught here, not late inside the job.
@@ -1652,12 +1717,25 @@ async def generate(body: GenerateRequest):
         if mode == "IMG" or drop_legacy_video_media_ids
         else list(body.image_media_ids or [])
     )
+    official_provider_media_id = None
     for slot_label, ref_asset in ordered_ref_slots(
         effective_start_asset, request_refs, end_asset=body.endAsset
     ):
         media_id = await _resolve_asset_to_media_id(client, ref_asset, slot_label)
         if media_id and media_id not in resolved_ids:
             resolved_ids.append(media_id)
+        asset_source = str(
+            ref_asset.get("assetSource")
+            or ref_asset.get("asset_source")
+            or ref_asset.get("source")
+            or ""
+        ).upper()
+        if media_id and (
+            ref_asset.get("officialVisual") is True
+            or ref_asset.get("official_visual") is True
+            or asset_source.startswith("PRODUCT_VISUAL_OFFICIAL")
+        ):
+            official_provider_media_id = str(media_id)
     if mode == "IMG" and (not body.product_id or exact_img):
         # Product-aware non-exact IMG requests deliberately do not merge the
         # caller's untyped image_media_ids.  Those IDs have no slot/lineage and
@@ -1665,6 +1743,27 @@ async def generate(body: GenerateRequest):
         for media_id in body.image_media_ids or []:
             if media_id and media_id not in resolved_ids:
                 resolved_ids.append(media_id)
+
+    if product_visual_custody is not None:
+        from agent.services.product_visual_custody_service import (
+            bind_provider_reference_transport,
+        )
+
+        if not official_provider_media_id:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error_code": "ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED",
+                    "message": "The official product visual did not produce an observed provider reference id.",
+                },
+            )
+        product_visual_custody = bind_provider_reference_transport(
+            product_visual_custody,
+            provider_reference_media_ids=resolved_ids,
+            official_provider_media_id=official_provider_media_id,
+            provider_route="API_FIRST_GENERATIVE_REFERENCE",
+            generation_type="reference_frame_2_video",
+        )
 
     tier = "PAYGATE_TIER_ONE"
     if mode in ("T2V", "I2V", "F2V"):  # video modes need Pro/Ultra
@@ -1680,7 +1779,8 @@ async def generate(body: GenerateRequest):
         max_image_attempts=1 if creative_campaign else 8,
         collect_image_variants=creative_campaign,
         product_id=body.product_id,
-        source_mode=body.source_mode,
+        source_mode=effective_source_mode,
+        product_visual_custody=product_visual_custody,
         copy_execution_binding=(
             v2_resolution.to_metadata(
                 consumer_context=body.copy_v2_context
@@ -1703,6 +1803,8 @@ async def generate(body: GenerateRequest):
             # blocked before provider approval rather than silently entering the
             # text-only agent lane.
             content["routing_receipt"] = result["routing_receipt"]
+        if result.get("product_visual_custody") is not None:
+            content["product_visual_custody"] = result["product_visual_custody"]
         return JSONResponse(
             status_code=409,
             content=content,
@@ -2540,6 +2642,7 @@ _VIDEO_ASPECT_TO_RATIO = {
 }
 _INITIAL_GEN_TERMINAL = {
     "DONE",
+    "PRODUCT_FIDELITY_REVIEW_REQUIRED",
     "FAILED",
     "REJECTED",
     "GENERATED_BUT_UNRETRIEVED",
@@ -3249,6 +3352,17 @@ async def _persist_generation_results(snapshot, job, all_ids):
                                     or prod.get("name"))
             except Exception:  # noqa: BLE001 — display enrichment is non-critical
                 product_name = None
+        custody_payload = (
+            snapshot.get("product_visual_custody")
+            or job.get("product_visual_custody")
+            or {}
+        )
+        if isinstance(custody_payload, dict) and job.get("product_fidelity_qc") is not None:
+            custody_payload = {
+                **custody_payload,
+                "product_fidelity_qc": job.get("product_fidelity_qc"),
+                "product_fidelity_qc_status": job.get("product_fidelity_qc_status"),
+            }
         for mid in media_ids:
             await crud.insert_generation_result(
                 mid,
@@ -3267,6 +3381,7 @@ async def _persist_generation_results(snapshot, job, all_ids):
                 workspace_generation_package_id=snapshot.get(
                     "workspace_generation_package_id"),
                 project_id=snapshot.get("project_id"),
+                product_visual_custody=custody_payload,
             )
     except Exception:  # noqa: BLE001 — durable record is best-effort, never fatal
         pass
@@ -3329,6 +3444,15 @@ async def _bridge_generate_job_telemetry(request_id: str, job_id: str,
                 fail_code=code, first_fail_stage="API_GENERATE_PROGRESS",
             )
             await _persist_output_correlation_evidence(request_id, job_id, job)
+            await _persist_generation_results(
+                result_snapshot,
+                job,
+                [
+                    artifact.get("media_id")
+                    for artifact in (job.get("artifacts") or [])
+                    if artifact.get("media_id")
+                ],
+            )
             await crud.update_request(
                 request_id, status="FAILED", error_message=code, updated_at=crud._now(),
             )
@@ -3371,7 +3495,19 @@ async def _resolve_asset_to_media_id(client, asset: dict, slot: str, request_id:
     token = re.sub(r"[^A-Z0-9]+", "_", slot.upper()).strip("_")
     media_id = _extract_flow_media_id(asset)
     local_path = asset.get("localFilePath") or asset.get("local_file_path")
-    if media_id:
+    asset_source = str(
+        asset.get("assetSource") or asset.get("asset_source") or asset.get("source") or ""
+    ).upper()
+    official_visual = bool(
+        asset.get("officialVisual") is True
+        or asset.get("official_visual") is True
+        or asset_source.startswith("PRODUCT_VISUAL_OFFICIAL")
+    )
+    # An opaque pre-existing Flow id is not custody proof for an official
+    # product visual. Official assets must be uploaded from the byte-verified
+    # server-owned path on this dispatch; otherwise an old/stale media id can
+    # silently survive a Product Truth cutout replacement.
+    if media_id and not official_visual:
         check = await client.get_media(str(media_id))
         check_status = check.get("status") if isinstance(check, dict) else None
         media_alive = bool(
@@ -3549,6 +3685,61 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             start_asset=start_asset,
         )
         body["refs"] = gated_refs
+        # Product visual custody is a pre-credit gate. The official asset is
+        # the only product reference allowed into the shared API-first lane;
+        # exact-policy products cannot use the current generative R2V/I2V
+        # semantics until a deterministic exact route is proven.
+        if effective_source_mode != "FRAMES":
+            from agent.services.product_visual_custody_service import (
+                ProductVisualCustodyError,
+                build_product_visual_custody_receipt,
+                exact_product_required,
+                validate_pre_dispatch_route,
+            )
+
+            product_row = await crud.get_product(str(body["product_id"]))
+            official_asset = (
+                start_asset
+                if isinstance(start_asset, dict)
+                else (gated_refs.get("productAsset") if isinstance(gated_refs, dict) else None)
+            )
+            try:
+                if not product_row:
+                    raise ProductVisualCustodyError(
+                        "ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED",
+                        "The product row is unavailable for product-visual custody.",
+                    )
+                receipt = build_product_visual_custody_receipt(
+                    product_row,
+                    official_asset,
+                    mode=mode,
+                    source_mode=effective_source_mode,
+                    prompt=prompt,
+                    provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                    generation_type="reference_frame_2_video",
+                    execution_identity=body.get("execution_identity"),
+                )
+                validate_pre_dispatch_route(
+                    receipt,
+                    provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                    generation_type=receipt["generation_type"],
+                )
+                if (
+                    exact_product_required(product_row)
+                    and not receipt["prompt_lock"].get("all_required_markers_present")
+                ):
+                    raise ProductVisualCustodyError(
+                        "ERR_PRODUCT_PROMPT_LOCK_INCOMPLETE",
+                        "Exact-product video prompt is missing one or more required Product Lock sections.",
+                    )
+                body["product_visual_custody"] = receipt
+            except ProductVisualCustodyError as exc:
+                await _fail_manual_request(
+                    request_id,
+                    "API_PRODUCT_VISUAL_CUSTODY_GATE",
+                    str(exc),
+                    exc.code,
+                )
 
     if mode == "IMG" and body.get("product_id"):
         if creative_campaign:
@@ -3651,6 +3842,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                                     end_asset=body.get("endAsset"))
     refs = []
     local_paths = []
+    official_provider_media_id = None
     for slot_label, asset in slot_assets:
         resolved = await _resolve_asset_to_media_id(client, asset, slot_label, request_id)
         if resolved and resolved not in refs:
@@ -3658,6 +3850,15 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             lp = asset.get("localFilePath") or asset.get("local_file_path")
             if lp:
                 local_paths.append(str(lp))
+        asset_source = str(
+            asset.get("assetSource") or asset.get("asset_source") or asset.get("source") or ""
+        ).upper()
+        if resolved and (
+            asset.get("officialVisual") is True
+            or asset.get("official_visual") is True
+            or asset_source.startswith("PRODUCT_VISUAL_OFFICIAL")
+        ):
+            official_provider_media_id = str(resolved)
 
     if mode in ("I2V", "F2V") and not refs:
         await _fail_manual_request(
@@ -3695,6 +3896,35 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     if not _ref_ok:
         await _fail_manual_request(
             request_id, "API_LANE_REJECTED", _ref_detail, _ref_code)
+
+    if body.get("product_visual_custody") is not None:
+        from agent.services.product_visual_custody_service import (
+            ProductVisualCustodyError,
+            bind_provider_reference_transport,
+        )
+
+        if not official_provider_media_id:
+            await _fail_manual_request(
+                request_id,
+                "API_PRODUCT_VISUAL_CUSTODY_GATE",
+                "The official product visual did not produce an observed provider reference id.",
+                "ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED",
+            )
+        try:
+            body["product_visual_custody"] = bind_provider_reference_transport(
+                body["product_visual_custody"],
+                provider_reference_media_ids=refs,
+                official_provider_media_id=official_provider_media_id,
+                provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                generation_type="reference_frame_2_video",
+            )
+        except (KeyError, TypeError, ProductVisualCustodyError) as exc:
+            await _fail_manual_request(
+                request_id,
+                "API_PRODUCT_VISUAL_CUSTODY_GATE",
+                str(exc),
+                "ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED",
+            )
 
     tier = "PAYGATE_TIER_ONE"
     if mode in ("T2V", "I2V", "F2V"):
@@ -3839,7 +4069,10 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             mode, prompt, capture_project_id, refs, aspect=aspect, tier=tier,
             source_mode=_authority_source_mode, model=model_key,
             duration_s=duration_s,
-            confirm_live_credit_burn=bool(body.get("confirm_live_credit_burn")))
+            confirm_live_credit_burn=bool(body.get("confirm_live_credit_burn")),
+            product_visual_custody=body.get("product_visual_custody"),
+            execution_identity=body.get("execution_identity"),
+        )
         await crud.add_stage_event(
             request_id,
             "API_DIRECT_CAPTURE_FIRED" if cap.get("ok")
@@ -3862,6 +4095,8 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         image_model=body.get("image_model") if creative_campaign else None,
         product_id=body.get("product_id"),
         source_mode=_authority_source_mode,
+        product_visual_custody=body.get("product_visual_custody"),
+        execution_identity=body.get("execution_identity"),
         copy_execution_binding=(
             v2_resolution.to_metadata(
                 consumer_context=body.get("copy_v2_context")
@@ -3907,6 +4142,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             body.get("workspace_execution_package_id")
             or body.get("workspace_generation_package_id")),
         "project_id": created_project_id,
+        "product_visual_custody": body.get("product_visual_custody") or {},
         "copy_architecture_v2": (
             v2_resolution.to_metadata(
                 consumer_context=body.get("copy_v2_context")

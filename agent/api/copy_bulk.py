@@ -1,15 +1,15 @@
-"""Lapis 2 Phase 1 — bulk DRAFT copy generation router (credit-free, DRAFT-only).
+"""Lapis 2 bulk DRAFT generation and human review-queue router.
 
-Thin transport over `copy_register_bulk_service`. Every run produces DRAFT blueprints
-only; it NEVER approves or activates (human batch-approval stays the sole production
-path). Text-assist generation spends no Flow credits.
+Bulk generation remains DRAFT-only. Review-queue approval delegates to the V2
+per-blueprint authority and never activates or spends provider credits.
 """
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent.services import copy_register_bulk_service as svc
+from agent.services import copy_register_review_queue_service as review_queue
 
 router = APIRouter(prefix="/copy-register/v2/bulk", tags=["copy-register-v2-bulk"])
 
@@ -21,6 +21,16 @@ class CreateBulkRunRequest(BaseModel):
     label: Optional[str] = Field(default=None)
     # When true, generation starts immediately after the run is created.
     start: bool = Field(default=False)
+
+
+class BatchApproveDraftsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    blueprint_ids: list[str] = Field(min_length=1, max_length=500)
+    reviewer: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    readiness_proof: dict[str, Any]
+    confirmation_phrase: str = Field(min_length=1)
 
 
 @router.post("/runs")
@@ -61,3 +71,37 @@ async def get_bulk_run(run_id: str):
 @router.get("/runs")
 async def list_bulk_runs(limit: int = 50):
     return await svc.list_runs(limit)
+
+
+@router.get("/review-queue")
+async def get_review_queue(
+    only_claim_safe: bool = Query(default=False),
+    product_id: str | None = Query(default=None),
+):
+    try:
+        return await review_queue.list_review_queue(
+            only_claim_safe=only_claim_safe,
+            product_id=product_id,
+        )
+    except review_queue.CopyRegisterReviewQueueError as exc:
+        detail: dict[str, Any] = {"error": exc.code, "detail": str(exc)}
+        if exc.details is not None:
+            detail["details"] = exc.details
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+
+
+@router.post("/review-queue/approve")
+async def approve_review_queue_batch(request: BatchApproveDraftsRequest):
+    try:
+        return await review_queue.batch_approve_drafts(
+            request.blueprint_ids,
+            reviewer=request.reviewer,
+            rationale=request.rationale,
+            readiness_proof_dict=request.readiness_proof,
+            confirmation_phrase=request.confirmation_phrase,
+        )
+    except review_queue.CopyRegisterReviewQueueError as exc:
+        detail: dict[str, Any] = {"error": exc.code, "detail": str(exc)}
+        if exc.details is not None:
+            detail["details"] = exc.details
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc

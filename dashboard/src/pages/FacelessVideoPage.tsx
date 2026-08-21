@@ -391,10 +391,12 @@ export default function FacelessVideoPage() {
 				requestId: pkg.workspace_execution_package_id,
 			});
 		} catch (err: unknown) {
+			const detail = err instanceof Error ? err.message : "Failed to prepare package";
+			const fidelityBlocked = /ERR_PRODUCT_FIDELITY_ROUTE_NOT_PROVEN|ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED|ERR_OFFICIAL_PRODUCT_VISUAL/i.test(detail);
 			setNotice({
 				tone: "error",
-				title: "Prepare failed",
-				detail: err instanceof Error ? err.message : "Failed to prepare package",
+				title: fidelityBlocked ? "BLOCKED: product fidelity route not proven" : "Prepare failed",
+				detail,
 				requestId: null,
 			});
 		} finally {
@@ -430,6 +432,7 @@ export default function FacelessVideoPage() {
 				[
 					"FAILED",
 					"REJECTED",
+					"PRODUCT_FIDELITY_REVIEW_REQUIRED",
 					"GENERATED_BUT_UNRETRIEVED",
 					"RENDER_NOT_MATERIALIZED",
 					"STALE_OR_FOREIGN_CANDIDATES_ONLY",
