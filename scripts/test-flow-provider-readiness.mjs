@@ -20,6 +20,10 @@ const backgroundSource = fs.readFileSync(
 	path.join(repoRoot, "extension", "background.js"),
 	"utf8",
 );
+const readinessSource = fs.readFileSync(
+	path.join(scriptDir, "browser-uat", "flow-provider-readiness.mjs"),
+	"utf8",
+);
 
 function readyObservation() {
 	return {
@@ -103,5 +107,7 @@ assert.match(startSource, /user-data-dir=\$\(\$script:ChromeProfileDir\)/i);
 assert.match(backgroundSource, /extension_id/);
 assert.match(backgroundSource, /extension_session_id/);
 assert.match(backgroundSource, /extension_version/);
+assert.match(readinessSource, /const observedExtensionBuild = extensionIdentityProof/);
+assert.match(readinessSource, /extension_build_expected/);
 
 console.log("FLOW_PROVIDER_READINESS_TESTS_PASS cases=A,B,C,D,E,F,G");
