@@ -1783,3 +1783,13 @@ domains:
       # V2<->V3 parity coverage. Pure/provider-free; no authority-semantics change.
       - agent/services/product_truth_evidence.py
       - tests/unit/test_product_truth_evidence_parity.py
+      # Production Output management reporting: read-only projection over the
+      # authoritative P6, standalone video, Montage, and Poster Builder ledgers.
+      # No reporting database, generation path, or provider authority is added.
+      - agent/api/production_output_reporting.py
+      - agent/services/production_output_reporting_service.py
+      - dashboard/src/api/productionOutputReporting.ts
+      - dashboard/src/pages/ProductionOutputReportingPage.tsx
+      - dashboard/src/pages/ProductionOutputReportingPage.test.tsx
+      - tests/api/test_production_output_reporting_api.py
+      - tests/unit/test_production_output_reporting.py
