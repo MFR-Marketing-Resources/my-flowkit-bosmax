@@ -5213,6 +5213,8 @@ CREATE TABLE IF NOT EXISTS creative_production_plan (
     operating_window_hours     INTEGER NOT NULL DEFAULT 12 CHECK(operating_window_hours BETWEEN 1 AND 24),
     allocation_strategy        TEXT NOT NULL DEFAULT 'ROUND_ROBIN',
     variation_strategy         TEXT NOT NULL DEFAULT 'SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS',
+    production_recipe          TEXT
+                               CHECK(production_recipe IS NULL OR production_recipe IN ('HYBRID','FACELESS','MONTAGE')),
     logical_mode               TEXT NOT NULL DEFAULT 'T2V'
                                CHECK(logical_mode IN ('T2V','HYBRID','F2V','I2V')),
     model_keys_json            TEXT NOT NULL DEFAULT '[]',
@@ -5280,6 +5282,8 @@ CREATE TABLE IF NOT EXISTS creative_production_item (
     item_ordinal               INTEGER NOT NULL,
     product_id                 TEXT NOT NULL REFERENCES product(id) ON DELETE RESTRICT,
     media_type                 TEXT NOT NULL CHECK(media_type IN ('VIDEO','IMAGE','POSTER')),
+    production_recipe          TEXT
+                               CHECK(production_recipe IS NULL OR production_recipe IN ('HYBRID','FACELESS','MONTAGE')),
     logical_mode               TEXT NOT NULL DEFAULT 'T2V',
     creative_dimensions_json   TEXT NOT NULL DEFAULT '{}',
     creative_dna_sha256        TEXT NOT NULL,
@@ -5616,6 +5620,35 @@ CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_event_plan ON product_t
                 "Migrated: added plan_snapshot_json column to "
                 "creative_production_plan"
             )
+        # Production Studio recipe attribution is additive.  NULL is the
+        # deliberate historical value: legacy plans are readable but are never
+        # silently migrated into a current recipe.
+        recipe_columns_by_table = {
+            "creative_production_plan": (
+                "production_recipe",
+                "TEXT CHECK(production_recipe IS NULL OR production_recipe IN "
+                "('HYBRID','FACELESS','MONTAGE'))",
+            ),
+            "creative_production_item": (
+                "production_recipe",
+                "TEXT CHECK(production_recipe IS NULL OR production_recipe IN "
+                "('HYBRID','FACELESS','MONTAGE'))",
+            ),
+        }
+        for table_name, (column_name, column_type) in recipe_columns_by_table.items():
+            recipe_cursor = await db.execute(
+                f"PRAGMA table_info({table_name})"
+            )
+            existing_columns = {row[1] for row in await recipe_cursor.fetchall()}
+            if column_name not in existing_columns:
+                await db.execute(
+                    f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+                )
+                logger.info(
+                    "Migrated: added %s column to %s",
+                    column_name,
+                    table_name,
+                )
         cursor = await db.execute("PRAGMA table_info(creative_generation_attempt)")
         attempt_columns = {row[1] for row in await cursor.fetchall()}
         attempt_observation_columns = {

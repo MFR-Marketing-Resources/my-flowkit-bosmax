@@ -57,6 +57,7 @@ vi.mock("../api/creativeProduction", () => ({
 	reconcileAttempt: (...args: unknown[]) => reconcileAttempt(...args),
 	retryAttempt: (...args: unknown[]) => retryAttempt(...args),
 	decideItemQa: (...args: unknown[]) => decideItemQa(...args),
+	PRODUCTION_RECIPES: ["HYBRID", "FACELESS", "MONTAGE"],
 	P6_LIVE_CONFIRMATION: "AUTHORIZE_P6_LIVE_CREDIT_SPEND",
 }));
 
@@ -160,7 +161,7 @@ type AvailabilityFixtureRequest = {
 		product_id: string;
 		video_count: number;
 	}>;
-	logical_mode: string;
+	production_recipe: string;
 	model_key: string;
 	duration_seconds: number;
 	creative_format: string;
@@ -196,7 +197,8 @@ function makeTreatmentAvailability(
 		ready,
 		selection_mode: body.treatment_ids?.length ? "EXPLICIT" : "AUTO",
 		requested: {
-			logical_mode: body.logical_mode,
+			logical_mode: body.production_recipe === "HYBRID" ? "HYBRID" : "F2V",
+			production_recipe: body.production_recipe,
 			model_key: body.model_key,
 			duration_seconds: body.duration_seconds,
 			creative_format: body.creative_format,
@@ -212,7 +214,7 @@ function makeTreatmentAvailability(
 		supported_configurations: [
 			{
 				format: "UGC",
-				logical_mode: body.logical_mode,
+				logical_mode: body.production_recipe === "HYBRID" ? "HYBRID" : "F2V",
 				generation_mode: body.duration_seconds > 8 ? "EXTEND" : "SINGLE",
 				duration_seconds: body.duration_seconds,
 				model_keys: [body.model_key],
@@ -257,6 +259,7 @@ function makeSnapshot({
 	configuration,
 	completeness = "COMPLETE",
 	missingFields = [],
+	productionRecipe = "HYBRID",
 }: {
 	planId: string;
 	name: string;
@@ -269,6 +272,7 @@ function makeSnapshot({
 	configuration: typeof singleConfiguration;
 	completeness?: "COMPLETE" | "LEGACY_INCOMPLETE";
 	missingFields?: string[];
+	productionRecipe?: "HYBRID" | "FACELESS" | "MONTAGE" | null;
 }) {
 	const targetVideoCount = allocations.reduce(
 		(total, allocation) => total + allocation.video_count,
@@ -291,7 +295,8 @@ function makeSnapshot({
 		target_video_count: targetVideoCount,
 		target_image_count: 0,
 		target_poster_count: 0,
-		logical_mode: "T2V",
+		production_recipe: productionRecipe,
+		logical_mode: productionRecipe === "HYBRID" ? "HYBRID" : "T2V",
 		video_configurations: [configuration],
 		aspect_ratio: "16:9",
 		operating_window_hours: 12,
@@ -350,10 +355,11 @@ function makePlan(snapshot: ReturnType<typeof makeSnapshot>) {
 		target_video_count: snapshot.target_video_count,
 		target_image_count: 0,
 		target_poster_count: 0,
+		production_recipe: snapshot.production_recipe,
 		operating_window_hours: 12,
 		allocation_strategy: "ROUND_ROBIN",
 		variation_strategy: "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS",
-		logical_mode: "T2V",
+		logical_mode: snapshot.logical_mode,
 		model_keys: ["veo_3_1_lite"],
 		duration_seconds: [
 			snapshot.video_configurations[0]?.requested_total_duration_seconds ?? 8,
@@ -400,6 +406,7 @@ const SNAPSHOT_LEGACY = makeSnapshot({
 	configuration: singleConfiguration,
 	completeness: "LEGACY_INCOMPLETE",
 	missingFields: ["product_allocations"],
+	productionRecipe: null,
 });
 const SNAPSHOT_COMPLETED = makeSnapshot({
 	planId: "plan-completed",
@@ -435,7 +442,8 @@ function item(planId: string, ordinal: number, productId: string) {
 		item_ordinal: ordinal,
 		product_id: productId,
 		media_type: "VIDEO",
-		logical_mode: "T2V",
+		production_recipe: planId === "plan-legacy" ? null : "HYBRID",
+		logical_mode: planId === "plan-legacy" ? "T2V" : "HYBRID",
 		creative_dimensions: {
 			generation_mode: planId === "plan-b" ? "EXTEND" : "SINGLE",
 			duration_seconds: planId === "plan-b" ? "16" : "8",
@@ -557,7 +565,7 @@ function prime() {
 	});
 	fetchGovernedPoolAuthority.mockResolvedValue({
 		product_ids: [],
-		logical_mode: "T2V",
+		production_recipe: "HYBRID",
 		products: [],
 		copy_sets: [],
 		poster_copy_sets: [],
@@ -725,7 +733,7 @@ describe("P6.3-R2 production plan state isolation", () => {
 	it("auto-selects product-approved avatars and allows independent checkbox changes", async () => {
 		fetchGovernedPoolAuthority.mockResolvedValue({
 			product_ids: ["product-a"],
-			logical_mode: "T2V",
+			production_recipe: "HYBRID",
 			products: [],
 			copy_sets: [],
 			poster_copy_sets: [],
@@ -945,17 +953,20 @@ describe("P6.3-R2 production plan state isolation", () => {
 		).not.toBeInTheDocument();
 	});
 
-	it("marks incomplete legacy plans and keeps production disabled without inventing allocation", async () => {
+	it("marks historical legacy plans read-only without inventing a recipe or allocation", async () => {
 		render(<CreativeProductionStudioPage />);
 		await selectPlan("plan-legacy");
 		expect(screen.getByTestId("p6-primary-action")).toHaveTextContent(
 			"Production unavailable",
 		);
 		expect(
-			screen.getByText("Legacy plan — incomplete snapshot"),
+			screen.getByText("Historical plan — read-only"),
 		).toBeInTheDocument();
 		expect(screen.getByTestId("p6-live-disabled-reason")).toHaveTextContent(
-			"product_allocations",
+			"Historical plans are readable for audit",
+		);
+		expect(screen.getByTestId("p6-readonly-plan-snapshot")).toHaveTextContent(
+			"LEGACY / HISTORICAL",
 		);
 		expect(
 			screen.getByTestId("p6-readonly-plan-snapshot"),

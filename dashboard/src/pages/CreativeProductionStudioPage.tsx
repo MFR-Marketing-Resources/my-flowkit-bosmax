@@ -42,9 +42,11 @@ import {
 	materializeContentMatrix,
 	materializeStudioPlanManifest,
 	P6_LIVE_CONFIRMATION,
+	PRODUCTION_RECIPES,
 	type PlanDetail,
 	type ProductionPlan,
 	type ProductionPlanCanonicalSnapshot,
+	type ProductionRecipe,
 	type ProductVideoAllocation,
 	preflightProductionPlan,
 	reconcileAttempt,
@@ -164,7 +166,7 @@ function Metric({
 
 const WORKFLOW_STEPS = [
 	{ id: 1, label: "Pick products", desc: "Choose & quantity" },
-	{ id: 2, label: "Choose recipe", desc: "Mode & duration" },
+	{ id: 2, label: "Choose recipe", desc: "Recipe & duration" },
 	{ id: 3, label: "Check readiness", desc: "Capacity + supply" },
 	{ id: 4, label: "Compile", desc: "0 credits" },
 	{ id: 5, label: "Dry run", desc: "Review before live" },
@@ -195,18 +197,34 @@ const GUIDED_RECIPES = [
 	},
 ] as const;
 
+const PRODUCTION_RECIPE_DETAILS: Record<ProductionRecipe, { title: string; detail: string }> = {
+	HYBRID: {
+		title: "Hybrid",
+		detail: "Product anchor + creator-led treatment",
+	},
+	FACELESS: {
+		title: "Faceless",
+		detail: "Product-first scenes without a visible creator",
+	},
+	MONTAGE: {
+		title: "Montage",
+		detail: "Discrete product scenes assembled into one story",
+	},
+};
+
 type StudioMode =
 	| "NEW_DRAFT"
 	| "ACTIVE_PLAN"
 	| "UNSAVED_DRAFT_FROM_ACTIVE_PLAN"
 	| "LOADING_PLAN"
-	| "LEGACY_INCOMPLETE_PLAN";
+	| "LEGACY_INCOMPLETE_PLAN"
+	| "LEGACY_HISTORICAL_PLAN";
 
 const P6_COHORT_PAGE_SIZE = 50;
 
 export default function CreativeProductionStudioPage() {
 	const searchParams = new URLSearchParams(window.location.search);
-	// V4 cockpit is the DEFAULT (matches the T2V lane convention); `?classic=1`
+	// V4 cockpit is the DEFAULT; `?classic=1`
 	// opts back into the legacy surface. Operators no longer need a magic `?v4=1`.
 	const useV4 = searchParams.get("classic") !== "1";
 	// Deep-link handoff: the Copywriting Landbank opens Production Studio as
@@ -273,22 +291,16 @@ export default function CreativeProductionStudioPage() {
 	const [form, setForm] = useState({
 		name: "New production plan",
 		campaignKey: "",
-		imageCount: 0,
-		posterCount: 0,
 		windowHours: 12,
-		logicalMode: "T2V" as "T2V" | "HYBRID" | "F2V" | "I2V",
+		productionRecipe: "HYBRID" as ProductionRecipe,
 		modelKey: "",
 		durationSeconds: 8,
 		creativeFormat: "AUTO" as CreativeTreatmentFormatPreference,
 		treatmentIds: "",
 		aspect: "9:16" as "9:16" | "16:9",
 		avatarCodes: "",
-		productReferenceAssetIds: "",
-		finishedFrameAssetIds: "",
-		characterAssetIds: "",
 		sceneAssetIds: "",
 		styleAssetIds: "",
-		layoutIds: "",
 		controlledReuseReason: "",
 		controlledReuseMaxPerDna: 1,
 	});
@@ -428,9 +440,11 @@ export default function CreativeProductionStudioPage() {
 			assertPlanDetailBound(planId, fetchedDetail);
 			setDetail(fetchedDetail);
 			setStudioMode(
-				fetchedDetail.snapshot.completeness === "COMPLETE"
-					? "ACTIVE_PLAN"
-					: "LEGACY_INCOMPLETE_PLAN",
+				!fetchedDetail.snapshot.production_recipe
+					? "LEGACY_HISTORICAL_PLAN"
+					: fetchedDetail.snapshot.completeness === "COMPLETE"
+						? "ACTIVE_PLAN"
+						: "LEGACY_INCOMPLETE_PLAN",
 			);
 			return fetchedDetail;
 		} catch (reason) {
@@ -558,7 +572,7 @@ export default function CreativeProductionStudioPage() {
 		let active = true;
 		setPoolAuthority(null);
 		setPoolAuthorityLoading(true);
-		void fetchGovernedPoolAuthority(productIds, form.logicalMode)
+		void fetchGovernedPoolAuthority(productIds, form.productionRecipe)
 			.then((authority) => {
 				if (!active) return;
 				setPoolAuthority(authority);
@@ -573,7 +587,7 @@ export default function CreativeProductionStudioPage() {
 		return () => {
 			active = false;
 		};
-	}, [poolAuthorityProductKey, form.logicalMode]);
+	}, [poolAuthorityProductKey, form.productionRecipe]);
 
 	useEffect(() => {
 		if (!poolAuthority) return;
@@ -605,7 +619,7 @@ export default function CreativeProductionStudioPage() {
 		setTreatmentAvailabilityError("");
 		void fetchTreatmentAvailability({
 			product_video_allocations: allocations,
-			logical_mode: form.logicalMode,
+			production_recipe: form.productionRecipe,
 			model_key: form.modelKey,
 			duration_seconds: form.durationSeconds,
 			creative_format: form.creativeFormat,
@@ -628,7 +642,7 @@ export default function CreativeProductionStudioPage() {
 		allocations,
 		form.creativeFormat,
 		form.durationSeconds,
-		form.logicalMode,
+		form.productionRecipe,
 		form.modelKey,
 		form.treatmentIds,
 	]);
@@ -659,8 +673,27 @@ export default function CreativeProductionStudioPage() {
 			blockSeconds,
 			segments: seconds / blockSeconds,
 		}));
-		return [...singles, ...extensions];
-	}, [selectedModel]);
+		const options = [...singles, ...extensions];
+		return form.productionRecipe === "MONTAGE"
+			? options.filter((option) => option.generationMode === "SINGLE")
+			: options;
+	}, [selectedModel, form.productionRecipe]);
+	const chooseProductionRecipe = (recipe: ProductionRecipe) => {
+		setForm((current) => {
+			const montageDuration = selectedModel?.allowed_durations_s?.includes(
+				current.durationSeconds,
+			)
+				? current.durationSeconds
+				: selectedModel?.allowed_durations_s?.[0] ?? 8;
+			return {
+				...current,
+				productionRecipe: recipe,
+				aspect: recipe === "MONTAGE" ? "9:16" : current.aspect,
+				durationSeconds:
+					recipe === "MONTAGE" ? montageDuration : current.durationSeconds,
+			};
+		});
+	};
 	const selectedDurationOption = durationOptions.find(
 		(option) => option.seconds === form.durationSeconds,
 	);
@@ -708,7 +741,6 @@ export default function CreativeProductionStudioPage() {
 				? configuration.model_keys.map(String)
 				: [];
 			return (
-				String(configuration.logical_mode ?? "") === form.logicalMode &&
 				modelKeys.includes(modelKey) &&
 				Number(configuration.duration_seconds) === durationSeconds &&
 				(format === "AUTO" || String(configuration.format ?? "") === format)
@@ -835,26 +867,18 @@ export default function CreativeProductionStudioPage() {
 			product_ids: allocations.map((allocation) => allocation.product_id),
 			product_video_allocations: allocations,
 			target_video_count: totalVideoCount,
-			target_image_count: form.imageCount,
-			target_poster_count: form.posterCount,
+			production_recipe: form.productionRecipe,
 			operating_window_hours: form.windowHours,
 			allocation_strategy: "ROUND_ROBIN",
 			variation_strategy: "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS",
-			logical_mode: form.logicalMode,
 			model_keys: [selectedModel?.key || form.modelKey],
 			duration_seconds: [form.durationSeconds],
 			creative_format: form.creativeFormat,
 			pools: {
 				treatment_ids: splitValues(form.treatmentIds),
 				avatar_codes: splitValues(form.avatarCodes),
-				// Product visuals are never a P6 pool dimension. Each item resolves
-				// the product's saved Product Registration Official Product Visual.
-				product_reference_asset_ids: [],
-				finished_frame_asset_ids: splitValues(form.finishedFrameAssetIds),
-				character_asset_ids: splitValues(form.characterAssetIds),
 				scene_asset_ids: splitValues(form.sceneAssetIds),
 				style_asset_ids: splitValues(form.styleAssetIds),
-				layout_ids: splitValues(form.layoutIds),
 			},
 			controlled_reuse_reason: form.controlledReuseReason || null,
 			controlled_reuse_max_per_dna: form.controlledReuseMaxPerDna,
@@ -874,6 +898,13 @@ export default function CreativeProductionStudioPage() {
 	const duplicateActivePlan = useCallback(() => {
 		if (!detail) return;
 		const snapshot = detail.snapshot;
+		const productionRecipe = snapshot.production_recipe;
+		if (!productionRecipe) {
+			setError(
+				"Historical plans remain read-only and cannot be duplicated into a new recipe without an explicit operator decision.",
+			);
+			return;
+		}
 		const configuration = snapshot.video_configurations[0];
 		const pool = snapshot.pool_snapshot;
 		const poolValues = (key: string) =>
@@ -890,10 +921,8 @@ export default function CreativeProductionStudioPage() {
 			...current,
 			name: `${snapshot.plan_name} copy`,
 			campaignKey: snapshot.purpose ?? "",
-			imageCount: snapshot.target_image_count,
-			posterCount: snapshot.target_poster_count,
 			windowHours: snapshot.operating_window_hours,
-			logicalMode: snapshot.logical_mode,
+			productionRecipe,
 			modelKey: configuration?.model_key ?? current.modelKey,
 			durationSeconds:
 				configuration?.requested_total_duration_seconds ??
@@ -904,12 +933,8 @@ export default function CreativeProductionStudioPage() {
 			) as CreativeTreatmentFormatPreference,
 			treatmentIds: poolValues("treatment_ids"),
 			avatarCodes: poolValues("avatar_codes"),
-			productReferenceAssetIds: poolValues("product_reference_asset_ids"),
-			finishedFrameAssetIds: poolValues("finished_frame_asset_ids"),
-			characterAssetIds: poolValues("character_asset_ids"),
 			sceneAssetIds: poolValues("scene_asset_ids"),
 			styleAssetIds: poolValues("style_asset_ids"),
-			layoutIds: poolValues("layout_ids"),
 			controlledReuseReason: String(pool.controlled_reuse_reason ?? ""),
 			controlledReuseMaxPerDna: Number(pool.controlled_reuse_max_per_dna ?? 1),
 		}));
@@ -938,20 +963,14 @@ export default function CreativeProductionStudioPage() {
 			...current,
 			name: "New production plan",
 			campaignKey: "",
-			imageCount: 0,
-			posterCount: 0,
 			windowHours: 12,
-			logicalMode: "T2V",
+			productionRecipe: "HYBRID",
 			aspect: "9:16",
 			creativeFormat: "AUTO",
 			treatmentIds: "",
 			avatarCodes: "",
-			productReferenceAssetIds: "",
-			finishedFrameAssetIds: "",
-			characterAssetIds: "",
 			sceneAssetIds: "",
 			styleAssetIds: "",
-			layoutIds: "",
 			controlledReuseReason: "",
 			controlledReuseMaxPerDna: 1,
 		}));
@@ -998,6 +1017,9 @@ export default function CreativeProductionStudioPage() {
 	const liveDisabledReason = useMemo(() => {
 		if (studioMode === "UNSAVED_DRAFT_FROM_ACTIVE_PLAN") {
 			return "Create the new plan before starting production.";
+		}
+		if (studioMode === "LEGACY_HISTORICAL_PLAN") {
+			return "Historical plans are readable for audit, but cannot be edited or dispatched as a current recipe.";
 		}
 		if (!selectedPlan || !selectedSnapshot) {
 			return "Select an existing plan before starting production.";
@@ -1060,6 +1082,22 @@ export default function CreativeProductionStudioPage() {
 	}, [detail]);
 
 	const primaryActionConfig = (() => {
+		if (studioMode === "LEGACY_HISTORICAL_PLAN" && selectedSnapshot) {
+			return {
+				step: activeStep,
+				title: "Historical plan — read-only",
+				subtitle:
+					"This legacy plan remains readable for audit and lineage, but it is not a current Production Studio recipe.",
+				buttonLabel: "Production unavailable",
+				buttonTestId: "p6-primary-action",
+				actionName: "legacy-historical",
+				executeAction: async () => {},
+				disabled: true,
+				disabledReason:
+					"Historical plans cannot be assigned a new recipe or dispatched from Production Studio.",
+				isCreditSpend: false,
+			};
+		}
 		if (studioMode === "LEGACY_INCOMPLETE_PLAN" && selectedSnapshot) {
 			return {
 				step: activeStep,
@@ -1328,7 +1366,7 @@ export default function CreativeProductionStudioPage() {
 	const guidedAuthorityReady = cohort?.matches_frozen_authority === true;
 	const p6V4Surface = (surface: ReactNode) =>
 		useV4 ? (
-			<WorkflowStep
+					<WorkflowStep
 				index={1}
 				title="P6 batch production workspace"
 				status={selectedPlan ? "done" : allocations.length ? "active" : "upcoming"}
@@ -1359,7 +1397,7 @@ export default function CreativeProductionStudioPage() {
 						</div>
 					</div>
 
-										<WorkflowStep
+					<WorkflowStep
 						index={1}
 						title="Products"
 						status={allocations.length ? "done" : "active"}
@@ -1372,13 +1410,41 @@ export default function CreativeProductionStudioPage() {
 						</div>
 					</WorkflowStep>
 
-										<WorkflowStep
+					<WorkflowStep
 						index={2}
 						title="Recipe & length"
 						status={form.durationSeconds && allocations.length ? "done" : allocations.length ? "active" : "upcoming"}
-						summary={guidedRecipe}
-						helper="Pick one recipe per plan: a single clip, or an extended (chained) clip."
+						summary={`${form.productionRecipe} · ${guidedRecipe}`}
+						helper="Pick one canonical Production Studio recipe and one governed video length per plan."
 					>
+						<div className="mb-3 grid gap-2 md:grid-cols-3">
+							{PRODUCTION_RECIPES.map((recipe) => {
+								const selected = form.productionRecipe === recipe;
+								const detail = PRODUCTION_RECIPE_DETAILS[recipe];
+								return (
+									<button
+										key={recipe}
+										type="button"
+										disabled={Boolean(busy)}
+										onClick={() => chooseProductionRecipe(recipe)}
+										data-testid={`p6-production-recipe-${recipe}`}
+										className={`rounded-xl border p-3 text-left transition-colors ${
+											selected
+												? "border-cyan-400/80 bg-cyan-500/15 text-cyan-100"
+												: "border-slate-700 bg-slate-950/60 text-slate-300 hover:border-cyan-400/50"
+										}`}
+									>
+										<div className="flex items-center justify-between gap-2">
+											<strong>{detail.title}</strong>
+											{selected ? <StatusBadge status="SELECTED" /> : null}
+										</div>
+										<div className="mt-1 text-[10px] text-slate-500">
+											{detail.detail}
+										</div>
+									</button>
+								);
+							})}
+						</div>
 						<div className="grid gap-2 md:grid-cols-3">
 							{GUIDED_RECIPES.map((recipe) => {
 							const available = durationOptions.some(
@@ -1416,7 +1482,7 @@ export default function CreativeProductionStudioPage() {
 						</div>
 					</WorkflowStep>
 
-										<WorkflowStep
+					<WorkflowStep
 						index={3}
 						title="Readiness"
 						status={guidedAuthorityReady ? "done" : allocations.length ? "active" : "upcoming"}
@@ -1430,7 +1496,7 @@ export default function CreativeProductionStudioPage() {
 						)}
 					</WorkflowStep>
 
-										<WorkflowStep
+						<WorkflowStep
 						index={4}
 						title="Compile & generate"
 						status={selectedPlan ? "done" : allocations.length && guidedAuthorityReady ? "active" : "upcoming"}
@@ -1720,7 +1786,7 @@ export default function CreativeProductionStudioPage() {
 								{selectedSnapshot.target_video_count === 1 ? "" : "s"} across{" "}
 								{selectedSnapshot.product_allocations.length} product
 								{selectedSnapshot.product_allocations.length === 1 ? "" : "s"} ·{" "}
-								{selectedSnapshot.logical_mode} ·{" "}
+								{selectedSnapshot.production_recipe ?? "LEGACY / HISTORICAL"} ·{" "}
 								{selectedSnapshot.video_configurations
 									.map(
 										(configuration) =>
@@ -1835,54 +1901,40 @@ export default function CreativeProductionStudioPage() {
 											From product quantities
 										</div>
 									</div>
-									{(
-										[
-											["imageCount", "Images"],
-											["posterCount", "Posters"],
-										] as const
-									).map(([key, label]) => (
-										<label key={key} className="text-xs text-slate-400">
-											{label}
-											<input
-												aria-label={label}
-												type="number"
-												min={0}
-												max={200}
-												value={form[key]}
-												onChange={(event) =>
-													setForm({
-														...form,
-														[key]: Number(event.target.value),
-													})
-												}
-												className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
-											/>
-										</label>
-									))}
+									<div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 p-2">
+										<div className="text-[10px] text-slate-400">Media target</div>
+										<div className="mt-1 text-lg font-semibold text-emerald-200">Video only</div>
+										<div className="text-[9px] text-slate-500">Image production and Poster Builder remain separate surfaces.</div>
+									</div>
 								</div>
 								<div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-300">
 									B. Configure video
 								</div>
 								<div className="grid grid-cols-2 gap-2">
-									<label className="text-xs text-slate-400">
-										Video mode
-										<select
-											aria-label="Video logical mode"
-											value={form.logicalMode}
-											onChange={(event) =>
-												setForm({
-													...form,
-													logicalMode: event.target
-														.value as typeof form.logicalMode,
-												})
-											}
-											className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
-										>
-											{["T2V", "HYBRID", "F2V", "I2V"].map((mode) => (
-												<option key={mode}>{mode}</option>
-											))}
-										</select>
-									</label>
+									<div className="col-span-2">
+										<div className="mb-1 text-xs text-slate-400">Production recipe</div>
+										<div className="grid gap-2 sm:grid-cols-3">
+											{PRODUCTION_RECIPES.map((recipe) => {
+												const selected = form.productionRecipe === recipe;
+												return (
+													<button
+														key={recipe}
+														type="button"
+														disabled={Boolean(busy)}
+														onClick={() => chooseProductionRecipe(recipe)}
+														data-testid={`p6-production-recipe-${recipe}-advanced`}
+														className={`rounded-lg border px-3 py-2 text-left text-xs ${
+															selected
+																? "border-cyan-400/70 bg-cyan-500/15 text-cyan-100"
+																: "border-slate-700 bg-slate-900 text-slate-300"
+														}`}
+													>
+														{PRODUCTION_RECIPE_DETAILS[recipe].title}
+													</button>
+												);
+											})}
+										</div>
+									</div>
 									<label className="text-xs text-slate-400">
 										Model
 										<select
@@ -1949,20 +2001,21 @@ export default function CreativeProductionStudioPage() {
 										<select
 											aria-label="Video aspect ratio"
 											value={form.aspect}
-											onChange={(event) =>
-												setForm({
-													...form,
-													aspect: event.target.value as typeof form.aspect,
-												})
-											}
-											className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
-										>
-											<option value="9:16">9:16 · Portrait</option>
-											<option value="16:9">16:9 · Landscape</option>
-										</select>
-									</label>
+											disabled={form.productionRecipe === "MONTAGE"}
+										onChange={(event) =>
+											setForm({
+												...form,
+												aspect: event.target.value as typeof form.aspect,
+											})
+										}
+										className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-white"
+									>
+										<option value="9:16">9:16 · Portrait</option>
+										<option value="16:9">16:9 · Landscape</option>
+									</select>
+								</label>
 								</div>
-								{form.logicalMode === "HYBRID" ? (
+								{form.productionRecipe === "HYBRID" ? (
 									<div
 										data-testid="p6-hybrid-anchor-note"
 										className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs text-emerald-100"
@@ -1971,6 +2024,16 @@ export default function CreativeProductionStudioPage() {
 										its own Official Product Visual (approved cutout → source image)
 										saved in Smart Product Registration as the anchor. No start-frame
 										picker or Creative Library selection is needed here.
+									</div>
+								) : null}
+								{form.productionRecipe === "FACELESS" ? (
+									<div className="rounded-lg border border-violet-500/30 bg-violet-500/10 p-2 text-xs text-violet-100">
+										Faceless uses the canonical product-first lane. Creator and avatar selections are not required for this recipe.
+									</div>
+								) : null}
+								{form.productionRecipe === "MONTAGE" ? (
+									<div className="rounded-lg border border-fuchsia-500/30 bg-fuchsia-500/10 p-2 text-xs text-fuchsia-100">
+										Montage prepares discrete product scenes through the canonical Montage run and preserves the final assembly lineage.
 									</div>
 								) : null}
 								<label className="text-xs text-slate-400">
@@ -2095,8 +2158,8 @@ export default function CreativeProductionStudioPage() {
 											className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs text-emerald-100"
 										>
 											Product images are not selected from Creative Library here. Every P6
-											IMG, Hybrid, I2V, and Poster item uses the Official Product Visual
-											saved in Smart Product Registration.
+											video recipe uses the Official Product Visual saved in Smart Product
+											Registration as its product anchor.
 										</div>
 										{poolAuthorityLoading ? (
 											<div
@@ -2107,27 +2170,17 @@ export default function CreativeProductionStudioPage() {
 											</div>
 										) : null}
 										{[
-											{
-												key: "avatarCodes",
-												label: "Product-first approved avatars",
-												options: approvedAvatarOptions,
-												valueKey: "avatar_code",
-												labelKeys: ["character_name", "variant"],
-											},
-											{
-												key: "finishedFrameAssetIds",
-												label: "Finished composite frames",
-												options: poolAuthority?.finished_frame_assets ?? [],
-												valueKey: "asset_id",
-												labelKeys: ["name", "semantic_role"],
-											},
-											{
-												key: "characterAssetIds",
-												label: "Character reference assets",
-												options: poolAuthority?.character_assets ?? [],
-												valueKey: "asset_id",
-												labelKeys: ["name", "semantic_role"],
-											},
+											...(form.productionRecipe === "HYBRID"
+												? [
+													{
+														key: "avatarCodes",
+														label: "Product-first approved avatars",
+														options: approvedAvatarOptions,
+														valueKey: "avatar_code",
+														labelKeys: ["character_name", "variant"],
+													},
+												]
+												: []),
 											{
 												key: "sceneAssetIds",
 												label: "Scene context assets",
@@ -2141,13 +2194,6 @@ export default function CreativeProductionStudioPage() {
 												options: poolAuthority?.style_assets ?? [],
 												valueKey: "asset_id",
 												labelKeys: ["name", "semantic_role"],
-											},
-											{
-												key: "layoutIds",
-												label: "Authoritative poster recipes",
-												options: poolAuthority?.poster_recipes ?? [],
-												valueKey: "recipe_id",
-												labelKeys: ["name", "layout_family"],
 											},
 									].map(({ key, label, options, valueKey, labelKeys }) => {
 										if (key === "avatarCodes") {
@@ -2352,6 +2398,9 @@ export default function CreativeProductionStudioPage() {
 								Read-only plan snapshot
 							</p>
 							<div className="mt-3 space-y-2 text-xs">
+								<div>
+									Production recipe: {selectedSnapshot.production_recipe ?? "LEGACY / HISTORICAL"}
+								</div>
 								{selectedSnapshot.product_allocations.map((allocation) => (
 									<div
 										key={allocation.product_id}
@@ -2469,7 +2518,7 @@ export default function CreativeProductionStudioPage() {
 											{productCount} product{productCount === 1 ? "" : "s"} ·{" "}
 											{plan.target_video_count} video
 											{plan.target_video_count === 1 ? "" : "s"} ·{" "}
-											{plan.logical_mode}
+											{plan.production_recipe ?? "LEGACY / HISTORICAL"}
 											{configuration
 												? ` · ${configuration.requested_total_duration_seconds}s ${configuration.generation_mode}`
 												: " · Incomplete snapshot"}{" "}
@@ -2571,14 +2620,18 @@ export default function CreativeProductionStudioPage() {
 										label="Video"
 										value={detail.plan.target_video_count}
 									/>
-									<Metric
-										label="Image"
-										value={detail.plan.target_image_count}
-									/>
-									<Metric
-										label="Poster"
-										value={detail.plan.target_poster_count}
-									/>
+									{!selectedSnapshot?.production_recipe ? (
+										<>
+											<Metric
+												label="Legacy image target"
+												value={detail.plan.target_image_count}
+											/>
+											<Metric
+												label="Legacy poster target"
+												value={detail.plan.target_poster_count}
+											/>
+										</>
+									) : null}
 									<Metric label="Items" value={detail.progress.total} />
 									<Metric
 										label="Progress"
@@ -2802,7 +2855,7 @@ export default function CreativeProductionStudioPage() {
 								</summary>
 								<div className="mt-4">
 									<div className="grid gap-2 sm:grid-cols-3">
-										{["VIDEO", "IMAGE", "POSTER"].map((mediaType) => (
+											{["VIDEO"].map((mediaType) => (
 											<div
 												key={mediaType}
 												className="rounded-xl border border-slate-800 bg-slate-900/60 p-3"

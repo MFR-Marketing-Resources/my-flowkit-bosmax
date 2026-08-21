@@ -64,6 +64,7 @@ _PLAN_UPDATE_COLUMNS = {
     "operating_window_hours",
     "allocation_strategy",
     "variation_strategy",
+    "production_recipe",
     "logical_mode",
     "model_keys_json",
     "duration_seconds_json",

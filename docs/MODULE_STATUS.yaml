@@ -272,6 +272,8 @@ domains:
       - tests/api/test_creative_production_api.py
       - tests/unit/test_creative_production_orchestrator.py
       - tests/unit/test_creative_production_migration.py
+      - agent/services/creative_production_recipe_service.py
+      - tests/unit/test_creative_production_recipe_cutover.py
       - tests/unit/test_video_models.py
       - tests/ui/test_creative_production_ui_contract.py
       - docs/evidence/p6-batch-creative-production-orchestrator.md
