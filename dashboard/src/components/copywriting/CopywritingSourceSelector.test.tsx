@@ -287,7 +287,7 @@ describe("CopywritingSourceSelector Governance & Features", () => {
 		expect(activateCalls.length).toBe(0);
 	});
 
-	it("selects and activates approved copy when clicking 'Use This Copy'", async () => {
+	it("routes approved copy to the owner-gated Copy Authority queue instead of activating inline", async () => {
 		const fetchMock = stubFetch([mockApprovedBlueprint], null);
 		const onCopySelected = vi.fn();
 		render(
@@ -300,23 +300,17 @@ describe("CopywritingSourceSelector Governance & Features", () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByTestId("use-this-copy-button")).toBeInTheDocument();
+			expect(screen.getByTestId("open-copy-authority-activation")).toBeInTheDocument();
 		});
 
-		fireEvent.click(screen.getByTestId("use-this-copy-button"));
-
-		await waitFor(() => {
-			expect(screen.getByTestId("copywriting-selected-summary")).toBeInTheDocument();
-		});
-
-		expect(screen.getByText(/Copywriting Selected/i)).toBeInTheDocument();
-		expect(screen.getByTestId("change-copy-button")).toBeInTheDocument();
-		expect(onCopySelected).toHaveBeenCalled();
-
-		// Verify activate API was called but NOT approve
+		const activationLink = screen.getByTestId("open-copy-authority-activation");
+		expect(activationLink).toHaveAttribute("href", expect.stringContaining("/creative/copy-authority"));
+		expect(activationLink).toHaveAttribute("href", expect.stringContaining("blueprint_id=bp-1"));
+		expect(onCopySelected).not.toHaveBeenCalled();
+		// The production-flow selector has no activation write path.
 		const activateCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/activate"));
 		const approveCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/approve"));
-		expect(activateCalls.length).toBe(1);
+		expect(activateCalls.length).toBe(0);
 		expect(approveCalls.length).toBe(0);
 	});
 

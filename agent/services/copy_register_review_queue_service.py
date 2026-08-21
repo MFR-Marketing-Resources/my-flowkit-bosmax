@@ -1,10 +1,10 @@
-"""Cross-product human review and batch approval for Copy Register V2 drafts.
+"""Cross-product human review and owner-gated Copy Register V2 activation.
 
 This module is deliberately a thin orchestration layer over the existing V2
-approval authority.  It only reads DRAFT blueprints, applies the claim-safety
-and current Product Truth gates, and then calls ``approve_blueprint`` once per
-selected blueprint.  It never binds or activates a blueprint and never calls a
-provider.
+approval and activation authorities. Review approval is DRAFT-only and never
+activates a blueprint. Activation is a separate, explicitly selected,
+provider-free batch that preflights every item before calling the existing
+per-blueprint binding authority.
 """
 from __future__ import annotations
 
@@ -19,6 +19,9 @@ from agent.services import copy_register_v2_service as v2
 BATCH_APPROVAL_CONFIRMATION_PHRASE = "APPROVE_COPY_DRAFTS_BATCH"
 # Public alias keeps the phrase easy to share with API/UI callers and tests.
 APPROVAL_PHRASE = BATCH_APPROVAL_CONFIRMATION_PHRASE
+BATCH_ACTIVATION_CONFIRMATION_PHRASE = "ACTIVATE_COPY_AUTHORITY_BATCH"
+ACTIVATION_PHRASE = BATCH_ACTIVATION_CONFIRMATION_PHRASE
+ACTIVATION_BATCH_MAX = 50
 
 _REVIEW_REQUIRED_STATUSES = {
     "CLAIM_REVIEW_REQUIRED",
@@ -245,6 +248,167 @@ async def list_review_queue(
     }
 
 
+def _activation_error_code(row: dict[str, Any]) -> str:
+    reason = _clean(row.get("blocked_reason") or row.get("current_authority_reason")).upper()
+    if "COPY_V2_TAXONOMY_AUTHORITY_STALE" in reason:
+        return "COPY_V2_TAXONOMY_AUTHORITY_STALE"
+    if "STALE" in reason or "TRUTH" in reason or "AUTHORITY" in reason:
+        return "COPY_V2_PRODUCT_TRUTH_STALE"
+    return "COPY_V2_ACTIVATION_NOT_ALLOWED"
+
+
+def _activation_candidate_row(
+    raw: dict[str, Any],
+    blueprint: v2.CopyBlueprintV2,
+    validation: dict[str, Any],
+    activation_status: dict[str, Any],
+) -> dict[str, Any]:
+    validation_allowed = validation.get("activation_allowed") is True
+    product_allowed = activation_status.get("activation_allowed") is True
+    activatable = validation_allowed and product_allowed
+    is_current = (
+        activatable
+        and activation_status.get("active_blueprint_id") == blueprint.blueprint_id
+        and activation_status.get("active_revision") == blueprint.revision
+        and int(activation_status.get("active_lane_count") or 0)
+        == int(activation_status.get("required_lane_count") or 0)
+    )
+    reasons: list[str] = []
+    if not validation_allowed:
+        reasons.extend(
+            code.strip()
+            for code in _clean(validation.get("reason")).split(",")
+            if code.strip()
+        )
+    if not product_allowed:
+        reason = _clean(activation_status.get("activation_reason"))
+        if reason:
+            reasons.extend(code.strip() for code in reason.split(",") if code.strip())
+    reasons = list(dict.fromkeys(reasons))
+    state = "CURRENT" if is_current else "NONE" if activatable else "STALE"
+    return {
+        "blueprint_id": blueprint.blueprint_id,
+        "revision": blueprint.revision,
+        "product_id": blueprint.product_id,
+        "product_name": _clean(raw.get("product_display_name") or raw.get("raw_product_title")),
+        "status": blueprint.status,
+        "formula_id": blueprint.formula_id,
+        "angle": blueprint.angle.model_dump(mode="json"),
+        "activatable": activatable,
+        "activation_allowed": activatable,
+        "current_authority_state": state,
+        "blocked_reason": " · ".join(reasons) if reasons else None,
+        "current_authority_reason": validation.get("reason") or activation_status.get("activation_reason"),
+        "current_authority_mismatches": validation.get("mismatches") or [],
+        "current_authority_fingerprint": validation.get("current_fingerprint"),
+        "blueprint_authority_fingerprint": validation.get("blueprint_fingerprint"),
+        "active_blueprint_id": activation_status.get("active_blueprint_id"),
+        "active_revision": activation_status.get("active_revision"),
+        "active_lane_count": int(activation_status.get("active_lane_count") or 0),
+        "required_lane_count": int(activation_status.get("required_lane_count") or 0),
+        "draft_preview": _row_preview(blueprint),
+    }
+
+
+async def list_activation_candidates() -> dict[str, Any]:
+    """List the latest approved V2 blueprint for each blueprint identity.
+
+    Candidate discovery is read-only. It deliberately projects both the
+    persisted approval status and the current Product Truth/authority gate so
+    stale approvals remain visible but can never become an activation affordance.
+    """
+
+    db = await get_db()
+    cursor = await db.execute(
+        """
+        SELECT b.*, p.product_display_name, p.raw_product_title
+        FROM copy_blueprint_v2 b
+        JOIN product p ON p.id = b.product_id
+        JOIN (
+            SELECT blueprint_id, MAX(revision) AS latest_revision
+            FROM copy_blueprint_v2
+            GROUP BY blueprint_id
+        ) latest
+          ON latest.blueprint_id = b.blueprint_id
+         AND latest.latest_revision = b.revision
+        WHERE b.status = 'PRODUCTION_VALID'
+        ORDER BY LOWER(COALESCE(p.product_display_name, p.raw_product_title)),
+                 b.created_at, b.blueprint_id
+        """
+    )
+    raw_rows = [dict(row) for row in await cursor.fetchall()]
+    await cursor.close()
+
+    items: list[dict[str, Any]] = []
+    for raw in raw_rows:
+        try:
+            blueprint = v2._row_to_blueprint(raw)
+            truth = await v2.get_product_truth_proof(blueprint.product_id)
+            validation = v2.get_blueprint_current_authority_validation(blueprint, truth)
+            activation_status = await v2.get_activation_status(blueprint.product_id)
+            items.append(_activation_candidate_row(raw, blueprint, validation, activation_status))
+        except v2.CopyRegisterV2Error as exc:
+            items.append(
+                {
+                    "blueprint_id": raw.get("blueprint_id"),
+                    "revision": raw.get("revision"),
+                    "product_id": raw.get("product_id"),
+                    "product_name": _clean(raw.get("product_display_name") or raw.get("raw_product_title")),
+                    "status": raw.get("status"),
+                    "formula_id": raw.get("formula_id"),
+                    "angle": None,
+                    "activatable": False,
+                    "activation_allowed": False,
+                    "current_authority_state": "STALE",
+                    "blocked_reason": exc.code,
+                    "current_authority_reason": exc.code,
+                    "current_authority_mismatches": [],
+                    "current_authority_fingerprint": None,
+                    "blueprint_authority_fingerprint": None,
+                    "active_blueprint_id": None,
+                    "active_revision": None,
+                    "active_lane_count": 0,
+                    "required_lane_count": 0,
+                    "draft_preview": None,
+                    "error_detail": str(exc),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - invalid persistence fails closed
+            items.append(
+                {
+                    "blueprint_id": raw.get("blueprint_id"),
+                    "revision": raw.get("revision"),
+                    "product_id": raw.get("product_id"),
+                    "product_name": _clean(raw.get("product_display_name") or raw.get("raw_product_title")),
+                    "status": raw.get("status"),
+                    "formula_id": raw.get("formula_id"),
+                    "angle": None,
+                    "activatable": False,
+                    "activation_allowed": False,
+                    "current_authority_state": "STALE",
+                    "blocked_reason": "COPY_V2_ACTIVATION_CANDIDATE_INVALID",
+                    "current_authority_reason": "COPY_V2_ACTIVATION_CANDIDATE_INVALID",
+                    "current_authority_mismatches": [],
+                    "current_authority_fingerprint": None,
+                    "blueprint_authority_fingerprint": None,
+                    "active_blueprint_id": None,
+                    "active_revision": None,
+                    "active_lane_count": 0,
+                    "required_lane_count": 0,
+                    "draft_preview": None,
+                    "error_detail": str(exc),
+                }
+            )
+    return {
+        "items": items,
+        "total": len(items),
+        "max_batch_size": ACTIVATION_BATCH_MAX,
+        "provider_calls": 0,
+        "credit_spend": 0,
+        "activation_mutations": 0,
+    }
+
+
 def _batch_error_code(row: dict[str, Any]) -> str:
     reason = _clean(row.get("draft_blocked_reason")).upper()
     if "CLAIM" in reason:
@@ -252,6 +416,168 @@ def _batch_error_code(row: dict[str, Any]) -> str:
     if "STALE" in reason or "TRUTH" in reason or "AUTHORITY" in reason:
         return "COPY_V2_PRODUCT_TRUTH_STALE"
     return "COPY_V2_BATCH_NOT_APPROVABLE"
+
+
+async def batch_activate(
+    blueprint_ids: list[str],
+    *,
+    confirmation_phrase: str,
+    owner_authorization: bool,
+) -> dict[str, Any]:
+    """Activate an explicit, capped, owner-authorized blueprint batch.
+
+    Every requested id is preflighted before the first binding mutation. The
+    existing per-blueprint activation authority remains the only write path;
+    one race/failure is isolated to that item and the binding transaction is
+    still atomic for the item's required lanes.
+    """
+
+    if confirmation_phrase != BATCH_ACTIVATION_CONFIRMATION_PHRASE:
+        raise CopyRegisterReviewQueueError(
+            "INVALID_CONFIRMATION_PHRASE",
+            "The exact copy authority batch activation confirmation phrase is required.",
+            details={"expected": BATCH_ACTIVATION_CONFIRMATION_PHRASE},
+        )
+    if owner_authorization is not True:
+        raise CopyRegisterReviewQueueError(
+            "OWNER_AUTHORIZATION_REQUIRED",
+            "Explicit owner authorization is required for copy authority activation.",
+        )
+    if len(blueprint_ids) > ACTIVATION_BATCH_MAX:
+        raise CopyRegisterReviewQueueError(
+            "COPY_V2_ACTIVATION_BATCH_LIMIT_EXCEEDED",
+            f"Activation is capped at {ACTIVATION_BATCH_MAX} blueprints per request.",
+            details={"max_batch_size": ACTIVATION_BATCH_MAX},
+        )
+
+    ids: list[str] = []
+    for blueprint_id in blueprint_ids:
+        value = _clean(blueprint_id)
+        if not value:
+            raise CopyRegisterReviewQueueError(
+                "COPY_V2_ACTIVATION_BLUEPRINT_ID_REQUIRED",
+                "Every activation selection must contain a blueprint id.",
+            )
+        if value in ids:
+            raise CopyRegisterReviewQueueError(
+                "COPY_V2_ACTIVATION_DUPLICATE_BLUEPRINT",
+                "The activation selection must not contain duplicate blueprint ids.",
+                details={"blueprint_id": value},
+            )
+        ids.append(value)
+    if not ids:
+        raise CopyRegisterReviewQueueError(
+            "COPY_V2_ACTIVATION_BATCH_EMPTY",
+            "Select at least one approved blueprint to activate.",
+        )
+
+    candidates = await list_activation_candidates()
+    rows_by_id = {str(item["blueprint_id"]): item for item in candidates["items"]}
+    invalid: list[dict[str, Any]] = []
+    for blueprint_id in ids:
+        try:
+            blueprint = await v2.get_blueprint(blueprint_id)
+        except v2.CopyRegisterV2Error as exc:
+            invalid.append(
+                {"blueprint_id": blueprint_id, "error_code": exc.code, "detail": str(exc)}
+            )
+            continue
+        if blueprint.status != "PRODUCTION_VALID":
+            invalid.append(
+                {
+                    "blueprint_id": blueprint_id,
+                    "error_code": (
+                        "EXPLICIT_HUMAN_APPROVAL_REQUIRED"
+                        if blueprint.status in {"DRAFT", "REVIEW_REQUIRED"}
+                        else "COPY_V2_BLUEPRINT_NOT_PRODUCTION_VALID"
+                    ),
+                    "detail": "Only PRODUCTION_VALID blueprints may enter the activation batch.",
+                }
+            )
+            continue
+        row = rows_by_id.get(blueprint_id)
+        if not row or row.get("activatable") is not True:
+            invalid.append(
+                {
+                    "blueprint_id": blueprint_id,
+                    "error_code": _activation_error_code(row or {}),
+                    "detail": (row or {}).get("blocked_reason") or "Current authority is not activatable.",
+                }
+            )
+    if invalid:
+        raise CopyRegisterReviewQueueError(
+            "COPY_V2_ACTIVATION_BATCH_PREFLIGHT_FAILED",
+            "Every selected blueprint must be PRODUCTION_VALID and current-authority activatable.",
+            details={"items": invalid},
+        )
+
+    results: list[dict[str, Any]] = []
+    for blueprint_id in ids:
+        row = rows_by_id[blueprint_id]
+        lane_count = int(row.get("required_lane_count") or 0)
+        if row.get("current_authority_state") == "CURRENT":
+            results.append(
+                {
+                    "blueprint_id": blueprint_id,
+                    "activated": False,
+                    "idempotent": True,
+                    "status": "ALREADY_ACTIVE",
+                    "lane_count": lane_count,
+                    "error_code": None,
+                }
+            )
+            continue
+        try:
+            bindings = await v2.activate_blueprint_for_required_lanes(blueprint_id)
+            results.append(
+                {
+                    "blueprint_id": blueprint_id,
+                    "activated": True,
+                    "idempotent": False,
+                    "status": "ACTIVATED",
+                    "lane_count": len(bindings),
+                    "error_code": None,
+                }
+            )
+        except v2.CopyRegisterV2Error as exc:
+            results.append(
+                {
+                    "blueprint_id": blueprint_id,
+                    "activated": False,
+                    "idempotent": False,
+                    "status": "FAILED",
+                    "lane_count": 0,
+                    "error_code": exc.code,
+                    "error_detail": str(exc),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - isolate one activation item
+            results.append(
+                {
+                    "blueprint_id": blueprint_id,
+                    "activated": False,
+                    "idempotent": False,
+                    "status": "FAILED",
+                    "lane_count": 0,
+                    "error_code": "COPY_V2_ACTIVATION_ITEM_FAILED",
+                    "error_detail": str(exc),
+                }
+            )
+
+    activated_count = sum(item["activated"] is True for item in results)
+    idempotent_count = sum(item["idempotent"] is True for item in results)
+    failed_count = sum(item["status"] == "FAILED" for item in results)
+    return {
+        "results": results,
+        "activated_count": activated_count,
+        "idempotent_count": idempotent_count,
+        "failed_count": failed_count,
+        "activation_mutations": activated_count,
+        "bound_lane_count": sum(item["lane_count"] for item in results if item["activated"]),
+        "automatic_approval": False,
+        "provider_calls": 0,
+        "credit_spend": 0,
+    }
 
 
 async def batch_approve_drafts(
@@ -417,7 +743,12 @@ async def batch_approve_drafts(
 __all__ = [
     "APPROVAL_PHRASE",
     "BATCH_APPROVAL_CONFIRMATION_PHRASE",
+    "ACTIVATION_BATCH_MAX",
+    "ACTIVATION_PHRASE",
+    "BATCH_ACTIVATION_CONFIRMATION_PHRASE",
     "CopyRegisterReviewQueueError",
+    "batch_activate",
     "batch_approve_drafts",
+    "list_activation_candidates",
     "list_review_queue",
 ]

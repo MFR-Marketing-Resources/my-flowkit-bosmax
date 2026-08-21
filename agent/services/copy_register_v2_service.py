@@ -1562,14 +1562,27 @@ async def get_activation_status(product_id: str) -> dict[str, Any]:
         if item["copy_policy"] == "REQUIRED"
     )
     product, snapshot = await _product_truth_rows(product_id)
+    truth_blockers = _truth_gate(product, snapshot)
     current_lineage = _lineage(product, snapshot) if product and snapshot else None
-    if current_lineage is None or _truth_gate(product, snapshot):
+    truth_ready = bool(
+        current_lineage
+        and not truth_blockers
+        and bool(_fact_candidates(product, snapshot) if snapshot else False)
+    )
+    activation_reason = (
+        None
+        if truth_ready
+        else ", ".join(truth_blockers) or "COPY_V2_EVIDENCE_REQUIRED"
+    )
+    if current_lineage is None or truth_blockers:
         return {
             "active_blueprint_id": None,
             "active_revision": None,
             "active_lane_count": 0,
             "required_lane_count": len(required_lanes),
             "activated_at": None,
+            "activation_allowed": False,
+            "activation_reason": activation_reason,
         }
     placeholders = ",".join("?" for _ in required_lanes)
     db = await get_db()
@@ -1625,6 +1638,8 @@ async def get_activation_status(product_id: str) -> dict[str, Any]:
         "active_lane_count": len(row[1]["lanes"]) if row else 0,
         "required_lane_count": len(required_lanes),
         "activated_at": max(row[1]["activated_at"]) if row else None,
+        "activation_allowed": truth_ready,
+        "activation_reason": activation_reason,
     }
 
 
