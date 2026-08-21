@@ -124,7 +124,8 @@ function Write-BrowserUatContract {
   param(
     [string]$BrowserPath,
     [string]$BrowserVersion,
-    [Nullable[int]]$ChromePid
+    [Nullable[int]]$ChromePid,
+    [string]$ExtensionPath = ''
   )
   $payload = [ordered]@{
     schema            = 'bosmax-browser-uat/1'
@@ -134,6 +135,7 @@ function Write-BrowserUatContract {
     bosmax_url        = $script:BosmaxUrl
     profile_path      = $script:ChromeProfileDir
     profile_kind      = 'DEDICATED_UAT'
+    extension_path    = $ExtensionPath
     loopback_only     = $true
     browser_path      = $BrowserPath
     browser_version   = $BrowserVersion

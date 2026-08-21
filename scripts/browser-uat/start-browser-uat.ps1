@@ -11,7 +11,8 @@
 #>
 [CmdletBinding()]
 param(
-  [switch]$ForceRestartUatOnly
+  [switch]$ForceRestartUatOnly,
+  [string]$ExtensionPath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -29,6 +30,33 @@ function Write-UatLog([string]$Message) {
 
 $browserExe = Resolve-BrowserExecutable
 $browserVersion = Get-BrowserProductVersion -ExePath $browserExe
+$extensionPathWasExplicit = -not [string]::IsNullOrWhiteSpace($ExtensionPath)
+if (-not $extensionPathWasExplicit) {
+  $ExtensionPath = [Environment]::GetEnvironmentVariable('BOSMAX_EXTENSION_PATH')
+}
+if ([string]::IsNullOrWhiteSpace($ExtensionPath)) {
+  $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+  $extensionCandidates = @(
+    'C:\Users\USER\Desktop\_ref_flowkit\extension',
+    (Join-Path $repoRoot 'extension')
+  )
+  foreach ($candidate in $extensionCandidates) {
+    if (Test-Path -LiteralPath (Join-Path $candidate 'manifest.json')) {
+      $ExtensionPath = $candidate
+      break
+    }
+  }
+}
+if (-not [string]::IsNullOrWhiteSpace($ExtensionPath)) {
+  $ExtensionPath = [System.IO.Path]::GetFullPath($ExtensionPath)
+  if (-not (Test-Path -LiteralPath (Join-Path $ExtensionPath 'manifest.json'))) {
+    if ($extensionPathWasExplicit) {
+      throw "UAT extension manifest not found: $ExtensionPath"
+    }
+    Write-UatLog "WARN: extension path has no manifest; starting generic Browser UAT only path=$ExtensionPath"
+    $ExtensionPath = ''
+  }
+}
 $lock = $null
 
 try {
@@ -45,7 +73,7 @@ try {
     }
     if ($allUat -and (Test-CdpLoopbackOnly) -and -not $ForceRestartUatOnly) {
       $mainPid = @($pids | Select-Object -First 1)[0]
-      Write-BrowserUatContract -BrowserPath $browserExe -BrowserVersion $browserVersion -ChromePid $mainPid
+      Write-BrowserUatContract -BrowserPath $browserExe -BrowserVersion $browserVersion -ChromePid $mainPid -ExtensionPath $ExtensionPath
       if ($mainPid) { Set-Content -LiteralPath $script:PidPath -Value $mainPid -Encoding ascii }
       Write-UatLog "REUSE healthy UAT CDP on $($script:CdpBaseUrl) pid=$mainPid"
       Write-Host "BROWSER_UAT_START: REUSE"
@@ -104,6 +132,9 @@ try {
     '--password-store=basic',
     '--about-blank'
   )
+  if (-not [string]::IsNullOrWhiteSpace($ExtensionPath)) {
+    $args += "--load-extension=$ExtensionPath"
+  }
 
   Write-UatLog "START $browserExe $($args -join ' ')"
   $proc = Start-Process -FilePath $browserExe -ArgumentList $args -PassThru -WindowStyle Minimized
@@ -148,7 +179,7 @@ try {
 
   $listenPid = @(Get-CdpListenPids | Select-Object -First 1)[0]
   if (-not $listenPid) { $listenPid = $proc.Id }
-  Write-BrowserUatContract -BrowserPath $browserExe -BrowserVersion $browserVersion -ChromePid $listenPid
+  Write-BrowserUatContract -BrowserPath $browserExe -BrowserVersion $browserVersion -ChromePid $listenPid -ExtensionPath $ExtensionPath
   Set-Content -LiteralPath $script:PidPath -Value $listenPid -Encoding ascii
 
   $ver = Get-CdpVersionObject
@@ -157,6 +188,9 @@ try {
   Write-Host "CDP_URL=$($script:CdpBaseUrl)"
   Write-Host "CHROME_PID=$listenPid"
   Write-Host "PROFILE=$($script:ChromeProfileDir)"
+  if (-not [string]::IsNullOrWhiteSpace($ExtensionPath)) {
+    Write-Host "EXTENSION_PATH=$ExtensionPath"
+  }
   Write-Host "BROWSER=$($ver.Browser)"
   exit 0
 }
