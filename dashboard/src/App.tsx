@@ -57,6 +57,7 @@ import CopywritingLandbankDatabasePage from "./pages/CopywritingLandbankDatabase
 import DashboardPage from "./pages/DashboardPage";
 import ReportingExecutivePage from "./pages/ReportingExecutivePage";
 import ReportingOperationsPage from "./pages/ReportingOperationsPage";
+import ProductionOutputReportingPage from "./pages/ProductionOutputReportingPage";
 import OperatorPage from "./pages/OperatorPage";
 import FacelessVideoPage from "./pages/FacelessVideoPage";
 import MontagePage from "./pages/MontagePage";
@@ -153,6 +154,7 @@ const ALL_NAV_GROUPS = [
 		items: [
 			{ to: "/reporting/executive", icon: Gauge, label: "Executive" },
 			{ to: "/reporting/operations", icon: Siren, label: "Operations" },
+			{ to: "/reporting/production", icon: Activity, label: "Production Output" },
 			{ to: "/reporting/copywriting-landbank", icon: Database, label: "Copywriting Landbank DB" },
 		],
 	},
@@ -613,6 +615,10 @@ function Layout() {
 						<Route
 							path="/reporting/operations"
 							element={<ReportingOperationsPage />}
+						/>
+						<Route
+							path="/reporting/production"
+							element={<ProductionOutputReportingPage />}
 						/>
 						<Route
 							path="/reporting/copywriting-landbank"
