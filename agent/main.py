@@ -197,6 +197,14 @@ async def lifespan(app: FastAPI):
     except Exception as _p6_e:  # pragma: no cover
         logger.warning("P6 creative production recovery skipped: %s", _p6_e)
     try:
+        from agent.services import make_video as _make_video_svc
+
+        _single_recovery = await _make_video_svc.recover_durable_single_jobs()
+        if _single_recovery.get("marked_recovery_required"):
+            logger.info("SINGLE generation recovery: %s", _single_recovery)
+    except Exception as _single_e:  # pragma: no cover — boot must remain available
+        logger.warning("SINGLE generation recovery skipped: %s", _single_e)
+    try:
         from agent.services import bulk_generation_service as _bulk_svc
 
         _rec = await _bulk_svc.recover_stuck_bulk_runs()

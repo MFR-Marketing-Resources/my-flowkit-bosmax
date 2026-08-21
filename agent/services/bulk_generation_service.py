@@ -611,6 +611,8 @@ async def _process_avatar_image_item(run_id: str, item: dict, config: dict) -> N
             if _run_control.get(run_id) == "CANCEL":
                 return
             job = make_video.get_job(job_id)
+            if job is None:
+                job = await make_video.get_durable_job(job_id)
             if not job:
                 await asyncio.sleep(2)
                 continue
@@ -719,7 +721,10 @@ async def _fire_video_payload(
 
     waited = 0
     while waited < _VIDEO_JOB_TIMEOUT_SECONDS:
-        job = make_video.get_job(job_id) or {}
+        job = make_video.get_job(job_id)
+        if job is None:
+            job = await make_video.get_durable_job(job_id)
+        job = job or {}
         status = job.get("status")
         if status in ("DONE", "FAILED", "REJECTED", "GENERATED_BUT_UNRETRIEVED"):
             break
@@ -731,7 +736,10 @@ async def _fire_video_payload(
         )
         return {"ok": False, "error": "JOB_TIMEOUT", "job_id": job_id}
 
-    job = make_video.get_job(job_id) or {}
+    job = make_video.get_job(job_id)
+    if job is None:
+        job = await make_video.get_durable_job(job_id)
+    job = job or {}
     if job.get("status") in ("FAILED", "REJECTED"):
         err = job.get("error") or "VIDEO_JOB_FAILED"
         await crud.update_workspace_generation_package(

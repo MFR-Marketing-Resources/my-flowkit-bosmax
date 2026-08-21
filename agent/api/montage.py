@@ -35,6 +35,7 @@ from agent.services.montage_run_service import (
     estimate_montage_run_generation,
     get_montage_discrete_run,
     readiness_from_montage_run,
+    resume_montage_run,
 )
 from agent.services.montage_scene_reference_policy import (
     SceneReferencePolicy,
@@ -655,16 +656,30 @@ async def montage_run_assemble(run_id: str, body: MontageRunAssembleRequest) -> 
             confirm_live_credit_burn=True,
         )
         if result.get("final_media_id"):
-            await crud.insert_generated_artifact(
-                result["final_media_id"],
-                job_id=effective_job_id,
-                mode="MONTAGE",
-                artifact_kind="video",
-                local_path=result.get("local_path"),
-                size_mb=result.get("size_mb"),
-                model_used=cfg.get("model"),
-                duration_used=result.get("measured_duration_s"),
+            from agent.services.video_artifact_delivery_service import (
+                register_final_video_artifact,
             )
+
+            try:
+                await register_final_video_artifact(
+                    result,
+                    job_id=effective_job_id,
+                    mode="MONTAGE",
+                    project_id=cfg.get("project_id"),
+                    request_id=f"montage:{run_id}",
+                    product_id=cfg.get("product_id"),
+                    prompt=str(cfg.get("scene_context_override") or ""),
+                    aspect_ratio="9:16",
+                )
+            except Exception as exc:  # noqa: BLE001 — final delivery is recoverable, not green
+                await crud.update_video_production_job_full(
+                    effective_job_id,
+                    status="FINAL_ARTIFACT_DELIVERY_FAILED",
+                    error_code="FINAL_ARTIFACT_DELIVERY_FAILED",
+                )
+                raise ValueError(
+                    f"FINAL_ARTIFACT_DELIVERY_FAILED:{str(exc)[:240]}"
+                ) from exc
         return result
 
     try:
@@ -778,6 +793,9 @@ async def montage_authorize_generation(
             gen_body = GenerateRequest(
                 mode=str(kwargs.get("mode") or "F2V"),
                 prompt=str(kwargs.get("prompt") or f"Montage scene {kwargs.get('scene_id')}"),
+                request_id=(
+                    f"montage:{run_id}:{str(kwargs.get('scene_id') or '')}"
+                ),
                 product_id=kwargs.get("product_id") or None,
                 aspect="9:16",
                 # Thread the source lineage + package id the run persisted. For a
@@ -815,6 +833,9 @@ async def montage_authorize_generation(
             status = make_video.get_job(job_id)
             if isinstance(status, dict):
                 return status
+            durable = await make_video.get_durable_job(job_id)
+            if isinstance(durable, dict):
+                return durable
             return {
                 "status": "FAILED",
                 "job_id": job_id,
@@ -830,6 +851,8 @@ async def montage_authorize_generation(
             dry_run=body.dry_run,
             generate_fn=generate_fn,
             poll_fn=poll_fn,
+            async_worker=not body.dry_run,
+            poll_interval_s=5.0,
         )
     except ValueError as exc:
         msg = str(exc)
@@ -839,6 +862,29 @@ async def montage_authorize_generation(
         if "CREDIT_CONFIRM" in msg or "COUNT_MISMATCH" in msg:
             code = 403
         raise HTTPException(status_code=code, detail=msg) from exc
+
+
+@router.post("/runs/{run_id}/resume-generation")
+async def resume_montage_generation(run_id: str) -> dict[str, Any]:
+    """Poll one durable scene job and advance its lease; never re-submit."""
+    from agent.services import make_video
+
+    async def poll_fn(job_id: str) -> dict[str, Any]:
+        status = make_video.get_job(job_id)
+        if isinstance(status, dict):
+            return status
+        durable = await make_video.get_durable_job(job_id)
+        return durable or {
+            "job_id": job_id,
+            "status": "RECOVERY_REQUIRED",
+            "error": "ERR_MONTAGE_CANONICAL_JOB_NOT_FOUND",
+        }
+
+    try:
+        return await resume_montage_run(run_id, poll_fn=poll_fn, max_items=1)
+    except ValueError as exc:
+        code = 404 if "NOT_FOUND" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
 
 
 @router.get("/policies")

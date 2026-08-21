@@ -166,6 +166,163 @@ def _provider_correlation_id(job: dict[str, Any]) -> str | None:
     return str(value) if value else None
 
 
+def _attempt_source_mode(payload: dict[str, Any]) -> str | None:
+    value = str(payload.get("source_mode") or "").strip().upper()
+    return value or None
+
+
+def _attempt_provider_targets(payload: dict[str, Any]) -> list[str]:
+    """Collect only explicit transport targets; never manufacture a media id."""
+    raw = payload.get("provider_targets")
+    targets = [str(value).strip() for value in raw or [] if str(value).strip()]
+    if not targets:
+        targets.extend(
+            str(value).strip()
+            for value in (payload.get("image_media_ids") or [])
+            if str(value).strip()
+        )
+    for key in ("start_asset", "end_asset"):
+        asset = payload.get(key)
+        if isinstance(asset, dict):
+            value = asset.get("mediaId") or asset.get("media_id")
+            if value and str(value).strip():
+                targets.append(str(value).strip())
+    return list(dict.fromkeys(targets))
+
+
+def _attempt_identity_snapshot(
+    payload: dict[str, Any],
+    *,
+    product_id: str | None,
+    project_id: str | None,
+    provider_targets: list[str],
+) -> dict[str, Any]:
+    source_mode = _attempt_source_mode(payload)
+    from agent.services.flow_mode_reference_contract import certify_source_mode
+
+    missing = []
+    if not product_id:
+        missing.append("product_id")
+    if not project_id:
+        missing.append("project_id")
+    if not provider_targets:
+        missing.append("provider_targets")
+    return {
+        "provider": "GOOGLE_FLOW_API_FIRST",
+        "engine": str(payload.get("engine") or "make_video.start_generate"),
+        "source_mode": source_mode,
+        "source_mode_certification": certify_source_mode(source_mode),
+        "product_id": product_id,
+        "project_id": project_id,
+        "provider_targets": provider_targets,
+        "identity_state": "DECLARED" if not missing else "UNRESOLVED_PRE_PROVIDER",
+        "unresolved_fields": missing,
+    }
+
+
+def _structured_dispatch_result(result: Any) -> dict[str, Any]:
+    """Unwrap an internal FastAPI JSONResponse without losing its error fields."""
+    if isinstance(result, dict):
+        return result
+    body = getattr(result, "body", None)
+    if isinstance(body, (bytes, bytearray)):
+        try:
+            decoded = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, TypeError, ValueError):
+            decoded = {}
+        if isinstance(decoded, dict):
+            return decoded
+    return {}
+
+
+def _pre_provider_rejection(result: Any) -> tuple[str, str, dict[str, Any]] | None:
+    """Classify a known local rejection before treating a missing job id as uncertain."""
+    structured = _structured_dispatch_result(result)
+    pre_provider = structured.get("pre_provider")
+    status_code = int(getattr(result, "status_code", 0) or 0)
+    if not (
+        str(structured.get("status") or "").upper() == "REJECTED"
+        or str((pre_provider or {}).get("classification") or "").upper() == "BLOCKED"
+        or status_code in (409, 422)
+    ):
+        return None
+    receipt = structured.get("routing_receipt") or {}
+    code = str(
+        structured.get("error")
+        or (pre_provider or {}).get("blocker_code")
+        or receipt.get("reference_contract_code")
+        or "REJECTED_PRE_PROVIDER"
+    ).strip()
+    detail = str(structured.get("detail") or code).strip()
+    return code[:300], detail[:500], structured
+
+
+async def _record_pre_provider_rejection(
+    attempt: dict[str, Any],
+    lane: dict[str, Any],
+    *,
+    blocker_code: str,
+    detail: str,
+    evidence: dict[str, Any] | None = None,
+) -> CreativeProductionError:
+    """Persist a known local rejection without mislabelling it as uncertain."""
+    now = _now()
+    identity = _loads(attempt.get("provider_identity_json"), {})
+    if not isinstance(identity, dict):
+        identity = {}
+    identity.update(
+        {
+            "provider_calls": 0,
+            "credit_spend": False,
+            "provider_touch": "PRE_PROVIDER",
+            "blocker_code": blocker_code,
+            "blocker_detail": detail,
+            "rejection_evidence": evidence or {},
+            "observed_at": now,
+        }
+    )
+    await p6db.update_attempt(
+        attempt["attempt_id"],
+        attempt_state=AttemptState.FAILED.value,
+        provider_touch_classification="PRE_PROVIDER",
+        provider_identity_json=_stable_json(identity),
+        failure_stage="PRE_PROVIDER",
+        failure_code=blocker_code,
+        recovery_class="REJECTED_PRE_PROVIDER",
+        completed_at=now,
+        updated_at=now,
+    )
+    await p6db.update_item(
+        attempt["item_id"],
+        status=ItemStatus.FAILED.value,
+        updated_at=now,
+    )
+    await p6db.release_lease(
+        attempt["attempt_id"],
+        released_at=now,
+        release_reason="REJECTED_PRE_PROVIDER",
+    )
+    await p6db.record_lane_outcome(
+        str(lane["lane_id"]),
+        succeeded=False,
+        completed_at=now,
+        next_available_at=(
+            datetime.now(UTC)
+            + timedelta(seconds=int(lane["cooldown_seconds"]))
+        ).isoformat(),
+    )
+    return CreativeProductionError(
+        "REJECTED_PRE_PROVIDER",
+        detail,
+        status_code=409,
+        details={
+            "blocker_code": blocker_code,
+            "provider_calls": 0,
+            "credit_spend": False,
+        },
+    )
+
+
 async def _persist_provider_observation(
     attempt: dict[str, Any],
     job: dict[str, Any],
@@ -185,10 +342,38 @@ async def _persist_provider_observation(
     if not project_id and isinstance(job.get("binding"), dict):
         project_id = job["binding"].get("project_id")
     snapshot["observed_at"] = observed_at
+    provider_project_id = str(project_id) if project_id else None
+    provider_identity = _loads(attempt.get("provider_identity_json"), {})
+    if not isinstance(provider_identity, dict):
+        provider_identity = {}
+    provider_identity.update(
+        {
+            "provider_job_id": job.get("provider_job_id") or job.get("job_id"),
+            "provider_project_id": provider_project_id,
+            "provider_correlation_id": _provider_correlation_id(job),
+            "observed_at": observed_at,
+            "provider_operation_ids": job.get("provider_operation_ids") or [],
+            "artifact_media_ids": [
+                str(artifact.get("media_id"))
+                for artifact in (job.get("artifacts") or [])
+                if isinstance(artifact, dict) and artifact.get("media_id")
+            ],
+        }
+    )
+    observed_targets = (
+        job.get("provider_operation_ids")
+        or job.get("direct_media_targets")
+        or provider_identity.get("provider_operation_ids")
+        or []
+    )
     return await p6db.update_attempt(
         str(attempt["attempt_id"]),
-        provider_project_id=str(project_id) if project_id else None,
+        provider_project_id=provider_project_id,
+        project_id=str(project_id) if project_id else attempt.get("project_id"),
+        provider_targets_json=_stable_json(observed_targets),
         provider_correlation_id=_provider_correlation_id(job),
+        provider_identity_json=_stable_json(provider_identity),
+        provider_touch_classification="PROVIDER_TOUCHED",
         provider_snapshot_json=_stable_json(snapshot),
         provider_snapshot_updated_at=observed_at,
         updated_at=observed_at,
@@ -390,6 +575,13 @@ async def _build_recipe_execution_payload(
             return {}, [str(exc)]
         if not state.get("scenes"):
             return {}, ["MONTAGE_SCENE_SET_REQUIRED"]
+        first_scene = next(
+            (scene for scene in state.get("scenes") or [] if isinstance(scene, dict)),
+            {},
+        )
+        montage_product_id = str(
+            state.get("product_id") or item.get("product_id") or ""
+        ).strip() or None
         return {
             "mode": "MONTAGE",
             "prompt": str(package.get("final_prompt_text") or ""),
@@ -403,6 +595,10 @@ async def _build_recipe_execution_payload(
             "montage_run_id": run_id,
             "workspace_execution_package_id": execution_package_id or None,
             "montage_status": state.get("status"),
+            "source_mode": str(first_scene.get("source_mode") or "").strip().upper() or None,
+            "product_id": montage_product_id,
+            "project_id": str(package.get("project_id") or "").strip() or None,
+            "provider_targets": [],
         }, []
     if recipe != "FACELESS":
         return {}, ["PRODUCTION_RECIPE_UNSUPPORTED"]
@@ -460,6 +656,10 @@ async def _build_recipe_execution_payload(
         "generation_mode": str(package.get("generation_mode") or "SINGLE").upper(),
         "source_mode": source_mode,
         "product_id": str(wep.get("product_id") or item.get("product_id") or ""),
+        "project_id": str(
+            wep.get("project_id") or wep.get("flow_project_id") or ""
+        ).strip() or None,
+        "provider_targets": list(media_ids),
         "start_asset": start_asset,
         "end_asset": end_asset,
         "faceless_execution_identity": execution_identity,
@@ -876,6 +1076,16 @@ async def _create_attempt(
         ]
     )
     now = _now()
+    product_id = str(item.get("product_id") or payload.get("product_id") or "").strip() or None
+    project_id = str(payload.get("project_id") or "").strip() or None
+    source_mode = _attempt_source_mode(payload)
+    provider_targets = _attempt_provider_targets(payload)
+    provider_identity = _attempt_identity_snapshot(
+        payload,
+        product_id=product_id,
+        project_id=project_id,
+        provider_targets=provider_targets,
+    )
     return await p6db.create_attempt(
         {
             "attempt_id": f"p6attempt_{uuid.uuid4().hex[:20]}",
@@ -891,6 +1101,15 @@ async def _create_attempt(
             "duration_seconds": (
                 payload.get("duration_seconds") or payload.get("duration_s")
             ),
+            "source_mode": source_mode,
+            "product_id": product_id,
+            "project_id": project_id,
+            "provider_targets_json": _stable_json(provider_targets),
+            "provider_identity_json": _stable_json(provider_identity),
+            "source_mode_certification": provider_identity[
+                "source_mode_certification"
+            ],
+            "provider_touch_classification": "NOT_TOUCHED",
             "last_actor_id": actor_id,
             "last_action_request_id": action_request_id,
             "attempt_state": AttemptState.NOT_SUBMITTED.value,
@@ -1085,6 +1304,7 @@ async def _fire_montage_recipe(
     payload: dict[str, Any],
     *,
     credit_confirmation: str,
+    attempt: dict[str, Any],
 ) -> dict[str, Any]:
     """Delegate Montage live execution to its durable scene/run authority."""
 
@@ -1128,6 +1348,10 @@ async def _fire_montage_recipe(
                     kwargs.get("prompt")
                     or f"Montage scene {kwargs.get('scene_id')}"
                 ),
+                request_id=(
+                    f"p6:{attempt['attempt_id']}:montage:{str(kwargs.get('scene_id') or '')}"
+                ),
+                project_id=payload.get("project_id") or None,
                 product_id=kwargs.get("product_id") or item.get("product_id"),
                 aspect="9:16",
                 source_mode=kwargs.get("source_mode") or None,
@@ -1159,7 +1383,13 @@ async def _fire_montage_recipe(
         return {"job_id": None, "media_id": None}
 
     async def _poll_scene(job_id: str) -> dict[str, Any]:
-        return make_video.get_job(job_id) or {
+        status = make_video.get_job(job_id)
+        if isinstance(status, dict):
+            return status
+        durable = await make_video.get_durable_job(job_id)
+        if isinstance(durable, dict):
+            return durable
+        return {
             "job_id": job_id,
             "status": "UNKNOWN",
         }
@@ -1173,7 +1403,8 @@ async def _fire_montage_recipe(
         generate_fn=_generate_scene,
         poll_fn=_poll_scene,
         max_polls=120,
-        poll_interval_s=0.0,
+        poll_interval_s=5.0,
+        async_worker=True,
     )
     if not authorized.get("ok"):
         raise CreativeProductionError(
@@ -1181,6 +1412,22 @@ async def _fire_montage_recipe(
             str(authorized.get("detail") or "Montage generation failed."),
             details={"montage_run_id": run_id, "result": authorized},
         )
+    if authorized.get("async_worker") and authorized.get("next_action") == "POLL":
+        # The provider job is durably owned by the scene item. Assembly waits
+        # for the poll-only reconciliation worker; this request never holds a
+        # tight loop and never advances to a second scene while one is active.
+        return {
+            "job_id": f"montage:{run_id}",
+            "media_id": None,
+            "montage_run_id": run_id,
+            "status": "SUBMITTED",
+            "async_worker": True,
+            "next_action": "POLL",
+            "provider_generation_submits": authorized.get(
+                "provider_generation_submits", 1
+            ),
+            "assembly": None,
+        }
 
     async def _concat_boundary(**kwargs: Any) -> dict[str, Any]:
         from agent.services.google_flow_final_timeline_runtime import finalize_timeline
@@ -1236,16 +1483,31 @@ async def _fire_montage_recipe(
             confirm_live_credit_burn=True,
         )
         if result.get("final_media_id"):
-            await crud.insert_generated_artifact(
-                result["final_media_id"],
-                job_id=effective_job_id,
-                mode="MONTAGE",
-                artifact_kind="video",
-                local_path=result.get("local_path"),
-                size_mb=result.get("size_mb"),
-                model_used=payload.get("model"),
-                duration_used=result.get("measured_duration_s") or payload.get("duration_s"),
+            from agent.services.video_artifact_delivery_service import (
+                register_final_video_artifact,
             )
+
+            try:
+                await register_final_video_artifact(
+                    result,
+                    job_id=effective_job_id,
+                    mode="MONTAGE",
+                    project_id=payload.get("project_id"),
+                    request_id=f"p6:{attempt['attempt_id']}:montage:{run_id}",
+                    product_id=item.get("product_id") or payload.get("product_id"),
+                    prompt=str(payload.get("prompt") or ""),
+                    aspect_ratio=payload.get("aspect") or "9:16",
+                )
+            except Exception as exc:  # noqa: BLE001 - final delivery is fail-closed
+                await crud.update_video_production_job_full(
+                    effective_job_id,
+                    status="FINAL_ARTIFACT_DELIVERY_FAILED",
+                    final_media_id=result.get("final_media_id"),
+                    final_local_path=result.get("local_path"),
+                    error_code="FINAL_ARTIFACT_DELIVERY_FAILED",
+                    error_detail=str(exc)[:500],
+                )
+                raise
         return result
 
     from agent.services.montage_run_service import assemble_from_montage_run
@@ -1293,6 +1555,7 @@ async def _dispatch_attempt(
                 item,
                 payload,
                 credit_confirmation=credit_confirmation,
+                attempt=attempt,
             )
         elif production_recipe == "FACELESS":
             if str(payload.get("generation_mode") or "").upper() == "EXTEND":
@@ -1325,6 +1588,8 @@ async def _dispatch_attempt(
                     GenerateRequest(
                         mode=str(payload["mode"]).upper(),
                         prompt=str(payload["prompt"]),
+                        request_id=f"p6:{attempt['attempt_id']}",
+                        project_id=payload.get("project_id") or None,
                         product_id=item.get("product_id") or payload.get("product_id"),
                         source_mode=payload.get("source_mode"),
                         workspace_execution_package_id=payload.get(
@@ -1389,15 +1654,40 @@ async def _dispatch_attempt(
             result = await make_video.start_generate(
                 mode=runtime_payload["mode"],
                 prompt=runtime_payload["prompt"],
+                project_id=runtime_payload.get("project_id"),
                 image_media_ids=runtime_payload.get("image_media_ids"),
                 aspect=runtime_payload.get("aspect") or "9:16",
                 model=runtime_payload.get("model"),
                 duration_s=runtime_payload.get("duration_s"),
                 num_videos=int(runtime_payload.get("num_videos") or 1),
                 image_model=runtime_payload.get("image_model"),
+                product_id=item.get("product_id") or runtime_payload.get("product_id"),
+                source_mode=runtime_payload.get("source_mode"),
+                request_id=f"p6:{attempt['attempt_id']}",
+                idempotency_key=str(attempt.get("idempotency_key") or attempt["attempt_id"]),
                 manifest_id=_manifest_id,
             )
     except Exception as exc:
+        # Some internal FastAPI/service boundaries raise a typed 409/422
+        # instead of returning JSONResponse.  That is still a deterministic
+        # local rejection: never relabel it as an uncertain provider submit.
+        exception_status = int(getattr(exc, "status_code", 0) or 0)
+        if exception_status in (409, 422):
+            blocker_code = str(
+                getattr(exc, "code", None) or "REJECTED_PRE_PROVIDER"
+            )
+            rejection = await _record_pre_provider_rejection(
+                attempt,
+                lane,
+                blocker_code=blocker_code,
+                detail=str(exc)[:500],
+                evidence={
+                    "exception_type": type(exc).__name__,
+                    "status_code": exception_status,
+                    "details": getattr(exc, "details", {}) or {},
+                },
+            )
+            raise rejection from exc
         await p6db.update_attempt(
             attempt["attempt_id"],
             attempt_state=AttemptState.SUBMISSION_OUTCOME_UNCERTAIN.value,
@@ -1421,6 +1711,18 @@ async def _dispatch_attempt(
             ).isoformat(),
         )
         raise
+    rejection = _pre_provider_rejection(result)
+    if rejection is not None:
+        blocker_code, detail, evidence = rejection
+        error = await _record_pre_provider_rejection(
+            attempt,
+            lane,
+            blocker_code=blocker_code,
+            detail=detail,
+            evidence=evidence,
+        )
+        raise error
+    result = _structured_dispatch_result(result)
     provider_job_id = str(result.get("job_id") or "")
     if not provider_job_id:
         await p6db.update_attempt(
@@ -1450,10 +1752,27 @@ async def _dispatch_attempt(
             "The generation door returned no durable job identity.",
             status_code=502,
         )
+    provider_identity = _loads(attempt.get("provider_identity_json"), {})
+    if not isinstance(provider_identity, dict):
+        provider_identity = {}
+    provider_identity.update(
+        {
+            "provider_job_id": provider_job_id,
+            "provider_project_id": result.get("project_id") or provider_identity.get(
+                "provider_project_id"
+            ),
+            "provider_operation_ids": result.get("provider_operation_ids") or [],
+            "provider_media_id": result.get("media_id")
+            or result.get("video_media_id"),
+            "observed_at": _now(),
+        }
+    )
     attempt = await p6db.update_attempt(
         attempt["attempt_id"],
         attempt_state=AttemptState.PROVIDER_JOB_KNOWN.value,
         provider_job_id=provider_job_id,
+        provider_project_id=str(result.get("project_id") or "") or None,
+        provider_identity_json=_stable_json(provider_identity),
         provider_known_at=_now(),
         updated_at=_now(),
     )
@@ -1470,6 +1789,8 @@ async def _dispatch_attempt(
         initial_job = await video_jobs.get_job_status(provider_job_id)
     else:
         initial_job = make_video.get_job(provider_job_id)
+        if initial_job is None:
+            initial_job = await make_video.get_durable_job(provider_job_id)
     if initial_job is not None:
         attempt = await _persist_provider_observation(attempt, initial_job)
     await p6db.update_item(
@@ -1874,6 +2195,8 @@ async def reconcile_attempt(attempt_id: str) -> dict[str, Any]:
         job_source = "VIDEO_JOBS_ORCHESTRATOR"
     else:
         live_job = make_video.get_job(provider_job_id)
+        if live_job is None:
+            live_job = await make_video.get_durable_job(provider_job_id)
         job_source = "LIVE_PROCESS"
     if live_job is None:
         artifact = await p6db.get_generated_artifact_by_job_id(provider_job_id)
