@@ -18,6 +18,8 @@ export const FACELESS_TRANSPORT_MODE = "F2V" as const;
 export const FACELESS_SOURCE_MODE = "HYBRID" as const;
 export const FACELESS_OVERRIDE_SOURCE_MODE = "FRAMES" as const;
 export const FACELESS_CHARACTER_PRESENCE = "FACELESS" as const;
+export const FACELESS_EXACT_ROUTE =
+	"EXACT_PRODUCT_DETERMINISTIC_COMPOSITE" as const;
 
 export const FACELESS_VISUAL_LAW =
 	"VISUAL LAW (FACELESS): No visible human face and no AI presenter face. " +
@@ -189,6 +191,27 @@ export function generateAssetHasTransport(
 	);
 }
 
+export function facelessExactRoute(
+	pkg: WorkspaceExecutionPackage | null | undefined,
+): string | null {
+	const route =
+		pkg?.selected_execution_route ||
+		(pkg?.exact_product_video as { selected_execution_route?: unknown } | null)
+			?.selected_execution_route;
+	return route ? String(route) : null;
+}
+
+export function facelessExactRouteBlocker(
+	pkg: WorkspaceExecutionPackage | null | undefined,
+): string | null {
+	if (facelessExactRoute(pkg) !== FACELESS_EXACT_ROUTE) return null;
+	if (pkg?.generate_eligibility === false) {
+		const exact = pkg.exact_product_video as { blocker?: unknown } | null | undefined;
+		return String(exact?.blocker || "Exact choreography is not supported for deterministic compositing.");
+	}
+	return null;
+}
+
 /**
  * Canonical Faceless → POST /api/flow/generate body.
  * startAsset from package product anchor (normal) or Advanced override binding.
@@ -227,6 +250,32 @@ export function buildFacelessGenerateBody(input: {
 	}
 
 	const pkg = input.workspacePackage ?? null;
+	const exactRoute = facelessExactRoute(pkg);
+	if (exactRoute === FACELESS_EXACT_ROUTE) {
+		const exactBlocker = facelessExactRouteBlocker(pkg);
+		if (exactBlocker) throw new Error(`Faceless exact route blocked: ${exactBlocker}`);
+		const exactBody: Record<string, unknown> = {
+			mode: "T2V",
+			prompt,
+			aspect: input.aspect || pkg?.aspect_ratio || "9:16",
+			product_id: input.productId ?? pkg?.product_id ?? null,
+			source_mode: "T2V",
+			model,
+			duration_s: durationSeconds,
+			generation_mode: "SINGLE",
+			engine: input.engine || "GOOGLE_FLOW",
+			image_media_ids: [],
+			workspace_execution_package_id: pkg?.workspace_execution_package_id,
+		};
+		if (pkg?.prompt_fingerprint) {
+			exactBody.prompt_fingerprint = pkg.prompt_fingerprint;
+		}
+		const exactIdentity =
+			pkg?.faceless_execution_identity ??
+			pkg?.request_lineage_payload?.faceless_execution_identity;
+		if (exactIdentity) exactBody.execution_identity = exactIdentity;
+		return exactBody;
+	}
 	const startFromPkg = resolvedAssetToGenerateAsset(
 		packageSlotResolvedAsset(pkg, "start_frame"),
 	);

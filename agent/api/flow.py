@@ -1,5 +1,6 @@
 """Direct Flow API endpoints — for manual operations outside the queue."""
 import base64
+import copy
 import hashlib
 import json
 import re
@@ -1427,11 +1428,15 @@ async def generate(body: GenerateRequest):
                     "detail": "The Faceless execution identity must reference its prepared package.",
                 },
             )
+    _package = None
+    _package_lineage: dict[str, Any] = {}
+    _package_exact_route = False
+    _package_exact_custody: dict[str, Any] | None = None
     # Faceless packages carry a server-authoritative receipt that binds the exact
     # product anchor, actor resolution, opening truth decision, choreography, and
     # provider settings reviewed by the operator. Resolve it before Copy V2,
     # connectivity, asset transport, credits, or the dispatch approval gate.
-    if mode == "F2V" and body.workspace_execution_package_id:
+    if mode in ("F2V", "T2V") and body.workspace_execution_package_id:
         _package = await crud.get_workspace_execution_package(
             body.workspace_execution_package_id
         )
@@ -1449,6 +1454,64 @@ async def generate(body: GenerateRequest):
                 _lineage = json.loads(_lineage)
             except (TypeError, ValueError):
                 _lineage = {}
+        if isinstance(_lineage, dict):
+            _package_lineage = _lineage
+            _package_exact_custody = _lineage.get("product_visual_custody")
+            _faceless_lineage = _lineage.get("faceless_resolution") or {}
+            _exact_plan = (
+                _faceless_lineage.get("exact_product_video")
+                if isinstance(_faceless_lineage, dict)
+                else None
+            ) or _lineage.get("exact_product_video")
+            _package_exact_route = bool(
+                isinstance(_package_exact_custody, dict)
+                and _package_exact_custody.get("provider_route")
+                == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+            ) or bool(
+                isinstance(_exact_plan, dict)
+                and _exact_plan.get("selected_execution_route")
+                == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+            )
+            if _package_exact_route:
+                expected_product_id = str(
+                    _lineage.get("product_id")
+                    or (_package_exact_custody or {}).get("product_id")
+                    or ""
+                ).strip()
+                if not expected_product_id or str(body.product_id or "").strip() != expected_product_id:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "error": "EXACT_PRODUCT_PACKAGE_PRODUCT_MISMATCH",
+                            "detail": "Exact Product Truth package and generate product_id must match.",
+                            "package_product_id": expected_product_id,
+                            "request_product_id": body.product_id,
+                        },
+                    )
+                if mode != "T2V":
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "error": "EXACT_PRODUCT_ROUTE_MODE_INVALID",
+                            "detail": "Exact Faceless product packages dispatch only as a text-only scene scaffold (T2V).",
+                        },
+                    )
+                if str(body.source_mode or "").strip().upper() not in {"", "T2V"}:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "error": "EXACT_PRODUCT_SOURCE_MODE_INVALID",
+                            "detail": "Exact deterministic composite requires T2V scene-scaffold lineage.",
+                        },
+                    )
+                if body.image_media_ids or body.refs or body.startAsset or body.endAsset:
+                    raise HTTPException(
+                        status_code=422,
+                        detail={
+                            "error": "EXACT_PRODUCT_PROVIDER_REFERENCE_FORBIDDEN",
+                            "detail": "Exact Product Truth is inserted server-side; provider product/reference media are forbidden.",
+                        },
+                    )
         _expected_identity = (
             _package.get("faceless_execution_identity")
             or (
@@ -1592,7 +1655,15 @@ async def generate(body: GenerateRequest):
                 maximum_provider_operations=body.maximum_provider_operations,
                 max_retry_operations=body.max_retry_operations,
             )
-    if mode in ("I2V", "F2V") and body.product_id:
+    if _package_exact_route:
+        # Exact Faceless uses a text-only provider scene scaffold.  The
+        # canonical product asset never enters refs/startAsset and is carried
+        # only as server-side custody for deterministic final compositing.
+        effective_source_mode = "T2V"
+        effective_start_asset = None
+        request_refs = {}
+        drop_legacy_video_media_ids = True
+    elif mode in ("I2V", "F2V") and body.product_id:
         effective_source_mode = await _effective_video_source_mode(
             body.source_mode,
             body.workspace_execution_package_id,
@@ -1611,7 +1682,11 @@ async def generate(body: GenerateRequest):
     else:
         effective_source_mode = body.source_mode
 
-    product_visual_custody = None
+    product_visual_custody = (
+        copy.deepcopy(_package_exact_custody)
+        if _package_exact_route and isinstance(_package_exact_custody, dict)
+        else None
+    )
     if (
         mode in ("I2V", "F2V")
         and body.product_id
@@ -1744,7 +1819,35 @@ async def generate(body: GenerateRequest):
             if media_id and media_id not in resolved_ids:
                 resolved_ids.append(media_id)
 
-    if product_visual_custody is not None:
+    if _package_exact_route:
+        if not isinstance(product_visual_custody, dict):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error_code": "ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED",
+                    "message": "Exact deterministic composite package has no custody receipt.",
+                },
+            )
+        from agent.services.product_visual_custody_service import (
+            ProductVisualCustodyError,
+            validate_pre_dispatch_route,
+        )
+
+        try:
+            validate_pre_dispatch_route(
+                product_visual_custody,
+                provider_route="EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+                generation_type=str(
+                    product_visual_custody.get("generation_type")
+                    or "scene_video_scaffold_then_deterministic_composite"
+                ),
+            )
+        except ProductVisualCustodyError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"error_code": exc.code, "message": exc.message, "details": exc.details},
+            ) from exc
+    elif product_visual_custody is not None:
         from agent.services.product_visual_custody_service import (
             bind_provider_reference_transport,
         )

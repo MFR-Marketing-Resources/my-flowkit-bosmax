@@ -124,7 +124,7 @@ def test_official_existing_media_id_is_not_accepted_as_byte_custody(monkeypatch)
     assert calls == {"get_media": 0, "upload": 1}
 
 
-def test_faceless_exact_product_route_blocks_before_copy_package(monkeypatch):
+def test_faceless_exact_product_route_prepares_without_provider_reference(monkeypatch):
     calls = {"package": 0}
 
     async def fake_product(_product_id):
@@ -135,7 +135,8 @@ def test_faceless_exact_product_route_blocks_before_copy_package(monkeypatch):
 
     def fake_resolution(**_kwargs):
         return {
-            "source_mode": "HYBRID",
+            "source_mode": "T2V",
+            "transport_mode": "T2V",
             "actor_profile": {},
             "opening_strategy": {},
             "hook": {},
@@ -143,11 +144,29 @@ def test_faceless_exact_product_route_blocks_before_copy_package(monkeypatch):
             "scene_strategy": {},
             "choreography": {},
             "faceless_resolution": {},
+            "exact_product_video": {
+                "selected_execution_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+                "generate_eligibility": True,
+                "choreography": {"choreography_id": "PRODUCT_PRESENT_TO_CAMERA"},
+            },
         }
 
-    async def should_not_create_package(**_kwargs):
+    async def create_package(**_kwargs):
         calls["package"] += 1
-        raise AssertionError("exact-product route must block before package/compiler work")
+        return {
+            "workspace_execution_package_id": "wep_exact",
+            "prompt_text": "SCENE-ONLY PLATE",
+            "execution_allowed": True,
+            "selected_execution_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+            "generate_eligibility": True,
+            "exact_product_video": {
+                "selected_execution_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+                "generate_eligibility": True,
+            },
+            "asset_slots": [],
+            "resolved_assets": [],
+            "product_visual_custody": custody_receipt,
+        }
 
     custody_receipt = {
         "exact_product_required": True,
@@ -187,24 +206,23 @@ def test_faceless_exact_product_route_blocks_before_copy_package(monkeypatch):
     monkeypatch.setattr(
         faceless,
         "create_workspace_execution_package",
-        should_not_create_package,
+        create_package,
     )
 
-    with pytest.raises(HTTPException) as exc:
-        _run(
-            faceless.faceless_prepare(
-                faceless.FacelessPrepareRequest(
-                    product_id=PRODUCT_ID,
-                    model="Veo 3.1 - Lite",
-                    duration_seconds=8,
-                )
+    response = _run(
+        faceless.faceless_prepare(
+            faceless.FacelessPrepareRequest(
+                product_id=PRODUCT_ID,
+                model="Veo 3.1 - Lite",
+                duration_seconds=8,
             )
         )
+    )
 
-    assert exc.value.status_code == 422
-    assert exc.value.detail["error_code"] == custody.ERR_PRODUCT_FIDELITY_ROUTE_NOT_PROVEN
-    assert exc.value.detail["product_visual_custody"] == custody_receipt
-    assert calls == {"package": 0}
+    assert response["selected_execution_route"] == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+    assert response["debug"]["transport_mode"] == "T2V"
+    assert response["debug"]["provider_product_reference_forbidden"] is True
+    assert calls == {"package": 1}
 
 
 async def _none():

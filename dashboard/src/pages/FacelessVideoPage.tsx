@@ -37,7 +37,10 @@ import SearchableProductSelect from "../components/workspace/SearchableProductSe
 import type { Product, WorkspaceExecutionPackage } from "../types";
 import {
 	buildFacelessGenerateBody,
+	FACELESS_EXACT_ROUTE,
 	FACELESS_VISUAL_LAW,
+	facelessExactRoute,
+	facelessExactRouteBlocker,
 	facelessPrepareBlockers,
 	optionLabel,
 	type FacelessSceneMode,
@@ -247,6 +250,8 @@ export default function FacelessVideoPage() {
 		if (selectedProduct && !v2CopyReady) {
 			result.push("Copy Register V2 binding is not production-ready for Faceless.");
 		}
+		const exactBlocker = facelessExactRouteBlocker(workspacePackage);
+		if (exactBlocker) result.push(`Exact product route blocked: ${exactBlocker}`);
 		if (showAdvancedRef && binding.startFrameAssetId === "" && false) {
 			/* advanced optional */
 		}
@@ -269,6 +274,7 @@ export default function FacelessVideoPage() {
 		modelsAtDuration,
 		extendBlockedReason,
 		v2CopyReady,
+		workspacePackage,
 	]);
 
 	const openingStrategyOptions =
@@ -387,7 +393,11 @@ export default function FacelessVideoPage() {
 			setNotice({
 				tone: "success",
 				title: "Faceless package ready",
-				detail: `${sceneMode} · ${videoModel} · ${durationLabel} · Opening Strategy ${h?.setting_id || hookId} · Background ${b?.setting_id || backgroundId}`,
+				detail:
+					`${sceneMode} · ${videoModel} · ${durationLabel} · Opening Strategy ${h?.setting_id || hookId} · Background ${b?.setting_id || backgroundId}` +
+					(facelessExactRoute(pkg) === FACELESS_EXACT_ROUTE
+						? " · Product fidelity Exact product · Exact deterministic composite"
+						: ""),
 				requestId: pkg.workspace_execution_package_id,
 			});
 		} catch (err: unknown) {
@@ -542,7 +552,12 @@ export default function FacelessVideoPage() {
 				};
 				setPendingApproval({
 					surface: "faceless",
-					logical_mode: String(gb.mode ?? "F2V"),
+					logical_mode: String(
+						gb.mode ??
+							(facelessExactRoute(workspacePackage) === FACELESS_EXACT_ROUTE
+								? "T2V"
+								: "F2V"),
+					),
 					final_prompt_text: String(gb.prompt ?? ""),
 					product_id: gb.product_id ?? null,
 					source_mode: gb.source_mode ?? null,
@@ -1016,6 +1031,15 @@ export default function FacelessVideoPage() {
 						<p className="mb-2 text-[11px] text-slate-400" data-testid="faceless-visual-law">
 							{FACELESS_VISUAL_LAW}
 						</p>
+						{facelessExactRoute(workspacePackage) === FACELESS_EXACT_ROUTE ? (
+							<div
+								className="mb-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-100"
+								data-testid="faceless-exact-route"
+							>
+								<div className="font-bold">Product fidelity: Exact product</div>
+								<div>Execution: Exact deterministic composite · provider scene scaffold only</div>
+							</div>
+						) : null}
 						{blockers.length ? (
 							<ul className="mb-3 list-disc space-y-1 pl-4 text-[12px] text-amber-100">
 								{blockers.map((b) => (

@@ -1,8 +1,9 @@
 """Faceless Video lane — product-first preset over the shared one-door.
 
 Operator surface = Hybrid product path WITHOUT avatar / visible face.
-Internal transport reuses F2V + HYBRID product-anchor lineage (approved package
-start_frame from product truth). Operator never selects F2V/FRAMES/startAsset.
+Ordinary internal transport reuses F2V + HYBRID product-anchor lineage. Exact
+products use a T2V scene scaffold and server-side deterministic composite.
+Operator never selects F2V/FRAMES/startAsset.
 
 Visual law: no face; hands/arms/torso OK with face out of frame; product locked.
 """
@@ -19,6 +20,12 @@ from agent.services.scene_strategy_library import (
     resolve_scene_strategy,
     select_scene_strategy_variant,
 )
+from agent.services.exact_product_video_compositor_service import (
+    ExactProductVideoCompositeError,
+    build_exact_product_video_plan,
+    EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,
+)
+from agent.services.product_visual_custody_service import exact_product_required
 
 FACELESS_SURFACE_MODE = "FACELESS"
 # Internal one-door only — never operator chrome
@@ -325,6 +332,22 @@ def build_faceless_resolution(
     )
     scene_strategy = (scene_authority or {}).get("scene_strategy")
     choreography = (scene_authority or {}).get("choreography")
+    exact_product_video = (scene_authority or {}).get("exact_product_video")
+    # An explicit finished-frame override is its own FRAMES contract.  Do not
+    # relabel that operator-selected composite as the deterministic exact video
+    # route or silently switch it to a T2V scene scaffold.
+    if override:
+        exact_product_video = None
+    if exact_product_video and not override:
+        source_mode = "T2V"
+    transport_mode = (
+        "T2V"
+        if exact_product_video
+        and exact_product_video.get("selected_execution_route")
+        == EXACT_PRODUCT_DETERMINISTIC_COMPOSITE
+        and not override
+        else FACELESS_TRANSPORT_MODE
+    )
     actor = (scene_authority or {}).get("actor_profile") or resolve_faceless_actor_profile(
         actor_profile,
         product_id=product_id or (scene_authority or {}).get("product", {}).get("id"),
@@ -336,10 +359,13 @@ def build_faceless_resolution(
         choreography=choreography,
         actor_profile=actor,
         opening_strategy_truth=(scene_authority or {}).get("opening_strategy_truth"),
+        exact_product_video=exact_product_video,
+        transport_mode=transport_mode,
+        source_mode=source_mode,
     )
     resolution = {
         "lane": FACELESS_SURFACE_MODE,
-        "transport_mode": FACELESS_TRANSPORT_MODE,
+        "transport_mode": transport_mode,
         "source_mode": source_mode,
         "character_presence": FACELESS_CHARACTER_PRESENCE,
         "avatar_id": None,
@@ -350,6 +376,7 @@ def build_faceless_resolution(
         "background": background,
         "scene_strategy": scene_strategy,
         "choreography": choreography,
+        "exact_product_video": exact_product_video,
         "compatible_background_options": (scene_authority or {}).get(
             "background_options", []
         ),
@@ -373,6 +400,9 @@ def _faceless_resolution_receipt(
     choreography: dict[str, Any] | None,
     actor_profile: dict[str, Any],
     opening_strategy_truth: dict[str, Any] | None = None,
+    exact_product_video: dict[str, Any] | None = None,
+    transport_mode: str = FACELESS_TRANSPORT_MODE,
+    source_mode: str = FACELESS_SOURCE_MODE,
 ) -> dict[str, Any] | None:
     if not scene_strategy or not choreography:
         return None
@@ -389,6 +419,8 @@ def _faceless_resolution_receipt(
         "choreography_sha256": choreography["choreography_sha256"],
         "variation_index": int(choreography.get("variation_index") or 0),
         "character_presence": FACELESS_CHARACTER_PRESENCE,
+        "transport_mode": transport_mode,
+        "source_mode": source_mode,
         "compatibility_status": "COMPATIBLE",
         # Keep the complete resolved actor contract in the receipt. The WEP
         # compiler consumes this field to render the provider-facing cue;
@@ -401,6 +433,8 @@ def _faceless_resolution_receipt(
     }
     if opening_strategy_truth:
         receipt["opening_strategy_truth"] = opening_strategy_truth
+    if exact_product_video is not None:
+        receipt["exact_product_video"] = dict(exact_product_video)
     return receipt
 
 
@@ -480,6 +514,14 @@ async def resolve_faceless_scene_authority(
         scene_context_hint=scene_context_hint,
         compatible_contexts=compatible_contexts,
     )
+    exact_product_video = None
+    if exact_product_required(product):
+        try:
+            exact_product_video = build_exact_product_video_plan(product, selected)
+        except ExactProductVideoCompositeError as exc:
+            raise ValueError(
+                f"{exc.code}: {exc.message}"
+            ) from exc
     return {
         "product": product,
         "opening_strategy": opening_strategy,
@@ -492,6 +534,7 @@ async def resolve_faceless_scene_authority(
         "compatible_contexts": compatible_contexts,
         "scene_strategy": scene_receipt,
         "choreography": selected,
+        "exact_product_video": exact_product_video,
     }
 
 
@@ -556,4 +599,5 @@ def build_faceless_package_fields(resolution: dict[str, Any]) -> dict[str, Any]:
             "visual_law": FACELESS_VISUAL_LAW,
         },
         "faceless_resolution": resolution.get("faceless_resolution"),
+        "exact_product_video": resolution.get("exact_product_video"),
     }

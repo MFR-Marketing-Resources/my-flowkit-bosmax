@@ -605,6 +605,9 @@ export interface WorkspaceExecutionPackage {
 	copy_execution_binding?: Record<string, unknown> | null;
 	faceless_execution_identity?: Record<string, unknown> | null;
 	product_visual_custody?: Record<string, unknown> | null;
+	selected_execution_route?: string | null;
+	exact_product_video?: Record<string, unknown> | null;
+	generate_eligibility?: boolean;
 	request_lineage_payload: {
 		product_id: string;
 		mode: WorkspaceMode;
@@ -624,6 +627,7 @@ export interface WorkspaceExecutionPackage {
 		compiler?: Record<string, unknown>;
 		faceless_execution_identity?: Record<string, unknown> | null;
 		product_visual_custody?: Record<string, unknown> | null;
+		exact_product_video?: Record<string, unknown> | null;
 	};
 	source_of_truth_notes: string[];
 	prompt_preview?: string;

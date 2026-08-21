@@ -53,6 +53,11 @@ from agent.services.product_visual_custody_service import (
     product_visual_custody_receipt_sha256,
     validate_pre_dispatch_route,
 )
+from agent.services.exact_product_video_compositor_service import (
+    EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,
+    ExactProductVideoCompositeError,
+    build_exact_scene_scaffold_prompt,
+)
 
 
 def _fingerprint(*parts: str) -> str:
@@ -131,7 +136,17 @@ def _faceless_execution_identity(
     return {
         "identity_version": "FACELESS_EXECUTION_IDENTITY_V1",
         "lane": "FACELESS",
-        "transport_mode": "F2V",
+        "transport_mode": str(
+            faceless_resolution.get("transport_mode")
+            or (
+                "T2V"
+                if (faceless_resolution.get("exact_product_video") or {}).get(
+                    "selected_execution_route"
+                )
+                == EXACT_PRODUCT_DETERMINISTIC_COMPOSITE
+                else "F2V"
+            )
+        ).upper(),
         "source_mode": str(source_mode or "").upper() or None,
         "product_id": product_id,
         "product_anchor_fingerprint": (asset_fingerprints[0] if asset_fingerprints else None),
@@ -479,6 +494,44 @@ async def create_workspace_execution_package(
             "copy_fallback_confirmation_source": COPY_FALLBACK_CONFIRMATION_SOURCE,
             "copy_fallback_policy": COPY_FALLBACK_POLICY,
         }
+    exact_product_video = (
+        (faceless_resolution or {}).get("exact_product_video")
+        if isinstance(faceless_resolution, dict)
+        else None
+    )
+    exact_faceless_route = bool(
+        isinstance(exact_product_video, dict)
+        and exact_product_video.get("selected_execution_route")
+        == EXACT_PRODUCT_DETERMINISTIC_COMPOSITE
+    )
+    if exact_faceless_route:
+        # The shared compiler remains the source of copy/shot lineage, but the
+        # provider-facing text is explicitly rewritten to scene-scaffold-only.
+        # Exact product pixels are forbidden from the provider lane.
+        try:
+            scaffold_prompt = build_exact_scene_scaffold_prompt(
+                compiler_result.get("final_compiled_prompt_text") or "",
+                exact_product_video,
+                scene_context=scene_context_override or "",
+            )
+        except ExactProductVideoCompositeError as exc:
+            raise CopyBindingError(exc.code, status_code=exc.status_code, detail=exc.message) from exc
+        compiler_result["final_compiled_prompt_text"] = scaffold_prompt
+        for block in compiler_result.get("prompt_blocks") or []:
+            if not isinstance(block, dict):
+                continue
+            for key in (
+                "compiled_prompt_text",
+                "engine_prompt_text",
+                "initial_generation_prompt_text",
+                "independent_block_prompt_text",
+            ):
+                if block.get(key) is not None:
+                    block[key] = scaffold_prompt
+        compiler_result["prompt_fingerprint"] = _fingerprint(scaffold_prompt)
+        compiler_result.setdefault("source_of_truth_notes", []).append(
+            "Exact Faceless route: provider receives scene scaffold only; final product pixels are inserted from Product Truth Lock."
+        )
     prompt_fingerprint = compiler_result["prompt_fingerprint"]
     total_duration_seconds = int(compiler_result["total_duration_seconds"])
     effective_lineage_source_mode = (
@@ -539,12 +592,76 @@ async def create_workspace_execution_package(
     )
     product_visual_custody: dict[str, Any] | None = None
     custody_blockers: list[str] = []
-    # Product-aware video packages must carry the same server-owned visual
-    # custody proof that the dispatch seam consumes. T2V remains text-only and
-    # intentionally does not enter this visual gate. FRAMES is an explicit
-    # finished-frame continuation and keeps its selected composite; the normal
-    # FACELESS/HYBRID product path is always official-visual anchored.
-    if normalized_mode in {"F2V", "I2V"} and resolved_source_mode != "FRAMES":
+    # Exact Faceless is a T2V scene-scaffold package with no provider product
+    # reference.  The custody receipt still carries the approved canonical
+    # visual so the later deterministic compositor can prove lineage.
+    if exact_faceless_route:
+        product_row = await crud.get_product(product_id)
+        try:
+            if not product_row:
+                raise ProductVisualCustodyError(
+                    ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED,
+                    "Product row is unavailable for exact-product custody.",
+                )
+            from agent.services.product_visual_grounding_resolver import (
+                build_official_product_visual_asset,
+            )
+
+            official_asset = build_official_product_visual_asset(
+                product_row,
+                slot_key="canonical_product_asset",
+                label="Canonical Product Truth cutout",
+            )
+            product_visual_custody = build_product_visual_custody_receipt(
+                product_row,
+                official_asset,
+                mode=normalized_mode,
+                source_mode=effective_lineage_source_mode,
+                prompt=compiler_result.get("final_compiled_prompt_text"),
+                provider_route=EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,
+                generation_type="scene_video_scaffold_then_deterministic_composite",
+                execution_identity=faceless_execution_identity_seed,
+            )
+            validate_pre_dispatch_route(
+                product_visual_custody,
+                provider_route=EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,
+                generation_type=product_visual_custody["generation_type"],
+            )
+            product_visual_custody["exact_product_video"] = copy.deepcopy(
+                exact_product_video
+            )
+            product_visual_custody["provider_product_reference_forbidden"] = True
+            product_visual_custody["reference_transport"] = "NOT_DISPATCHED"
+            product_visual_custody["receipt_sha256"] = product_visual_custody_receipt_sha256(
+                product_visual_custody
+            )
+            if exact_product_video.get("generate_eligibility") is not True:
+                custody_blockers.append(
+                    str(exact_product_video.get("blocker") or "EXACT_COMPOSITE_UNSUPPORTED")
+                )
+        except (ProductVisualCustodyError, ValueError) as exc:
+            code = getattr(exc, "code", None) or ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED
+            custody_blockers.append(code)
+            product_visual_custody = {
+                "receipt_version": "PRODUCT_VISUAL_CUSTODY_V1",
+                "product_id": product_id,
+                "fidelity_policy": "EXACT_PRODUCT_REQUIRED",
+                "exact_product_required": True,
+                "product_fidelity_qc_required": True,
+                "product_fidelity_qc_status": "PRODUCT_FIDELITY_QC_PENDING",
+                "provider_route": EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,
+                "generation_type": "scene_video_scaffold_then_deterministic_composite",
+                "provider_product_reference_forbidden": True,
+                "custody_error": code,
+                "custody_error_detail": str(exc),
+                "exact_product_video": copy.deepcopy(exact_product_video),
+            }
+            product_visual_custody["receipt_sha256"] = product_visual_custody_receipt_sha256(
+                product_visual_custody
+            )
+    # Product-aware reference-bearing packages retain the existing generic
+    # custody route.  This branch deliberately does not widen the exact route.
+    elif normalized_mode in {"F2V", "I2V"} and resolved_source_mode != "FRAMES":
         product_row = await crud.get_product(product_id)
         official_asset = next(
             (
@@ -684,6 +801,10 @@ async def create_workspace_execution_package(
         request_lineage_payload["faceless_resolution"] = copy.deepcopy(
             faceless_resolution
         )
+    if isinstance(exact_product_video, dict):
+        request_lineage_payload["exact_product_video"] = copy.deepcopy(
+            exact_product_video
+        )
     if faceless_execution_identity is not None:
         request_lineage_payload["faceless_execution_identity"] = copy.deepcopy(
             faceless_execution_identity
@@ -805,6 +926,19 @@ async def create_workspace_execution_package(
         "request_lineage_payload": request_lineage_payload,
         "faceless_execution_identity": faceless_execution_identity,
         "product_visual_custody": product_visual_custody,
+        "selected_execution_route": (
+            exact_product_video.get("selected_execution_route")
+            if isinstance(exact_product_video, dict)
+            else None
+        ),
+        "exact_product_video": copy.deepcopy(exact_product_video)
+        if isinstance(exact_product_video, dict)
+        else None,
+        "generate_eligibility": (
+            exact_product_video.get("generate_eligibility")
+            if isinstance(exact_product_video, dict)
+            else execution_allowed
+        ),
         "source_of_truth_notes": [
             *package["source_of_truth_notes"],
             *compiler_result["source_of_truth_notes"],

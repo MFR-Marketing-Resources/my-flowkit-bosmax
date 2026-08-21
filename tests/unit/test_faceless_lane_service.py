@@ -180,8 +180,8 @@ async def test_scene_authority_resolves_faceless_receipt_and_concrete_auto_backg
 ):
     product = {
         "id": "prod-oil",
-        "name": "Minyak Warisan Cap Burung 25ml",
-        "raw_product_title": "Minyak Warisan Cap Burung 25ml",
+        "name": "Test Traditional Herbal Oil",
+        "raw_product_title": "Test Traditional Herbal Oil",
         "product_type": "TRADITIONAL_HERBAL_OIL",
         "product_physics": "TRADITIONAL_HERBAL_OIL_BOTTLE",
     }

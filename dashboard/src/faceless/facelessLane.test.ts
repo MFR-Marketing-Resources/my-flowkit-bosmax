@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
 	buildFacelessGenerateBody,
 	FACELESS_CHARACTER_PRESENCE,
+	FACELESS_EXACT_ROUTE,
 	FACELESS_SOURCE_MODE,
 	FACELESS_TRANSPORT_MODE,
 	FACELESS_VISUAL_LAW,
@@ -176,5 +177,42 @@ describe("facelessLane product-first", () => {
 			resolvedAssetToGenerateAsset(packageSlotResolvedAsset(pkg, "start_frame"))
 				?.assetId,
 		).toBe("from_slot");
+	});
+
+	it("exact deterministic route emits T2V scene scaffold with zero refs", () => {
+		const pkg = {
+			workspace_execution_package_id: "wep_exact",
+			prompt_fingerprint: "fp_exact",
+			prompt_text: "SCENE-ONLY PLATE",
+			product_id: "p1",
+			aspect_ratio: "9:16",
+			selected_execution_route: FACELESS_EXACT_ROUTE,
+			generate_eligibility: true,
+			exact_product_video: {
+				selected_execution_route: FACELESS_EXACT_ROUTE,
+				generate_eligibility: true,
+			},
+			faceless_execution_identity: {
+				identity_version: "FACELESS_EXECUTION_IDENTITY_V1",
+				lane: "FACELESS",
+				transport_mode: "T2V",
+			},
+			asset_slots: [],
+		} as unknown as WorkspaceExecutionPackage;
+
+		const body = buildFacelessGenerateBody({
+			prompt: pkg.prompt_text!,
+			productId: "p1",
+			workspacePackage: pkg,
+			model: "Veo 3.1 - Lite",
+			durationSeconds: 8,
+			sceneMode: "SINGLE",
+		});
+
+		expect(body.mode).toBe("T2V");
+		expect(body.source_mode).toBe("T2V");
+		expect(body.image_media_ids).toEqual([]);
+		expect(body.startAsset).toBeUndefined();
+		expect(body.execution_identity).toEqual(pkg.faceless_execution_identity);
 	});
 });
