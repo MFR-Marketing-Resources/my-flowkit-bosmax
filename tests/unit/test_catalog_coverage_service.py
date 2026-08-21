@@ -322,7 +322,13 @@ async def test_approved_product_truth_description_releases_description_absent_bl
 
     async def fake_approved_snapshot(product_id):
         assert product_id == "8e75f1a8-ba43-444e-8b40-c71d140c76c5"
-        return {"product_description": "Approved product truth description."}
+        # A realistic P6_READY product is claim-safe (the launch cohort is
+        # claim-safe by construction); set the gate so this test isolates the
+        # description-absent-blocker release it is actually exercising.
+        return {
+            "product_description": "Approved product truth description.",
+            "claim_gate": "CLAIM_SAFE",
+        }
 
     monkeypatch.setattr(service.crud, "list_products", fake_products)
     monkeypatch.setattr(service, "attach_product_strategy_taxonomies", fake_attach)
@@ -501,3 +507,36 @@ async def test_approved_product_intelligence_releases_only_resolved_p58_blockers
     released_rows = {row.product_id: row for row in released.products}
     assert released_rows[headlamp_id].terminal_state == "P6_READY"
     assert released_rows[headlamp_id].terminal_reasons == []
+
+
+@pytest.mark.asyncio
+async def test_claim_safety_launch_blocker_gates_claim_review_products(monkeypatch):
+    """The P5.8 launch cohort is claim-safe by construction: a CLAIM_REVIEW_REQUIRED
+    approved snapshot yields a launch blocker (any risk level); a CLAIM_SAFE snapshot
+    does not; a product without an approved snapshot is left to the existing gates."""
+
+    snapshots = {
+        "safe_low": {"status": "APPROVED", "claim_gate": "CLAIM_SAFE", "claim_risk_level": "LOW"},
+        "safe_medium": {"status": "APPROVED", "claim_gate": "CLAIM_SAFE", "claim_risk_level": "MEDIUM"},
+        "review_high": {"status": "APPROVED", "claim_gate": "CLAIM_REVIEW_REQUIRED", "claim_risk_level": "HIGH"},
+        "review_medium": {"status": "APPROVED", "claim_gate": "CLAIM_REVIEW_REQUIRED", "claim_risk_level": "MEDIUM"},
+        "no_snapshot": None,
+    }
+
+    async def fake_snapshot(product_id: str):
+        return snapshots[product_id]
+
+    monkeypatch.setattr(
+        service.crud,
+        "get_latest_approved_product_intelligence_snapshot",
+        fake_snapshot,
+    )
+
+    # CLAIM_SAFE stays in the cohort regardless of overall risk level.
+    assert await service._claim_safety_launch_blocker("safe_low") == ()
+    assert await service._claim_safety_launch_blocker("safe_medium") == ()
+    # CLAIM_REVIEW_REQUIRED is fail-closed out of the launch cohort at any risk.
+    assert await service._claim_safety_launch_blocker("review_high") == ("CLAIM_REVIEW_REQUIRED",)
+    assert await service._claim_safety_launch_blocker("review_medium") == ("CLAIM_REVIEW_REQUIRED",)
+    # No approved snapshot -> not this gate's concern (existing authority gates apply).
+    assert await service._claim_safety_launch_blocker("no_snapshot") == ()

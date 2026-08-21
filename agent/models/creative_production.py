@@ -17,9 +17,15 @@ from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
 # Re-pinned again 2026-08-05: owner purged the registered pharmaceutical "Panadol
 # Regular Coated" (paracetamol) from the marketing/generation catalog (archived,
 # reversible). It was a cohort member, so the certified set drops 453 -> 452.
-P58_COHORT_COUNT = 452
+# Re-pinned 2026-08-21: the P6 launch cohort is now claim-safe by construction —
+# the matrix builder blocks any product whose latest approved Product Intelligence
+# is not CLAIM_SAFE (see catalog_coverage_service._claim_safety_launch_blocker).
+# Post-freeze re-derivation had grown the (claim-blind) cohort to 581; gating out
+# the 7 CLAIM_REVIEW_REQUIRED products (3 HIGH / 4 MEDIUM health-claim items) yields
+# the certified claim-safe set 574. Owner-approved acceptance of that vetted cohort.
+P58_COHORT_COUNT = 574
 P58_COHORT_SHA256 = (
-    "cfb3ed6441f4b0623bb0a07550d893694a4f6bac66aefc148b5afe7bb72e580d"
+    "add708e17fb9b474764b7287c025724cb01f8a8c19eb35929cff9cc97da9ba14"
 )
 P6_LIVE_CONFIRMATION = "AUTHORIZE_P6_LIVE_CREDIT_SPEND"
 
