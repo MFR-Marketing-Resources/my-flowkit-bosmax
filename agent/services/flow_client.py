@@ -7,6 +7,7 @@ extension executes them in browser context (residential IP, cookies, reCAPTCHA).
 import asyncio
 import json
 import logging
+import secrets
 import time
 import uuid
 from typing import Optional
@@ -1057,6 +1058,115 @@ class FlowClient:
             "manualDisconnect": False,
             "metrics": {},
             "error": "invalid extension status payload",
+        }
+
+    async def verify_provider_session_challenge(
+        self,
+        flow_tab_id: int | None = None,
+        timeout: float = 15,
+    ) -> dict:
+        """Prove that the live extension session owns the live Flow project tab.
+
+        The backend supplies a short-lived nonce to the connected extension. The
+        extension routes it to the selected project-editor content script and
+        returns the nonce together with the tab's current project URL/build.
+        Comparing the returned extension session id with the status snapshot is
+        the provider-authority proof; no CDP browser or cookie inspection is
+        involved.
+        """
+        status = await self.get_status(timeout=5)
+        if status.get("connected") is not True:
+            return {
+                "ok": False,
+                "primary_blocker": "EXTENSION_BRIDGE_NOT_CONNECTED",
+                "flow_transport_connected": False,
+            }
+
+        backend_session_id = str(status.get("extension_session_id") or "").strip()
+        if not backend_session_id:
+            return {
+                "ok": False,
+                "primary_blocker": "EXTENSION_SESSION_MISMATCH",
+                "flow_transport_connected": True,
+                "backend_extension_session_id": None,
+            }
+
+        nonce = secrets.token_urlsafe(24)
+        params = {"nonce": nonce}
+        if flow_tab_id is not None:
+            params["flow_tab_id"] = int(flow_tab_id)
+        response = await self._send(
+            "FLOW_PROVIDER_SESSION_CHALLENGE",
+            params,
+            timeout=timeout,
+        )
+        payload = response.get("result") if isinstance(response, dict) else None
+        if not isinstance(payload, dict):
+            payload = response if isinstance(response, dict) else {}
+
+        returned_nonce = str(payload.get("challenge_nonce") or "")
+        returned_session_id = str(payload.get("extension_session_id") or "").strip()
+        returned_tab_id = payload.get("flow_tab_id")
+        try:
+            returned_tab_id = int(returned_tab_id) if returned_tab_id is not None else None
+        except (TypeError, ValueError):
+            returned_tab_id = None
+        expected_tab_id = int(flow_tab_id) if flow_tab_id is not None else None
+        nonce_match = secrets.compare_digest(returned_nonce, nonce)
+        same_extension_session = bool(
+            returned_session_id and returned_session_id == backend_session_id
+        )
+        same_flow_tab = bool(
+            payload.get("same_flow_tab") is True
+            or (
+                returned_tab_id is not None
+                and (expected_tab_id is None or returned_tab_id == expected_tab_id)
+                and bool(payload.get("flow_project_id"))
+            )
+        )
+        content_alive = payload.get("content_script_alive") is True
+        challenge_verified = bool(
+            payload.get("ok") is True
+            and nonce_match
+            and same_extension_session
+            and same_flow_tab
+            and content_alive
+        )
+        status_build = str(
+            status.get("extension_build")
+            or status.get("background_build_id")
+            or ""
+        )
+        result_build = str(payload.get("extension_build") or "")
+        extension_build_match = bool(
+            payload.get("extension_build_match") is True
+            and (not status_build or not result_build or status_build == result_build)
+        )
+        return {
+            **payload,
+            "ok": challenge_verified,
+            "backend_extension_session_id": backend_session_id,
+            "challenge_nonce_expected": nonce,
+            "challenge_nonce_returned": returned_nonce or None,
+            "challenge_nonce_match": nonce_match,
+            "same_extension_session": same_extension_session,
+            "same_flow_tab": same_flow_tab,
+            "content_script_alive": content_alive,
+            "extension_build_match": extension_build_match,
+            "session_challenge_verified": challenge_verified,
+            "flow_transport_connected": True,
+            "primary_blocker": (
+                None
+                if challenge_verified
+                else str(
+                    payload.get("primary_blocker")
+                    or (
+                        "FLOW_SESSION_CHALLENGE_FAILED"
+                        if nonce_match
+                        else "FLOW_SESSION_CHALLENGE_FAILED"
+                    )
+                )
+            ),
         }
 
     async def validate_media_id(self, media_id: str) -> bool:

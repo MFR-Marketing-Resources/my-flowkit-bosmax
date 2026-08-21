@@ -1585,6 +1585,7 @@ const WS_METHOD_TIMEOUT_MS = {
 	GET_RUNTIME_SELF_TEST: 60000,
 	BOOTSTRAP_FLOW_PROJECT_EDITOR: 90000,
 	CHECK_FLOW_COMPOSER_READY: 12000,
+	FLOW_PROVIDER_SESSION_CHALLENGE: 12000,
 	FLOW_PAGE_STATE_DIAGNOSTIC: 12000,
 	RELOAD_FLOW_TAB: 12000,
 	MEDIA_URL_REDIRECT: 30000,
@@ -4037,6 +4038,122 @@ async function ensureFlowDomScript(tabId) {
 	}
 }
 
+async function handleFlowProviderSessionChallenge(params = {}) {
+	const requestedTabId = Number(params?.flow_tab_id || 0);
+	let flowTab = requestedTabId
+		? await getTabSafe(requestedTabId)
+		: await getFlowTabSafe();
+	if (
+		!requestedTabId &&
+		(!flowTab?.id || !isProjectEditorUrl(flowTab.url) || isRootFlowUrl(flowTab.url))
+	) {
+		const editorTabs = (await getFlowTabs()).filter(
+			(tab) => isProjectEditorUrl(tab?.url) && !isRootFlowUrl(tab?.url),
+		);
+		flowTab = editorTabs[0] || flowTab;
+	}
+	const manifest = chrome.runtime.getManifest();
+	const identity = {
+		extension_session_id: EXTENSION_SESSION_ID,
+		extension_id: chrome.runtime.id,
+		extension_version: manifest.version || null,
+		extension_build: BUILD_ID,
+	};
+	const base = {
+		...identity,
+		ok: false,
+		flow_tab_found: false,
+		flow_tab_id: flowTab?.id ?? null,
+		flow_url: flowTab?.url ?? null,
+		flow_project_url: null,
+		flow_project_id: null,
+		content_script_loaded: false,
+		content_script_alive: false,
+		content_build_id: null,
+		content_script_protocol_version: null,
+		extension_build_match: false,
+		challenge_nonce: String(params?.nonce || ""),
+		challenge_verified: false,
+		same_extension_session: true,
+		same_flow_tab: false,
+	};
+	if (!flowTab?.id || !isProjectEditorUrl(flowTab.url) || isRootFlowUrl(flowTab.url)) {
+		return {
+			...base,
+			primary_blocker: "FLOW_PROJECT_NOT_FOUND",
+		};
+	}
+	if (requestedTabId && Number(flowTab.id) !== requestedTabId) {
+		return {
+			...base,
+			primary_blocker: "FLOW_PROJECT_NOT_FOUND",
+		};
+	}
+
+	await ensureFlowDomScript(flowTab.id);
+	const content = await sendTabMessageSafe(
+		flowTab.id,
+		{
+			type: "FLOW_PROVIDER_SESSION_CHALLENGE",
+			nonce: String(params?.nonce || ""),
+		},
+		8000,
+	);
+	const liveTab = (await getTabSafe(flowTab.id)) || flowTab;
+	const flowUrl = String(liveTab.url || flowTab.url || "").trim();
+	const projectId = extractFlowProjectId(flowUrl);
+	const contentUrl = String(
+		content?.flow_project_url || content?.flow_url || content?.location_href || "",
+	).trim();
+	const contentProjectId = extractFlowProjectId(contentUrl);
+	const nonceMatch =
+		String(content?.challenge_nonce || "") === String(params?.nonce || "");
+	const contentAlive =
+		content?.ok === true && content?.content_script_loaded === true;
+	const buildMatch =
+		String(content?.content_build_id || "") === String(BUILD_ID);
+	const sameTab = Boolean(
+		contentAlive &&
+		isProjectEditorUrl(flowUrl) &&
+		projectId &&
+		contentProjectId === projectId &&
+		(!contentUrl || normalizeFlowProjectUrl(contentUrl) === normalizeFlowProjectUrl(flowUrl)),
+	);
+	const challengeVerified = Boolean(
+		nonceMatch && contentAlive && buildMatch && sameTab && projectId,
+	);
+	return {
+		...base,
+		...content,
+		...identity,
+		ok: challengeVerified,
+		flow_tab_found: true,
+		flow_tab_id: liveTab.id,
+		flow_url: flowUrl,
+		flow_project_url: flowUrl,
+		flow_project_id: projectId,
+		content_script_loaded: content?.content_script_loaded === true,
+		content_script_alive: contentAlive,
+		content_build_id: content?.content_build_id || null,
+		content_script_protocol_version:
+			content?.content_script_protocol_version || null,
+		extension_build_match: buildMatch,
+		challenge_nonce: content?.challenge_nonce || null,
+		challenge_verified: challengeVerified,
+		same_extension_session: true,
+		same_flow_tab: sameTab,
+		primary_blocker: challengeVerified
+			? null
+			: !nonceMatch
+				? "FLOW_SESSION_CHALLENGE_FAILED"
+				: !contentAlive
+					? "FLOW_CONTENT_SCRIPT_NOT_ALIVE"
+					: !buildMatch
+						? "EXTENSION_BUILD_MISMATCH"
+						: "FLOW_PROJECT_NOT_FOUND",
+	};
+}
+
 function getKnownContentScriptHealth(tabId) {
 	const last = flowContentScriptHealth.get(tabId);
 	return {
@@ -5803,6 +5920,11 @@ function connectToAgent() {
 					ok: true,
 					...buildBackgroundStatusResponse(),
 				}));
+				replyToAgent(msg, result);
+			} else if (msg.method === "FLOW_PROVIDER_SESSION_CHALLENGE") {
+				const result = await executeWsMethodAndReply(msg, () =>
+					handleFlowProviderSessionChallenge(msg.params || {}),
+				);
 				replyToAgent(msg, result);
 			} else if (msg.method === "GET_RUNTIME_SELF_TEST") {
 				const result = await executeWsMethodAndReply(msg, () =>
