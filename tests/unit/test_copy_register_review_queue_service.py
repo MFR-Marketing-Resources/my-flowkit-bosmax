@@ -215,3 +215,190 @@ async def test_batch_rerun_is_idempotent_and_does_not_change_authority():
     assert rerun_error.value.details["items"][0]["error_code"] == "COPY_V2_BLUEPRINT_NOT_DRAFT"
     after = int((await (await db.execute("SELECT COUNT(*) FROM copy_execution_authority_v2")).fetchone())[0])
     assert after == before == 0
+
+
+async def _approve_for_activation(blueprint):
+    result = await queue.batch_approve_drafts(
+        [blueprint.blueprint_id],
+        reviewer="activation-reviewer",
+        rationale="Explicit human review completed against current Product Truth.",
+        readiness_proof_dict=_READINESS,
+        confirmation_phrase=queue.BATCH_APPROVAL_CONFIRMATION_PHRASE,
+    )
+    assert result["approved_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_activation_candidates_and_batch_bind_each_approved_product_to_all_required_lanes(
+    monkeypatch,
+):
+    first_product, _, first = await _seed_draft("bp-activate-1")
+    second_product, _, second = await _seed_draft("bp-activate-2")
+    await _approve_for_activation(first)
+    await _approve_for_activation(second)
+
+    def fail_provider(*_args, **_kwargs):
+        raise AssertionError("copy authority activation must not call the provider")
+
+    monkeypatch.setattr(v2.ai_provider, "complete_json_with_receipt", fail_provider)
+
+    candidates = await queue.list_activation_candidates()
+    by_id = {item["blueprint_id"]: item for item in candidates["items"]}
+    assert {first.blueprint_id, second.blueprint_id}.issubset(by_id)
+    for blueprint, product in ((first, first_product), (second, second_product)):
+        row = by_id[blueprint.blueprint_id]
+        assert row["product_id"] == product["id"]
+        assert row["status"] == "PRODUCTION_VALID"
+        assert row["activatable"] is True
+        assert row["current_authority_state"] == "NONE"
+        assert row["required_lane_count"] == 8
+
+    db = await get_db()
+    before_binding = int(
+        (await (await db.execute("SELECT COUNT(*) FROM copy_execution_binding_v2")).fetchone())[0]
+    )
+    before_authority = int(
+        (await (await db.execute("SELECT COUNT(*) FROM copy_execution_authority_v2")).fetchone())[0]
+    )
+    result = await queue.batch_activate(
+        [first.blueprint_id, second.blueprint_id],
+        confirmation_phrase=queue.BATCH_ACTIVATION_CONFIRMATION_PHRASE,
+        owner_authorization=True,
+    )
+
+    assert result["activated_count"] == 2
+    assert result["idempotent_count"] == 0
+    assert result["failed_count"] == 0
+    assert result["bound_lane_count"] == 16
+    assert result["activation_mutations"] == 2
+    assert result["provider_calls"] == 0
+    assert result["credit_spend"] == 0
+    assert all(item["status"] == "ACTIVATED" for item in result["results"])
+    assert all(item["lane_count"] == 8 for item in result["results"])
+
+    after_binding = int(
+        (await (await db.execute("SELECT COUNT(*) FROM copy_execution_binding_v2")).fetchone())[0]
+    )
+    after_authority = int(
+        (await (await db.execute("SELECT COUNT(*) FROM copy_execution_authority_v2")).fetchone())[0]
+    )
+    assert after_binding - before_binding == 16
+    assert after_authority - before_authority == 16
+    cursor = await db.execute(
+        """
+        SELECT binding.blueprint_id, binding.binding_status, COUNT(authority.lane) AS lanes
+        FROM copy_execution_binding_v2 binding
+        JOIN copy_execution_authority_v2 authority ON authority.binding_id = binding.binding_id
+        WHERE binding.blueprint_id IN (?, ?)
+        GROUP BY binding.blueprint_id, binding.binding_status
+        """,
+        (first.blueprint_id, second.blueprint_id),
+    )
+    rows = await cursor.fetchall()
+    assert {(row["blueprint_id"], row["binding_status"], int(row["lanes"])) for row in rows} == {
+        (first.blueprint_id, "BOUND", 8),
+        (second.blueprint_id, "BOUND", 8),
+    }
+
+
+@pytest.mark.asyncio
+async def test_activation_preflight_rejects_stale_and_draft_before_any_mutation():
+    _, stale_snapshot, stale = await _seed_draft("bp-activation-stale")
+    _, _, draft = await _seed_draft("bp-activation-draft")
+    await _approve_for_activation(stale)
+    await _make_current_truth_stale(stale.product_id, stale_snapshot)
+
+    db = await get_db()
+    before = int(
+        (await (await db.execute("SELECT COUNT(*) FROM copy_execution_authority_v2")).fetchone())[0]
+    )
+    with pytest.raises(queue.CopyRegisterReviewQueueError) as error:
+        await queue.batch_activate(
+            [stale.blueprint_id, draft.blueprint_id],
+            confirmation_phrase=queue.BATCH_ACTIVATION_CONFIRMATION_PHRASE,
+            owner_authorization=True,
+        )
+
+    assert error.value.code == "COPY_V2_ACTIVATION_BATCH_PREFLIGHT_FAILED"
+    details = {item["blueprint_id"]: item for item in error.value.details["items"]}
+    assert details[stale.blueprint_id]["error_code"] in {
+        "COPY_V2_PRODUCT_TRUTH_STALE",
+        "COPY_V2_TAXONOMY_AUTHORITY_STALE",
+    }
+    assert details[draft.blueprint_id]["error_code"] == "EXPLICIT_HUMAN_APPROVAL_REQUIRED"
+    after = int(
+        (await (await db.execute("SELECT COUNT(*) FROM copy_execution_authority_v2")).fetchone())[0]
+    )
+    assert after == before == 0
+
+
+@pytest.mark.asyncio
+async def test_activation_attestation_and_batch_cap_fail_closed():
+    _, _, approved = await _seed_draft("bp-activation-attestation")
+    await _approve_for_activation(approved)
+
+    with pytest.raises(queue.CopyRegisterReviewQueueError) as phrase_error:
+        await queue.batch_activate(
+            [approved.blueprint_id],
+            confirmation_phrase="WRONG",
+            owner_authorization=True,
+        )
+    assert phrase_error.value.code == "INVALID_CONFIRMATION_PHRASE"
+
+    with pytest.raises(queue.CopyRegisterReviewQueueError) as owner_error:
+        await queue.batch_activate(
+            [approved.blueprint_id],
+            confirmation_phrase=queue.BATCH_ACTIVATION_CONFIRMATION_PHRASE,
+            owner_authorization=False,
+        )
+    assert owner_error.value.code == "OWNER_AUTHORIZATION_REQUIRED"
+
+    with pytest.raises(queue.CopyRegisterReviewQueueError) as cap_error:
+        await queue.batch_activate(
+            [f"bp-over-cap-{index}" for index in range(queue.ACTIVATION_BATCH_MAX + 1)],
+            confirmation_phrase=queue.BATCH_ACTIVATION_CONFIRMATION_PHRASE,
+            owner_authorization=True,
+        )
+    assert cap_error.value.code == "COPY_V2_ACTIVATION_BATCH_LIMIT_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_activation_rerun_is_idempotent_and_does_not_grow_authority():
+    _, _, approved = await _seed_draft("bp-activation-idempotent")
+    await _approve_for_activation(approved)
+    first = await queue.batch_activate(
+        [approved.blueprint_id],
+        confirmation_phrase=queue.BATCH_ACTIVATION_CONFIRMATION_PHRASE,
+        owner_authorization=True,
+    )
+    assert first["activated_count"] == 1
+
+    db = await get_db()
+    before = int(
+        (await (await db.execute("SELECT COUNT(*) FROM copy_execution_authority_v2")).fetchone())[0]
+    )
+    second = await queue.batch_activate(
+        [approved.blueprint_id],
+        confirmation_phrase=queue.BATCH_ACTIVATION_CONFIRMATION_PHRASE,
+        owner_authorization=True,
+    )
+
+    assert second["activated_count"] == 0
+    assert second["idempotent_count"] == 1
+    assert second["failed_count"] == 0
+    assert second["activation_mutations"] == 0
+    assert second["bound_lane_count"] == 0
+    assert second["results"] == [
+        {
+            "blueprint_id": approved.blueprint_id,
+            "activated": False,
+            "idempotent": True,
+            "status": "ALREADY_ACTIVE",
+            "lane_count": 8,
+            "error_code": None,
+        }
+    ]
+    after = int(
+        (await (await db.execute("SELECT COUNT(*) FROM copy_execution_authority_v2")).fetchone())[0]
+    )
+    assert after == before == 8

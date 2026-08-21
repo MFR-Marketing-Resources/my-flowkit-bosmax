@@ -1,12 +1,13 @@
-"""Lapis 2 bulk DRAFT generation and human review-queue router.
+"""Lapis 2 bulk DRAFT, review-queue, and owner-gated activation router.
 
-Bulk generation remains DRAFT-only. Review-queue approval delegates to the V2
-per-blueprint authority and never activates or spends provider credits.
+Bulk generation remains DRAFT-only. Review approval and copy-authority
+activation are separate V2-controlled operations; neither calls a provider or
+spends generation credits.
 """
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from agent.services import copy_register_bulk_service as svc
 from agent.services import copy_register_review_queue_service as review_queue
@@ -31,6 +32,16 @@ class BatchApproveDraftsRequest(BaseModel):
     rationale: str = Field(min_length=1)
     readiness_proof: dict[str, Any]
     confirmation_phrase: str = Field(min_length=1)
+
+
+class BatchActivateBlueprintsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # The service enforces the exact 50-item cap so over-cap requests receive
+    # the stable governance error rather than silently truncating the set.
+    blueprint_ids: list[str] = Field(min_length=1, max_length=review_queue.ACTIVATION_BATCH_MAX + 1)
+    confirmation_phrase: str = Field(min_length=1)
+    owner_authorization: StrictBool
 
 
 @router.post("/runs")
@@ -99,6 +110,32 @@ async def approve_review_queue_batch(request: BatchApproveDraftsRequest):
             rationale=request.rationale,
             readiness_proof_dict=request.readiness_proof,
             confirmation_phrase=request.confirmation_phrase,
+        )
+    except review_queue.CopyRegisterReviewQueueError as exc:
+        detail: dict[str, Any] = {"error": exc.code, "detail": str(exc)}
+        if exc.details is not None:
+            detail["details"] = exc.details
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+
+
+@router.get("/activation-candidates")
+async def get_activation_candidates():
+    try:
+        return await review_queue.list_activation_candidates()
+    except review_queue.CopyRegisterReviewQueueError as exc:
+        detail: dict[str, Any] = {"error": exc.code, "detail": str(exc)}
+        if exc.details is not None:
+            detail["details"] = exc.details
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
+
+
+@router.post("/activate")
+async def activate_blueprint_batch(request: BatchActivateBlueprintsRequest):
+    try:
+        return await review_queue.batch_activate(
+            request.blueprint_ids,
+            confirmation_phrase=request.confirmation_phrase,
+            owner_authorization=request.owner_authorization,
         )
     except review_queue.CopyRegisterReviewQueueError as exc:
         detail: dict[str, Any] = {"error": exc.code, "detail": str(exc)}

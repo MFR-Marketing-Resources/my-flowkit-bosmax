@@ -1,9 +1,10 @@
 import { BookOpen, ChevronLeft, ChevronRight, Search, ShieldCheck, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
 	approveFormulaBlueprint,
-	activateFormulaBlueprint,
+	batchActivateCopyBlueprints,
+	fetchCopyActivationCandidates,
 	fetchCopyRegisterFormulas,
 	fetchCopyRegisterProviderStatus,
 	fetchCopyRegisterTruth,
@@ -12,6 +13,8 @@ import {
 	listCopyRegisterBlueprints,
 	regenerateFormulaStage,
 	type CopyAngleOptionV2,
+	type CopyActivationCandidateV2,
+	type CopyBatchActivationResultV2,
 	type CopyBlueprintV2Record,
 	type CopyFormulaV2,
 	type CopyTruthProofV2,
@@ -302,6 +305,171 @@ function BlueprintCard({
 	);
 }
 
+const ACTIVATION_CONFIRMATION_PHRASE = "ACTIVATE_COPY_AUTHORITY_BATCH";
+
+function CopyActivationQueue({
+	candidates,
+	selectedIds,
+	confirmationPhrase,
+	ownerAuthorized,
+	busy,
+	error,
+	results,
+	confirmOpen,
+	onToggle,
+	onPhraseChange,
+	onOwnerChange,
+	onReview,
+	onCancelReview,
+	onConfirm,
+	queueRef,
+}: {
+	candidates: CopyActivationCandidateV2[];
+	selectedIds: string[];
+	confirmationPhrase: string;
+	ownerAuthorized: boolean;
+	busy: boolean;
+	error: string;
+	results: CopyBatchActivationResultV2[];
+	confirmOpen: boolean;
+	onToggle: (blueprintId: string) => void;
+	onPhraseChange: (value: string) => void;
+	onOwnerChange: (value: boolean) => void;
+	onReview: () => void;
+	onCancelReview: () => void;
+	onConfirm: () => void;
+	queueRef: RefObject<HTMLDivElement | null>;
+}) {
+	const readyToReview =
+		selectedIds.length > 0 &&
+		confirmationPhrase === ACTIVATION_CONFIRMATION_PHRASE &&
+		ownerAuthorized;
+	return (
+		<Section
+			title="Phase 3 · Bulk activate copy authority"
+			helper="Select current, approved blueprints to bind copy for the video and poster lanes. This action never generates media, calls a provider, or spends credits."
+		>
+			<div ref={queueRef} data-testid="activation-queue" className="space-y-4">
+				{error ? (
+					<p className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100" data-testid="activation-queue-error">
+						{error}
+					</p>
+				) : null}
+				<div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+					<span data-testid="activation-candidate-count">{candidates.length} PRODUCTION_VALID blueprint{candidates.length === 1 ? "" : "s"}</span>
+					<span>Exact phrase + explicit owner authorization required</span>
+				</div>
+				<div className="space-y-2" data-testid="activation-candidate-list">
+					{candidates.length === 0 ? (
+						<p className="rounded-lg border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">No PRODUCTION_VALID activation candidates are currently available.</p>
+					) : candidates.map((candidate) => {
+						const alreadyCurrent = candidate.current_authority_state === "CURRENT";
+						const selectable = candidate.activatable && !alreadyCurrent;
+						const disabledReason = alreadyCurrent
+							? "Already CURRENT for all required lanes; rerun is an idempotent no-op."
+							: candidate.blocked_reason || "Current authority is not activatable.";
+						return (
+							<label
+								key={`${candidate.blueprint_id}:${candidate.revision}`}
+								data-testid={`activation-candidate-${candidate.blueprint_id}`}
+								className={`block rounded-lg border p-3 ${selectable ? "border-slate-800 bg-slate-950/60" : "border-amber-500/30 bg-amber-500/5"}`}
+							>
+								<div className="flex items-start gap-3">
+									<input
+										type="checkbox"
+										data-testid={`activation-select-${candidate.blueprint_id}`}
+										checked={selectedIds.includes(candidate.blueprint_id)}
+										disabled={!selectable || busy}
+										onChange={() => onToggle(candidate.blueprint_id)}
+										className="mt-1"
+									/>
+									<div className="min-w-0 flex-1 text-xs">
+										<div className="flex flex-wrap items-center gap-2">
+											<span className="font-semibold text-slate-100">{candidate.product_name || candidate.product_id}</span>
+											<Badge tone={alreadyCurrent ? "success" : selectable ? "info" : "warn"}>{candidate.current_authority_state}</Badge>
+											<span className="font-mono text-[10px] text-slate-500">{candidate.blueprint_id} · rev {candidate.revision}</span>
+										</div>
+										<p className="mt-1 text-slate-400">{candidate.formula_id} · {candidate.required_lane_count} required lanes · {candidate.status}</p>
+										{!selectable ? <HelperText tone="warn" className="mt-1">Disabled: {disabledReason}</HelperText> : null}
+									</div>
+								</div>
+							</label>
+						);
+					})}
+				</div>
+
+				<div className="grid gap-3 rounded-lg border border-slate-800 bg-slate-950/50 p-3 md:grid-cols-2">
+					<FormField label="Exact confirmation phrase" className="md:col-span-2">
+						<input
+							className={INPUT_CLASS}
+							data-testid="activation-confirmation-phrase"
+							value={confirmationPhrase}
+							onChange={(event) => onPhraseChange(event.target.value)}
+							placeholder={ACTIVATION_CONFIRMATION_PHRASE}
+						/>
+					</FormField>
+					<label className="flex items-start gap-2 text-xs text-slate-300 md:col-span-2">
+						<input
+							type="checkbox"
+							data-testid="activation-owner-authorization"
+							checked={ownerAuthorized}
+							onChange={(event) => onOwnerChange(event.target.checked)}
+							className="mt-0.5"
+						/>
+						<span>I am the owner authorizing this copy-authority activation batch.</span>
+					</label>
+					<HelperText className="md:col-span-2">
+						Selected: {selectedIds.length}. The batch is capped at 50 blueprints and rejects any stale, draft, or unapproved id before binding.
+					</HelperText>
+				</div>
+
+				<button
+					type="button"
+					data-testid="activation-review-selection"
+					disabled={busy || !readyToReview}
+					onClick={onReview}
+					className="rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40"
+				>
+					Review selected activation
+				</button>
+
+				{results.length ? (
+					<div className="space-y-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3" data-testid="activation-results">
+						<p className="text-xs font-semibold text-emerald-100">Activation results</p>
+						{results.map((result) => (
+							<div key={result.blueprint_id} className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300">
+								<span className="font-mono">{result.blueprint_id}</span>
+								<span className={result.status === "FAILED" ? "text-rose-200" : "text-emerald-200"}>
+									{result.status} · {result.lane_count} lanes{result.error_code ? ` · ${result.error_code}` : ""}
+								</span>
+							</div>
+						))}
+					</div>
+				) : null}
+
+				{confirmOpen ? (
+					<div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4" data-testid="activation-confirm-overlay">
+						<div className="w-full max-w-lg rounded-2xl border border-blue-500/40 bg-slate-900 p-6 shadow-2xl">
+							<div className="flex items-center gap-2 text-blue-200"><ShieldCheck size={18} /><span className="text-[11px] font-bold uppercase tracking-[0.18em]">Owner-gated authority activation</span></div>
+							<h2 className="mt-2 text-lg font-bold text-slate-100">Confirm binding selected copy authority?</h2>
+							<ul className="mt-3 space-y-1.5 text-xs text-slate-300">
+								<li>• Selected blueprints: <span className="font-semibold text-slate-100">{selectedIds.length}</span></li>
+								<li>• This binds approved copy for the <span className="font-semibold text-slate-100">video and poster lanes</span>.</li>
+								<li>• It does <span className="font-semibold text-slate-100">not</span> generate video or spend credits.</li>
+								<li>• Existing authority receipts are not deleted; only the explicit pointer may be advanced.</li>
+							</ul>
+							<div className="mt-5 flex items-center justify-end gap-3">
+								<button type="button" data-testid="activation-confirm-cancel" disabled={busy} onClick={onCancelReview} className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-40">Cancel</button>
+								<button type="button" data-testid="activation-confirm-submit" disabled={busy} onClick={onConfirm} className="rounded-lg border border-blue-500/40 bg-blue-600/30 px-4 py-2 text-xs font-bold uppercase text-blue-100 hover:bg-blue-600/50 disabled:opacity-40">{busy ? "Activating…" : "Confirm bulk activation"}</button>
+							</div>
+						</div>
+					</div>
+				) : null}
+			</div>
+		</Section>
+	);
+}
+
 export default function CopySetRegistryPage() {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const { products, isLoadingProducts, productsError } = useProductCatalog(50);
@@ -325,6 +493,15 @@ export default function CopySetRegistryPage() {
 	const [reviewer, setReviewer] = useState("operator");
 	const [approvalChecks, setApprovalChecks] = useState(EMPTY_APPROVAL_CHECKS);
 	const [activatedBlueprintId, setActivatedBlueprintId] = useState("");
+	const [activationCandidates, setActivationCandidates] = useState<CopyActivationCandidateV2[]>([]);
+	const [activationSelectedIds, setActivationSelectedIds] = useState<string[]>([]);
+	const [activationConfirmationPhrase, setActivationConfirmationPhrase] = useState("");
+	const [ownerAuthorization, setOwnerAuthorization] = useState(false);
+	const [activationResults, setActivationResults] = useState<CopyBatchActivationResultV2[]>([]);
+	const [activationQueueBusy, setActivationQueueBusy] = useState(false);
+	const [activationQueueError, setActivationQueueError] = useState("");
+	const [activationConfirmOpen, setActivationConfirmOpen] = useState(false);
+	const activationQueueRef = useRef<HTMLDivElement>(null);
 	// RULE 3: the operator acts on the EXACT blueprint they selected — never a
 	// silent blueprints[0] substitution. This holds the explicitly selected review
 	// target, set by: "Review & Approve"/"Revalidate" from the Library, a
@@ -334,11 +511,6 @@ export default function CopySetRegistryPage() {
 	// RULE 3: a blueprint_id deep-link that cannot be resolved fails VISIBLY here;
 	// it never silently falls back to another blueprint.
 	const [deepLinkError, setDeepLinkError] = useState("");
-	// Task B §4: global activation is an advanced, high-consequence action. Hold the
-	// target blueprint here and require explicit confirmation before calling
-	// activateFormulaBlueprint (which changes the sole V2 authority for all creator
-	// lanes). Never auto-activate.
-	const [pendingActivation, setPendingActivation] = useState<CopyBlueprintV2Record | null>(null);
 	// Dedupes an in-flight by-id product resolution (cleared on settle) so the
 	// deep-link fetch is not fired twice for the same product id.
 	const productResolveRef = useRef("");
@@ -380,6 +552,20 @@ export default function CopySetRegistryPage() {
 			: []),
 		...(!textAssistReady ? ["Text Assist provider not configured"] : []),
 	];
+
+	useEffect(() => {
+		let cancelled = false;
+		void fetchCopyActivationCandidates()
+			.then((response) => {
+				if (!cancelled) setActivationCandidates(response.items ?? []);
+			})
+			.catch((reason) => {
+				if (!cancelled) setActivationQueueError(errorMessage(reason));
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	useEffect(() => {
 		void fetchCopyRegisterFormulas()
@@ -521,34 +707,56 @@ export default function CopySetRegistryPage() {
 		setLibraryPage(1);
 	};
 
-	const handleActivate = async (blueprint: CopyBlueprintV2Record) => {
-		setBusy(true);
-		setError("");
+	const toggleActivationSelection = (blueprintId: string) => {
+		setActivationSelectedIds((current) =>
+			current.includes(blueprintId)
+				? current.filter((item) => item !== blueprintId)
+				: [...current, blueprintId],
+		);
+	};
+
+	const openActivationQueueFor = (blueprint: CopyBlueprintV2Record) => {
+		const candidate = activationCandidates.find((item) => item.blueprint_id === blueprint.blueprint_id);
+		if (candidate?.activatable && candidate.current_authority_state !== "CURRENT") {
+			setActivationSelectedIds([blueprint.blueprint_id]);
+			setActivationQueueError("");
+		} else {
+			setActivationSelectedIds([]);
+			setActivationQueueError(candidate?.blocked_reason || "This blueprint is not a current activation candidate.");
+		}
+		activationQueueRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+	};
+
+	const handleBatchActivation = async () => {
+		if (
+			activationSelectedIds.length === 0 ||
+			activationConfirmationPhrase !== ACTIVATION_CONFIRMATION_PHRASE ||
+			!ownerAuthorization
+		) return;
+		setActivationQueueBusy(true);
+		setActivationQueueError("");
 		setSuccess("");
 		try {
-			const response = await activateFormulaBlueprint(blueprint.blueprint_id);
-			setActivatedBlueprintId(blueprint.blueprint_id);
-			setSuccess(
-				`V2 blueprint activated as the sole authority for all ${response.required_lane_count} copy-required lanes.`,
-			);
-		} catch (reason) {
-			// The backend is the final authority. If the current authority changed
-			// between page load and confirmation (e.g. COPY_V2_EVIDENCE_STALE), stay
-			// fail-closed: surface the failure AND refresh the current-authority
-			// projection so the card drops its now-impossible "Activate" affordance and
-			// shows the truthful stale state. Never hide or downgrade the backend error.
-			setError(errorMessage(reason));
+			const response = await batchActivateCopyBlueprints({
+				blueprint_ids: activationSelectedIds,
+				confirmation_phrase: activationConfirmationPhrase,
+				owner_authorization: ownerAuthorization,
+			});
+			setActivationResults(response.results ?? []);
+			setActivationSelectedIds([]);
+			setSuccess(`Bulk activation complete: ${response.activated_count} blueprint${response.activated_count === 1 ? "" : "s"} bound; ${response.bound_lane_count} lane bindings written.`);
+			const refreshedCandidates = await fetchCopyActivationCandidates();
+			setActivationCandidates(refreshedCandidates.items ?? []);
 			if (selectedProduct) {
-				try {
-					const refreshed = await listCopyRegisterBlueprints(selectedProduct.id);
-					setBlueprints(refreshed.items ?? []);
-					setActivatedBlueprintId(refreshed.activation?.active_blueprint_id ?? "");
-				} catch {
-					// Keep the original activation failure visible.
-				}
+				const refreshed = await listCopyRegisterBlueprints(selectedProduct.id);
+				setBlueprints(refreshed.items ?? []);
+				setActivatedBlueprintId(refreshed.activation?.active_blueprint_id ?? "");
 			}
+		} catch (reason) {
+			setActivationQueueError(errorMessage(reason));
 		} finally {
-			setBusy(false);
+			setActivationQueueBusy(false);
+			setActivationConfirmOpen(false);
 		}
 	};
 
@@ -795,6 +1003,24 @@ export default function CopySetRegistryPage() {
 				</a>
 			</div>
 
+			<CopyActivationQueue
+				candidates={activationCandidates}
+				selectedIds={activationSelectedIds}
+				confirmationPhrase={activationConfirmationPhrase}
+				ownerAuthorized={ownerAuthorization}
+				busy={activationQueueBusy}
+				error={activationQueueError}
+				results={activationResults}
+				confirmOpen={activationConfirmOpen}
+				onToggle={toggleActivationSelection}
+				onPhraseChange={setActivationConfirmationPhrase}
+				onOwnerChange={setOwnerAuthorization}
+				onReview={() => setActivationConfirmOpen(true)}
+				onCancelReview={() => setActivationConfirmOpen(false)}
+				onConfirm={() => void handleBatchActivation()}
+				queueRef={activationQueueRef}
+			/>
+
 			{error ? <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100" data-testid="copy-registry-error">{error}</p> : null}
 			{deepLinkError ? <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100" data-testid="copy-registry-deeplink-error">{deepLinkError}</p> : null}
 			{success ? <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100" data-testid="copy-registry-success">{success}</p> : null}
@@ -961,8 +1187,8 @@ export default function CopySetRegistryPage() {
 								<div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
 									{canActivateAuthority(reviewTarget) || activatedBlueprintId === reviewTarget.blueprint_id ? (
 										<>
-											<HelperText className="text-emerald-300/80">Approved copy is immutable. Activation never changes its approved text.</HelperText>
-											<button type="button" data-testid="activate-v2-blueprint" disabled={busy || !canActivateAuthority(reviewTarget) || activatedBlueprintId === reviewTarget.blueprint_id} onClick={() => setPendingActivation(reviewTarget)} className="mt-3 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{activatedBlueprintId === reviewTarget.blueprint_id ? "ACTIVE · 8 REQUIRED LANES" : busy ? "Activating…" : "ACTIVATE FOR VIDEO + POSTER LANES"}</button>
+											<HelperText className="text-emerald-300/80">Approved copy is immutable. Activation is owner-gated and is available only through the Phase 3 bulk activation queue.</HelperText>
+											<button type="button" data-testid="open-activation-queue-from-review" disabled={busy} onClick={() => openActivationQueueFor(reviewTarget)} className="mt-3 rounded-xl border border-blue-500/40 bg-blue-600/20 px-4 py-2 text-xs font-bold uppercase text-blue-100 disabled:opacity-40">{activatedBlueprintId === reviewTarget.blueprint_id ? "VIEW BULK ACTIVATION QUEUE" : "OPEN BULK ACTIVATION QUEUE"}</button>
 										</>
 									) : (
 										<div data-testid="stale-corrective-path">
@@ -1073,9 +1299,9 @@ export default function CopySetRegistryPage() {
 									cardDisabled = busy;
 									onCardAction = () => reviewBlueprint(bp);
 								} else if (canActivate) {
-									cardLabel = "Activate Authority";
+									cardLabel = "Open activation queue";
 									cardDisabled = busy;
-									onCardAction = () => setPendingActivation(bp);
+									onCardAction = () => openActivationQueueFor(bp);
 								} else if (draftReviewable) {
 									cardLabel = "Review & Approve";
 									cardDisabled = busy;
@@ -1264,52 +1490,6 @@ export default function CopySetRegistryPage() {
 				</Section>
 			)}
 
-			{/* Task B §4: GLOBAL COPY AUTHORITY CHANGE confirmation. Activation makes the
-			    selected V2 blueprint the sole copy authority for every creator lane. It is
-			    an advanced, high-consequence action, so require explicit confirmation and
-			    never auto-activate. It does NOT rewrite V3 Landbank copy and does NOT mutate
-			    any immutable approval. */}
-			{pendingActivation ? (
-				<div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4" data-testid="activation-confirm-overlay">
-					<div className="w-full max-w-lg rounded-2xl border border-blue-500/40 bg-slate-900 p-6 shadow-2xl">
-						<div className="flex items-center gap-2 text-blue-200">
-							<ShieldCheck size={18} />
-							<span className="text-[11px] font-bold uppercase tracking-[0.18em]">Global copy authority change</span>
-						</div>
-						<h2 className="mt-2 text-lg font-bold text-slate-100">Activate this V2 blueprint as the live copy authority?</h2>
-						<ul className="mt-3 space-y-1.5 text-xs text-slate-300">
-							<li>• It becomes the <span className="font-semibold text-slate-100">active V2 authority</span> for all copy-required creator lanes (video + poster).</li>
-							<li>• It does <span className="font-semibold text-slate-100">not</span> rewrite Copywriting Landbank (V3) copy.</li>
-							<li>• It does <span className="font-semibold text-slate-100">not</span> mutate any immutable approval — approved text stays unchanged.</li>
-							<li>• This is an advanced production operation. Normal campaign copy belongs in Copywriting Landbank.</li>
-						</ul>
-						<div className="mt-5 flex items-center justify-end gap-3">
-							<button
-								type="button"
-								data-testid="activation-cancel"
-								disabled={busy}
-								onClick={() => setPendingActivation(null)}
-								className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-40"
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								data-testid="activation-confirm"
-								disabled={busy}
-								onClick={() => {
-									const target = pendingActivation;
-									setPendingActivation(null);
-									if (target) void handleActivate(target);
-								}}
-								className="rounded-lg border border-blue-500/40 bg-blue-600/30 px-4 py-2 text-xs font-bold uppercase text-blue-100 hover:bg-blue-600/50 disabled:opacity-40"
-							>
-								Confirm global activation
-							</button>
-						</div>
-					</div>
-				</div>
-			) : null}
 		</div>
 	);
 }

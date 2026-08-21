@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Bot, Check, ChevronLeft, ChevronRight, FileText, RefreshCw, Sparkles, ExternalLink, ShieldAlert } from "lucide-react";
 import {
-	activateFormulaBlueprint,
 	fetchCopyRegisterFormulas,
 	fetchCopyRegisterProviderStatus,
 	fetchCopyRegisterTruth,
@@ -75,7 +74,6 @@ export function CopywritingSourceSelector({
 	productId,
 	productName: _productName,
 	lane: _lane,
-	onCopySelected,
 	className = "",
 }: CopywritingSourceSelectorProps) {
 	const [activeSource, setActiveSource] = useState<CopySource>("REGISTER");
@@ -172,37 +170,6 @@ export function CopywritingSourceSelector({
 		const start = (page - 1) * PAGE_SIZE;
 		return filteredBlueprints.slice(start, start + PAGE_SIZE);
 	}, [filteredBlueprints, page]);
-
-	const handleUseCopy = async (bp: CopyBlueprintV2Record) => {
-		// Strict Governance Rule: Activation must be based on CURRENT authority, not merely historical status
-		const canActivate = bp.current_authority_activation_allowed === true;
-		if (!canActivate) {
-			if (bp.status === "PRODUCTION_VALID" || bp.status === "V2_APPROVED") {
-				setError("This copy set is historically approved but its Product Truth authority is stale. Please revalidate in Copy Register.");
-			} else {
-				setError("This copy set is in DRAFT status. Please review and approve it in the Copy Register before using.");
-			}
-			return;
-		}
-
-		setLoading(true);
-		setError(null);
-		setSuccessMsg(null);
-		try {
-			await activateFormulaBlueprint(bp.blueprint_id);
-			setActiveBlueprintId(bp.blueprint_id);
-			setSuccessMsg("Copy set activated for this product across creator lanes.");
-			setIsSelecting(false);
-			onCopySelected?.(bp);
-			if (productId) {
-				void loadBlueprints(productId);
-			}
-		} catch (e) {
-			setError(e instanceof Error ? e.message : "Failed to activate selected copy.");
-		} finally {
-			setLoading(false);
-		}
-	};
 
 	// AI Copy Generation Handlers
 	const handleGenerateAiAngles = async () => {
@@ -615,16 +582,17 @@ export function CopywritingSourceSelector({
 													>
 														Active Copy
 													</button>
-												) : canActivate ? (
-													<button
-														type="button"
-														data-testid="use-this-copy-button"
-														disabled={loading}
-														onClick={() => void handleUseCopy(bp)}
-														className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-500 disabled:opacity-40"
-													>
-														Use This Copy
-													</button>
+								) : canActivate ? (
+									<a
+										href={`/creative/copy-authority?product_id=${encodeURIComponent(productId || "")}&blueprint_id=${encodeURIComponent(bp.blueprint_id)}`}
+										target="_blank"
+										rel="noreferrer"
+										data-testid="open-copy-authority-activation"
+										className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-500"
+									>
+										<span>Open Copy Authority activation queue</span>
+										<ExternalLink size={12} />
+									</a>
 												) : isStaleHistorical ? (
 													<a
 														href={`/creative/copy-registry?product_id=${encodeURIComponent(productId || "")}&blueprint_id=${encodeURIComponent(bp.blueprint_id)}`}

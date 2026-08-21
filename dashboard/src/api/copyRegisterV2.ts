@@ -153,6 +153,8 @@ export interface CopyRegisterActivationStatusV2 {
 	active_lane_count: number;
 	required_lane_count: number;
 	activated_at: string | null;
+	activation_allowed?: boolean;
+	activation_reason?: string | null;
 }
 
 export interface CopyReviewQueueRowV2 {
@@ -196,6 +198,47 @@ export interface CopyBatchApprovalResultV2 {
 	status: "APPROVED" | "FAILED";
 	production_status?: string | null;
 	error_code?: string | null;
+	error_detail?: string;
+}
+
+export interface CopyActivationCandidateV2 {
+	blueprint_id: string;
+	revision: number;
+	product_id: string;
+	product_name: string;
+	status: "PRODUCTION_VALID" | string;
+	formula_id: string;
+	angle: { angle_id: string; definition: string } | null;
+	activatable: boolean;
+	activation_allowed: boolean;
+	current_authority_state: "NONE" | "CURRENT" | "STALE" | string;
+	blocked_reason: string | null;
+	current_authority_reason: string | null;
+	current_authority_mismatches: Array<Record<string, unknown>>;
+	active_blueprint_id: string | null;
+	active_revision: number | null;
+	active_lane_count: number;
+	required_lane_count: number;
+	draft_preview?: CopyReviewQueueRowV2["draft_preview"];
+	error_detail?: string;
+}
+
+export interface CopyActivationCandidatesResponseV2 {
+	items: CopyActivationCandidateV2[];
+	total: number;
+	max_batch_size: number;
+	provider_calls: 0;
+	credit_spend: 0;
+	activation_mutations: 0;
+}
+
+export interface CopyBatchActivationResultV2 {
+	blueprint_id: string;
+	activated: boolean;
+	idempotent: boolean;
+	status: "ACTIVATED" | "ALREADY_ACTIVE" | "FAILED" | string;
+	lane_count: number;
+	error_code: string | null;
 	error_detail?: string;
 }
 
@@ -249,6 +292,32 @@ export async function batchApproveCopyDrafts(input: {
 }> {
 	return postAPI(
 		"/api/copy-register/v2/bulk/review-queue/approve",
+		input,
+	);
+}
+
+export async function fetchCopyActivationCandidates(): Promise<CopyActivationCandidatesResponseV2> {
+	return getAPI<CopyActivationCandidatesResponseV2>(
+		"/api/copy-register/v2/bulk/activation-candidates",
+	);
+}
+
+export async function batchActivateCopyBlueprints(input: {
+	blueprint_ids: string[];
+	confirmation_phrase: string;
+	owner_authorization: boolean;
+}): Promise<{
+	results: CopyBatchActivationResultV2[];
+	activated_count: number;
+	idempotent_count: number;
+	failed_count: number;
+	activation_mutations: number;
+	bound_lane_count: number;
+	provider_calls: 0;
+	credit_spend: 0;
+}> {
+	return postAPI(
+		"/api/copy-register/v2/bulk/activate",
 		input,
 	);
 }
