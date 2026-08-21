@@ -502,6 +502,35 @@ class V3CopywritingLandbankMaintenanceService:
             "angles": sorted({str(row["angle_id"]) for row in rows if row.get("angle_id")}),
         }
 
+    @staticmethod
+    def _filter_product_coverage(
+        coverage: Sequence[Mapping[str, Any]],
+        *,
+        product_id: str | None,
+        search: str | None,
+    ) -> list[dict[str, Any]]:
+        """Narrow the visible catalog without changing authoritative counts.
+
+        ``product_coverage`` is the all-product catalog, including products
+        with no V3 Master rows.  Product selection and product-name/ID search
+        must operate on that catalog independently of the Master-row query.
+        The full catalog remains available as ``product_options`` for the
+        bounded UI picker.
+        """
+
+        visible = list(coverage)
+        if product_id:
+            visible = [item for item in visible if str(item.get("product_id") or "") == product_id]
+        normalized_search = normalized_text(search or "").casefold()
+        if normalized_search:
+            visible = [
+                item
+                for item in visible
+                if normalized_search in str(item.get("product_id") or "").casefold()
+                or normalized_search in str(item.get("product_name") or "").casefold()
+            ]
+        return [dict(item) for item in visible]
+
     async def list_records(
         self,
         *,
@@ -575,6 +604,11 @@ class V3CopywritingLandbankMaintenanceService:
         status_counts = Counter(str(master.status) for master in typed_masters)
         coverage = await self._coverage(products, typed_masters, current_truth)
         latest_masters = {master.master_id: master for master in typed_masters}
+        visible_coverage = self._filter_product_coverage(
+            coverage,
+            product_id=product_id,
+            search=search,
+        )
         # The distinct Master-ID count is deliberately separated from the exact
         # revision count so operators do not mistake lineage rows for copy sets.
         return {
@@ -605,7 +639,14 @@ class V3CopywritingLandbankMaintenanceService:
                 "production_ready": "latest product Master IDs with every projection PRODUCTION_VALID",
                 "stale": "latest product Master IDs requiring Product Truth or projection revalidation",
             },
-            "product_coverage": coverage,
+            "product_coverage": visible_coverage,
+            "product_options": [
+                {
+                    "product_id": item["product_id"],
+                    "product_name": item["product_name"],
+                }
+                for item in coverage
+            ],
             "filter_options": await self._filter_options(),
             "provider_calls": 0,
             "mutations": 0,

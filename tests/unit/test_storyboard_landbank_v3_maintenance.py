@@ -13,7 +13,10 @@ from agent.services.storyboard_landbank_v3_maintenance import (
     V3CopywritingLandbankMaintenanceService,
 )
 from agent.services.storyboard_landbank_v3_round2 import V3CopyRegisterRound2Service
-from tests.unit.test_storyboard_landbank_v3_round2_copy_register import _seed_round2_fixture
+from tests.unit.test_storyboard_landbank_v3_round2_copy_register import (
+    _seed_product_truth,
+    _seed_round2_fixture,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -215,6 +218,48 @@ async def test_all_product_list_is_exact_revision_paged_and_provider_free(monkey
     searched = await service.list_records(search=first["master"]["entity_id"])
     assert searched["total"] == 1
     assert searched["items"][0]["master_id"] == first["master"]["entity_id"]
+
+
+@pytest.mark.asyncio
+async def test_product_coverage_search_and_id_work_when_v3_masters_are_zero():
+    await _seed_product_truth("coverage-zero")
+    db = await get_db()
+    await db.execute(
+        "UPDATE product SET raw_product_title=?, product_display_name=? WHERE id=?",
+        ("KAXIER Zero Copy", "KAXIER Zero Copy", "coverage-zero"),
+    )
+    await db.commit()
+    service = V3CopywritingLandbankMaintenanceService()
+
+    by_name = await service.list_records(search="KAXIER")
+    assert by_name["total"] == 0
+    assert [item["product_id"] for item in by_name["product_coverage"]] == ["coverage-zero"]
+    assert by_name["summary"]["total_master_revisions"] == 0
+    assert by_name["provider_calls"] == 0
+    assert by_name["mutations"] == 0
+
+    by_id = await service.list_records(search="coverage-zero")
+    assert by_id["total"] == 0
+    assert [item["product_id"] for item in by_id["product_coverage"]] == ["coverage-zero"]
+    assert {item["product_id"] for item in by_id["product_options"]} == {"coverage-zero"}
+
+    no_match = await service.list_records(search="does-not-match-any-product")
+    assert no_match["total"] == 0
+    assert no_match["product_coverage"] == []
+    assert no_match["summary"]["total_products"] == 1
+
+
+@pytest.mark.asyncio
+async def test_product_id_narrows_coverage_without_changing_all_product_summary(monkeypatch):
+    factory, _round2, _first = await _generate("coverage-with-master", monkeypatch)
+    await _seed_product_truth("coverage-without-master")
+    service = V3CopywritingLandbankMaintenanceService(factory=factory)
+
+    page = await service.list_records(product_id="coverage-without-master")
+    assert page["total"] == 0
+    assert [item["product_id"] for item in page["product_coverage"]] == ["coverage-without-master"]
+    assert page["summary"]["total_products"] == 2
+    assert page["summary"]["total_master_revisions"] == 1
 
 
 @pytest.mark.asyncio

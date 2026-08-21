@@ -46,6 +46,11 @@ export interface MaintenanceProductCoverage {
 	stale: number;
 }
 
+export interface MaintenanceProductOption {
+	product_id: string;
+	product_name: string;
+}
+
 export interface MaintenanceRecord {
 	product: { id: string; name: string };
 	master_id: string;
@@ -104,6 +109,7 @@ export interface MaintenanceListResponse {
 	summary: MaintenanceSummary;
 	count_basis: Record<string, string>;
 	product_coverage: MaintenanceProductCoverage[];
+	product_options: MaintenanceProductOption[];
 	filter_options: { formulas: string[]; angles: string[] };
 	provider_calls: number;
 	mutations: number;

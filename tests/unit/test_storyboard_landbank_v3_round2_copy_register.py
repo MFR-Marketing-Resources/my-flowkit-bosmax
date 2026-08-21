@@ -10,6 +10,13 @@ import pytest
 from agent.authority.copy_blueprint_v2_authority import required_formula_stage_keys
 from agent.db.schema import get_db
 from agent.models.copy_blueprint_v2 import digest_evidence_text
+from agent.models.storyboard_landbank_v3_round2 import (
+    V3AICopyProposal,
+    V3AICopySegment,
+    V3AIProviderEnvelope,
+    V3AngleProposal,
+    V3StorylineFamilyProposal,
+)
 from agent.services import ai_copy_provider_adapter
 from agent.services.storyboard_landbank_v3_factory import V3CopyFactoryService
 
@@ -159,6 +166,25 @@ async def _seed_round2_fixture(product_id: str = "round2-product"):
         request_id=f"{product_id}:recipe",
     )
     return factory, recipe, angle, family
+
+
+async def _seed_zero_supply_recipe(product_id: str):
+    await _seed_product_truth(product_id)
+    factory = V3CopyFactoryService()
+    recipe = await factory.create_recipe(
+        product_id,
+        {
+            "recipe_id": f"{product_id}-recipe",
+            "formula_id": "PAS",
+            "objective_id": "conversion",
+            "objective_definition": "Drive a safe trial",
+            "component_count_targets": {"HOOK": 1, "BODY_CORE": 1, "CTA": 1},
+            "supported_durations_seconds": [8, 16, 24],
+        },
+        actor_id="round2-fixture",
+        request_id=f"{product_id}:recipe",
+    )
+    return factory, recipe
 
 
 class _SchemaFailureProvider:
@@ -319,6 +345,192 @@ def _remove_entry_key(payload):
 
 def _remove_exit_key(payload):
     payload["proposals"][0]["segments"][0].pop("exit_key")
+
+
+def _replace_with_legacy_deepseek_shape(payload):
+    """Reproduce the observed valid-JSON, legacy DeepSeek response exactly."""
+
+    payload.clear()
+    payload.update({
+        "schema_version": "v3-copy-assistant-1",
+        "angle_proposal": {
+            "angle_id": "confidence-led-shine-control",
+            "description": "An angle described with the legacy field names.",
+            "rationale": "Legacy DeepSeek shape.",
+        },
+        "storyline_family_proposal": {
+            "storyline_family_id": "problem-solution-benefit",
+            "description": "A legacy storyline description.",
+            "rationale": "Legacy DeepSeek shape.",
+        },
+        "proposals": [
+            {
+                "component_id": "hook-001",
+                "component_type": "HOOK",
+                "component_subtype": "PAIN_POINT",
+                "copy": "Stress muka cepat berminyak dan parut jerawat masih nampak?",
+                "semantic_class": "HOOK",
+            },
+            {
+                "component_id": "body-001",
+                "component_type": "BODY_CORE",
+                "component_subtype": "BENEFIT_EXPLAINER",
+                "copy": "KAXIER membantu menghasilkan kemasan matte yang lebih kemas.",
+                "semantic_class": "BODY_CORE",
+            },
+            {
+                "component_id": "cta-001",
+                "component_type": "CTA",
+                "component_subtype": "DIRECT_RESPONSE",
+                "copy": "Cuba KAXIER hari ini.",
+                "semantic_class": "CTA",
+            },
+        ],
+    })
+
+
+@pytest.mark.asyncio
+async def test_round2_observed_legacy_deepseek_shape_is_rejected_without_normalization():
+    _plan, _provider, _service, _row, failure = await _run_schema_failure_case(
+        "round2-legacy-deepseek-shape",
+        _replace_with_legacy_deepseek_shape,
+    )
+    raw = failure["failure_evidence"]["provider_output"]["value"]
+    assert raw["angle_proposal"]["angle_id"] == "confidence-led-shine-control"
+    assert raw["angle_proposal"]["description"]
+    assert "definition" not in raw["angle_proposal"]
+    assert raw["proposals"][0]["component_id"] == "hook-001"
+    assert raw["proposals"][0]["copy"]
+    assert "proposal_id" not in raw["proposals"][0]
+    assert "segments" not in raw["proposals"][0]
+    assert failure["failure_evidence"]["error_code"] == "V3_PROVIDER_SCHEMA_VALIDATION_FAILED"
+    assert failure["failure_evidence"]["validation_error_count"] > 0
+    locations = {
+        tuple(error["loc"])
+        for error in failure["failure_evidence"]["validation_errors"]
+    }
+    assert ("angle_proposal", "definition") in locations
+    assert ("proposals", 0, "proposal_id") in locations
+
+
+@pytest.mark.asyncio
+async def test_round2_prompt_contract_is_exact_and_mode_aware():
+    factory, recipe, _angle, _family = await _seed_round2_fixture("round2-contract-reuse")
+    service = V3CopyRegisterRound2Service(factory=factory)
+    plan = await service.plan_assistant(
+        recipe.product_id,
+        recipe.recipe_id,
+        mode="CREATE",
+        actor_id="round2-contract-test",
+        request_id="round2:contract-reuse-plan",
+    )
+    system, user, _truth = await service._prompt_parts(plan, recipe)
+    prompt = system + "\n" + user
+    required_fields = (
+        "schema_version",
+        "angle_proposal",
+        "definition",
+        "storyline_family_proposal",
+        "reviewed_definition",
+        "proposal_id",
+        "semantic_class",
+        "segments",
+        "formula_stage_key",
+        "authored_text",
+        "entry_key",
+        "exit_key",
+        "continuity_requirements",
+        "evidence_fact_ids",
+        "claim_bearing",
+        "rationale",
+        "risk_notes",
+    )
+    for field_name in required_fields:
+        assert field_name in prompt
+    assert "Do not output legacy fields" in prompt
+    for legacy_field in ("angle_id", "component_id", "description", "copy"):
+        assert legacy_field in prompt
+
+    contract = service._provider_output_contract(plan, recipe)
+    expected_models = {
+        "V3AIProviderEnvelope": V3AIProviderEnvelope,
+        "V3AngleProposal": V3AngleProposal,
+        "V3StorylineFamilyProposal": V3StorylineFamilyProposal,
+        "V3AICopyProposal": V3AICopyProposal,
+        "V3AICopySegment": V3AICopySegment,
+    }
+    for model_name, model in expected_models.items():
+        assert contract["canonical_models"][model_name]["allowed_keys"] == list(model.model_fields)
+    # Existing supply is reused, so the illustrative envelope omits both
+    # bootstrap-only proposal objects instead of asking DeepSeek to recreate them.
+    assert "angle_proposal" not in contract["output_shape"]
+    assert "storyline_family_proposal" not in contract["output_shape"]
+
+    zero_factory, zero_recipe = await _seed_zero_supply_recipe("round2-contract-create")
+    zero_service = V3CopyRegisterRound2Service(factory=zero_factory)
+    zero_plan = await zero_service.plan_assistant(
+        zero_recipe.product_id,
+        zero_recipe.recipe_id,
+        mode="CREATE",
+        actor_id="round2-contract-test",
+        request_id="round2:contract-create-plan",
+    )
+    zero_contract = zero_service._provider_output_contract(zero_plan, zero_recipe)
+    zero_envelope = V3AIProviderEnvelope.model_validate(zero_contract["output_shape"])
+    assert zero_plan.supply_actions == {
+        "angle": "CREATE_DRAFT",
+        "storyline_family": "CREATE_DRAFT",
+    }
+    assert isinstance(zero_envelope.angle_proposal, V3AngleProposal)
+    assert isinstance(zero_envelope.storyline_family_proposal, V3StorylineFamilyProposal)
+    assert all(isinstance(proposal, V3AICopyProposal) for proposal in zero_envelope.proposals)
+    assert all(
+        isinstance(segment, V3AICopySegment)
+        for proposal in zero_envelope.proposals
+        for segment in proposal.segments
+    )
+
+
+@pytest.mark.asyncio
+async def test_round2_canonical_contract_fixture_validates_and_persists():
+    factory, recipe, _angle, _family = await _seed_round2_fixture("round2-canonical-contract")
+    provider = _SchemaFailureProvider()
+    service = V3CopyRegisterRound2Service(factory=factory, provider=provider)
+    plan = await service.plan_assistant(
+        recipe.product_id,
+        recipe.recipe_id,
+        mode="CREATE",
+        actor_id="round2-canonical-fixture",
+        request_id="round2:canonical-fixture-plan",
+    )
+    contract = service._provider_output_contract(plan, recipe)
+    provider.payload = deepcopy(contract["output_shape"])
+    bundle = await factory.truth_adapter.current(recipe.product_id)
+    envelope = V3AIProviderEnvelope.model_validate(provider.payload)
+    assert isinstance(envelope, V3AIProviderEnvelope)
+    assert {proposal.semantic_class for proposal in envelope.proposals} == {"HOOK", "BODY_CORE", "CTA"}
+    assert all(proposal.segments for proposal in envelope.proposals)
+    assert all(
+        segment.formula_stage_key
+        and segment.authored_text
+        and segment.entry_key
+        and segment.exit_key
+        for proposal in envelope.proposals
+        for segment in proposal.segments
+    )
+    validated, _usage = service._validate_proposals(provider.payload, plan, recipe, bundle)
+    assert isinstance(validated, V3AIProviderEnvelope)
+
+    result = await service.execute_assistant(
+        plan.plan_id,
+        actor_id="round2-canonical-fixture",
+        request_id="round2:canonical-fixture-execute",
+    )
+    assert result["status"] == "EXECUTED"
+    assert result["provider_calls"] == 1
+    assert result["master"]["entity_id"]
+    assert len(result["projections"]) == 3
+    assert provider.calls == 1
 
 
 @pytest.mark.asyncio
