@@ -10,7 +10,9 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$ExtensionPath = ''
+  [string]$ExtensionPath = '',
+  [string]$ProviderBrowserAuthority = '',
+  [string]$OwnerProfileLabel = ''
 )
 
 Set-StrictMode -Version Latest
@@ -40,6 +42,15 @@ if ([string]::IsNullOrWhiteSpace($ExtensionPath)) {
   $ExtensionPath = 'C:\Users\USER\Desktop\_ref_flowkit\extension'
 }
 $ExtensionPath = [System.IO.Path]::GetFullPath($ExtensionPath)
+$providerMode = $ProviderBrowserAuthority
+if ([string]::IsNullOrWhiteSpace($providerMode)) {
+  $providerMode = [Environment]::GetEnvironmentVariable('FLOW_PROVIDER_BROWSER_AUTHORITY')
+}
+if ([string]::IsNullOrWhiteSpace($providerMode)) { $providerMode = 'DEDICATED_CDP_UAT' }
+$providerMode = $providerMode.Trim().ToUpperInvariant()
+if ([string]::IsNullOrWhiteSpace($OwnerProfileLabel)) {
+  $OwnerProfileLabel = [Environment]::GetEnvironmentVariable('FLOW_PROVIDER_OWNER_PROFILE_LABEL')
+}
 
 function Invoke-Readiness {
   $raw = (& node $readinessScript `
@@ -47,7 +58,9 @@ function Invoke-Readiness {
     --bosmax-url $script:BosmaxUrl `
     --extension-path $ExtensionPath `
     --profile-path $script:ChromeProfileDir `
-    --browser-uat-root $script:BrowserUatRoot 2>&1 | Out-String).Trim()
+    --browser-uat-root $script:BrowserUatRoot `
+    --provider-authority-mode $providerMode `
+    --owner-profile-label $OwnerProfileLabel 2>&1 | Out-String).Trim()
   $obj = $null
   try { $obj = $raw | ConvertFrom-Json } catch {}
   [pscustomobject]@{ raw = $raw; receipt = $obj }
@@ -88,6 +101,14 @@ if ($first.receipt.video_job_in_flight -eq $true) {
   Write-Output $first.raw
   Write-Output 'PRIMARY_BLOCKER=UAT_PROVIDER_JOB_IN_FLIGHT'
   Write-Output 'No Chrome restart or Flow action was taken while a video job was in flight.'
+  exit 2
+}
+
+if ($providerMode -eq 'OWNER_PROFILE_EXTENSION_BRIDGE') {
+  Write-Output $first.raw
+  Write-Output ("PRIMARY_BLOCKER=" + [string]$first.receipt.primary_blocker)
+  Write-Output 'OWNER_ACTION=Keep the already-open owner Profile 43 / Flow project editor unchanged; resolve only the reported bridge/readiness blocker.'
+  Write-Output 'OWNER_ACTION_NO_CDP_SWITCH=The dedicated :9222 Browser UAT profile is not provider authority for this mode.'
   exit 2
 }
 

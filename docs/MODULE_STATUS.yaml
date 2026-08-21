@@ -26,6 +26,9 @@ domains:
       - scripts/browser-uat/bosmax-smoke-uat.ps1
       - scripts/browser-uat/bosmax-click-path-uat.ps1
       - scripts/browser-uat/install-browser-uat-autostart.ps1
+      - scripts/browser-uat/bootstrap-flow-provider-uat.ps1
+      - scripts/browser-uat/flow-provider-readiness.mjs
+      - scripts/test-flow-provider-readiness.mjs
       - package-lock.json
       - biome.json
       - .dependency-cruiser.cjs
