@@ -98,6 +98,8 @@ export interface MaintenanceListResponse {
 	total: number;
 	limit: number;
 	offset: number;
+	sort_by: MaintenanceSortBy;
+	sort_dir: MaintenanceSortDir;
 	has_more: boolean;
 	summary: MaintenanceSummary;
 	count_basis: Record<string, string>;
@@ -106,6 +108,9 @@ export interface MaintenanceListResponse {
 	provider_calls: number;
 	mutations: number;
 }
+
+export type MaintenanceSortBy = "created_at" | "product_name" | "status" | "formula" | "revision";
+export type MaintenanceSortDir = "asc" | "desc";
 
 export interface MaintenanceDetail extends MaintenanceRecord {
 	exact_revision: { master_id: string; revision: number };
@@ -155,6 +160,8 @@ export async function fetchCopywritingLandbankMaintenance(input: {
 	search?: string;
 	production_ready?: boolean;
 	stale?: boolean;
+	sort_by?: MaintenanceSortBy;
+	sort_dir?: MaintenanceSortDir;
 	limit?: number;
 	offset?: number;
 } = {}): Promise<MaintenanceListResponse> {
