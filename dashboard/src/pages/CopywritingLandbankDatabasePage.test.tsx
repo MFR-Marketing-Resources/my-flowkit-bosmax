@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CopywritingLandbankDatabasePage from "./CopywritingLandbankDatabasePage";
 import type {
@@ -76,6 +76,8 @@ function listResponse(items: MaintenanceRecord[] = [record()]): MaintenanceListR
 		total: items.length,
 		limit: 25,
 		offset: 0,
+		sort_by: "created_at",
+		sort_dir: "desc",
 		has_more: false,
 		summary: { total_products: 2, products_with_copy: 1, products_without_copy: 1, total_copy_masters: items.length, total_master_revisions: items.length, draft: 0, review_required: 0, validated: items.length, approved: 0, production_ready: 0, stale: 0 },
 		count_basis: {},
@@ -97,8 +99,19 @@ function detailResponse(overrides: Partial<MaintenanceDetail> = {}): Maintenance
 	};
 }
 
-function renderAt(path = "/reporting/copywriting-landbank") {
-	return render(<MemoryRouter initialEntries={[path]}><CopywritingLandbankDatabasePage /></MemoryRouter>);
+function LocationProbe() {
+	const location = useLocation();
+	const navigate = useNavigate();
+	return <><output data-testid="maintenance-location-path">{location.pathname}</output><output data-testid="maintenance-location-search">{location.search}</output><button type="button" data-testid="maintenance-history-back" onClick={() => navigate(-1)}>Back history</button><button type="button" data-testid="maintenance-history-forward" onClick={() => navigate(1)}>Forward history</button></>;
+}
+
+function renderAt(path = "/reporting/copywriting-landbank", entries?: string[], initialIndex?: number) {
+	const initialEntries = entries || [path];
+	return render(<MemoryRouter initialEntries={initialEntries} initialIndex={initialIndex ?? initialEntries.length - 1}><LocationProbe /><CopywritingLandbankDatabasePage /></MemoryRouter>);
+}
+
+function currentQuery(): URLSearchParams {
+	return new URLSearchParams(screen.getByTestId("maintenance-location-search").textContent || "");
 }
 
 describe("Copywriting Landbank Reporting maintenance console", () => {
@@ -156,5 +169,133 @@ describe("Copywriting Landbank Reporting maintenance console", () => {
 		renderAt();
 		fireEvent.click(await screen.findByText("Next"));
 		await waitFor(() => expect(mockedList).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 25, limit: 25 })));
+	});
+
+	it("places one complete filter bar before overview, coverage, and records", async () => {
+		renderAt();
+		const filterBar = await screen.findByText("Filter and sort records");
+		expect(filterBar).toBeInTheDocument();
+		expect(screen.getByTestId("maintenance-sort-by")).toBeInTheDocument();
+		expect(screen.getByTestId("maintenance-sort-direction")).toBeInTheDocument();
+		expect(screen.getByTestId("maintenance-clear-filters")).toBeInTheDocument();
+		const overview = screen.getByText("Authoritative overview");
+		expect(Boolean(filterBar.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+		expect(screen.getAllByTestId("maintenance-product-filter")).toHaveLength(1);
+	});
+
+	it("updates every filter control in URL state", async () => {
+		renderAt("/reporting/copywriting-landbank?offset=50");
+		await screen.findByTestId("maintenance-record-table");
+		const changes: Array<[string, string, string]> = [
+			["maintenance-product-filter", "product-2", "product_id"],
+			["maintenance-status-filter", "DRAFT", "status"],
+			["maintenance-formula-filter", "PAS", "formula_id"],
+			["maintenance-angle-filter", "angle-1", "angle_id"],
+			["maintenance-production-filter", "true", "production_ready"],
+			["maintenance-stale-filter", "false", "stale"],
+		];
+		for (const [testId, value, key] of changes) {
+			fireEvent.change(screen.getByTestId(testId), { target: { value } });
+			await waitFor(() => expect(currentQuery().get(key)).toBe(value));
+		}
+		fireEvent.change(screen.getByTestId("maintenance-search"), { target: { value: "master-1" } });
+		await waitFor(() => expect(currentQuery().get("search")).toBe("master-1"));
+	});
+
+	it("resets offset and exact drilldown when a filter changes", async () => {
+		renderAt("/reporting/copywriting-landbank?offset=50&master_id=master-1&revision=2");
+		await screen.findByTestId("maintenance-record-table");
+		fireEvent.change(screen.getByTestId("maintenance-status-filter"), { target: { value: "DRAFT" } });
+		await waitFor(() => {
+			const query = currentQuery();
+			expect(query.get("offset")).toBe("0");
+			expect(query.has("master_id")).toBe(false);
+			expect(query.has("revision")).toBe(false);
+		});
+	});
+
+	it("updates sort selection and request state", async () => {
+		renderAt("/reporting/copywriting-landbank?offset=50");
+		await screen.findByTestId("maintenance-record-table");
+		fireEvent.change(screen.getByTestId("maintenance-sort-by"), { target: { value: "revision" } });
+		await waitFor(() => {
+			expect(currentQuery().get("sort_by")).toBe("revision");
+			expect(mockedList).toHaveBeenLastCalledWith(expect.objectContaining({ sort_by: "revision", sort_dir: "desc", offset: 0 }));
+		});
+	});
+
+	it("updates sort direction and request state", async () => {
+		renderAt("/reporting/copywriting-landbank?sort_by=status");
+		await screen.findByTestId("maintenance-record-table");
+		fireEvent.change(screen.getByTestId("maintenance-sort-direction"), { target: { value: "asc" } });
+		await waitFor(() => {
+			expect(currentQuery().get("sort_dir")).toBe("asc");
+			expect(mockedList).toHaveBeenLastCalledWith(expect.objectContaining({ sort_by: "status", sort_dir: "asc", offset: 0 }));
+		});
+	});
+
+	it("Clear Filters removes every filter, drilldown, and restores default sorting", async () => {
+		renderAt("/reporting/copywriting-landbank?product_id=product-1&status=DRAFT&formula_id=PAS&angle_id=angle-1&production_ready=true&stale=false&search=needle&offset=50&master_id=master-1&revision=2&sort_by=revision&sort_dir=asc");
+		await screen.findByTestId("maintenance-record-table");
+		fireEvent.click(screen.getByTestId("maintenance-clear-filters"));
+		await waitFor(() => {
+			const query = currentQuery();
+			for (const key of ["product_id", "status", "formula_id", "angle_id", "production_ready", "stale", "search", "master_id", "revision"]) expect(query.has(key)).toBe(false);
+			expect(query.get("offset")).toBe("0");
+			expect(query.get("sort_by")).toBe("created_at");
+			expect(query.get("sort_dir")).toBe("desc");
+		});
+	});
+
+	it("pagination preserves all active filters and sorting", async () => {
+		mockedList.mockResolvedValue({ ...listResponse(), total: 30, has_more: true });
+		renderAt("/reporting/copywriting-landbank?product_id=product-1&status=DRAFT&sort_by=formula&sort_dir=asc");
+		fireEvent.click(await screen.findByText("Next"));
+		await waitFor(() => {
+			const query = currentQuery();
+			expect(query.get("product_id")).toBe("product-1");
+			expect(query.get("status")).toBe("DRAFT");
+			expect(query.get("sort_by")).toBe("formula");
+			expect(query.get("sort_dir")).toBe("asc");
+			expect(query.get("offset")).toBe("25");
+			expect(mockedList).toHaveBeenLastCalledWith(expect.objectContaining({ product_id: "product-1", status: "DRAFT", sort_by: "formula", sort_dir: "asc", offset: 25 }));
+		});
+	});
+
+	it("product names link to the exact canonical Copywriting Landbank workflow", async () => {
+		renderAt();
+		await screen.findByTestId("maintenance-product-coverage");
+		const productLinks = screen.getAllByRole("link", { name: /Product One/ });
+		expect(productLinks.length).toBeGreaterThanOrEqual(2);
+		for (const link of productLinks) expect(link).toHaveAttribute("href", "/creative/storyboard-landbank-v3?product_id=product-1");
+	});
+
+	it("View Records keeps Reporting navigation and applies only the product filter", async () => {
+		renderAt();
+		fireEvent.click(await screen.findByTestId("maintenance-view-records-product-2"));
+		await waitFor(() => {
+			expect(currentQuery().get("product_id")).toBe("product-2");
+			expect(screen.getByTestId("maintenance-location-path")).toHaveTextContent("/reporting/copywriting-landbank");
+			expect(mockedList).toHaveBeenLastCalledWith(expect.objectContaining({ product_id: "product-2", offset: 0 }));
+		});
+	});
+
+	it("reconstructs filters and sorting through browser back and forward state", async () => {
+		renderAt("/reporting/copywriting-landbank?status=DRAFT&sort_by=revision&sort_dir=asc", [
+			"/reporting/copywriting-landbank?status=VALIDATED&sort_by=created_at&sort_dir=desc",
+			"/reporting/copywriting-landbank?status=DRAFT&sort_by=revision&sort_dir=asc",
+		], 1);
+		await screen.findByTestId("maintenance-record-table");
+		fireEvent.click(screen.getByTestId("maintenance-history-back"));
+		await waitFor(() => {
+			expect(currentQuery().get("status")).toBe("VALIDATED");
+			expect(currentQuery().get("sort_by")).toBe("created_at");
+		});
+		fireEvent.click(screen.getByTestId("maintenance-history-forward"));
+		await waitFor(() => {
+			expect(currentQuery().get("status")).toBe("DRAFT");
+			expect(currentQuery().get("sort_by")).toBe("revision");
+			expect(currentQuery().get("sort_dir")).toBe("asc");
+		});
 	});
 });

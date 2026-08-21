@@ -607,6 +607,8 @@ async def get_v3_copy_register_maintenance(
     search: str | None = None,
     production_ready: bool | None = None,
     stale: bool | None = None,
+    sort_by: str = Query(default="created_at"),
+    sort_dir: str = Query(default="desc"),
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ):
@@ -621,6 +623,8 @@ async def get_v3_copy_register_maintenance(
             search=search,
             production_ready=production_ready,
             stale=stale,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
             limit=limit,
             offset=offset,
         )
