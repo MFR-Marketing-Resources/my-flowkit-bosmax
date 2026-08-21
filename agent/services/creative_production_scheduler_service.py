@@ -10,6 +10,7 @@ import os
 import socket
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from agent.db import creative_production_crud as p6db
@@ -248,6 +249,228 @@ async def patch_lane(
     return _decode_row(row)
 
 
+def _recipe_execution_metadata(
+    item: dict[str, Any],
+    plan: dict[str, Any],
+    package: dict[str, Any],
+) -> dict[str, Any] | None:
+    metadata = package.get("recipe_execution")
+    if isinstance(metadata, dict) and metadata.get("production_recipe"):
+        return metadata
+    recipe = str(
+        package.get("production_recipe")
+        or item.get("production_recipe")
+        or plan.get("production_recipe")
+        or ""
+    ).strip().upper()
+    if recipe not in {"FACELESS", "MONTAGE"}:
+        return None
+    return {
+        "production_recipe": recipe,
+        "internal_logical_mode": "F2V",
+        **(metadata if isinstance(metadata, dict) else {}),
+    }
+
+
+def _recipe_asset_transport_rows(wep: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+    """Read WEP asset lineage without inventing a Flow media identity."""
+
+    slots = _loads(wep.get("asset_slots"), [])
+    resolved = _loads(wep.get("resolved_assets"), [])
+    candidates: list[dict[str, Any]] = []
+    if isinstance(slots, list):
+        for slot in slots:
+            if not isinstance(slot, dict):
+                continue
+            candidate = slot.get("resolved_asset")
+            if isinstance(candidate, dict):
+                candidates.append(candidate)
+    if isinstance(resolved, list):
+        candidates.extend(row for row in resolved if isinstance(row, dict))
+    media_ids: list[str] = []
+    deferred: list[dict[str, Any]] = []
+    for asset in candidates:
+        media_id = str(asset.get("media_id") or asset.get("mediaId") or "").strip()
+        if media_id:
+            media_ids.append(media_id)
+        elif asset.get("local_file_path") or asset.get("localFilePath"):
+            deferred.append(asset)
+    return list(dict.fromkeys(media_ids)), deferred
+
+
+def _recipe_generate_asset(
+    wep: dict[str, Any],
+    slot_key: str,
+) -> dict[str, Any] | None:
+    """Project one WEP asset into the canonical ``/api/flow/generate`` shape."""
+
+    slots = _loads(wep.get("asset_slots"), [])
+    resolved = _loads(wep.get("resolved_assets"), [])
+    candidate: dict[str, Any] | None = None
+    if isinstance(slots, list):
+        for slot in slots:
+            if not isinstance(slot, dict) or slot.get("slot_key") != slot_key:
+                continue
+            if isinstance(slot.get("resolved_asset"), dict):
+                candidate = slot["resolved_asset"]
+                break
+    if candidate is None and isinstance(resolved, list):
+        candidate = next(
+            (
+                row
+                for row in resolved
+                if isinstance(row, dict) and row.get("slot_key") == slot_key
+            ),
+            None,
+        )
+    if not isinstance(candidate, dict) or not candidate.get("asset_id"):
+        return None
+    asset_source = str(
+        candidate.get("asset_source")
+        or candidate.get("assetSource")
+        or ""
+    )
+    official_visual = bool(
+        candidate.get("official_visual") is True
+        or candidate.get("officialVisual") is True
+        or asset_source.upper().startswith("PRODUCT_VISUAL_OFFICIAL")
+    )
+    return {
+        "mediaId": candidate.get("media_id") or candidate.get("mediaId"),
+        "fileName": candidate.get("file_name") or candidate.get("fileName") or "frame.png",
+        "label": candidate.get("label") or candidate.get("file_name") or candidate["asset_id"],
+        "previewUrl": candidate.get("preview_url") or candidate.get("previewUrl"),
+        "downloadUrl": candidate.get("download_url") or candidate.get("downloadUrl"),
+        "localFilePath": candidate.get("local_file_path") or candidate.get("localFilePath"),
+        "assetId": candidate["asset_id"],
+        "assetFingerprint": candidate.get("asset_fingerprint") or candidate.get("assetFingerprint"),
+        "assetSource": asset_source or None,
+        "isDefaultPackageAsset": True,
+        "previewRenderableStatus": candidate.get("preview_renderable_status"),
+        "previewErrorDetail": candidate.get("preview_error_detail"),
+        "localImagePathPresent": bool(
+            candidate.get("local_image_path_present")
+            or candidate.get("local_file_path")
+            or candidate.get("localFilePath")
+        ),
+        "remoteImageUrlPresent": bool(
+            candidate.get("remote_image_url_present")
+            or candidate.get("download_url")
+            or candidate.get("downloadUrl")
+            or candidate.get("preview_url")
+            or candidate.get("previewUrl")
+        ),
+        "officialVisual": official_visual,
+    }
+
+
+async def _build_recipe_execution_payload(
+    item: dict[str, Any],
+    plan: dict[str, Any],
+    package: dict[str, Any],
+    *,
+    aspect: str,
+    metadata: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    recipe = str(metadata.get("production_recipe") or "").upper()
+    execution_package_id = str(
+        package.get("workspace_execution_package_id")
+        or metadata.get("workspace_execution_package_id")
+        or ""
+    ).strip()
+    if recipe == "MONTAGE":
+        run_id = str(metadata.get("montage_run_id") or "").strip()
+        if not run_id:
+            return {}, ["MONTAGE_RUN_ID_REQUIRED"]
+        from agent.services import montage_run_service
+
+        try:
+            state = await montage_run_service.get_montage_discrete_run(run_id)
+        except ValueError as exc:
+            return {}, [str(exc)]
+        if not state.get("scenes"):
+            return {}, ["MONTAGE_SCENE_SET_REQUIRED"]
+        return {
+            "mode": "MONTAGE",
+            "prompt": str(package.get("final_prompt_text") or ""),
+            "aspect": aspect,
+            "model": str(package.get("model") or "") or None,
+            "duration_s": int(package.get("duration_seconds") or 8),
+            "num_videos": 1,
+            "logical_mode": "F2V",
+            "production_recipe": "MONTAGE",
+            "execution_lane": "MONTAGE_ORCHESTRATOR",
+            "montage_run_id": run_id,
+            "workspace_execution_package_id": execution_package_id or None,
+            "montage_status": state.get("status"),
+        }, []
+    if recipe != "FACELESS":
+        return {}, ["PRODUCTION_RECIPE_UNSUPPORTED"]
+    if not execution_package_id:
+        return {}, ["FACELESS_EXECUTION_PACKAGE_REQUIRED"]
+    wep = await crud.get_workspace_execution_package(execution_package_id)
+    if not wep:
+        return {}, ["FACELESS_EXECUTION_PACKAGE_NOT_FOUND"]
+    blockers = _loads(wep.get("blockers"), [])
+    if not bool(wep.get("execution_allowed")) or blockers:
+        return {}, [
+            "FACELESS_PACKAGE_BLOCKED",
+            *(
+                [str(blocker) for blocker in blockers]
+                if isinstance(blockers, list)
+                else []
+            ),
+        ]
+    prompt = str(wep.get("prompt_text") or package.get("final_prompt_text") or "")
+    if not prompt.strip():
+        return {}, ["EMPTY_FINAL_PROMPT"]
+    media_ids, deferred = _recipe_asset_transport_rows(wep)
+    lineage = _loads(wep.get("request_lineage_payload"), {})
+    if not isinstance(lineage, dict):
+        lineage = {}
+    compiler_lineage = lineage.get("compiler")
+    if not isinstance(compiler_lineage, dict):
+        compiler_lineage = {}
+    execution_identity = (
+        wep.get("faceless_execution_identity")
+        or lineage.get("faceless_execution_identity")
+    )
+    if not isinstance(execution_identity, dict):
+        return {}, ["FACELESS_EXECUTION_IDENTITY_REQUIRED"]
+    mode = str(wep.get("mode") or "F2V").upper()
+    source_mode = str(
+        compiler_lineage.get("source_mode")
+        or lineage.get("source_mode")
+        or ("T2V" if mode == "T2V" else "HYBRID")
+    ).upper()
+    start_asset = _recipe_generate_asset(wep, "start_frame")
+    end_asset = _recipe_generate_asset(wep, "end_frame")
+    return {
+        "mode": mode,
+        "prompt": prompt,
+        "image_media_ids": media_ids or None,
+        "deferred_official_visual_assets": deferred,
+        "aspect": str(wep.get("aspect_ratio") or aspect),
+        "model": str(wep.get("model") or "") or None,
+        "duration_s": int(wep.get("duration_seconds") or 8),
+        "num_videos": 1,
+        "logical_mode": "F2V",
+        "production_recipe": "FACELESS",
+        "execution_lane": "FACELESS_ORCHESTRATOR",
+        "generation_mode": str(package.get("generation_mode") or "SINGLE").upper(),
+        "source_mode": source_mode,
+        "product_id": str(wep.get("product_id") or item.get("product_id") or ""),
+        "start_asset": start_asset,
+        "end_asset": end_asset,
+        "faceless_execution_identity": execution_identity,
+        "copy_v2_context": {"lane": "FACELESS"},
+        "workspace_generation_package_id": str(item.get("workspace_generation_package_id") or ""),
+        "workspace_execution_package_id": execution_package_id,
+        "faceless_resolution": metadata.get("faceless_resolution")
+        or lineage.get("faceless_resolution"),
+    }, []
+
+
 async def _build_item_payload(
     item: dict[str, Any],
     plan: dict[str, Any],
@@ -270,6 +493,7 @@ async def _build_item_payload(
         v2_blockers.append(
             "COPY_V2_BINDING_NOT_READY:" + str(v2_handoff.get("status") or "UNKNOWN")
         )
+    recipe_metadata = _recipe_execution_metadata(item, plan, package)
     # Queue/start is a second consumer boundary. Revalidate the persisted
     # identity before a P6 item can be emitted, and require the compiled item
     # to carry the same durable receipt so V2 cannot silently disappear.
@@ -361,6 +585,18 @@ async def _build_item_payload(
         }
         if package_lineage != expected_lineage:
             return {}, ["TREATMENT_HASH_STALE"]
+    if media_type == "VIDEO" and recipe_metadata is not None:
+        recipe_payload, recipe_blockers = await _build_recipe_execution_payload(
+            item,
+            plan,
+            package,
+            aspect=aspect,
+            metadata=recipe_metadata,
+        )
+        if treatment is not None and not recipe_blockers:
+            recipe_payload["creative_treatment_lineage"] = expected_lineage
+            recipe_payload["compiled_shot_grammar"] = treatment["shot_grammar"]
+        return _with_v2(recipe_payload), [*v2_blockers, *recipe_blockers]
     if media_type == "POSTER":
         prompt = (
             package.get("final_prompt_text")
@@ -815,6 +1051,22 @@ async def build_studio_plan_manifest_items(
             # An unbuildable item would block at dispatch anyway; don't freeze an
             # unfireable manifest item for it.
             continue
+        recipe_metadata = _recipe_execution_metadata(
+            item,
+            plan,
+            _loads(item.get("prompt_package_json"), {}),
+        )
+        if recipe_metadata and recipe_metadata.get("production_recipe") == "MONTAGE":
+            from agent.services import montage_run_service
+
+            run_id = str(recipe_metadata.get("montage_run_id") or "").strip()
+            if run_id:
+                montage_manifest = await montage_run_service.build_montage_manifest_items(
+                    run_id
+                )
+                for scene_item in montage_manifest.get("items") or []:
+                    items.append(dict(scene_item))
+                continue
         items.append({
             "item_key": str(item["item_id"]),
             "mode": payload["mode"],
@@ -826,6 +1078,191 @@ async def build_studio_plan_manifest_items(
             "image_model": payload.get("image_model"),
         })
     return items
+
+
+async def _fire_montage_recipe(
+    item: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    credit_confirmation: str,
+) -> dict[str, Any]:
+    """Delegate Montage live execution to its durable scene/run authority."""
+
+    from agent.services import montage_run_service
+
+    run_id = str(payload.get("montage_run_id") or "").strip()
+    if not run_id:
+        raise CreativeProductionError(
+            "MONTAGE_RUN_ID_REQUIRED",
+            "Montage dispatch requires its canonical durable run identity.",
+        )
+    estimate = await montage_run_service.estimate_montage_run_generation(run_id)
+    manifest_id = None
+    from agent.services import execution_approval_service as _eas
+
+    manifest_id = await _eas.approved_manifest_id_for_run(
+        str(item["plan_id"]),
+        surface="production_studio",
+    )
+
+    async def _generate_scene(**kwargs: Any) -> dict[str, Any]:
+        """Use the same GenerateRequest one-door as the canonical Montage API."""
+
+        from agent.api.flow import GenerateRequest, generate as flow_generate
+
+        start_asset = kwargs.get("start_asset")
+        image_media_ids: list[str] = []
+        image_media_id = str(kwargs.get("image_media_id") or "").strip()
+        if image_media_id:
+            image_media_ids.append(image_media_id)
+        if isinstance(start_asset, dict):
+            start_media_id = str(
+                start_asset.get("mediaId") or start_asset.get("media_id") or ""
+            ).strip()
+            if start_media_id and start_media_id not in image_media_ids:
+                image_media_ids.append(start_media_id)
+        result = await flow_generate(
+            GenerateRequest(
+                mode=str(kwargs.get("mode") or "F2V").upper(),
+                prompt=str(
+                    kwargs.get("prompt")
+                    or f"Montage scene {kwargs.get('scene_id')}"
+                ),
+                product_id=kwargs.get("product_id") or item.get("product_id"),
+                aspect="9:16",
+                source_mode=kwargs.get("source_mode") or None,
+                workspace_execution_package_id=(
+                    kwargs.get("workspace_execution_package_id")
+                    or payload.get("workspace_execution_package_id")
+                    or None
+                ),
+                model=kwargs.get("model") or payload.get("model"),
+                duration_s=int(
+                    kwargs.get("duration_s") or payload.get("duration_s") or 8
+                ),
+                generation_mode="SINGLE",
+                engine="GOOGLE_FLOW",
+                startAsset=start_asset if isinstance(start_asset, dict) else None,
+                image_media_ids=image_media_ids or None,
+                manifest_id=manifest_id,
+                manifest_item_key=str(kwargs.get("scene_id") or "") or None,
+            )
+        )
+        if isinstance(result, dict):
+            return {
+                "job_id": result.get("job_id") or result.get("id"),
+                "media_id": result.get("media_id")
+                or result.get("video_media_id")
+                or (result.get("result") or {}).get("media_id"),
+                **result,
+            }
+        return {"job_id": None, "media_id": None}
+
+    async def _poll_scene(job_id: str) -> dict[str, Any]:
+        return make_video.get_job(job_id) or {
+            "job_id": job_id,
+            "status": "UNKNOWN",
+        }
+
+    authorized = await montage_run_service.authorize_montage_run_generation(
+        run_id,
+        confirm_credit_burn=credit_confirmation == P6_LIVE_CONFIRMATION,
+        expected_video_generations=int(estimate["expected_video_generations"]),
+        expected_provider_operations=int(estimate["expected_provider_operations"]),
+        dry_run=False,
+        generate_fn=_generate_scene,
+        poll_fn=_poll_scene,
+        max_polls=120,
+        poll_interval_s=0.0,
+    )
+    if not authorized.get("ok"):
+        raise CreativeProductionError(
+            "MONTAGE_GENERATION_FAILED",
+            str(authorized.get("detail") or "Montage generation failed."),
+            details={"montage_run_id": run_id, "result": authorized},
+        )
+
+    async def _concat_boundary(**kwargs: Any) -> dict[str, Any]:
+        from agent.services.google_flow_final_timeline_runtime import finalize_timeline
+        from agent.services.flow_client import get_flow_client
+
+        segment_ids = list(kwargs.get("segment_media_ids") or [])
+        requested_seconds = int(
+            kwargs.get("requested_seconds")
+            or payload.get("duration_s")
+            or 0
+        )
+        logical_key = f"montage:{run_id}"
+        existing = await crud.get_video_production_job_by_logical_key(logical_key)
+        if existing:
+            effective_job_id = str(existing["job_id"])
+        else:
+            # Create the durable lifecycle owner before the final concat boundary,
+            # matching the canonical Montage API path. A retry must resume the
+            # same logical run and never create a second final-timeline job.
+            effective_job_id = f"montage-final-{run_id}"
+            await crud.create_video_production_job_full(
+                effective_job_id,
+                logical_job_key=logical_key,
+                status="CREATED",
+                requested_duration_seconds=requested_seconds,
+                product_id=item.get("product_id"),
+                model=payload.get("model"),
+                aspect_ratio=payload.get("aspect") or "9:16",
+                segment_media_ids_json=json.dumps(segment_ids),
+                whole_plan_json=json.dumps(
+                    {
+                        "execution_mode": "MONTAGE_DISCRETE",
+                        "production_recipe": "MONTAGE",
+                        "montage_run_id": run_id,
+                        "requested_seconds": requested_seconds,
+                        "segment_count": len(segment_ids),
+                    }
+                ),
+            )
+            # INSERT OR IGNORE is the database-level race guard; use the winner's
+            # job id if another worker created the logical owner first.
+            existing = await crud.get_video_production_job_by_logical_key(logical_key)
+            if existing:
+                effective_job_id = str(existing["job_id"])
+        result = await finalize_timeline(
+            get_flow_client(),
+            job_id=effective_job_id,
+            segment_media_ids=segment_ids,
+            requested_seconds=requested_seconds,
+            segment_seconds=int(kwargs.get("segment_seconds") or 8),
+            out_dir=Path("output") / "retrieved",
+            dry_run=False,
+            confirm_live_credit_burn=True,
+        )
+        if result.get("final_media_id"):
+            await crud.insert_generated_artifact(
+                result["final_media_id"],
+                job_id=effective_job_id,
+                mode="MONTAGE",
+                artifact_kind="video",
+                local_path=result.get("local_path"),
+                size_mb=result.get("size_mb"),
+                model_used=payload.get("model"),
+                duration_used=result.get("measured_duration_s") or payload.get("duration_s"),
+            )
+        return result
+
+    from agent.services.montage_run_service import assemble_from_montage_run
+
+    assembly = await assemble_from_montage_run(
+        run_id,
+        concat_fn=_concat_boundary,
+        dry_run=False,
+        job_id=f"montage-final-{run_id}",
+    )
+    return {
+        "job_id": f"montage:{run_id}",
+        "media_id": assembly.get("final_media_id"),
+        "montage_run_id": run_id,
+        "assembly": assembly,
+        "status": "COMPLETED" if assembly.get("final_media_id") else "SUBMITTED",
+    }
 
 
 async def _dispatch_attempt(
@@ -850,7 +1287,71 @@ async def _dispatch_attempt(
     )
     payload = _loads(attempt["payload_snapshot_json"], {})
     try:
-        if str(payload.get("generation_mode") or "").upper() == "EXTEND":
+        production_recipe = str(payload.get("production_recipe") or "").upper()
+        if production_recipe == "MONTAGE":
+            result = await _fire_montage_recipe(
+                item,
+                payload,
+                credit_confirmation=credit_confirmation,
+            )
+        elif production_recipe == "FACELESS":
+            if str(payload.get("generation_mode") or "").upper() == "EXTEND":
+                result = await production_queue_service._fire_extend_via_video_jobs(
+                    item,
+                    {
+                        "model": payload.get("model"),
+                        "aspect": payload.get("aspect") or "9:16",
+                    },
+                    str(payload.get("workspace_generation_package_id") or ""),
+                )
+                if not result.get("ok"):
+                    raise CreativeProductionError(
+                        "FACELESS_EXTEND_DISPATCH_FAILED",
+                        str(result.get("error") or "Canonical Faceless EXTEND dispatch failed."),
+                    )
+            else:
+                from agent.services import execution_approval_service as _eas
+                from agent.api.flow import GenerateRequest, generate as flow_generate
+
+                manifest_id = await _eas.approved_manifest_id_for_run(
+                    str(item["plan_id"]),
+                    surface="production_studio",
+                )
+                # Faceless SINGLE is the same package-aware one-door request as
+                # the standalone Faceless operator surface. Calling the lower
+                # make_video primitive here would drop the persisted WEP identity,
+                # source lineage, and package-bound product visual custody.
+                result = await flow_generate(
+                    GenerateRequest(
+                        mode=str(payload["mode"]).upper(),
+                        prompt=str(payload["prompt"]),
+                        product_id=item.get("product_id") or payload.get("product_id"),
+                        source_mode=payload.get("source_mode"),
+                        workspace_execution_package_id=payload.get(
+                            "workspace_execution_package_id"
+                        ),
+                        image_media_ids=payload.get("image_media_ids"),
+                        startAsset=payload.get("start_asset"),
+                        endAsset=payload.get("end_asset"),
+                        aspect=payload.get("aspect") or "9:16",
+                        model=payload.get("model"),
+                        duration_s=payload.get("duration_s"),
+                        count=int(payload.get("num_videos") or 1),
+                        manifest_id=manifest_id,
+                        manifest_item_key=str(item["item_id"]),
+                        generation_mode="SINGLE",
+                        engine="GOOGLE_FLOW",
+                        copy_v2_context=payload.get("copy_v2_context")
+                        or {"lane": "FACELESS"},
+                        execution_identity=payload.get("faceless_execution_identity"),
+                    )
+                )
+                if not isinstance(result, dict):
+                    raise CreativeProductionError(
+                        "FACELESS_SINGLE_DISPATCH_FAILED",
+                        "Canonical Faceless generate returned no structured job result.",
+                    )
+        elif str(payload.get("generation_mode") or "").upper() == "EXTEND":
             result = await production_queue_service._fire_extend_via_video_jobs(
                 item,
                 {
@@ -956,7 +1457,14 @@ async def _dispatch_attempt(
         provider_known_at=_now(),
         updated_at=_now(),
     )
-    if provider_job_id.startswith("vj_"):
+    if provider_job_id.startswith("montage:"):
+        initial_job = {
+            "job_id": provider_job_id,
+            "status": str(result.get("status") or "SUBMITTED").upper(),
+            "media_id": result.get("media_id"),
+            "montage_run_id": result.get("montage_run_id"),
+        }
+    elif provider_job_id.startswith("vj_"):
         from agent.services import video_production_orchestrator as video_jobs
 
         initial_job = await video_jobs.get_job_status(provider_job_id)
@@ -1307,7 +1815,35 @@ async def reconcile_attempt(attempt_id: str) -> dict[str, Any]:
             "provider_state": "UNKNOWN",
             "resubmission_allowed": False,
         }
-    if provider_job_id.startswith("vj_"):
+    if provider_job_id.startswith("montage:"):
+        from agent.services import montage_run_service
+
+        montage_run_id = provider_job_id.split(":", 1)[1]
+        try:
+            montage_state = await montage_run_service.get_montage_discrete_run(
+                montage_run_id
+            )
+        except ValueError:
+            live_job = None
+        else:
+            assembly = (montage_state.get("config") or {}).get("assembly") or {}
+            final_media_id = str(assembly.get("final_media_id") or "").strip()
+            run_status = str(montage_state.get("status") or "").upper()
+            live_job = {
+                "job_id": provider_job_id,
+                "status": (
+                    "COMPLETED"
+                    if final_media_id
+                    else "FAILED"
+                    if run_status in {"PARTIAL", "FAILED"}
+                    else "SUBMITTED"
+                ),
+                "media_id": final_media_id or None,
+                "montage_run_id": montage_run_id,
+                "error": montage_state.get("detail"),
+            }
+        job_source = "MONTAGE_ORCHESTRATOR"
+    elif provider_job_id.startswith("vj_"):
         from agent.services import video_production_orchestrator as video_jobs
 
         try:

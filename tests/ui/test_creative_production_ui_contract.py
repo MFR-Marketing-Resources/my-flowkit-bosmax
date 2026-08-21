@@ -22,6 +22,7 @@ def test_removed_legacy_studio_route_cannot_bypass_the_primary_surface():
     assert 'path="/rpa-production-studio"' not in app
     assert 'path="/production-studio"' in app
     assert 'studioMode === "LEGACY_INCOMPLETE_PLAN"' in page
+    assert 'studioMode === "LEGACY_HISTORICAL_PLAN"' in page
     assert "This legacy plan is missing" in page
 
 
@@ -93,6 +94,23 @@ def test_p6_v4_guided_flow_progressively_discloses_advanced_metadata():
     assert "Advanced workspace · factory, matrix, history and diagnostics" in page
 
 
+def test_production_studio_exposes_only_the_three_canonical_recipes():
+    page = _read("dashboard/src/pages/CreativeProductionStudioPage.tsx")
+    client = _read("dashboard/src/api/creativeProduction.ts")
+    assert "PRODUCTION_RECIPES.map" in page
+    assert "data-testid={`p6-production-recipe-${recipe}`}" in page
+    assert "data-testid={`p6-production-recipe-${recipe}-advanced`}" in page
+    assert 'export type ProductionRecipe = "HYBRID" | "FACELESS" | "MONTAGE";' in client
+    assert "production_recipe: ProductionRecipe;" in client
+    assert 'logical_mode: "T2V"' not in page
+    assert 'aria-label="Video logical mode"' not in page
+    assert "target_image_count: form" not in page
+    assert "target_poster_count: form" not in page
+    assert 'key: "finishedFrameAssetIds"' not in page
+    assert 'key: "layoutIds"' not in page
+    assert '{["VIDEO"].map((mediaType)' in page
+
+
 def test_poster_is_formula_native_v2_only():
     page = _read("dashboard/src/pages/PosterBuilderPage.tsx")
     assert 'data-testid="poster-builder-v2-only"' in page
@@ -149,6 +167,7 @@ def test_plan_state_is_explicit_and_canonical_data_is_not_reconstructed():
         "UNSAVED_DRAFT_FROM_ACTIVE_PLAN",
         "LOADING_PLAN",
         "LEGACY_INCOMPLETE_PLAN",
+        "LEGACY_HISTORICAL_PLAN",
     ):
         assert mode in page
     assert "planRequestSequence" in page

@@ -133,6 +133,7 @@ def test_video_request_allows_server_authoritative_treatment_allocation() -> Non
             {"product_id": "product-1", "video_count": 1},
         ],
         target_video_count=1,
+        production_recipe="HYBRID",
         model_keys=["Veo 3.1 - Lite"],
         duration_seconds=[8],
         pools=CreativePoolSelection(),
@@ -330,6 +331,18 @@ def test_video_dimensions_are_one_row_per_treatment_not_cartesian() -> None:
         "assets": {},
         "scene_strategies": {},
         "creative_selections": {},
+        "copy_sets": {
+            "product-1": [
+                {
+                    "copy_set_id": "copy-1",
+                    "angle": "benefit",
+                    "hook": "Approved hook",
+                    "cta": "Shop now",
+                    "formula_family": "PAS",
+                    "usage_count": 0,
+                }
+            ]
+        },
         "treatments": [_projection()],
     }
     capacity, rows, blockers = plans._product_dimension_rows(

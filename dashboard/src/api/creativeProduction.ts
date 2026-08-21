@@ -36,6 +36,14 @@ export type ItemStatus =
 	| "CANCELLED"
 	| "SUPERSEDED";
 
+export type ProductionRecipe = "HYBRID" | "FACELESS" | "MONTAGE";
+
+export const PRODUCTION_RECIPES = [
+	"HYBRID",
+	"FACELESS",
+	"MONTAGE",
+] as const satisfies readonly ProductionRecipe[];
+
 export interface CohortProduct {
 	product_id: string;
 	product_name: string;
@@ -62,16 +70,9 @@ export interface CohortAuthority {
 
 export interface CreativePoolSelection {
 	treatment_ids: string[];
-	/** Archived recovery-only fields; V2 production callers must omit them. */
-	copy_set_ids?: string[];
-	poster_copy_set_ids?: string[];
 	avatar_codes: string[];
-	product_reference_asset_ids: string[];
-	finished_frame_asset_ids: string[];
-	character_asset_ids: string[];
 	scene_asset_ids: string[];
 	style_asset_ids: string[];
-	layout_ids: string[];
 }
 
 export interface CreateProductionPlanRequest {
@@ -82,8 +83,7 @@ export interface CreateProductionPlanRequest {
 	product_ids: string[];
 	product_video_allocations: ProductVideoAllocation[];
 	target_video_count: number;
-	target_image_count: number;
-	target_poster_count: number;
+	production_recipe: ProductionRecipe;
 	operating_window_hours: number;
 	allocation_strategy: "ROUND_ROBIN" | "PRODUCT_WEIGHTED";
 	variation_strategy:
@@ -91,7 +91,6 @@ export interface CreateProductionPlanRequest {
 		| "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS"
 		| "DIFF_SCRIPT_DIFF_VISUALS"
 		| "OPERATOR_MATRIX";
-	logical_mode: "T2V" | "HYBRID" | "F2V" | "I2V";
 	model_keys: string[];
 	duration_seconds: number[];
 	creative_format: CreativeTreatmentFormatPreference;
@@ -115,7 +114,7 @@ export type CreativeTreatmentFormatPreference =
 
 export interface TreatmentAvailabilityRequest {
 	product_video_allocations: ProductVideoAllocation[];
-	logical_mode: "T2V" | "HYBRID" | "F2V" | "I2V";
+	production_recipe: ProductionRecipe;
 	model_key: string;
 	duration_seconds: number;
 	creative_format: CreativeTreatmentFormatPreference;
@@ -128,6 +127,7 @@ export interface TreatmentAvailability {
 	availability_sha256: string;
 	requested: {
 		logical_mode: string;
+		production_recipe?: ProductionRecipe | null;
 		model_key: string;
 		duration_seconds: number;
 		creative_format: CreativeTreatmentFormatPreference;
@@ -179,6 +179,7 @@ export interface ProductionPlanCanonicalSnapshot {
 	target_video_count: number;
 	target_image_count: number;
 	target_poster_count: number;
+	production_recipe?: ProductionRecipe | null;
 	logical_mode: "T2V" | "HYBRID" | "F2V" | "I2V";
 	video_configurations: PlanVideoConfigurationSnapshot[];
 	aspect_ratio: "9:16" | "16:9";
@@ -221,6 +222,7 @@ export interface ProductionPlan {
 	target_video_count: number;
 	target_image_count: number;
 	target_poster_count: number;
+	production_recipe?: ProductionRecipe | null;
 	operating_window_hours: number;
 	allocation_strategy: string;
 	variation_strategy: string;
@@ -249,6 +251,7 @@ export interface ProductionItem {
 	item_ordinal: number;
 	product_id: string;
 	media_type: "VIDEO" | "IMAGE" | "POSTER";
+	production_recipe?: ProductionRecipe | null;
 	logical_mode: string;
 	creative_dimensions: Record<string, string>;
 	creative_dna_sha256: string;
@@ -330,7 +333,8 @@ export const P6_LIVE_CONFIRMATION = "AUTHORIZE_P6_LIVE_CREDIT_SPEND";
 
 export interface GovernedPoolAuthority {
 	product_ids: string[];
-	logical_mode: string;
+	production_recipe: ProductionRecipe;
+	logical_mode?: string;
 	products: Array<Record<string, unknown>>;
 	copy_sets: Array<Record<string, unknown>>;
 	poster_copy_sets: Array<Record<string, unknown>>;
@@ -384,11 +388,11 @@ export function createProductionPlan(
 
 export function fetchGovernedPoolAuthority(
 	productIds: string[],
-	logicalMode: string,
+	productionRecipe: ProductionRecipe,
 ): Promise<GovernedPoolAuthority> {
 	return postAPI("/api/creative-production/pool-authority", {
 		product_ids: productIds,
-		logical_mode: logicalMode,
+		production_recipe: productionRecipe,
 	});
 }
 

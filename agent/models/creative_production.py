@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
 
@@ -22,6 +22,44 @@ P58_COHORT_SHA256 = (
     "cfb3ed6441f4b0623bb0a07550d893694a4f6bac66aefc148b5afe7bb72e580d"
 )
 P6_LIVE_CONFIRMATION = "AUTHORIZE_P6_LIVE_CREDIT_SPEND"
+
+
+class ProductionRecipe(StrEnum):
+    """The only business recipes available to new Production Studio plans.
+
+    The technical ``logical_mode`` field remains below this boundary for
+    historical rows and private execution adapters.  It is intentionally not
+    the operator-facing contract.
+    """
+
+    HYBRID = "HYBRID"
+    FACELESS = "FACELESS"
+    MONTAGE = "MONTAGE"
+
+
+RETIRED_PRODUCTION_LOGICAL_MODES = frozenset({"T2V", "F2V", "I2V"})
+
+
+def _reject_legacy_production_mode(value: str | None) -> None:
+    if value is None:
+        return
+    normalized = str(value).strip().upper()
+    if normalized in RETIRED_PRODUCTION_LOGICAL_MODES:
+        raise ValueError("PRODUCTION_RECIPE_RETIRED")
+    raise ValueError("PRODUCTION_RECIPE_UNSUPPORTED")
+
+
+def _validate_production_recipe_value(value: ProductionRecipe | str | None):
+    """Preserve semantic retirement errors before Enum coercion happens."""
+
+    if value is None or isinstance(value, ProductionRecipe):
+        return value
+    normalized = str(value).strip().upper()
+    if normalized in RETIRED_PRODUCTION_LOGICAL_MODES:
+        raise ValueError("PRODUCTION_RECIPE_RETIRED")
+    if normalized not in {recipe.value for recipe in ProductionRecipe}:
+        raise ValueError("PRODUCTION_RECIPE_UNSUPPORTED")
+    return normalized
 
 
 class PlanStatus(StrEnum):
@@ -136,14 +174,24 @@ class TreatmentAvailabilityRequest(BaseModel):
         min_length=1,
         max_length=P58_COHORT_COUNT,
     )
-    logical_mode: Literal["T2V", "HYBRID", "F2V", "I2V"]
+    production_recipe: ProductionRecipe | None = None
+    # Compatibility-only input.  It is explicit so retired callers receive a
+    # deterministic semantic error instead of an incidental extra-field error.
+    logical_mode: str | None = None
     model_key: str = Field(min_length=1, max_length=160)
     duration_seconds: int = Field(ge=1, le=240)
     creative_format: Literal["AUTO", "UGC", "PGC", "CINEMATIC"] = "AUTO"
     treatment_ids: list[str] = Field(default_factory=list, max_length=200)
 
+    _validate_recipe_value = field_validator("production_recipe", mode="before")(
+        _validate_production_recipe_value
+    )
+
     @model_validator(mode="after")
     def validate_unique_authority(self) -> "TreatmentAvailabilityRequest":
+        _reject_legacy_production_mode(self.logical_mode)
+        if self.production_recipe is None:
+            raise ValueError("PRODUCTION_RECIPE_REQUIRED")
         product_ids = [item.product_id for item in self.product_video_allocations]
         if len(set(product_ids)) != len(product_ids):
             raise ValueError("product_video_allocations product_id values must be unique")
@@ -190,6 +238,7 @@ class ProductionPlanCanonicalSnapshot(BaseModel):
     target_video_count: int
     target_image_count: int
     target_poster_count: int
+    production_recipe: ProductionRecipe | None = None
     logical_mode: Literal["T2V", "HYBRID", "F2V", "I2V"]
     video_configurations: list[ProductionPlanVideoConfigurationSnapshot]
     aspect_ratio: Literal["9:16", "16:9"]
@@ -219,8 +268,10 @@ class ProductionPlanCreateRequest(BaseModel):
         max_length=P58_COHORT_COUNT,
     )
     target_video_count: int = Field(default=0, ge=0, le=200)
-    target_image_count: int = Field(default=0, ge=0, le=200)
-    target_poster_count: int = Field(default=0, ge=0, le=200)
+    # Dormant compatibility fields: old wire clients may still send zero, but
+    # positive image/poster targets are rejected by the semantic validator.
+    target_image_count: int | None = Field(default=None, ge=0, le=200)
+    target_poster_count: int | None = Field(default=None, ge=0, le=200)
     operating_window_hours: Literal[8, 12, 24] = 12
     allocation_strategy: Literal["ROUND_ROBIN", "PRODUCT_WEIGHTED"] = "ROUND_ROBIN"
     variation_strategy: Literal[
@@ -229,7 +280,9 @@ class ProductionPlanCreateRequest(BaseModel):
         "DIFF_SCRIPT_DIFF_VISUALS",
         "OPERATOR_MATRIX",
     ] = "SAME_ANGLE_DIFF_DIALOGUE_DIFF_VISUALS"
-    logical_mode: Literal["T2V", "HYBRID", "F2V", "I2V"] = "T2V"
+    production_recipe: ProductionRecipe | None = None
+    # Compatibility-only input; new Studio callers must use production_recipe.
+    logical_mode: str | None = None
     model_keys: list[str] = Field(min_length=1, max_length=12)
     duration_seconds: list[int] = Field(min_length=1, max_length=12)
     creative_format: Literal[
@@ -243,15 +296,19 @@ class ProductionPlanCreateRequest(BaseModel):
     )
     copy_v2_context: dict[str, Any] | None = None
 
+    _validate_recipe_value = field_validator("production_recipe", mode="before")(
+        _validate_production_recipe_value
+    )
+
     @model_validator(mode="after")
     def validate_targets(self) -> "ProductionPlanCreateRequest":
-        if (
-            self.target_video_count
-            + self.target_image_count
-            + self.target_poster_count
-            <= 0
-        ):
-            raise ValueError("at least one media target is required")
+        _reject_legacy_production_mode(self.logical_mode)
+        if (self.target_image_count or 0) > 0 or (self.target_poster_count or 0) > 0:
+            raise ValueError("PRODUCTION_STUDIO_VIDEO_ONLY")
+        if self.production_recipe is None:
+            raise ValueError("PRODUCTION_RECIPE_REQUIRED")
+        if self.target_video_count <= 0:
+            raise ValueError("PRODUCTION_STUDIO_VIDEO_ONLY")
         if len(set(self.product_ids)) != len(self.product_ids):
             raise ValueError("product_ids must be unique")
         if len(set(self.pools.treatment_ids)) != len(self.pools.treatment_ids):
@@ -296,14 +353,24 @@ class ProductionPlanCreateRequest(BaseModel):
             raise ValueError("duration_seconds values must be between 1 and 240")
         from agent.services import video_models
 
+        if self.production_recipe is ProductionRecipe.MONTAGE:
+            if self.execution_policy.aspect != "9:16":
+                raise ValueError("MONTAGE_ASPECT_9_16_ONLY")
         for model_key in self.model_keys:
             for duration in self.duration_seconds:
                 try:
-                    video_models.resolve_orchestration(model_key, duration)
+                    orchestration = video_models.resolve_orchestration(
+                        model_key, duration
+                    )
                 except ValueError as exc:
                     raise ValueError(
                         f"invalid governed model-duration combination: {exc}"
                     ) from exc
+                if (
+                    self.production_recipe is ProductionRecipe.MONTAGE
+                    and orchestration["generation_mode"] != "SINGLE"
+                ):
+                    raise ValueError("MONTAGE_SINGLE_CLIPS_ONLY")
         if self.controlled_reuse_max_per_dna > 1 and not str(
             self.controlled_reuse_reason or ""
         ).strip():
@@ -335,7 +402,10 @@ class ProductionPlanUpdateRequest(BaseModel):
         "DIFF_SCRIPT_DIFF_VISUALS",
         "OPERATOR_MATRIX",
     ] | None = None
-    logical_mode: Literal["T2V", "HYBRID", "F2V", "I2V"] | None = None
+    production_recipe: ProductionRecipe | None = None
+    # Compatibility-only input; retired logical modes are never accepted as a
+    # new P6 configuration value.
+    logical_mode: str | None = None
     model_keys: list[str] | None = Field(default=None, min_length=1, max_length=12)
     duration_seconds: list[int] | None = Field(
         default=None,
@@ -346,12 +416,36 @@ class ProductionPlanUpdateRequest(BaseModel):
     controlled_reuse_reason: str | None = Field(default=None, max_length=500)
     controlled_reuse_max_per_dna: int | None = Field(default=None, ge=1, le=3)
 
+    _validate_recipe_value = field_validator("production_recipe", mode="before")(
+        _validate_production_recipe_value
+    )
+
+    @model_validator(mode="after")
+    def validate_public_recipe(self) -> "ProductionPlanUpdateRequest":
+        _reject_legacy_production_mode(self.logical_mode)
+        if (self.target_image_count or 0) > 0 or (self.target_poster_count or 0) > 0:
+            raise ValueError("PRODUCTION_STUDIO_VIDEO_ONLY")
+        return self
+
 
 class PoolAuthorityRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     product_ids: list[str] = Field(min_length=1, max_length=P58_COHORT_COUNT)
-    logical_mode: Literal["T2V", "HYBRID", "F2V", "I2V"] = "T2V"
+    production_recipe: ProductionRecipe | None = None
+    # Compatibility-only input for deterministic retirement errors.
+    logical_mode: str | None = None
+
+    _validate_recipe_value = field_validator("production_recipe", mode="before")(
+        _validate_production_recipe_value
+    )
+
+    @model_validator(mode="after")
+    def validate_public_recipe(self) -> "PoolAuthorityRequest":
+        _reject_legacy_production_mode(self.logical_mode)
+        if self.production_recipe is None:
+            raise ValueError("PRODUCTION_RECIPE_REQUIRED")
+        return self
 
 
 class PlanActionRequest(BaseModel):

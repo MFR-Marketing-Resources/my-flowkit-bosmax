@@ -48,6 +48,11 @@ async def test_additive_migration_is_idempotent_and_preserves_rows():
     )
     plan_columns = {column[1] for column in await plan_cursor.fetchall()}
     assert "plan_snapshot_json" in plan_columns
+    assert "production_recipe" in plan_columns
+    item_cursor = await db.execute(
+        "PRAGMA table_info(creative_production_item)"
+    )
+    assert "production_recipe" in {column[1] for column in await item_cursor.fetchall()}
     assert row["plan_snapshot_json"] == "{}"
 
 
