@@ -25,6 +25,7 @@ from agent.models.creative_production import (
     ProductionPlanCreateRequest,
     ProductionPlanDetailResponse,
     ProductionPlanUpdateRequest,
+    ProductionRecipe,
     WaveAssignmentRequest,
 )
 from agent.services import avatar_registry
@@ -47,6 +48,11 @@ from agent.services.copy_execution_resolver import (
     resolve_persisted_copy_execution_binding,
 )
 from agent.services import copy_register_v2_service
+from agent.services.creative_production_recipe_service import (
+    ProductionRecipeError,
+    recipe_for_plan,
+    resolve_production_recipe,
+)
 
 
 MAX_ENUMERATED_COMBINATIONS = 250_000
@@ -344,6 +350,11 @@ def _snapshot_from_plan_values(
         "target_video_count": target_video_count,
         "target_image_count": int(plan.get("target_image_count") or 0),
         "target_poster_count": int(plan.get("target_poster_count") or 0),
+        # NULL is preserved for historical plans.  A current plan always gets
+        # this value from the typed create request.
+        "production_recipe": (
+            str(plan.get("production_recipe") or "").strip().upper() or None
+        ),
         "logical_mode": str(plan["logical_mode"]),
         "video_configurations": video_configurations,
         "aspect_ratio": aspect,
@@ -1305,6 +1316,24 @@ async def resolve_item_treatment(
 
 
 async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
+    try:
+        recipe_adapter = resolve_production_recipe(body.production_recipe or "")
+    except ProductionRecipeError as exc:
+        raise CreativeProductionError(exc.code, str(exc), status_code=422) from exc
+    target_image_count = int(body.target_image_count or 0)
+    target_poster_count = int(body.target_poster_count or 0)
+    if target_image_count > 0 or target_poster_count > 0:
+        raise CreativeProductionError(
+            "PRODUCTION_STUDIO_VIDEO_ONLY",
+            "Production Studio accepts video targets only.",
+            status_code=422,
+        )
+    if int(body.target_video_count) <= 0:
+        raise CreativeProductionError(
+            "PRODUCTION_STUDIO_VIDEO_ONLY",
+            "Production Studio requires at least one video target.",
+            status_code=422,
+        )
     existing = await p6db.get_plan_by_request_id(body.request_id)
     request_snapshot = _request_snapshot(body)
     request_sha = _sha(request_snapshot)
@@ -1333,7 +1362,7 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
             )
         availability = await resolve_treatment_availability(
             product_video_allocations=allocation_snapshot,
-            logical_mode=body.logical_mode,
+            logical_mode=recipe_adapter.treatment_logical_mode,
             model_key=body.model_keys[0],
             duration_seconds=body.duration_seconds[0],
             creative_format=body.creative_format,
@@ -1408,12 +1437,13 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
         "p58_cohort_sha256": authority.cohort_sha256,
         "p58_cohort_count": authority.cohort_count,
         "target_video_count": body.target_video_count,
-        "target_image_count": body.target_image_count,
-        "target_poster_count": body.target_poster_count,
+        "target_image_count": target_image_count,
+        "target_poster_count": target_poster_count,
         "operating_window_hours": body.operating_window_hours,
         "allocation_strategy": body.allocation_strategy,
         "variation_strategy": body.variation_strategy,
-        "logical_mode": body.logical_mode,
+        "production_recipe": recipe_adapter.recipe.value,
+        "logical_mode": recipe_adapter.internal_logical_mode,
         "model_keys_json": _stable_json(body.model_keys),
         "duration_seconds_json": _stable_json(body.duration_seconds),
         "pool_snapshot_json": _stable_json(pool_snapshot),
@@ -1550,6 +1580,19 @@ async def update_plan(
     body: ProductionPlanUpdateRequest,
 ) -> dict[str, Any]:
     plan = await _require_plan(plan_id)
+    current_recipe = recipe_for_plan(plan)
+    requested_recipe = None
+    if body.production_recipe is not None:
+        try:
+            requested_recipe = resolve_production_recipe(body.production_recipe)
+        except ProductionRecipeError as exc:
+            raise CreativeProductionError(exc.code, str(exc), status_code=422) from exc
+        if current_recipe is None:
+            raise CreativeProductionError(
+                "LEGACY_PLAN_READ_ONLY",
+                "Historical Production Studio plans cannot be assigned a new recipe.",
+                status_code=409,
+            )
     if plan["status"] not in {
         PlanStatus.DRAFT.value,
         PlanStatus.PREFLIGHT_BLOCKED.value,
@@ -1604,6 +1647,15 @@ async def update_plan(
     for field in current_targets:
         if field in patch:
             current_targets[field] = int(patch[field])
+    if current_targets["target_image_count"] > 0 or current_targets["target_poster_count"] > 0:
+        # Existing legacy targets remain readable, but an update cannot turn
+        # them into a new active Studio configuration.
+        if "target_image_count" in patch or "target_poster_count" in patch:
+            raise CreativeProductionError(
+                "PRODUCTION_STUDIO_VIDEO_ONLY",
+                "Production Studio accepts video targets only.",
+                status_code=422,
+            )
     if sum(current_targets.values()) <= 0:
         raise CreativeProductionError(
             "MEDIA_TARGET_REQUIRED",
@@ -1653,11 +1705,13 @@ async def update_plan(
         "operating_window_hours",
         "allocation_strategy",
         "variation_strategy",
-        "logical_mode",
     }
     for field in scalar_fields:
         if field in patch:
             values[field] = patch[field]
+    if requested_recipe is not None:
+        values["production_recipe"] = requested_recipe.recipe.value
+        values["logical_mode"] = requested_recipe.internal_logical_mode
     if "model_keys" in patch:
         models = _unique(patch["model_keys"])
         if not models:
@@ -1779,6 +1833,10 @@ async def update_plan(
 async def get_governed_pool_authority(
     body: PoolAuthorityRequest,
 ) -> dict[str, Any]:
+    try:
+        recipe_adapter = resolve_production_recipe(body.production_recipe)
+    except ProductionRecipeError as exc:
+        raise CreativeProductionError(exc.code, str(exc), status_code=422) from exc
     await _assert_frozen_cohort(body.product_ids)
     products = {
         product_id: await crud.get_product(product_id)
@@ -1830,7 +1888,7 @@ async def get_governed_pool_authority(
             (selection or {}).get("selected_avatar_code") or ""
         ).strip()
         profile = avatar_index.get(avatar_code)
-        avatar_required = body.logical_mode in {"T2V", "HYBRID", "I2V"}
+        avatar_required = recipe_adapter.avatar_required_without_treatment
         selection_valid = (
             selection is not None
             and selection.get("status") == "APPROVED"
@@ -1868,7 +1926,7 @@ async def get_governed_pool_authority(
     ]
     return {
         "product_ids": sorted(body.product_ids),
-        "logical_mode": body.logical_mode,
+        "production_recipe": recipe_adapter.recipe.value,
         "products": [products[pid] for pid in body.product_ids if products[pid]],
         "copy_sets": copy_sets,
         "poster_copy_sets": poster_copy_sets,
@@ -1886,7 +1944,7 @@ async def get_governed_pool_authority(
         "official_product_visual_authority": {
             "source": "PRODUCT_REGISTRATION",
             "selection": "ONE_APPROVED_OFFICIAL_VISUAL_PER_PRODUCT",
-            "used_by": ["IMG", "HYBRID", "I2V", "F2V", "POSTER"],
+            "used_by": ["HYBRID", "FACELESS", "MONTAGE"],
         },
         "finished_frame_assets": [
             row
@@ -1998,6 +2056,7 @@ async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
     product_ids = _loads(plan.get("product_scope_json"), [])
     blockers: list[dict[str, Any]] = []
     logical_mode = str(plan["logical_mode"])
+    recipe_adapter = recipe_for_plan(plan)
     target_video_count = int(plan["target_video_count"])
     treatment_projections = await _resolve_plan_treatments(plan)
     treatment_authority_active = bool(treatment_projections)
@@ -2147,7 +2206,12 @@ async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
         # on adult + resolvable profile + APPROVED selection.
         selected_codes = _selection_avatar_codes(selection)
         avatar_required = (
-            target_video_count > 0 and logical_mode in {"T2V", "HYBRID", "I2V"}
+            target_video_count > 0
+            and (
+                recipe_adapter.avatar_required_without_treatment
+                if recipe_adapter is not None
+                else logical_mode in {"T2V", "HYBRID", "I2V"}
+            )
             and not treatment_authority_active
         )
         if avatar_required and (not selection_approved or not selected_codes):
@@ -2453,6 +2517,7 @@ def _creative_dna_payload(dimensions: dict[str, str]) -> dict[str, str]:
     governed_fields = (
         "product_id",
         "media_type",
+        "production_recipe",
         "logical_mode",
         "copy_set_id",
         "copy_identity_sha256",
@@ -2534,6 +2599,7 @@ def _product_dimension_rows(
     )
     strategy_variants = _scene_variants(approved, product_id)
     logical_mode = str(plan["logical_mode"])
+    production_recipe = str(plan.get("production_recipe") or "").strip().upper()
     model_keys = _loads(plan.get("model_keys_json"), [])
     durations = _loads(plan.get("duration_seconds_json"), [])
     policy = _loads(plan.get("execution_policy_json"), {})
@@ -2548,7 +2614,7 @@ def _product_dimension_rows(
         ]
         v2_copy_dimensions: dict[str, str] | None = None
         if not legacy_copy_maintenance_enabled():
-            copy_authorities = approved["copy_sets"].get(product_id) or []
+            copy_authorities = (approved.get("copy_sets") or {}).get(product_id) or []
             if not copy_authorities:
                 blockers.append(
                     {"code": "V2 BINDING REQUIRED", "product_id": product_id}
@@ -2622,6 +2688,7 @@ def _product_dimension_rows(
                 {
                     "product_id": product_id,
                     "media_type": "VIDEO",
+                    "production_recipe": production_recipe,
                     "logical_mode": logical_mode,
                     **copy_dimensions,
                     "avatar_code": treatment["avatar_code"],
@@ -2789,6 +2856,29 @@ def _product_dimension_rows(
                     scenes or [{}],
                     styles or [{}],
                 )
+            ]
+        elif (
+            media_type == "VIDEO"
+            and logical_mode == "F2V"
+            and production_recipe in {"FACELESS", "MONTAGE"}
+        ):
+            # F2V remains the private transport primitive for these recipes,
+            # but their canonical authorities resolve the product anchor and
+            # scene/run state themselves.  Do not require the retired public
+            # finished-frame pool for a new Faceless or Montage plan.
+            visual_rows = [
+                {
+                    "product_reference_asset_id": "",
+                    "finished_frame_asset_id": "",
+                    "character_asset_id": "",
+                    "avatar_code": "",
+                    "age_band": "",
+                    "wardrobe": "",
+                    "avatar_variant": "",
+                    "scene_asset_id": str(scene.get("asset_id") or ""),
+                    "style_asset_id": str(style.get("asset_id") or ""),
+                }
+                for scene, style in itertools.product(scenes or [{}], styles or [{}])
             ]
         elif media_type == "VIDEO" and logical_mode == "F2V":
             if not finished_frames:
@@ -2990,6 +3080,7 @@ def _product_dimension_rows(
             {
                 "product_id": product_id,
                 "media_type": media_type,
+                "production_recipe": production_recipe or None,
                 "logical_mode": logical_mode if media_type == "VIDEO" else "IMG",
                 **copy_fields,
                 **visual,
@@ -3648,6 +3739,10 @@ async def materialize_content_matrix(
                 "item_ordinal": item_ordinal,
                 "product_id": dimensions["product_id"],
                 "media_type": dimensions["media_type"],
+                "production_recipe": (
+                    str(dimensions.get("production_recipe") or "").strip().upper()
+                    or None
+                ),
                 "logical_mode": dimensions["logical_mode"],
                 "creative_dimensions_json": _stable_json(dimensions),
                 "creative_dna_sha256": dna,

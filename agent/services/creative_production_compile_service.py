@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from types import SimpleNamespace
 from typing import Any
 
+from agent.db import crud as core_crud
 from agent.db import creative_production_crud as p6db
-from agent.models.creative_production import PlanActionRequest
+from agent.models.creative_production import PlanActionRequest, ProductionRecipe
 from agent.models.poster_prompt_draft import PosterPromptDraftRequest
 from agent.services import workspace_generation_package_service as wgp_service
 from agent.services import workspace_execution_package_service as wep_service
@@ -28,6 +30,10 @@ from agent.services.copy_execution_resolver import (
     resolve_persisted_copy_execution_binding,
 )
 from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
+from agent.services.creative_production_recipe_service import (
+    ProductionRecipeError,
+    resolve_production_recipe,
+)
 
 
 def _prompt_sha(prompt: str) -> str:
@@ -76,6 +82,344 @@ def _with_round3_selection(
     return base
 
 
+async def _create_p6_execution_bridge(
+    *,
+    item: dict[str, Any],
+    plan: dict[str, Any],
+    package: dict[str, Any],
+    source_lane: str,
+    recipe_metadata: dict[str, Any],
+) -> tuple[str, str, dict[str, Any]]:
+    """Persist a P6-readable wrapper around an existing recipe authority.
+
+    Faceless and Montage canonically prepare ``workspace_execution_package``
+    rows, while the P6 ledger historically points at a generation package.  A
+    thin, deterministic bridge preserves that common attribution without
+    recompiling the prompt or creating a second execution authority.
+    """
+
+    prompt = str(package.get("prompt_text") or package.get("final_prompt_text") or "")
+    if not prompt.strip():
+        raise CreativeProductionError(
+            "EMPTY_COMPILED_PROMPT",
+            "The canonical recipe authority returned an empty prompt.",
+        )
+    execution_package_id = str(
+        package.get("workspace_execution_package_id") or ""
+    ).strip()
+    if not execution_package_id:
+        raise CreativeProductionError(
+            "RECIPE_EXECUTION_PACKAGE_REQUIRED",
+            "The canonical recipe authority returned no execution package identity.",
+        )
+    bridge_id = f"p6recipe_{_prompt_sha(item['item_id'] + execution_package_id)[:24]}"
+    existing = await core_crud.get_workspace_generation_package(bridge_id)
+    if existing is None:
+        await core_crud.create_workspace_generation_package(
+            bridge_id,
+            mode=str(package.get("mode") or "F2V").upper(),
+            product_id=str(item["product_id"]),
+            product_name_snapshot=str(package.get("product_name_snapshot") or ""),
+            source_lane=source_lane,
+            prompt_package_snapshot_id=str(
+                package.get("prompt_package_snapshot_id") or ""
+            ),
+            workspace_execution_package_id=execution_package_id,
+            generation_mode=str(package.get("generation_mode") or "SINGLE").upper(),
+            final_prompt_text=prompt,
+            prompt_blocks_json=_stable_json(package.get("prompt_blocks") or []),
+            selected_assets_json=_stable_json(
+                _loads(package.get("asset_slots"), [])
+                if isinstance(package.get("asset_slots"), str)
+                else package.get("asset_slots") or package.get("selected_assets") or {}
+            ),
+            resolved_engine_slots_json=_stable_json(
+                package.get("resolved_engine_slots") or {}
+            ),
+            resolver_output_json=_stable_json(
+                {
+                    "production_recipe": recipe_metadata.get("production_recipe"),
+                    "recipe_adapter": recipe_metadata,
+                    "faceless_resolution": package.get("faceless_resolution"),
+                    "copy_architecture_v2": package.get("copy_architecture_v2"),
+                }
+            ),
+            image_assets_json=_stable_json(package.get("image_assets") or {}),
+            manual_handoff_json=_stable_json(package.get("manual_fallback") or {}),
+            dom_handoff_payload_json=_stable_json(
+                package.get("dom_handoff_payload")
+                or {
+                    "settings": {
+                        "duration_seconds": package.get("duration_seconds"),
+                        "model": package.get("model"),
+                        "aspect_ratio": package.get("aspect_ratio"),
+                    }
+                }
+            ),
+            blockers_json=_stable_json(package.get("blockers") or []),
+            warnings_json=_stable_json(package.get("warnings") or []),
+            status=(
+                "READY_MANUAL"
+                if bool(package.get("execution_allowed"))
+                or not package.get("blockers")
+                else "BLOCKED"
+            ),
+            batch_run_id=str(plan["plan_id"]),
+        )
+    fingerprint = str(
+        package.get("prompt_fingerprint") or _prompt_sha(prompt)
+    )
+    return bridge_id, fingerprint, {
+        "kind": "PRODUCTION_RECIPE_EXECUTION_BRIDGE",
+        "production_recipe": recipe_metadata.get("production_recipe"),
+        "canonical_authority": recipe_metadata.get("canonical_authority"),
+        "internal_logical_mode": recipe_metadata.get("internal_logical_mode"),
+        "workspace_generation_package_id": bridge_id,
+        "workspace_execution_package_id": execution_package_id,
+        "final_prompt_text": prompt,
+        "prompt_fingerprint": fingerprint,
+        "generation_mode": str(package.get("generation_mode") or "SINGLE").upper(),
+        "recipe_execution": recipe_metadata,
+        "copy_architecture_v2": package.get("copy_architecture_v2"),
+        "status": package.get("status") or package.get("readiness"),
+    }
+
+
+async def _compile_faceless_recipe(
+    *,
+    item: dict[str, Any],
+    plan: dict[str, Any],
+    dimensions: dict[str, Any],
+    aspect: str,
+    copy_v2_context: dict[str, Any] | None,
+    treatment: dict[str, Any] | None,
+    generation_mode: str,
+    total_duration: int,
+    engine_block_duration: int,
+) -> tuple[str, str, dict[str, Any]]:
+    """Prepare Faceless through its existing lane and WEP authority."""
+
+    from agent.services import faceless_lane_service as faceless
+
+    model = str(dimensions.get("model_key") or "").strip()
+    ok, code, detail = faceless.validate_faceless_inputs(
+        product_id=str(item["product_id"]),
+        hook_id="AUTO",
+        background_id="AUTO",
+        actor_profile="AUTO",
+        model=model,
+        generation_mode=generation_mode,
+        duration_seconds=engine_block_duration,
+        total_duration_seconds=total_duration,
+        require_model=True,
+        reference_override=False,
+    )
+    if not ok:
+        raise CreativeProductionError(
+            str(code or "FACELESS_INPUT_INVALID"),
+            str(detail or "Faceless input validation failed."),
+        )
+    ok_video, code_video, detail_video, orchestration = (
+        faceless.resolve_faceless_video_configuration(
+            model=model,
+            generation_mode=generation_mode,
+            duration_seconds=engine_block_duration,
+            total_duration_seconds=total_duration,
+        )
+    )
+    if not ok_video or not orchestration:
+        raise CreativeProductionError(
+            str(code_video or "FACELESS_MODEL_DURATION_INVALID"),
+            str(detail_video or "Faceless model/duration is not governed."),
+        )
+    scene_authority = await faceless.resolve_faceless_scene_authority(
+        product_id=str(item["product_id"]),
+        hook_id="AUTO",
+        background_id="AUTO",
+        actor_profile="AUTO",
+        scene_context_hint=dimensions.get("scene_strategy_context"),
+    )
+    resolution = faceless.build_faceless_resolution(
+        product_id=str(item["product_id"]),
+        hook_id="AUTO",
+        background_id="AUTO",
+        actor_profile="AUTO",
+        scene_context_hint=dimensions.get("scene_strategy_context"),
+        scene_authority=scene_authority,
+    )
+    from agent.services import workspace_execution_package_service as wep_service
+
+    lane_context = (
+        {**copy_v2_context, "lane": "FACELESS"}
+        if isinstance(copy_v2_context, dict)
+        else {"lane": "FACELESS"}
+    )
+    package = await wep_service.create_workspace_execution_package(
+        product_id=str(item["product_id"]),
+        mode=str(resolution.get("transport_mode") or faceless.FACELESS_TRANSPORT_MODE),
+        duration_seconds=int(orchestration["engine_block_duration_seconds"]),
+        aspect_ratio=aspect,
+        model=model,
+        manual_override=False,
+        generation_mode=str(orchestration["generation_mode"]),
+        character_presence=faceless.FACELESS_CHARACTER_PRESENCE,
+        creator_persona="DEFAULT_CREATOR",
+        source_mode=str(resolution.get("source_mode") or faceless.FACELESS_SOURCE_MODE),
+        scene_context_override=faceless.build_faceless_scene_context(resolution),
+        faceless_resolution=resolution.get("faceless_resolution"),
+        requested_total_duration_seconds=(
+            total_duration if generation_mode == "EXTEND" else None
+        ),
+        creative_treatment=treatment,
+        copy_v2_context=lane_context,
+    )
+    if not isinstance(package, dict) or not bool(package.get("execution_allowed")):
+        raise CreativeProductionError(
+            "FACELESS_PACKAGE_BLOCKED",
+            "The canonical Faceless execution package is not ready.",
+            details={"blockers": package.get("blockers") if isinstance(package, dict) else []},
+        )
+    metadata = {
+        "production_recipe": ProductionRecipe.FACELESS.value,
+        "canonical_authority": "faceless_lane_service + workspace_execution_package_service",
+        "internal_logical_mode": "F2V",
+        "transport_mode": resolution.get("transport_mode"),
+        "source_mode": resolution.get("source_mode"),
+        "faceless_resolution": resolution.get("faceless_resolution"),
+    }
+    return await _create_p6_execution_bridge(
+        item=item,
+        plan=plan,
+        package=package,
+        source_lane="FACELESS",
+        recipe_metadata=metadata,
+    )
+
+
+def _montage_story_beats(treatment: dict[str, Any] | None) -> list[Any]:
+    shots = treatment.get("shot_grammar") if isinstance(treatment, dict) else None
+    if isinstance(shots, list) and shots:
+        beats: list[Any] = []
+        for index, shot in enumerate(shots, start=1):
+            if not isinstance(shot, dict):
+                continue
+            beats.append(
+                SimpleNamespace(
+                    beat_id=f"treatment-shot-{index}",
+                    role="BODY" if index < len(shots) else "CTA",
+                    objective=str(shot.get("purpose") or "Approved treatment beat"),
+                    visual_action=str(shot.get("subject") or "Product-led scene"),
+                )
+            )
+        if beats:
+            return beats
+    return [
+        SimpleNamespace(
+            beat_id="hook",
+            role="HOOK",
+            objective="Open with product truth",
+            visual_action="Hero product plate",
+        ),
+        SimpleNamespace(
+            beat_id="body",
+            role="BODY",
+            objective="Demonstrate the approved product benefit",
+            visual_action="Product in context",
+        ),
+        SimpleNamespace(
+            beat_id="cta",
+            role="CTA",
+            objective="Close with the approved call to action",
+            visual_action="Pack shot and CTA",
+        ),
+    ]
+
+
+async def _compile_montage_recipe(
+    *,
+    item: dict[str, Any],
+    plan: dict[str, Any],
+    dimensions: dict[str, Any],
+    copy_v2_context: dict[str, Any] | None,
+    treatment: dict[str, Any] | None,
+    engine_block_duration: int,
+) -> tuple[str, str, dict[str, Any]]:
+    """Create the durable Montage run through its canonical orchestrator."""
+
+    from agent.services import montage_run_service
+    from agent.services import workspace_execution_package_service as wep_service
+    from agent.services.montage_scene_reference_policy import SceneReferencePolicy
+
+    model = str(dimensions.get("model_key") or "").strip()
+    lane_context = (
+        {**copy_v2_context, "lane": "MONTAGE"}
+        if isinstance(copy_v2_context, dict)
+        else {"lane": "MONTAGE"}
+    )
+    run = await montage_run_service.create_montage_discrete_run(
+        product_id=str(item["product_id"]),
+        story_beats=_montage_story_beats(treatment),
+        package_factory=wep_service.create_workspace_execution_package,
+        default_policy=SceneReferencePolicy.PRODUCT_ANCHOR,
+        model=model,
+        duration_seconds=engine_block_duration,
+        copy_fallback_confirmed=False,
+        copy_v2_context=lane_context,
+    )
+    if not bool(run.get("ok")) or not run.get("montage_run_id"):
+        raise CreativeProductionError(
+            "MONTAGE_PREPARATION_BLOCKED",
+            "The canonical Montage run could not be prepared.",
+            details={"run": run},
+        )
+    scenes = run.get("scenes") or []
+    first_scene = next(
+        (
+            scene
+            for scene in scenes
+            if str(scene.get("workspace_execution_package_id") or "").strip()
+        ),
+        None,
+    )
+    if not isinstance(first_scene, dict):
+        raise CreativeProductionError(
+            "MONTAGE_SCENE_PACKAGE_REQUIRED",
+            "The canonical Montage run returned no prepared scene package.",
+        )
+    wep = await core_crud.get_workspace_execution_package(
+        str(first_scene["workspace_execution_package_id"])
+    )
+    if not wep:
+        raise CreativeProductionError(
+            "MONTAGE_SCENE_PACKAGE_NOT_FOUND",
+            "The prepared Montage scene package could not be reloaded.",
+        )
+    metadata = {
+        "production_recipe": ProductionRecipe.MONTAGE.value,
+        "canonical_authority": "montage_run_service.create_montage_discrete_run",
+        "internal_logical_mode": "F2V",
+        "montage_run_id": str(run["montage_run_id"]),
+        "total_scenes": int(run.get("total_scenes") or len(scenes)),
+        "assembly_authority": "montage_run_service.assemble_from_montage_run",
+    }
+    bridge_package = {
+        **wep,
+        "prompt_text": first_scene.get("package_prompt") or wep.get("prompt_text"),
+        "generation_mode": "SINGLE",
+        "recipe_execution": metadata,
+    }
+    bridge_id, fingerprint, evidence = await _create_p6_execution_bridge(
+        item=item,
+        plan=plan,
+        package=bridge_package,
+        source_lane="MONTAGE",
+        recipe_metadata=metadata,
+    )
+    evidence["montage_run_id"] = str(run["montage_run_id"])
+    evidence["montage_scene_count"] = int(run.get("total_scenes") or len(scenes))
+    return bridge_id, fingerprint, evidence
+
+
 async def _compile_video(
     item: dict[str, Any],
     plan: dict[str, Any],
@@ -97,6 +441,7 @@ async def _compile_video(
     )
     aspect = str(execution_policy.get("aspect") or "9:16")
     logical_mode = str(plan["logical_mode"])
+    production_recipe = str(plan.get("production_recipe") or "").strip().upper()
     treatment = await resolve_item_treatment(dimensions, plan)
     segment_plan = (treatment or {}).get("segment_plan") or []
     if treatment and generation_mode == "EXTEND" and not isinstance(segment_plan, dict):
@@ -104,6 +449,34 @@ async def _compile_video(
             "TREATMENT_SEGMENT_PLAN_INVALID",
             "Governed EXTEND compilation requires immutable segment lineage.",
         )
+
+    if production_recipe:
+        try:
+            recipe_adapter = resolve_production_recipe(production_recipe)
+        except ProductionRecipeError as exc:
+            raise CreativeProductionError(exc.code, str(exc), status_code=422) from exc
+        logical_mode = recipe_adapter.internal_logical_mode
+        if recipe_adapter.recipe is ProductionRecipe.FACELESS:
+            return await _compile_faceless_recipe(
+                item=item,
+                plan=plan,
+                dimensions=dimensions,
+                aspect=aspect,
+                copy_v2_context=copy_v2_context,
+                treatment=treatment,
+                generation_mode=generation_mode,
+                total_duration=total_duration,
+                engine_block_duration=engine_block_duration,
+            )
+        if recipe_adapter.recipe is ProductionRecipe.MONTAGE:
+            return await _compile_montage_recipe(
+                item=item,
+                plan=plan,
+                dimensions=dimensions,
+                copy_v2_context=copy_v2_context,
+                treatment=treatment,
+                engine_block_duration=engine_block_duration,
+            )
 
     workspace_execution_package_id: str | None = None
     if generation_mode == "EXTEND":
@@ -252,7 +625,21 @@ async def _compile_video(
             ],
             "prompt_fingerprint": package.get("prompt_fingerprint"),
             "final_prompt_text": prompt,
+            "production_recipe": production_recipe or None,
             "logical_mode": logical_mode,
+            "recipe_execution": (
+                {
+                    "production_recipe": production_recipe,
+                    "canonical_authority": (
+                        "workspace_generation_package_service.create_hybrid_generation_package"
+                        if production_recipe == ProductionRecipe.HYBRID.value
+                        else None
+                    ),
+                    "internal_logical_mode": logical_mode,
+                }
+                if production_recipe
+                else None
+            ),
             "generation_mode": generation_mode,
             "requested_total_duration_seconds": total_duration,
             "engine_block_duration_seconds": engine_block_duration,

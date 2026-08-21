@@ -101,7 +101,7 @@ def _body(
             ProductVideoAllocation(product_id=PRODUCT_ID, video_count=target)
         ],
         target_video_count=target,
-        logical_mode="T2V",
+        production_recipe="HYBRID",
         model_keys=["Veo 3.1 - Lite"],
         duration_seconds=[8],
         pools=CreativePoolSelection(
@@ -365,7 +365,7 @@ async def test_explicit_multi_product_allocation_materializes_exact_counts(
             ProductVideoAllocation(product_id=PRODUCT_ID_3, video_count=3),
         ],
         target_video_count=6,
-        logical_mode="T2V",
+        production_recipe="HYBRID",
         model_keys=["veo_3_1_lite"],
         duration_seconds=[16],
         pools=CreativePoolSelection(
@@ -1202,7 +1202,7 @@ async def test_plan_update_and_governed_pool_authority_are_fail_closed(
     authority = await plans.get_governed_pool_authority(
         PoolAuthorityRequest(
             product_ids=[PRODUCT_ID],
-            logical_mode="T2V",
+            production_recipe="HYBRID",
         )
     )
     assert authority["credit_spend"] == 0
@@ -1241,7 +1241,7 @@ async def test_f2v_pool_authority_does_not_invent_avatar_requirement(
     authority = await plans.get_governed_pool_authority(
         PoolAuthorityRequest(
             product_ids=[PRODUCT_ID],
-            logical_mode="F2V",
+            production_recipe="FACELESS",
         )
     )
     assert authority["avatar_profiles"] == []

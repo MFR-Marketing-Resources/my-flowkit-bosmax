@@ -23,6 +23,10 @@ from agent.models.creative_production import (
 from agent.services import creative_production_compile_service as compiler
 from agent.services import creative_production_plan_service as plans
 from agent.services import creative_production_scheduler_service as scheduler
+from agent.services.creative_production_recipe_service import (
+    ProductionRecipeError,
+    resolve_production_recipe,
+)
 
 
 router = APIRouter(
@@ -62,6 +66,11 @@ async def cohort_authority(
 async def create_plan(body: ProductionPlanCreateRequest):
     try:
         return await plans.create_plan(body)
+    except ProductionRecipeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": exc.code, "message": str(exc), "details": {}},
+        ) from exc
     except plans.CreativeProductionError as exc:
         raise _http(exc) from exc
 
@@ -84,17 +93,23 @@ async def pool_authority(body: PoolAuthorityRequest):
 @router.post("/treatment-availability")
 async def treatment_availability(body: TreatmentAvailabilityRequest):
     try:
+        recipe_adapter = resolve_production_recipe(body.production_recipe)
         return await plans.resolve_treatment_availability(
             product_video_allocations=[
                 item.model_dump(mode="json")
                 for item in body.product_video_allocations
             ],
-            logical_mode=body.logical_mode,
+            logical_mode=recipe_adapter.treatment_logical_mode,
             model_key=body.model_key,
             duration_seconds=body.duration_seconds,
             creative_format=body.creative_format,
             treatment_ids=body.treatment_ids,
         )
+    except ProductionRecipeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": exc.code, "message": str(exc), "details": {}},
+        ) from exc
     except plans.CreativeProductionError as exc:
         raise _http(exc) from exc
 

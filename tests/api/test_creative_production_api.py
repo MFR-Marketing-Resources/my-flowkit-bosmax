@@ -32,10 +32,10 @@ def _create_body() -> ProductionPlanCreateRequest:
             ProductVideoAllocation(product_id="product-1", video_count=1)
         ],
         target_video_count=1,
+        production_recipe="HYBRID",
         model_keys=["Veo 3.1 - Lite"],
         duration_seconds=[8],
         pools=CreativePoolSelection(
-            copy_set_ids=["copy-1"],
             treatment_ids=["treatment-1"],
         ),
     )
@@ -52,10 +52,10 @@ def test_create_contract_validates_explicit_allocation_and_governed_duration():
             ProductVideoAllocation(product_id="product-2", video_count=1),
         ],
         target_video_count=3,
+        production_recipe="HYBRID",
         model_keys=["veo_3_1_lite"],
         duration_seconds=[16, 24],
         pools=CreativePoolSelection(
-            copy_set_ids=["copy-1", "copy-2"],
             treatment_ids=["treatment-1", "treatment-2", "treatment-3"],
         ),
     )
@@ -73,6 +73,7 @@ def test_create_contract_validates_explicit_allocation_and_governed_duration():
                 ProductVideoAllocation(product_id="product-1", video_count=2)
             ],
             target_video_count=1,
+            production_recipe="HYBRID",
             model_keys=["veo_3_1_lite"],
             duration_seconds=[8],
             pools=CreativePoolSelection(treatment_ids=["treatment-1"]),
@@ -91,6 +92,7 @@ def test_create_contract_validates_explicit_allocation_and_governed_duration():
             name="Missing allocation",
             product_ids=["product-1"],
             target_video_count=1,
+            production_recipe="HYBRID",
             model_keys=["veo_3_1_lite"],
             duration_seconds=[8],
             pools=CreativePoolSelection(treatment_ids=["treatment-1"]),
@@ -106,7 +108,8 @@ def test_create_contract_keeps_omni_10_single_and_refuses_unproven_20s():
         product_video_allocations=[
             ProductVideoAllocation(product_id="product-1", video_count=1)
         ],
-        target_video_count=1,
+            target_video_count=1,
+            production_recipe="HYBRID",
         model_keys=["omni_flash"],
         duration_seconds=[10],
         pools=CreativePoolSelection(treatment_ids=["treatment-1"]),
@@ -123,6 +126,7 @@ def test_create_contract_keeps_omni_10_single_and_refuses_unproven_20s():
                 ProductVideoAllocation(product_id="product-1", video_count=1)
             ],
             target_video_count=1,
+            production_recipe="HYBRID",
             model_keys=["omni_flash"],
             duration_seconds=[20],
             pools=CreativePoolSelection(treatment_ids=["treatment-1"]),
@@ -183,7 +187,7 @@ async def test_treatment_availability_api_preserves_typed_zero_credit_contract(
         product_video_allocations=[
             ProductVideoAllocation(product_id="product-1", video_count=1),
         ],
-        logical_mode="T2V",
+        production_recipe="HYBRID",
         model_key="veo_3_1_lite",
         duration_seconds=16,
         creative_format="UGC",
@@ -194,7 +198,7 @@ async def test_treatment_availability_api_preserves_typed_zero_credit_contract(
         product_video_allocations=[
             {"product_id": "product-1", "video_count": 1},
         ],
-        logical_mode="T2V",
+        logical_mode="HYBRID",
         model_key="veo_3_1_lite",
         duration_seconds=16,
         creative_format="UGC",
