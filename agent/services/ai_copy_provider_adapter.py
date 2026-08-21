@@ -112,6 +112,11 @@ class AICopyProviderError(Exception):
         self.http_status = http_status
         self.finish_reason = finish_reason
         self.usage = dict(usage or {})
+        # Populated only after a real call has been started.  These fields are
+        # secret-free provenance for callers that must persist a failed call
+        # even when no parsed JSON is returned.
+        self.call_id: int | None = None
+        self.provider_receipt: dict[str, Any] = {}
 
 
 def provider_call_receipt() -> dict[str, Any]:
@@ -611,6 +616,8 @@ def _complete(
                 diagnostic_category=exc.diagnostic_category,
                 diagnostic_metadata=exc.diagnostic_metadata,
             )
+        exc.call_id = call_id
+        exc.provider_receipt = _snapshot_provider_call_receipt(call_id)
         raise
     except Exception as exc:  # network / shape / auth — fail closed
         response = getattr(exc, "response", None)
@@ -619,12 +626,28 @@ def _complete(
             response_status="FAILED",
             http_status=getattr(response, "status_code", None),
         )
-        raise AICopyProviderError(ERR_CALL_FAILED, detail=str(exc)) from exc
+        error = AICopyProviderError(ERR_CALL_FAILED, detail=str(exc))
+        error.call_id = call_id
+        error.provider_receipt = _snapshot_provider_call_receipt(call_id)
+        raise error from exc
 
 
 def _pop_usage(call_id: int) -> dict[str, float]:
     with _provider_call_lock:
         return _usage_by_call_id.pop(call_id, {})
+
+
+def _snapshot_provider_call_receipt(call_id: int) -> dict[str, Any]:
+    """Copy one exact call receipt without removing it from the drain map."""
+
+    with _provider_call_lock:
+        receipt = dict(_provider_call_receipt_by_id.get(call_id, {}))
+        if receipt:
+            receipt["usage"] = dict(receipt.get("usage") or {})
+            receipt["diagnostic_metadata"] = dict(
+                receipt.get("diagnostic_metadata") or {}
+            )
+        return receipt
 
 
 def _pop_provider_call_receipt(call_id: int) -> dict[str, Any]:
@@ -672,10 +695,24 @@ def complete_json_with_receipt(
 
     if not is_configured():
         raise AICopyProviderNotConfigured(ERR_NOT_CONFIGURED)
-    text, finish_reason, call_id = _complete(
-        [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        structured_output=True,
-    )
+    try:
+        text, finish_reason, call_id = _complete(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            structured_output=True,
+        )
+    except AICopyProviderError as exc:
+        # _complete has already finished the exact call.  Drain its usage and
+        # receipt here so provider transport failures are observable without
+        # relying on the process-global "last call" under concurrency.
+        call_id = getattr(exc, "call_id", None)
+        if call_id is not None:
+            receipt = _pop_provider_call_receipt(call_id)
+            usage = _pop_usage(call_id)
+            if usage:
+                receipt["usage"] = usage
+                exc.usage = dict(usage)
+            exc.provider_receipt = receipt
+        raise
     try:
         parsed = _extract_json_object(text, finish_reason=finish_reason)
     except AICopyProviderError as exc:
@@ -685,8 +722,13 @@ def complete_json_with_receipt(
             diagnostic_category=exc.diagnostic_category,
             diagnostic_metadata=exc.diagnostic_metadata,
         )
-        _pop_usage(call_id)
-        _pop_provider_call_receipt(call_id)
+        usage = _pop_usage(call_id)
+        receipt = _pop_provider_call_receipt(call_id)
+        if usage:
+            receipt["usage"] = usage
+            exc.usage = dict(usage)
+        exc.call_id = call_id
+        exc.provider_receipt = receipt
         raise
     _record_json_parse_result(call_id, status="VALID")
     usage = _pop_usage(call_id)
