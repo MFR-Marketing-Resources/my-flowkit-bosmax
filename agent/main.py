@@ -90,6 +90,7 @@ from agent.services.flow_client import get_flow_client
 from agent.services.event_bus import event_bus
 from agent.api.telemetry import router as telemetry_router
 from agent.api.reporting import router as reporting_router
+from agent.api.production_output_reporting import router as production_output_reporting_router
 from agent.api.diagnostics import router as diagnostics_router
 from agent.api.smoke import router as smoke_router
 from agent.api.creative_brief import router as creative_brief_router
@@ -432,6 +433,7 @@ app.include_router(local_agent_router)
 app.include_router(operator_router)
 app.include_router(telemetry_router)
 app.include_router(reporting_router)
+app.include_router(production_output_reporting_router)
 app.include_router(diagnostics_router)
 app.include_router(smoke_router)
 app.include_router(creative_brief_router, prefix="/api")
