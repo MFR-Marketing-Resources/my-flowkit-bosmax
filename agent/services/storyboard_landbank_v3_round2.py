@@ -15,6 +15,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol, Sequence
 
+from pydantic import ValidationError
+
 from agent.db.schema import _db_lock, get_db
 from agent.models.storyboard_landbank_v3 import (
     V3DurationProjection,
@@ -77,6 +79,10 @@ MAX_EVIDENCE_SELECTION = 20
 MAX_PROVIDER_CALLS = 1
 MAX_OUTPUT_TOKENS = 20_000
 MAX_COST = 0
+MAX_FAILURE_OUTPUT_BYTES = 64 * 1024
+MAX_FAILURE_SNAPSHOT_ITEMS = 64
+MAX_FAILURE_SNAPSHOT_STRING = 256
+MAX_FAILURE_SNAPSHOT_DEPTH = 6
 _INJECTION_RE = re.compile(
     r"(?:ignore\s+(?:all|any|the|previous)|system\s+prompt|developer\s+message|<\s*/?system\s*>)",
     re.IGNORECASE,
@@ -111,6 +117,105 @@ def _loads(value: Any, default: Any) -> Any:
         return json.loads(str(value))
     except (TypeError, ValueError):
         return default
+
+
+def _safe_failure_value(value: Any, *, depth: int = 0) -> Any:
+    """Bound untrusted provider/error values before durable audit storage."""
+
+    if depth >= MAX_FAILURE_SNAPSHOT_DEPTH:
+        return {"__truncated_type__": type(value).__name__}
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        if len(value) <= MAX_FAILURE_SNAPSHOT_STRING:
+            return value
+        return {
+            "__truncated_string__": True,
+            "length": len(value),
+            "prefix": value[:MAX_FAILURE_SNAPSHOT_STRING],
+        }
+    if isinstance(value, Mapping):
+        items = list(value.items())
+        result = {
+            str(key): _safe_failure_value(item, depth=depth + 1)
+            for key, item in items[:MAX_FAILURE_SNAPSHOT_ITEMS]
+        }
+        if len(items) > MAX_FAILURE_SNAPSHOT_ITEMS:
+            result["__truncated_keys__"] = len(items) - MAX_FAILURE_SNAPSHOT_ITEMS
+        return result
+    if isinstance(value, (list, tuple)):
+        result = [_safe_failure_value(item, depth=depth + 1) for item in value[:MAX_FAILURE_SNAPSHOT_ITEMS]]
+        if len(value) > MAX_FAILURE_SNAPSHOT_ITEMS:
+            result.append({"__truncated_items__": len(value) - MAX_FAILURE_SNAPSHOT_ITEMS})
+        return result
+    return {"__type__": type(value).__name__, "repr": str(value)[:MAX_FAILURE_SNAPSHOT_STRING]}
+
+
+def _bounded_failure_output(value: Any) -> dict[str, Any]:
+    """Retain exact JSON when bounded, otherwise retain a typed snapshot."""
+
+    safe_value = value
+    try:
+        serialized = _json(value)
+    except (TypeError, ValueError):
+        safe_value = _safe_failure_value(value)
+        serialized = _json(safe_value)
+    serialized_bytes = len(serialized.encode("utf-8"))
+    if serialized_bytes <= MAX_FAILURE_OUTPUT_BYTES:
+        return {
+            "value": safe_value,
+            "truncated": False,
+            "serialized_bytes": serialized_bytes,
+            "max_bytes": MAX_FAILURE_OUTPUT_BYTES,
+        }
+    snapshot = _safe_failure_value(value)
+    snapshot_json = _json(snapshot)
+    return {
+        "value": snapshot,
+        "truncated": True,
+        "serialized_bytes": serialized_bytes,
+        "stored_bytes": len(snapshot_json.encode("utf-8")),
+        "max_bytes": MAX_FAILURE_OUTPUT_BYTES,
+    }
+
+
+def _pydantic_validation_errors(exc: ValidationError) -> list[dict[str, Any]]:
+    """Convert Pydantic errors into deterministic, JSON-safe audit records."""
+
+    errors: list[dict[str, Any]] = []
+    for error in exc.errors():
+        item: dict[str, Any] = {
+            "loc": [_safe_failure_value(part) for part in error.get("loc", ())],
+            "type": str(error.get("type") or "validation_error"),
+            "msg": str(error.get("msg") or "Validation failed."),
+        }
+        if "input" in error:
+            item["input"] = _safe_failure_value(error.get("input"))
+        if "ctx" in error:
+            item["ctx"] = _safe_failure_value(error.get("ctx"))
+        errors.append(item)
+    return errors
+
+
+def _provider_receipt_from_error(error: V3FactoryError) -> dict[str, Any]:
+    details = error.details
+    if not isinstance(details, Mapping):
+        return {}
+    receipt = details.get("provider_receipt")
+    return dict(receipt) if isinstance(receipt, Mapping) else {}
+
+
+def _failure_receipt(
+    plan: V3AssistantPlan,
+    provider_receipt: Mapping[str, Any] | None,
+    output_digest: str | None,
+) -> dict[str, Any]:
+    """Add run-level digests to the secret-free provider receipt."""
+
+    receipt = dict(provider_receipt or {})
+    receipt.setdefault("prompt_digest", plan.prompt_digest)
+    receipt.setdefault("output_digest", output_digest)
+    return receipt
 
 
 def _fake_provider_enabled() -> bool:
@@ -802,7 +907,19 @@ class V3CopyRegisterRound2Service:
         except ai_copy_provider_adapter.AICopyProviderNotConfigured as exc:
             raise V3FactoryError("AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED", "The existing text_assist lane is not configured or enabled.", status_code=409) from exc
         except ai_copy_provider_adapter.AICopyProviderError as exc:
-            raise V3FactoryError(str(getattr(exc, "code", "AI_COPY_ASSIST_PROVIDER_FAILED")), "The text_assist provider failed closed.", status_code=502, details=getattr(exc, "diagnostic_metadata", None)) from exc
+            provider_receipt = getattr(exc, "provider_receipt", None)
+            details = {
+                "provider_error_code": str(getattr(exc, "code", "AI_COPY_ASSIST_PROVIDER_FAILED")),
+                "diagnostic_category": getattr(exc, "diagnostic_category", None),
+                "diagnostic_metadata": getattr(exc, "diagnostic_metadata", None),
+                "provider_receipt": dict(provider_receipt) if isinstance(provider_receipt, Mapping) else {},
+            }
+            raise V3FactoryError(
+                str(getattr(exc, "code", "AI_COPY_ASSIST_PROVIDER_FAILED")),
+                "The text_assist provider failed closed.",
+                status_code=502,
+                details=details,
+            ) from exc
         except Exception as exc:
             raise V3FactoryError("AI_COPY_ASSIST_PROVIDER_FAILED", "The text_assist provider failed closed.", status_code=502) from exc
         if isinstance(result, tuple) and len(result) == 2:
@@ -810,18 +927,56 @@ class V3CopyRegisterRound2Service:
         else:
             raw, receipt = result, {}
         if not isinstance(raw, dict):
-            raise V3FactoryError("AI_COPY_ASSIST_RESPONSE_INVALID", "The provider response must be one JSON object.", status_code=502)
+            raise V3FactoryError(
+                "V3_PROVIDER_SCHEMA_VALIDATION_FAILED",
+                "Provider output failed the strict V3 proposal schema.",
+                status_code=502,
+                details={
+                    "validation_errors": [{
+                        "loc": [],
+                        "type": "model_type",
+                        "msg": "Provider response must be one JSON object.",
+                        "input": _safe_failure_value(raw),
+                    }],
+                    "validation_error_count": 1,
+                    "provider_receipt": dict(receipt) if isinstance(receipt, Mapping) else {},
+                    "provider_output": raw,
+                },
+            )
         return dict(raw), dict(receipt or {})
 
     def _validate_proposals(self, raw: dict[str, Any], plan: V3AssistantPlan, recipe: Any, bundle: Any) -> tuple[V3AIProviderEnvelope, dict[str, int]]:
         untrusted_keys = {"status", "approval", "activate", "materialize", "p6", "provider_instruction"}
-        if any(key in raw for key in untrusted_keys):
-            raise V3FactoryError("AI_COPY_ASSIST_RESPONSE_INVALID", "Provider output attempted to cross the V3 authoring boundary.", status_code=502)
-        usage = raw.pop("__usage__", None)
+        forbidden_keys = sorted(key for key in untrusted_keys if key in raw)
+        if forbidden_keys:
+            errors = [
+                {
+                    "loc": [key],
+                    "type": "forbidden_provider_control_field",
+                    "msg": "Provider output attempted to cross the V3 authoring boundary.",
+                    "input": _safe_failure_value(raw.get(key)),
+                }
+                for key in forbidden_keys
+            ]
+            raise V3FactoryError(
+                "V3_PROVIDER_SCHEMA_VALIDATION_FAILED",
+                "Provider output failed the strict V3 proposal schema.",
+                status_code=502,
+                details={"validation_errors": errors, "validation_error_count": len(errors)},
+            )
         try:
-            envelope = V3AIProviderEnvelope.model_validate(raw)
-        except Exception as exc:
-            raise V3FactoryError("AI_COPY_ASSIST_RESPONSE_INVALID", "Provider output failed the strict V3 proposal schema.", status_code=502, details=str(exc)) from exc
+            # Validate a copy so provider output remains available byte-for-byte
+            # for the failure digest and bounded audit representation.  No
+            # unknown provider fields are removed before strict validation.
+            envelope = V3AIProviderEnvelope.model_validate(dict(raw))
+        except ValidationError as exc:
+            errors = _pydantic_validation_errors(exc)
+            raise V3FactoryError(
+                "V3_PROVIDER_SCHEMA_VALIDATION_FAILED",
+                "Provider output failed the strict V3 proposal schema.",
+                status_code=502,
+                details={"validation_errors": errors, "validation_error_count": len(errors)},
+            ) from exc
         if plan.supply_actions.get("angle") == "CREATE_DRAFT" and envelope.angle_proposal is None:
             raise V3FactoryError("AI_COPY_ASSIST_ANGLE_PROPOSAL_REQUIRED", "Zero-supply CREATE requires a distinct Angle DRAFT proposal.", status_code=502)
         if plan.supply_actions.get("storyline_family") == "CREATE_DRAFT" and envelope.storyline_family_proposal is None:
@@ -848,7 +1003,88 @@ class V3CopyRegisterRound2Service:
                 if any(fact_id not in known_facts for fact_id in segment.evidence_fact_ids):
                     raise V3FactoryError("AI_COPY_ASSIST_EVIDENCE_INVALID", "Provider output cited evidence outside the current approved registry.", status_code=502)
             remaining[proposal.semantic_class] -= 1
-        return envelope, {"usage_tokens": int((usage or {}).get("total_tokens") or (usage or {}).get("output_tokens") or 0)}
+        return envelope, {"usage_tokens": 0}
+
+    def _failure_result(
+        self,
+        plan: V3AssistantPlan,
+        *,
+        provider_mode: ProviderMode,
+        raw: Any,
+        provider_receipt: Mapping[str, Any] | None,
+        error: V3FactoryError,
+        provider_calls: int,
+        token_usage: Mapping[str, int | float],
+        cost_status: str,
+        cost_reported: bool,
+        reported_cost: float,
+        output_digest: str | None,
+    ) -> dict[str, Any]:
+        details = error.details if error.details is not None else {}
+        validation_errors = (
+            details.get("validation_errors", [])
+            if isinstance(details, Mapping)
+            else []
+        )
+        receipt = provider_receipt or {}
+        receipt_metadata = {
+            key: _safe_failure_value(receipt.get(key))
+            for key in (
+                "lane",
+                "provider_id",
+                "model_id",
+                "call_id",
+                "response_status",
+                "http_status",
+                "json_parse_status",
+                "finish_reason",
+                "diagnostic_category",
+                "diagnostic_metadata",
+            )
+            if key in receipt
+        }
+        evidence = {
+            "kind": "V3_PROVIDER_FAILURE",
+            "error_code": error.code,
+            "error_message": str(error),
+            "error_details": _safe_failure_value(details),
+            "validation_error_count": len(validation_errors),
+            "validation_errors": _safe_failure_value(validation_errors),
+            "provider": {
+                **receipt_metadata,
+                "prompt_digest": plan.prompt_digest,
+                "output_digest": output_digest,
+                "usage": _safe_failure_value(dict(token_usage)),
+                "provider_calls": int(provider_calls),
+                "cost_status": cost_status,
+                "reported_cost": reported_cost if cost_reported else None,
+            },
+            "provider_output": (
+                _bounded_failure_output(raw)
+                if raw is not None
+                else _bounded_failure_output(details.get("provider_output"))
+                if isinstance(details, Mapping) and details.get("provider_output") is not None
+                else None
+            ),
+        }
+        return {
+            "run_id": plan.run_id,
+            "plan_id": plan.plan_id,
+            "product_id": plan.product_id,
+            "mode": plan.mode,
+            "status": "FAILED",
+            "provider_mode": provider_mode,
+            "provider_calls": int(provider_calls),
+            # The legacy integer column remains backward-compatible; the
+            # explicit cost_status/reported_cost pair is authoritative when a
+            # provider did not report a monetary/credit value.
+            "credit_spend": int(reported_cost) if cost_reported else 0,
+            "cost_status": cost_status,
+            "reported_cost": reported_cost if cost_reported else None,
+            "token_usage": dict(token_usage),
+            "output_digest": output_digest,
+            "failure_evidence": evidence,
+        }
 
     async def _persist_run_result(self, run_id: str, *, status: str, provider_mode: str, provider_receipt: dict[str, Any] | None, result: dict[str, Any] | None, error_code: str | None = None, cost_status: str | None = None) -> None:
         provider_receipt = provider_receipt or None
@@ -902,38 +1138,116 @@ class V3CopyRegisterRound2Service:
             raise V3FactoryError("TRUTH_LINEAGE_REQUIRED", "Assistant execution requires current Product Truth lineage.", status_code=409)
         bundle = await self.factory.truth_adapter.revalidate(recipe.product_truth)
         system, user, _truth_json = await self._prompt_parts(plan, recipe)
-        raw, provider_receipt_raw = await self._call_provider(system, user, mode=provider_mode, plan=plan, recipe=recipe, bundle=bundle)
-        envelope, usage = self._validate_proposals(raw, plan, recipe, bundle)
-        provider_usage = dict(provider_receipt_raw.get("usage") or {})
-        usage_tokens = int(max(
-            _usage_number(usage, ("usage_tokens", "total_tokens", "output_tokens")),
-            _usage_number(provider_usage, ("total_tokens", "output_tokens", "usage_tokens")),
-        ))
-        provider_calls = 0 if provider_mode == "FAKE_TEST" else 1
-        # Provider cost is never invented: it counts only if the provider
-        # actually returned a cost/credit field.  Absent that, cost is NOT_REPORTED.
-        cost_keys = ("credit_spend", "cost")
-        cost_reported = any(key in provider_receipt_raw for key in cost_keys) or any(key in provider_usage for key in cost_keys)
-        reported_cost = max(
-            _usage_number(provider_receipt_raw, cost_keys),
-            _usage_number(provider_usage, cost_keys),
-        )
-        if provider_calls > plan.max_provider_calls:
-            await self._persist_run_result(plan.run_id, status="FAILED", provider_mode=provider_mode, provider_receipt=provider_receipt_raw, result=None, error_code="AI_COPY_ASSIST_CALL_BUDGET_EXCEEDED", cost_status="NOT_REPORTED")
-            raise V3FactoryError("AI_COPY_ASSIST_CALL_BUDGET_EXCEEDED", "The provider call count exceeded the explicit Round 2 plan budget.", status_code=502)
-        if usage_tokens > plan.max_output_tokens:
-            await self._persist_run_result(plan.run_id, status="FAILED", provider_mode=provider_mode, provider_receipt=provider_receipt_raw, result=None, error_code="AI_COPY_ASSIST_TOKEN_BUDGET_EXCEEDED", cost_status="NOT_REPORTED")
-            raise V3FactoryError("AI_COPY_ASSIST_TOKEN_BUDGET_EXCEEDED", "The provider output exceeded the explicit Round 2 token budget.", status_code=502)
-        # A cost ceiling is enforced ONLY when an explicit positive max_cost was
-        # declared.  max_cost == 0 means cost is not the gating control (bounded
-        # calls/tokens/proposals are); it must never auto-fail a legitimate paid
-        # provider request just because no positive ceiling was configured.
-        if plan.max_cost > 0 and cost_reported and reported_cost > plan.max_cost:
-            await self._persist_run_result(plan.run_id, status="FAILED", provider_mode=provider_mode, provider_receipt=provider_receipt_raw, result=None, error_code="AI_COPY_ASSIST_COST_BUDGET_EXCEEDED", cost_status="BUDGET_EXCEEDED")
-            raise V3FactoryError("AI_COPY_ASSIST_COST_BUDGET_EXCEEDED", "The provider reported cost above the explicit Round 2 budget.", status_code=502)
-        cost_status = "NOT_REPORTED" if not cost_reported else "WITHIN_BUDGET"
-        if usage_tokens:
-            provider_usage["total_tokens"] = usage_tokens
+        raw: dict[str, Any] | None = None
+        provider_receipt_raw: dict[str, Any] = {}
+        raw_output_digest: str | None = None
+        provider_usage: dict[str, int | float] = {}
+        usage_tokens = 0
+        provider_calls = 0
+        cost_reported = False
+        reported_cost = 0.0
+        cost_status = "NOT_REPORTED"
+
+        def hydrate_failure_context(error: V3FactoryError) -> None:
+            """Recover exact provider context attached to a failed call."""
+
+            nonlocal raw, provider_receipt_raw, raw_output_digest
+            nonlocal provider_usage, provider_calls, cost_reported, reported_cost, cost_status
+            if not provider_receipt_raw:
+                provider_receipt_raw = _provider_receipt_from_error(error)
+            if not provider_receipt_raw:
+                return
+            if provider_mode != "FAKE_TEST":
+                provider_calls = max(provider_calls, 1)
+            receipt_usage = provider_receipt_raw.get("usage")
+            if isinstance(receipt_usage, Mapping):
+                provider_usage = {**dict(receipt_usage), **provider_usage}
+            cost_keys = ("credit_spend", "cost")
+            cost_reported = cost_reported or any(key in provider_receipt_raw for key in cost_keys) or any(key in provider_usage for key in cost_keys)
+            reported_cost = max(
+                reported_cost,
+                _usage_number(provider_receipt_raw, cost_keys),
+                _usage_number(provider_usage, cost_keys),
+            )
+            if cost_status != "BUDGET_EXCEEDED":
+                cost_status = "WITHIN_BUDGET" if cost_reported else "NOT_REPORTED"
+            if raw is None and isinstance(error.details, Mapping) and error.details.get("provider_output") is not None:
+                raw = error.details["provider_output"]
+            if raw_output_digest is None and raw is not None:
+                raw_output_digest = deterministic_digest(raw)
+
+        async def persist_failure(error: V3FactoryError) -> None:
+            hydrate_failure_context(error)
+            if not (provider_receipt_raw or provider_calls):
+                return
+            durable_receipt = _failure_receipt(plan, provider_receipt_raw, raw_output_digest)
+            failure = self._failure_result(
+                plan,
+                provider_mode=provider_mode,
+                raw=raw,
+                provider_receipt=durable_receipt,
+                error=error,
+                provider_calls=provider_calls,
+                token_usage=provider_usage,
+                cost_status=("BUDGET_EXCEEDED" if error.code == "AI_COPY_ASSIST_COST_BUDGET_EXCEEDED" else cost_status),
+                cost_reported=cost_reported,
+                reported_cost=reported_cost,
+                output_digest=raw_output_digest,
+            )
+            await self._persist_run_result(
+                plan.run_id,
+                status="FAILED",
+                provider_mode=provider_mode,
+                provider_receipt=durable_receipt,
+                result=failure,
+                error_code=error.code,
+                cost_status=("BUDGET_EXCEEDED" if error.code == "AI_COPY_ASSIST_COST_BUDGET_EXCEEDED" else cost_status),
+            )
+
+        try:
+            raw, provider_receipt_raw = await self._call_provider(
+                system, user, mode=provider_mode, plan=plan, recipe=recipe, bundle=bundle
+            )
+            raw_output_digest = deterministic_digest(raw)
+            provider_usage = dict(provider_receipt_raw.get("usage") or {})
+            provider_calls = 0 if provider_mode == "FAKE_TEST" else 1
+            # Provider cost is never invented: it counts only if the provider
+            # actually returned a cost/credit field.  Absent that, cost is
+            # NOT_REPORTED and the failure evidence records no numeric value.
+            cost_keys = ("credit_spend", "cost")
+            cost_reported = any(key in provider_receipt_raw for key in cost_keys) or any(key in provider_usage for key in cost_keys)
+            reported_cost = max(
+                _usage_number(provider_receipt_raw, cost_keys),
+                _usage_number(provider_usage, cost_keys),
+            )
+            envelope, usage = self._validate_proposals(raw, plan, recipe, bundle)
+            usage_tokens = int(max(
+                _usage_number(usage, ("usage_tokens", "total_tokens", "output_tokens")),
+                _usage_number(provider_usage, ("total_tokens", "output_tokens", "usage_tokens")),
+            ))
+            if provider_calls > plan.max_provider_calls:
+                raise V3FactoryError("AI_COPY_ASSIST_CALL_BUDGET_EXCEEDED", "The provider call count exceeded the explicit Round 2 plan budget.", status_code=502)
+            if usage_tokens > plan.max_output_tokens:
+                raise V3FactoryError("AI_COPY_ASSIST_TOKEN_BUDGET_EXCEEDED", "The provider output exceeded the explicit Round 2 token budget.", status_code=502)
+            # A cost ceiling is enforced ONLY when an explicit positive max_cost
+            # was declared.  max_cost == 0 means cost is not the gating control.
+            if plan.max_cost > 0 and cost_reported and reported_cost > plan.max_cost:
+                raise V3FactoryError("AI_COPY_ASSIST_COST_BUDGET_EXCEEDED", "The provider reported cost above the explicit Round 2 budget.", status_code=502)
+            cost_status = "NOT_REPORTED" if not cost_reported else "WITHIN_BUDGET"
+            if usage_tokens:
+                provider_usage["total_tokens"] = usage_tokens
+        except V3FactoryError as exc:
+            await persist_failure(exc)
+            raise
+        except Exception as exc:
+            failure_error = V3FactoryError(
+                "AI_COPY_ASSIST_EXECUTION_FAILED",
+                "The V3 assistant execution failed closed.",
+                status_code=500,
+                details={"exception_type": type(exc).__name__},
+            )
+            await persist_failure(failure_error)
+            raise failure_error from exc
         created_components: list[V3StoryboardComponent] = []
         try:
             angle, family = await self._resolve_route(recipe, allow_missing=plan.mode == "CREATE")
@@ -1086,8 +1400,17 @@ class V3CopyRegisterRound2Service:
             # If a component was already written, retain it as a reviewable V3
             # draft but make the assistant run terminal and explicit. No V2/P6
             # path is touched and no provider retry happens in the background.
-            await self._persist_run_result(plan.run_id, status="FAILED", provider_mode=provider_mode, provider_receipt=provider_receipt_raw, result=None, error_code=exc.code)
+            await persist_failure(exc)
             raise
+        except Exception as exc:
+            failure_error = V3FactoryError(
+                "AI_COPY_ASSIST_EXECUTION_FAILED",
+                "The V3 assistant execution failed closed.",
+                status_code=500,
+                details={"exception_type": type(exc).__name__},
+            )
+            await persist_failure(failure_error)
+            raise failure_error from exc
 
     def _ai_projection_prompt(self, master: V3MasterStoryboard, compressed: Sequence[Any], language: str) -> tuple[str, str]:
         stages_payload = [

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 import pytest
 
 from agent.authority.copy_blueprint_v2_authority import required_formula_stage_keys
 from agent.db.schema import get_db
 from agent.models.copy_blueprint_v2 import digest_evidence_text
+from agent.services import ai_copy_provider_adapter
 from agent.services.storyboard_landbank_v3_factory import V3CopyFactoryService
 
 _R2_SOURCE = "STORYBOARD_LANDBANK_V3_ROUND2_COPY_REGISTER_AI"
@@ -159,6 +161,166 @@ async def _seed_round2_fixture(product_id: str = "round2-product"):
     return factory, recipe, angle, family
 
 
+class _SchemaFailureProvider:
+    def __init__(self):
+        self.payload: dict = {}
+        self.calls = 0
+
+    def complete_json_with_receipt(self, _system: str, _user: str):
+        self.calls += 1
+        return deepcopy(self.payload), {
+            "lane": "text_assist",
+            "provider_id": "schema-test",
+            "model_id": "schema-test-model",
+            "call_id": 41,
+            "response_status": "SUCCEEDED",
+            "http_status": 200,
+            "finish_reason": "stop",
+            "json_parse_status": "VALID",
+            "diagnostic_metadata": {},
+            "usage": {"prompt_tokens": 3227, "completion_tokens": 1223, "total_tokens": 4450},
+        }
+
+
+class _TransportFailureProvider:
+    def __init__(self):
+        self.calls = 0
+
+    def complete_json_with_receipt(self, _system: str, _user: str):
+        self.calls += 1
+        error = ai_copy_provider_adapter.AICopyProviderError(
+            ai_copy_provider_adapter.ERR_CALL_FAILED,
+            detail="deterministic transport failure",
+            diagnostic_category="HTTP_FAILURE",
+            diagnostic_metadata={"reason": "test"},
+            http_status=502,
+            usage={"prompt_tokens": 3227, "completion_tokens": 0, "total_tokens": 3227},
+        )
+        error.call_id = 42
+        error.provider_receipt = {
+            "lane": "text_assist",
+            "provider_id": "transport-test",
+            "model_id": "transport-test-model",
+            "call_id": 42,
+            "response_status": "FAILED",
+            "http_status": 502,
+            "json_parse_status": "INVALID",
+            "diagnostic_category": "HTTP_FAILURE",
+            "diagnostic_metadata": {"reason": "test"},
+            "usage": {"prompt_tokens": 3227, "completion_tokens": 0, "total_tokens": 3227},
+        }
+        raise error
+
+
+async def _run_schema_failure_case(product_id: str, mutate):
+    factory, recipe, _angle, _family = await _seed_round2_fixture(product_id)
+    provider = _SchemaFailureProvider()
+    service = V3CopyRegisterRound2Service(factory=factory, provider=provider)
+    plan = await service.plan_assistant(
+        recipe.product_id,
+        recipe.recipe_id,
+        mode="CREATE",
+        actor_id="round2-schema-test",
+        request_id=f"{product_id}:plan",
+    )
+    bundle = await factory.truth_adapter.current(recipe.product_id)
+    provider.payload = service._fake_envelope(plan, recipe, bundle)
+    mutate(provider.payload)
+    with pytest.raises(Exception) as error:
+        await service.execute_assistant(
+            plan.plan_id,
+            actor_id="round2-schema-test",
+            request_id=f"{product_id}:execute",
+        )
+    assert error.value.code == "V3_PROVIDER_SCHEMA_VALIDATION_FAILED"
+    assert provider.calls == 1
+
+    db = await get_db()
+    row = await (await db.execute(
+        "SELECT status, error_code, provider_receipt_json, token_usage_json, provider_calls, credit_spend, cost_status, output_digest, result_json "
+        "FROM v3_ai_authoring_run WHERE run_id=?",
+        (plan.run_id,),
+    )).fetchone()
+    assert row["status"] == "FAILED"
+    assert row["error_code"] == "V3_PROVIDER_SCHEMA_VALIDATION_FAILED"
+    assert row["provider_calls"] == 1
+    assert row["credit_spend"] == 0  # legacy non-null column; cost_status is authoritative
+    assert row["cost_status"] == "NOT_REPORTED"
+    assert json.loads(row["token_usage_json"]) == {
+        "prompt_tokens": 3227,
+        "completion_tokens": 1223,
+        "total_tokens": 4450,
+    }
+    assert row["output_digest"] and len(row["output_digest"]) == 64
+
+    receipt = json.loads(row["provider_receipt_json"])
+    assert receipt["provider_id"] == "schema-test"
+    assert receipt["model_id"] == "schema-test-model"
+    assert receipt["call_id"] == 41
+    assert receipt["response_status"] == "SUCCEEDED"
+    assert receipt["json_parse_status"] == "VALID"
+    assert receipt["prompt_digest"] == plan.prompt_digest
+    assert receipt["output_digest"] == row["output_digest"]
+    assert receipt["usage"]["total_tokens"] == 4450
+
+    failure = json.loads(row["result_json"])
+    assert failure["status"] == "FAILED"
+    assert failure["provider_calls"] == 1
+    assert failure["cost_status"] == "NOT_REPORTED"
+    assert failure["reported_cost"] is None
+    assert failure["failure_evidence"]["provider"]["reported_cost"] is None
+    assert failure["failure_evidence"]["provider_output"]["value"] == provider.payload
+    assert failure["failure_evidence"]["provider_output"]["truncated"] is False
+    assert failure["failure_evidence"]["provider"]["output_digest"] == row["output_digest"]
+    assert failure["failure_evidence"]["validation_error_count"] == len(failure["failure_evidence"]["validation_errors"])
+
+    for table in (
+        "master_storyboard_v3",
+        "duration_projection_v3",
+        "v3_human_approval_receipt",
+        "materialization_link_v3",
+        "production_copy_supply_manifest_v3",
+    ):
+        count = await (await db.execute(f"SELECT COUNT(*) FROM {table} WHERE product_id=?", (recipe.product_id,))).fetchone()
+        assert count[0] == 0, table
+
+    # A terminal failure cannot be executed again, so the provider call cannot
+    # be doubled by an operator retry or a repeated persistence attempt.
+    with pytest.raises(Exception) as terminal_error:
+        await service.execute_assistant(
+            plan.plan_id,
+            actor_id="round2-schema-test",
+            request_id=f"{product_id}:retry",
+        )
+    assert terminal_error.value.code == "V3_PROVIDER_SCHEMA_VALIDATION_FAILED"
+    assert provider.calls == 1
+    return plan, provider, service, row, failure
+
+
+def _remove_proposals(payload):
+    payload.pop("proposals")
+
+
+def _add_unknown_field(payload):
+    payload["unexpected_field"] = "must remain visible in failure evidence"
+
+
+def _break_schema_version(payload):
+    payload["schema_version"] = "wrong-version"
+
+
+def _break_semantic_class(payload):
+    payload["proposals"][0]["semantic_class"] = "NOT_A_CLASS"
+
+
+def _remove_entry_key(payload):
+    payload["proposals"][0]["segments"][0].pop("entry_key")
+
+
+def _remove_exit_key(payload):
+    payload["proposals"][0]["segments"][0].pop("exit_key")
+
+
 @pytest.mark.asyncio
 async def test_round2_fake_assistant_is_explicit_bounded_and_projection_aware(monkeypatch):
     monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
@@ -280,7 +442,148 @@ async def test_round2_strict_output_rejects_injection_and_extra_governance_field
             actor_id="round2-security",
             request_id="round2:security-execute",
         )
-    assert error.value.code == "AI_COPY_ASSIST_RESPONSE_INVALID"
+    assert error.value.code == "V3_PROVIDER_SCHEMA_VALIDATION_FAILED"
+    db = await get_db()
+    row = await (await db.execute(
+        "SELECT status, error_code, provider_calls, cost_status, result_json FROM v3_ai_authoring_run WHERE run_id=?",
+        (plan.run_id,),
+    )).fetchone()
+    assert tuple(row[:4]) == ("FAILED", "V3_PROVIDER_SCHEMA_VALIDATION_FAILED", 1, "NOT_REPORTED")
+    failure = json.loads(row["result_json"])
+    assert failure["failure_evidence"]["validation_errors"][0]["loc"] == ["status"]
+    assert failure["failure_evidence"]["provider_output"]["value"]["status"] == "APPROVED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("case", "mutate", "expected_loc"),
+    (
+        ("missing-proposals", _remove_proposals, ("proposals",)),
+        ("unknown-field", _add_unknown_field, ("unexpected_field",)),
+        ("wrong-schema-version", _break_schema_version, ("schema_version",)),
+        ("wrong-semantic-class", _break_semantic_class, ("proposals", 0, "semantic_class")),
+        ("missing-entry-key", _remove_entry_key, ("proposals", 0, "segments", 0, "entry_key")),
+        ("missing-exit-key", _remove_exit_key, ("proposals", 0, "segments", 0, "exit_key")),
+    ),
+)
+async def test_round2_provider_schema_failures_are_durable(case, mutate, expected_loc):
+    _plan, _provider, _service, _row, failure = await _run_schema_failure_case(f"round2-schema-{case}", mutate)
+    locations = {
+        tuple(item["loc"])
+        for item in failure["failure_evidence"]["validation_errors"]
+    }
+    assert expected_loc in locations
+
+
+@pytest.mark.asyncio
+async def test_round2_provider_transport_failure_retains_exact_call_receipt():
+    factory, recipe, _angle, _family = await _seed_round2_fixture("round2-transport-failure")
+    provider = _TransportFailureProvider()
+    service = V3CopyRegisterRound2Service(factory=factory, provider=provider)
+    plan = await service.plan_assistant(
+        recipe.product_id,
+        recipe.recipe_id,
+        mode="CREATE",
+        actor_id="round2-transport-test",
+        request_id="round2:transport-plan",
+    )
+    with pytest.raises(Exception) as error:
+        await service.execute_assistant(
+            plan.plan_id,
+            actor_id="round2-transport-test",
+            request_id="round2:transport-execute",
+        )
+    assert error.value.code == "AI_COPY_ASSIST_CALL_FAILED"
+    assert provider.calls == 1
+
+    db = await get_db()
+    row = await (await db.execute(
+        "SELECT status, error_code, provider_receipt_json, token_usage_json, provider_calls, cost_status, output_digest, result_json "
+        "FROM v3_ai_authoring_run WHERE run_id=?",
+        (plan.run_id,),
+    )).fetchone()
+    assert tuple(row[:2]) == ("FAILED", "AI_COPY_ASSIST_CALL_FAILED")
+    assert row["provider_calls"] == 1
+    assert row["cost_status"] == "NOT_REPORTED"
+    assert row["output_digest"] is None
+    assert json.loads(row["token_usage_json"])["total_tokens"] == 3227
+    receipt = json.loads(row["provider_receipt_json"])
+    assert receipt["call_id"] == 42
+    assert receipt["response_status"] == "FAILED"
+    assert receipt["prompt_digest"] == plan.prompt_digest
+    failure = json.loads(row["result_json"])
+    assert failure["provider_calls"] == 1
+    assert failure["failure_evidence"]["provider_output"] is None
+
+
+@pytest.mark.asyncio
+async def test_round2_failure_persistence_is_idempotent():
+    plan, provider, service, row, _failure = await _run_schema_failure_case(
+        "round2-schema-idempotent", _add_unknown_field
+    )
+    before = (
+        row["status"],
+        row["error_code"],
+        row["provider_receipt_json"],
+        row["provider_calls"],
+        row["result_json"],
+    )
+    await service._persist_run_result(
+        plan.run_id,
+        status="FAILED",
+        provider_mode="LIVE_TEXT_ASSIST",
+        provider_receipt={"provider_id": "should-not-overwrite"},
+        result={"status": "FAILED", "provider_calls": 99},
+        error_code="SHOULD_NOT_OVERWRITE",
+        cost_status="BUDGET_EXCEEDED",
+    )
+    db = await get_db()
+    after = await (await db.execute(
+        "SELECT status, error_code, provider_receipt_json, provider_calls, result_json FROM v3_ai_authoring_run WHERE run_id=?",
+        (plan.run_id,),
+    )).fetchone()
+    assert tuple(after) == before
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_round2_successful_run_cannot_be_overwritten_by_failed_persistence(monkeypatch):
+    monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
+    factory, recipe, _angle, _family = await _seed_round2_fixture("round2-success-terminal")
+    service = V3CopyRegisterRound2Service(factory=factory)
+    plan = await service.plan_assistant(
+        recipe.product_id,
+        recipe.recipe_id,
+        mode="CREATE",
+        actor_id="round2-terminal",
+        request_id="round2:terminal-plan",
+    )
+    result = await service.execute_assistant(
+        plan.plan_id,
+        actor_id="round2-terminal",
+        request_id="round2:terminal-execute",
+        provider_mode="FAKE_TEST",
+    )
+    db = await get_db()
+    before = await (await db.execute(
+        "SELECT status, error_code, provider_calls, result_json FROM v3_ai_authoring_run WHERE run_id=?",
+        (plan.run_id,),
+    )).fetchone()
+    await service._persist_run_result(
+        plan.run_id,
+        status="FAILED",
+        provider_mode="LIVE_TEXT_ASSIST",
+        provider_receipt={"provider_id": "should-not-overwrite"},
+        result={"status": "FAILED", "provider_calls": 1},
+        error_code="SHOULD_NOT_OVERWRITE",
+        cost_status="NOT_REPORTED",
+    )
+    after = await (await db.execute(
+        "SELECT status, error_code, provider_calls, result_json FROM v3_ai_authoring_run WHERE run_id=?",
+        (plan.run_id,),
+    )).fetchone()
+    assert tuple(after) == tuple(before)
+    assert json.loads(after["result_json"]) == result
 
 
 @pytest.mark.asyncio
