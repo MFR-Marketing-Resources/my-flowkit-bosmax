@@ -177,6 +177,27 @@ async def _resolve_product_authority_blockers(
     return tuple(remaining)
 
 
+async def _claim_safety_launch_blocker(product_id: str) -> tuple[str, ...]:
+    """Keep the P5.8 launch cohort claim-safe by construction.
+
+    A product whose latest APPROVED Product Intelligence is not ``CLAIM_SAFE``
+    (i.e. still ``CLAIM_REVIEW_REQUIRED``) must never enter the production launch
+    cohort, regardless of taxonomy/authority mapping. Health-claim safety is
+    fail-closed at the cohort boundary; such a product returns to individual
+    review, it is not silently produced against. Products without an approved
+    snapshot are left to the existing authority/mapping gates.
+    """
+
+    snapshot = await crud.get_latest_approved_product_intelligence_snapshot(
+        product_id
+    )
+    if snapshot is None:
+        return ()
+    if str(snapshot.get("claim_gate") or "").upper() != "CLAIM_SAFE":
+        return ("CLAIM_REVIEW_REQUIRED",)
+    return ()
+
+
 def _product_name(product: dict[str, object]) -> str:
     for field in (
         "product_display_name",
@@ -451,6 +472,9 @@ async def build_catalog_authority_matrix() -> CatalogAuthorityMatrixReport:
         )
         authority_blockers = list(
             await _resolve_product_authority_blockers(coverage_row.product_id)
+        )
+        authority_blockers.extend(
+            await _claim_safety_launch_blocker(coverage_row.product_id)
         )
         blockers = list(
             dict.fromkeys([*coverage_row.blockers, *authority_blockers])
