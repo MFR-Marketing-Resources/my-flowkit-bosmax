@@ -49,6 +49,11 @@ def canonical_db_path() -> Path:
     return Path(os.environ.get("BOSMAX_CANONICAL_DB", str(dev_root() / "flow_agent.db"))).resolve()
 
 
+def source_root() -> Path:
+    """Return the immutable code/assets root without importing an API module."""
+    return Path(__file__).resolve().parent.parent
+
+
 # ── git helpers (module-level so tests can monkeypatch) ──────────────────────
 def _git(source_root: Path, *args: str) -> str | None:
     try:
@@ -57,6 +62,11 @@ def _git(source_root: Path, *args: str) -> str | None:
         ).strip()
     except Exception:
         return None
+
+
+def git_output(*args: str) -> str | None:
+    """Read git provenance from the served source root, with no app side effects."""
+    return _git(source_root(), *args)
 
 
 def git_head(source_root) -> str | None:

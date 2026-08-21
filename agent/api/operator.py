@@ -13,6 +13,7 @@ from openpyxl import load_workbook
 from pydantic import BaseModel
 
 from agent import config as agent_config
+from agent import runtime_release
 from agent.config import OPERATOR_PACK_DIR
 from agent.db import crud
 from agent.db.schema import get_db
@@ -141,6 +142,16 @@ class FlowReadinessSmokeRequest(BaseModel):
     batch_id: str | None = None
     variant_id: str | None = None
     mode: str = "F2V"
+
+
+class FlowProviderReadinessRequest(BaseModel):
+    provider_browser_authority_mode: str = "DEDICATED_CDP_UAT"
+    owner_profile_label: str | None = None
+    extension_source_path: str | None = None
+    provider_execution_route: str = "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+    scene_scaffold_route: str = "AGENT_T2V"
+    flow_tab_id: int | None = None
+    mode: str = "T2V"
 
 
 class ReloadFlowTabRequest(BaseModel):
@@ -500,6 +511,76 @@ async def _find_latest_batch_context(product_id: str | None) -> dict[str, Any] |
     return dict(row) if row else None
 
 
+def _extract_numeric_credit(value: Any) -> int | float | None:
+    """Find a finite numeric credit balance without treating auth metadata as proof."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return value if value == value and value not in (float("inf"), float("-inf")) else None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if re.fullmatch(r"-?\d+(?:\.\d+)?", stripped):
+            try:
+                return float(stripped) if "." in stripped else int(stripped)
+            except ValueError:
+                return None
+        return None
+    if isinstance(value, dict):
+        credit_keys = {"credits", "creditbalance", "availablecredits", "remainingcredits", "balance"}
+        for key, child in value.items():
+            if str(key).lower().replace("_", "") in credit_keys:
+                found = _extract_numeric_credit(child)
+                if found is not None:
+                    return found
+        for child in value.values():
+            found = _extract_numeric_credit(child)
+            if found is not None:
+                return found
+    if isinstance(value, (list, tuple)):
+        for child in value:
+            found = _extract_numeric_credit(child)
+            if found is not None:
+                return found
+    return None
+
+
+_ACTIVE_PROVIDER_JOB_STATUSES = frozenset({
+    "INITIAL_SUBMITTING",
+    "INITIAL_POLLING",
+    "INITIAL_RECOVERY_REQUIRED",
+    "EXTEND_SUBMITTING",
+    "EXTEND_POLLING",
+    "CONCAT_SUBMITTING",
+    "CONCAT_POLLING",
+    "FINAL_SAVING",
+    "RUNNING",
+    "GENERATING",
+    "IN_PROGRESS",
+    "POLLING",
+})
+
+
+async def _provider_readiness_runtime() -> dict[str, Any]:
+    origin_main = runtime_release.git_output("rev-parse", "origin/main")
+    provenance = runtime_release.resolve_provenance(
+        runtime_release.source_root(),
+        agent_config.DB_PATH,
+        origin_main=origin_main,
+    )
+    provenance["origin_main"] = origin_main
+    provenance["runtime_current_main"] = bool(
+        provenance.get("runtime_sha")
+        and provenance.get("origin_main")
+        and provenance.get("runtime_sha") == provenance.get("origin_main")
+        and provenance.get("canonical_runtime") is True
+        and provenance.get("source_stale") is False
+        and provenance.get("release_dirty") is False
+        and provenance.get("db_canonical") is True
+        and provenance.get("bundle_matches") is True
+    )
+    return provenance
+
+
 def _classify_flow_primary_blocker(
     extension_connected: bool,
     composer: dict[str, Any],
@@ -698,6 +779,191 @@ async def flow_readiness_smoke(body: FlowReadinessSmokeRequest):
         "composer": composer,
         "smoke_result": smoke_result,
         "batch_context": batch_context,
+    }
+
+
+@router.post("/flow-provider-readiness")
+async def flow_provider_readiness(body: FlowProviderReadinessRequest):
+    """Read-only provider-authority receipt for the selected execution route.
+
+    This endpoint deliberately separates the owner-profile extension bridge
+    from the dedicated CDP Browser UAT. It never opens a tab, changes account
+    state, submits a provider request, or touches product data.
+    """
+    authority_mode = str(body.provider_browser_authority_mode or "").strip().upper()
+    supported_modes = {"DEDICATED_CDP_UAT", "OWNER_PROFILE_EXTENSION_BRIDGE"}
+    runtime = await _provider_readiness_runtime()
+    base = {
+        "provider_browser_authority_mode": authority_mode,
+        "owner_profile_label": body.owner_profile_label,
+        "extension_source_path": body.extension_source_path,
+        "provider_execution_route": body.provider_execution_route,
+        "scene_scaffold_route": body.scene_scaffold_route,
+        "ui_composer_required": not (
+            body.provider_execution_route == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+            and body.scene_scaffold_route == "AGENT_T2V"
+        ),
+        "runtime_sha": runtime.get("runtime_sha"),
+        "origin_main": runtime.get("origin_main"),
+        "runtime_current_main": runtime.get("runtime_current_main") is True,
+        "release_dir": runtime.get("release_dir"),
+        "source_stale": runtime.get("source_stale"),
+        "release_dirty": runtime.get("release_dirty"),
+        "db_canonical": runtime.get("db_canonical"),
+        "bundle_matches": runtime.get("bundle_matches"),
+        "dashboard_bundle": runtime.get("dashboard_bundle"),
+        "flow_transport_connected": False,
+        "flow_transport_bound_to_provider_browser": False,
+        "flow_auth_status": "UNKNOWN",
+        "numeric_credit_balance": None,
+        "flow_tab_found": False,
+        "flow_tab_id": None,
+        "flow_project_url": None,
+        "flow_project_id": None,
+        "content_script_loaded": False,
+        "content_script_alive": False,
+        "session_challenge_verified": False,
+        "same_extension_session": False,
+        "same_flow_tab": False,
+        "extension_session_id": None,
+        "extension_id": None,
+        "extension_version": None,
+        "extension_build": None,
+        "extension_build_match": False,
+        "video_job_in_flight": False,
+    }
+    if authority_mode not in supported_modes:
+        return {
+            **base,
+            "FLOW_PROVIDER_UAT_READY": False,
+            "primary_blocker": "INVALID_PROVIDER_BROWSER_AUTHORITY_MODE",
+        }
+
+    client = get_flow_client()
+    status = await client.get_status(timeout=5)
+    extension_connected = client.connected and status.get("connected") is True
+    base.update({
+        "flow_transport_connected": extension_connected,
+        "extension_session_id": status.get("extension_session_id"),
+        "extension_id": status.get("extension_id"),
+        "extension_version": status.get("extension_version"),
+        "extension_build": status.get("extension_build") or status.get("background_build_id"),
+    })
+
+    challenge: dict[str, Any] = {}
+    if extension_connected:
+        challenge = await client.verify_provider_session_challenge(body.flow_tab_id)
+        base.update({
+            "extension_session_id": challenge.get("extension_session_id")
+            or status.get("extension_session_id"),
+            "extension_id": challenge.get("extension_id") or status.get("extension_id"),
+            "extension_version": challenge.get("extension_version")
+            or status.get("extension_version"),
+            "extension_build": challenge.get("extension_build")
+            or status.get("extension_build")
+            or status.get("background_build_id"),
+            "extension_build_match": challenge.get("extension_build_match") is True,
+            "flow_tab_found": challenge.get("flow_tab_found") is True,
+            "flow_tab_id": challenge.get("flow_tab_id"),
+            "flow_project_url": challenge.get("flow_project_url") or challenge.get("flow_url"),
+            "flow_project_id": challenge.get("flow_project_id"),
+            "content_script_loaded": challenge.get("content_script_loaded") is True,
+            "content_script_alive": challenge.get("content_script_alive") is True,
+            "session_challenge_verified": challenge.get("session_challenge_verified") is True,
+            "same_extension_session": challenge.get("same_extension_session") is True,
+            "same_flow_tab": challenge.get("same_flow_tab") is True,
+            "flow_transport_bound_to_provider_browser": challenge.get("session_challenge_verified") is True,
+        })
+
+    credit_payload: Any = None
+    if extension_connected:
+        credit_response = await client.get_credits()
+        credit_payload = credit_response.get("data", credit_response)
+    credit_balance = _extract_numeric_credit(credit_payload)
+    base["numeric_credit_balance"] = credit_balance
+
+    flow_key_present = bool(
+        status.get("flowKeyPresent") or status.get("flow_key_present")
+    )
+    authenticated = bool(
+        extension_connected
+        and base["session_challenge_verified"]
+        and base["same_extension_session"]
+        and base["same_flow_tab"]
+        and base["flow_tab_found"]
+        and base["content_script_alive"]
+        and flow_key_present
+        and credit_balance is not None
+    )
+    base["flow_auth_status"] = "AUTHENTICATED" if authenticated else (
+        "UNAUTHENTICATED" if extension_connected else "UNKNOWN"
+    )
+
+    try:
+        jobs = await crud.list_video_production_jobs(limit=100)
+    except Exception as exc:  # pragma: no cover - defensive read-only receipt path
+        jobs = []
+        base["video_job_error"] = str(exc)
+    active_jobs = [
+        {
+            "job_id": job.get("job_id"),
+            "status": job.get("status"),
+        }
+        for job in jobs
+        if str(job.get("status") or "").upper() in _ACTIVE_PROVIDER_JOB_STATUSES
+    ]
+    base["video_job_in_flight"] = bool(active_jobs)
+
+    composer: dict[str, Any] = {}
+    if base["ui_composer_required"] and extension_connected:
+        composer = await client.check_flow_composer_ready(body.mode)
+    base["composer_found"] = composer.get("composer_found") is True
+    base["composer_runtime_ready"] = composer.get("runtime_ready") is True
+    base["composer"] = composer
+
+    blocker = None
+    if not base["runtime_current_main"]:
+        blocker = "RUNTIME_NOT_CURRENT_MAIN"
+    elif not extension_connected:
+        blocker = "EXTENSION_BRIDGE_NOT_CONNECTED"
+    elif not base["same_extension_session"]:
+        blocker = "EXTENSION_SESSION_MISMATCH"
+    elif not base["session_challenge_verified"]:
+        blocker = (
+            "FLOW_SESSION_CHALLENGE_FAILED"
+            if challenge.get("challenge_nonce_match") is not True
+            else "FLOW_SESSION_CHALLENGE_FAILED"
+        )
+    elif not base["flow_tab_found"] or not base["flow_project_url"] or not base["flow_project_id"]:
+        blocker = "FLOW_PROJECT_NOT_FOUND"
+    elif not base["content_script_alive"]:
+        blocker = "FLOW_CONTENT_SCRIPT_NOT_ALIVE"
+    elif not base["extension_build_match"]:
+        blocker = "EXTENSION_BUILD_MISMATCH"
+    elif not authenticated:
+        blocker = "FLOW_AUTH_UNAUTHENTICATED"
+    elif base["video_job_in_flight"]:
+        blocker = "PROVIDER_JOB_IN_FLIGHT"
+    elif base["ui_composer_required"] and not (
+        base["composer_found"] and base["composer_runtime_ready"]
+    ):
+        blocker = "FLOW_COMPOSER_NOT_READY"
+
+    ready = blocker is None
+    return {
+        **base,
+        "flow_key_present": flow_key_present,
+        "active_video_jobs": active_jobs,
+        "FLOW_PROVIDER_UAT_READY": ready,
+        "primary_blocker": "FLOW_PROVIDER_UAT_READY" if ready else blocker,
+        "challenge": {
+            "challenge_verified": base["session_challenge_verified"],
+            "same_extension_session": base["same_extension_session"],
+            "same_flow_tab": base["same_flow_tab"],
+            "challenge_nonce_match": challenge.get("challenge_nonce_match") is True,
+            "content_build_id": challenge.get("content_build_id"),
+            "content_script_protocol_version": challenge.get("content_script_protocol_version"),
+        },
     }
 
 

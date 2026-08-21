@@ -561,6 +561,32 @@ function isSettingsScopedModelSource(source) {
     };
   }
 
+  function buildFlowProviderSessionChallengeResponse(nonce) {
+    const challengeNonce = typeof nonce === 'string' ? nonce : '';
+    const flowUrl = window.location.href;
+    const projectMatch = flowUrl.match(/\/project\/([^/?#]+)/i);
+    const flowProjectId = projectMatch ? projectMatch[1] : null;
+    const isProjectEditor =
+      /^https:\/\/labs\.google\/fx\//i.test(flowUrl)
+      && Boolean(flowProjectId)
+      && flowUrl.indexOf('/edit/') >= 0;
+    return {
+      ok: Boolean(challengeNonce && isProjectEditor),
+      challenge_nonce: challengeNonce || null,
+      challenge_verified: Boolean(challengeNonce && isProjectEditor),
+      flow_project_url: flowUrl,
+      flow_url: flowUrl,
+      flow_project_id: flowProjectId,
+      location_href: flowUrl,
+      content_script_loaded: true,
+      content_script_alive: true,
+      runtime_ready: true,
+      content_script_protocol_version: FLOW_KIT_DOM_PROTOCOL_VERSION,
+      content_build_id: FLOW_KIT_DOM_BUILD_ID,
+      git_sha: FLOW_KIT_DOM_BUILD_ID,
+    };
+  }
+
   function buildUiContractV2Proof(mode, observed, composer, generateBtn) {
     const resolvedComposer = composer || findComposerElement();
     const resolvedObserved = observed || observeFlowState();
@@ -6284,6 +6310,26 @@ function isSettingsScopedModelSource(source) {
           input_placeholders: [],
           contenteditable_texts: [],
           aria_labels: [],
+        });
+      }
+      return false;
+    }
+
+    if (msg.type === 'FLOW_PROVIDER_SESSION_CHALLENGE') {
+      try {
+        sendResponse(buildFlowProviderSessionChallengeResponse(msg.nonce));
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          error: 'FLOW_PROVIDER_SESSION_CHALLENGE_FAILED',
+          detail: String(error?.message || error),
+          challenge_nonce: null,
+          content_script_loaded: true,
+          content_script_alive: true,
+          content_build_id: FLOW_KIT_DOM_BUILD_ID,
+          content_script_protocol_version: FLOW_KIT_DOM_PROTOCOL_VERSION,
+          flow_project_url: window.location.href,
+          flow_url: window.location.href,
         });
       }
       return false;
