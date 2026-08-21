@@ -14,7 +14,6 @@ from pydantic import BaseModel
 
 from agent import config as agent_config
 from agent import runtime_release
-from agent.api.local_agent import _SOURCE_ROOT, _git_output
 from agent.config import OPERATOR_PACK_DIR
 from agent.db import crud
 from agent.db.schema import get_db
@@ -562,9 +561,9 @@ _ACTIVE_PROVIDER_JOB_STATUSES = frozenset({
 
 
 async def _provider_readiness_runtime() -> dict[str, Any]:
-    origin_main = _git_output("rev-parse", "origin/main")
+    origin_main = runtime_release.git_output("rev-parse", "origin/main")
     provenance = runtime_release.resolve_provenance(
-        _SOURCE_ROOT,
+        runtime_release.source_root(),
         agent_config.DB_PATH,
         origin_main=origin_main,
     )
