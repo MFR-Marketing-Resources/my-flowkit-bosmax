@@ -346,6 +346,71 @@ async def _record_artifacts(job, mode, artifacts):
     from the dashboard. Best-effort: a DB hiccup must never fail a finished job."""
     job["artifact_persist_attempted"] = True
     job["artifact_persisted_count"] = 0
+    custody = job.get("product_visual_custody")
+    exact_route = bool(
+        isinstance(custody, dict)
+        and custody.get("exact_product_required")
+        and custody.get("provider_route") == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+    )
+    if exact_route and mode in _VIDEO_MODES:
+        # The retrieved provider scene is an internal scaffold.  Register only
+        # deterministic final videos whose product pixels came from the
+        # approved Product Truth cutout.
+        try:
+            from agent.services import exact_product_video_compositor_service as _exact_video
+            from agent.db import crud
+
+            product = await crud.get_product(str(custody.get("product_id") or job.get("product_id") or ""))
+            if not product:
+                raise _exact_video.ExactProductVideoCompositeError(
+                    "ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED",
+                    "Exact video compositor could not resolve the server product row.",
+                )
+            plan = custody.get("exact_product_video")
+            if not isinstance(plan, dict):
+                raise _exact_video.ExactProductVideoCompositeError(
+                    "EXACT_COMPOSITE_PLAN_MISSING",
+                    "Exact video custody has no compositor plan.",
+                )
+            final_artifacts = []
+            for raw_artifact in artifacts:
+                final_artifacts.append(
+                    _exact_video.compose_exact_product_video_artifact(
+                        product=product,
+                        plan=plan,
+                        scene_artifact=raw_artifact,
+                        product_visual_custody=custody,
+                        job_id=job.get("job_id"),
+                        foreground_masks=(raw_artifact.get("foreground_masks") or []),
+                    )
+                )
+            if not final_artifacts:
+                raise _exact_video.ExactProductVideoCompositeError(
+                    "EXACT_COMPOSITE_FINAL_MISSING",
+                    "The provider returned no scene artifact for exact compositing.",
+                )
+            artifacts = final_artifacts
+            job["artifacts"] = list(final_artifacts)
+            job["media_id"] = final_artifacts[0].get("media_id")
+            job["local_path"] = final_artifacts[0].get("local_path")
+            job["size_mb"] = final_artifacts[0].get("size_mb")
+            job["product_fidelity_qc_evidence"] = final_artifacts[0].get(
+                "product_fidelity_qc_evidence"
+            )
+            custody = {
+                **custody,
+                "exact_video_composite": final_artifacts[0].get(
+                    "exact_product_lineage"
+                ),
+            }
+            job["product_visual_custody"] = custody
+        except Exception as exc:  # noqa: BLE001 — exact output must fail closed
+            job["status"] = "PRODUCT_FIDELITY_REVIEW_REQUIRED"
+            job["product_fidelity_qc_status"] = "PRODUCT_FIDELITY_REVIEW_REQUIRED"
+            job["generated_output_review_state"] = "PRODUCT_FIDELITY_REVIEW_REQUIRED"
+            job["error"] = str(exc)
+            job["exact_composite_error"] = getattr(exc, "code", "EXACT_COMPOSITE_FAILED")
+            return
     try:
         from agent.db import crud
         for art in artifacts:
@@ -363,7 +428,7 @@ async def _record_artifacts(job, mode, artifacts):
             job["artifact_persisted_count"] += 1
     except Exception as e:  # noqa: BLE001
         job["artifact_record_error"] = str(e)
-    custody = job.get("product_visual_custody")
+    custody = job.get("product_visual_custody") or custody
     if custody and mode in _VIDEO_MODES:
         from agent.services.product_visual_custody_service import (
             evaluate_product_fidelity_qc,
@@ -416,6 +481,12 @@ async def _record_artifacts(job, mode, artifacts):
 
             routing_receipt = job.get("routing_receipt") or {}
             for artifact in artifacts:
+                artifact_custody_result = custody_result
+                if artifact.get("exact_product_lineage"):
+                    artifact_custody_result = {
+                        **custody_result,
+                        "exact_video_composite": artifact.get("exact_product_lineage"),
+                    }
                 await crud.insert_generation_result(
                     artifact["media_id"],
                     job_id=job.get("job_id"),
@@ -430,7 +501,7 @@ async def _record_artifacts(job, mode, artifacts):
                     count_setting=job.get("num_videos"),
                     reference_media_ids=routing_receipt.get("reference_media_ids") or [],
                     project_id=job.get("project_id"),
-                    product_visual_custody=custody_result,
+                    product_visual_custody=artifact_custody_result,
                 )
         except Exception as exc:  # noqa: BLE001 - lineage must not fail retrieval
             job["product_visual_custody_record_error"] = str(exc)
@@ -515,17 +586,46 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
         _routing_receipt = _build_reference_routing_receipt(
             mode, source_mode, image_media_ids, _direct_plan,
         )
+        _exact_video_route = bool(
+            isinstance(product_visual_custody, dict)
+            and product_visual_custody.get("exact_product_required")
+            and product_visual_custody.get("provider_route")
+            == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+        )
+        if _exact_video_route:
+            # Exact finalization consumes a text-only scene scaffold.  Keep it
+            # on the agent T2V scaffold lane until a separate captured direct
+            # scaffold contract exists; never reinterpret the route as a
+            # reference-bearing direct operation.
+            _direct_plan = {
+                **(_direct_plan or {}),
+                "eligible": False,
+                "reason": "EXACT_PRODUCT_SCENE_SCAFFOLD_AGENT_T2V",
+            }
         if product_visual_custody:
             from agent.services.product_visual_custody_service import (
                 ProductVisualCustodyError,
                 validate_pre_dispatch_route,
             )
 
+            exact_route = _exact_video_route
             selected_route = (
-                "DIRECT_API"
-                if _direct_plan.get("eligible")
-                else "API_FIRST_GENERATIVE_REFERENCE"
+                "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+                if exact_route
+                else (
+                    "DIRECT_API"
+                    if _direct_plan.get("eligible")
+                    else "API_FIRST_GENERATIVE_REFERENCE"
+                )
             )
+            if exact_route:
+                _routing_receipt.update(
+                    {
+                        "selected_execution_route": selected_route,
+                        "provider_product_reference_forbidden": True,
+                        "scene_scaffold_route": "AGENT_T2V",
+                    }
+                )
             try:
                 validate_pre_dispatch_route(
                     product_visual_custody,

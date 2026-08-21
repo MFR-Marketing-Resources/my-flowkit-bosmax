@@ -23,6 +23,7 @@ PRODUCT_LOCK_VERSION = "PRODUCT_LOCK_V1"
 
 REFERENCE_CONDITIONED = "REFERENCE_CONDITIONED"
 EXACT_PRODUCT_REQUIRED = "EXACT_PRODUCT_REQUIRED"
+EXACT_PRODUCT_DETERMINISTIC_COMPOSITE = "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
 
 PRODUCT_FIDELITY_QC_PENDING = "PRODUCT_FIDELITY_QC_PENDING"
 PRODUCT_FIDELITY_QC_PASS = "PRODUCT_FIDELITY_QC_PASS"
@@ -42,6 +43,7 @@ PRODUCT_FIDELITY_QC_DIMENSIONS = (
 )
 
 ERR_PRODUCT_FIDELITY_ROUTE_NOT_PROVEN = "ERR_PRODUCT_FIDELITY_ROUTE_NOT_PROVEN"
+ERR_PRODUCT_FIDELITY_GENERATION_TYPE_INVALID = "ERR_PRODUCT_FIDELITY_GENERATION_TYPE_INVALID"
 ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED = "ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED"
 ERR_OFFICIAL_PRODUCT_VISUAL_BYTES_UNREADABLE = (
     "ERR_OFFICIAL_PRODUCT_VISUAL_BYTES_UNREADABLE"
@@ -306,6 +308,22 @@ def validate_pre_dispatch_route(
 
     if not receipt.get("exact_product_required"):
         return
+    if provider_route == EXACT_PRODUCT_DETERMINISTIC_COMPOSITE and generation_type not in {
+        "scene_video_scaffold",
+        "scene_video_scaffold_then_deterministic_composite",
+    }:
+        raise ProductVisualCustodyError(
+            ERR_PRODUCT_FIDELITY_GENERATION_TYPE_INVALID,
+            "The exact deterministic route requires a scene scaffold followed by deterministic compositing.",
+            details={
+                "provider_route": provider_route,
+                "generation_type": generation_type,
+                "allowed_generation_types": [
+                    "scene_video_scaffold",
+                    "scene_video_scaffold_then_deterministic_composite",
+                ],
+            },
+        )
     if provider_route != "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE":
         raise ProductVisualCustodyError(
             ERR_PRODUCT_FIDELITY_ROUTE_NOT_PROVEN,
@@ -386,8 +404,29 @@ def _all_fidelity_dimensions_pass(dimensions: Any) -> bool:
 
 
 def exact_output_ready(receipt: dict[str, Any] | None, qc: dict[str, Any] | None) -> bool:
-    """Exact-product output is READY only after an explicit QC PASS."""
+    """Exact output is READY only after product and face QC are explicit PASS.
+
+    Image-only custody callers retain the historic product-QC rule.  A video
+    compositor receipt is stricter because a Faceless contract also requires a
+    real face-QC pass; ``NOT_RUN`` is honest review-required state, never a
+    pass-through.
+    """
 
     if not receipt or not receipt.get("exact_product_required"):
         return True
-    return bool(qc and qc.get("status") == PRODUCT_FIDELITY_QC_PASS and qc.get("verified") is True)
+    product_pass = bool(
+        qc
+        and qc.get("status") == PRODUCT_FIDELITY_QC_PASS
+        and qc.get("verified") is True
+    )
+    if not product_pass:
+        return False
+    exact_video = receipt.get("exact_video_composite") or receipt.get("exact_product_video")
+    if not exact_video:
+        return True
+    face_qc = exact_video.get("face_qc") if isinstance(exact_video, dict) else None
+    return bool(
+        isinstance(face_qc, dict)
+        and str(face_qc.get("status") or "").upper() == "FACE_QC_PASS"
+        and face_qc.get("verified") is True
+    )

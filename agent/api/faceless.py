@@ -2,8 +2,9 @@
 
 Operator chooses product, opening strategy, background, SINGLE|EXTEND, model,
 duration. ``hook_id`` remains the backward-compatible wire field.
-Internal transport: F2V + HYBRID product-anchor (or FRAMES only when Advanced
-override supplies a start frame). No new generation engine.
+Internal transport: F2V + HYBRID product-anchor for ordinary Faceless, the
+exact-product scene-scaffold route uses T2V with server-side deterministic
+compositing, and FRAMES remains an explicit advanced override.
 """
 from __future__ import annotations
 
@@ -133,15 +134,20 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
     pkg_gen_mode = str(orchestration["generation_mode"])
 
     source_mode = resolution["source_mode"]
+    transport_mode = resolution.get("transport_mode") or fl.FACELESS_TRANSPORT_MODE
+    exact_product_video = resolution.get("exact_product_video")
+    exact_faceless_route = bool(
+        isinstance(exact_product_video, dict)
+        and exact_product_video.get("selected_execution_route")
+        == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+    )
     start_id = body.start_frame_asset_id if reference_override else None
     end_id = body.end_frame_asset_id if reference_override else None
 
-    # Exact-product Faceless requests must surface the product-fidelity route
-    # blocker before the Copy V2 compiler can fail for an unrelated reason.
-    # This is still credit-free and read-only: it resolves the server-owned
-    # Product Truth visual, builds the custody receipt, and performs only the
-    # pre-dispatch route check. FRAMES is an explicit finished-frame override
-    # and remains outside the product-anchor route.
+    # Exact-product Faceless requests are admitted only through the
+    # deterministic scene-scaffold/composite route. This preflight is still
+    # credit-free and performs no upload, approval, provider, or DB product
+    # mutation. FRAMES remains an explicit finished-frame override.
     if source_mode != "FRAMES":
         from agent.services.product_visual_custody_service import (
             ProductVisualCustodyError,
@@ -158,24 +164,29 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
         if product_row and exact_product_required(product_row):
             custody_receipt = None
             try:
+                if not exact_faceless_route:
+                    raise ProductVisualCustodyError(
+                        "ERR_PRODUCT_FIDELITY_ROUTE_NOT_PROVEN",
+                        "Exact Faceless product requires the deterministic composite route.",
+                    )
                 official_asset = build_official_product_visual_asset(
                     product_row,
-                    slot_key="start_frame",
-                    label="Official product visual",
+                    slot_key="canonical_product_asset",
+                    label="Canonical Product Truth cutout",
                 )
                 custody_receipt = build_product_visual_custody_receipt(
                     product_row,
                     official_asset,
-                    mode=fl.FACELESS_TRANSPORT_MODE,
+                    mode=transport_mode,
                     source_mode=source_mode,
-                    prompt="",
-                    provider_route="API_FIRST_GENERATIVE_REFERENCE",
-                    generation_type="reference_frame_2_video",
+                    prompt="EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+                    provider_route="EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+                    generation_type="scene_video_scaffold_then_deterministic_composite",
                 )
                 validate_pre_dispatch_route(
                     custody_receipt,
-                    provider_route="API_FIRST_GENERATIVE_REFERENCE",
-                    generation_type="reference_frame_2_video",
+                    provider_route="EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+                    generation_type="scene_video_scaffold_then_deterministic_composite",
                 )
             except ProductVisualReferenceRequiredError as exc:
                 raise HTTPException(
@@ -200,7 +211,7 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
     try:
         pkg = await create_workspace_execution_package(
             product_id=body.product_id,
-            mode=fl.FACELESS_TRANSPORT_MODE,
+            mode=transport_mode,
             duration_seconds=pkg_duration,
             aspect_ratio=body.aspect_ratio,
             model=str(body.model).strip(),
@@ -253,7 +264,7 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
             },
         )
 
-    if not reference_override:
+    if not reference_override and not exact_faceless_route:
         start_asset = None
         for slot in pkg.get("asset_slots") or []:
             if slot.get("slot_key") == "start_frame":
@@ -318,10 +329,26 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
         "visual_law": fl.FACELESS_VISUAL_LAW,
         # Debug-only internals (still returned for audit, FE hides from normal UI)
         "debug": {
-            "transport_mode": fl.FACELESS_TRANSPORT_MODE,
+            "transport_mode": transport_mode,
             "source_mode": source_mode,
             "reference_override": reference_override,
+            "provider_product_reference_forbidden": exact_faceless_route,
         },
+        "selected_execution_route": pkg.get("selected_execution_route")
+        or (exact_product_video or {}).get("selected_execution_route"),
+        "generate_eligibility": pkg.get("generate_eligibility")
+        if isinstance(pkg, dict)
+        else None,
+        "product_fidelity": (
+            "EXACT_PRODUCT"
+            if exact_faceless_route
+            else "REFERENCE_CONDITIONED"
+        ),
+        "exact_product_video": pkg.get("exact_product_video")
+        or exact_product_video,
+        "product_visual_custody": pkg.get("product_visual_custody")
+        if isinstance(pkg, dict)
+        else None,
         "resolution": {
             "opening_strategy": resolution["opening_strategy"],
             # Backward-compatible response alias; never actual Copy V2 text.
@@ -452,6 +479,32 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
         "duration_seconds": orchestration["engine_block_duration_seconds"],
         "total_duration_seconds": body.total_duration_seconds,
         "actor_profile": resolution.get("actor_profile"),
+        "selected_execution_route": (
+            (resolution.get("exact_product_video") or {}).get(
+                "selected_execution_route"
+            )
+            or resolution.get("transport_mode")
+        ),
+        "generate_eligibility": (
+            (resolution.get("exact_product_video") or {}).get(
+                "generate_eligibility"
+            )
+            if resolution.get("exact_product_video")
+            else True
+        ),
+        "product_fidelity": (
+            "EXACT_PRODUCT"
+            if resolution.get("exact_product_video")
+            else "REFERENCE_CONDITIONED"
+        ),
+        "exact_product_video": resolution.get("exact_product_video"),
+        "debug": {
+            "transport_mode": resolution.get("transport_mode"),
+            "source_mode": resolution.get("source_mode"),
+            "provider_product_reference_forbidden": bool(
+                resolution.get("exact_product_video")
+            ),
+        },
         "resolution": {
             "opening_strategy": resolution["opening_strategy"],
             "hook": resolution["hook"],

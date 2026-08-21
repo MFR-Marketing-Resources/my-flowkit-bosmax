@@ -720,6 +720,9 @@ domains:
       - agent/services/product_physics.py
       - agent/services/workspace_execution_package_service.py
       - agent/services/product_visual_custody_service.py
+      # Exact Product Video Compositor V1 — provider scene scaffold only; final
+      # product pixels are deterministically composited from approved Product Truth.
+      - agent/services/exact_product_video_compositor_service.py
       - agent/services/flow_client.py
       - agent/services/agent_video.py
       - agent/services/make_video.py
@@ -1019,6 +1022,8 @@ domains:
       - tests/unit/test_workspace_execution_package_service.py
       - tests/unit/test_product_visual_custody_service.py
       - tests/api/test_product_visual_custody_gate.py
+      - tests/unit/test_exact_product_video_compositor_service.py
+      - tests/api/test_exact_product_video_route.py
       - tests/unit/test_creative_asset_service.py
       - tests/unit/test_i2v_semantic_slot_resolver_service.py
       - tests/unit/test_img_asset_lane_config.py

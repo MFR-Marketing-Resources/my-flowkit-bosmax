@@ -113,6 +113,19 @@ def test_exact_product_generative_route_blocks_before_dispatch():
     assert exc.value.code == custody.ERR_PRODUCT_FIDELITY_ROUTE_NOT_PROVEN
 
 
+def test_exact_deterministic_route_is_the_only_allowed_exact_dispatch_route():
+    receipt = {
+        "exact_product_required": True,
+        "fidelity_policy": custody.EXACT_PRODUCT_REQUIRED,
+    }
+
+    custody.validate_pre_dispatch_route(
+        receipt,
+        provider_route=custody.EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,
+        generation_type="scene_video_scaffold_then_deterministic_composite",
+    )
+
+
 def test_prompt_and_reference_id_never_prove_video_fidelity():
     receipt = {
         "exact_product_required": True,
@@ -166,3 +179,25 @@ def test_incomplete_verified_dimensions_cannot_mark_exact_ready():
 
     assert qc["status"] == custody.PRODUCT_FIDELITY_REVIEW_REQUIRED
     assert custody.exact_output_ready(receipt, qc) is False
+
+
+def test_exact_video_requires_face_qc_after_product_qc():
+    receipt = {
+        "exact_product_required": True,
+        "product_fidelity_qc_required": True,
+        "provider_route": custody.EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,
+        "exact_video_composite": {
+            "face_qc": {"status": "NOT_RUN", "verified": False},
+        },
+    }
+    qc = {
+        "status": custody.PRODUCT_FIDELITY_QC_PASS,
+        "verified": True,
+    }
+
+    assert custody.exact_output_ready(receipt, qc) is False
+    receipt["exact_video_composite"]["face_qc"] = {
+        "status": "FACE_QC_PASS",
+        "verified": True,
+    }
+    assert custody.exact_output_ready(receipt, qc) is True
