@@ -13,12 +13,17 @@ import asyncio
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Iterable
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent.db.schema import get_db
 
 REPORTING_TIMEZONE = "Asia/Kuala_Lumpur"
-_REPORTING_ZONE = ZoneInfo(REPORTING_TIMEZONE)
+try:
+    _REPORTING_ZONE = ZoneInfo(REPORTING_TIMEZONE)
+except ZoneInfoNotFoundError:
+    # Kuala Lumpur has a fixed UTC+08 offset and no DST.  Keep the canonical
+    # reporting label usable on Windows runners that do not bundle IANA tzdata.
+    _REPORTING_ZONE = timezone(timedelta(hours=8), name=REPORTING_TIMEZONE)
 _MAX_WINDOW_DAYS = 366
 
 VIDEO_RECIPES = ("HYBRID", "FACELESS", "MONTAGE")
