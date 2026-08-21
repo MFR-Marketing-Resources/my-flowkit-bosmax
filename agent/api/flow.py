@@ -382,12 +382,54 @@ async def _build_manual_flow_failure_report(request_id: str, result: dict) -> di
 
 @router.get("/status")
 async def extension_status():
-    """Check if extension is connected."""
+    """Check extension connectivity and safe browser/session provenance.
+
+    The returned fields are non-secret runtime identity and tab diagnostics.  They
+    let the dedicated Browser UAT receipt correlate the backend WebSocket with the
+    extension service worker and the currently open Flow project without exposing
+    cookies, bearer keys, or signed media URLs.
+    """
     client = get_flow_client()
-    return {
+    status = await client.get_status(timeout=5) if client.connected else {}
+    safe_fields = (
+        "extension_id",
+        "extension_name",
+        "extension_version",
+        "extension_session_id",
+        "extension_build",
+        "extension_root_url",
+        "background_build_id",
+        "build_sha",
+        "build_stamped",
+        "build_dirty",
+        "build_branch",
+        "runtime_ready",
+        "runtimeReady",
+        "build_match",
+        "worker_alive",
+        "ws_connected",
+        "flow_tab_url",
+        "active_editor_tab_url",
+        "selected_tab_url",
+        "active_editor_tab_id",
+        "content_script_alive_on_active_tab",
+        "safe_to_click_active_tab",
+        "auth_state",
+        "flow_path_state",
+        "target_project_state",
+        "same_project_url",
+        "last_updated_at",
+    )
+    response = {
         "connected": client.connected,
         "flow_key_present": client._flow_key is not None,
     }
+    for key in safe_fields:
+        if key in status:
+            response[key] = status[key]
+    if status.get("error"):
+        response["status_error"] = str(status["error"])[:240]
+    return response
 
 
 @router.get("/credits")
