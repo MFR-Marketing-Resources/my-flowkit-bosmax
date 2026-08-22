@@ -1405,6 +1405,7 @@ async def _fire_montage_recipe(
         max_polls=120,
         poll_interval_s=5.0,
         async_worker=True,
+        manifest_id=manifest_id,
     )
     if not authorized.get("ok"):
         raise CreativeProductionError(

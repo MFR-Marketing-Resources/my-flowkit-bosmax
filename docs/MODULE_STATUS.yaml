@@ -34,6 +34,7 @@ domains:
       - .dependency-cruiser.cjs
       - scripts/mandor-check.ts
       - scripts/test-product-data-loading-network.mjs
+      - scripts/extension-provenance.mjs
       - scripts/install-local-agent.ps1
       - scripts/local-agent-common.ps1
       - scripts/start-local-agent.ps1
@@ -1705,6 +1706,8 @@ domains:
       - tests/unit/test_montage_mascot_v11_wiring.py
       - tests/unit/test_montage_m04_authorize_generation.py
       - tests/unit/test_montage_m04_serial_poll.py
+      - tests/unit/test_round1_video_lifecycle_contracts.py
+      - tests/unit/test_round1_restart_recovery_closure.py
       - tests/unit/test_montage_scene_orchestrator.py
       - tests/unit/test_montage_discrete_assembly.py
       - agent/authority/creative_lane_settings.json

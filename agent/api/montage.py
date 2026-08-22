@@ -765,6 +765,7 @@ async def montage_authorize_generation(
     """
     generate_fn = None
     poll_fn = None
+    _run_manifest_id = None
     if not body.dry_run:
         from agent.api.flow import GenerateRequest
         from agent.api.flow import generate as flow_generate
@@ -853,6 +854,7 @@ async def montage_authorize_generation(
             poll_fn=poll_fn,
             async_worker=not body.dry_run,
             poll_interval_s=5.0,
+            manifest_id=_run_manifest_id,
         )
     except ValueError as exc:
         msg = str(exc)
@@ -870,13 +872,17 @@ async def resume_montage_generation(run_id: str) -> dict[str, Any]:
     from agent.services import make_video
 
     async def poll_fn(job_id: str) -> dict[str, Any]:
+        from agent.services import make_video
+
         status = make_video.get_job(job_id)
         if isinstance(status, dict):
-            return status
-        durable = await make_video.get_durable_job(job_id)
+            state = str(status.get("status") or "").upper()
+            if state not in {"RECOVERY_REQUIRED", "RECOVERY_UNRECOVERABLE"}:
+                return status
+        durable = await make_video.reconcile_durable_single_job(job_id)
         return durable or {
             "job_id": job_id,
-            "status": "RECOVERY_REQUIRED",
+            "status": "GENERATED_BUT_UNRETRIEVED",
             "error": "ERR_MONTAGE_CANONICAL_JOB_NOT_FOUND",
         }
 

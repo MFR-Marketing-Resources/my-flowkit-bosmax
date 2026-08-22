@@ -85,8 +85,9 @@ async def test_single_job_is_idempotent_and_recoverable_from_durable_row() -> No
 
     recovered = await make_video.get_durable_job(first["job_id"])
     assert recovered and recovered["durable"] is True
-    assert recovered["status"] == "RECOVERY_REQUIRED"
+    assert recovered["status"] == "RECOVERY_UNRECOVERABLE"
     assert recovered["recovery_required"] is True
+    assert recovered["recovery_unrecoverable"] is True
 
 
 @pytest.mark.asyncio
