@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import secrets
+
 from fastapi.testclient import TestClient
 import pytest
 
@@ -19,8 +21,39 @@ def _mock_canonical_pv(monkeypatch):
     )
 
 
+_TEST_OWNER_EMAIL = f"approval-owner-{secrets.token_hex(8)}@example.test"
+_TEST_OWNER_PASSWORD = f"Aa{secrets.token_urlsafe(20)}7"
+
+
 def _client() -> TestClient:
-    return TestClient(app)
+    client = TestClient(app)
+    csrf_response = client.get("/api/auth/csrf")
+    assert csrf_response.status_code == 200
+    csrf_token = client.cookies.get("bosmax_csrf")
+    assert csrf_token
+    setup = client.post(
+        "/api/auth/setup-owner",
+        json={
+            "display_name": "Approval Test Owner",
+            "email": _TEST_OWNER_EMAIL,
+            "password": _TEST_OWNER_PASSWORD,
+            "password_confirmation": _TEST_OWNER_PASSWORD,
+        },
+        headers={"X-CSRF-Token": str(csrf_token)},
+    )
+    if setup.status_code == 409:
+        login = client.post(
+            "/api/auth/login",
+            json={"email": _TEST_OWNER_EMAIL, "password": _TEST_OWNER_PASSWORD},
+            headers={"X-CSRF-Token": str(csrf_token)},
+        )
+        assert login.status_code == 200, login.text
+    else:
+        assert setup.status_code == 200, setup.text
+    active_csrf = client.cookies.get("bosmax_csrf")
+    assert active_csrf
+    client.headers.update({"X-CSRF-Token": str(active_csrf)})
+    return client
 
 
 def _review_body(prompt: str, **ov) -> dict:

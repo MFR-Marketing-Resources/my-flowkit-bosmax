@@ -1,9 +1,30 @@
 const BASE = ''  // same origin, proxied by Vite in dev
 
+function csrfToken(): string {
+  if (typeof document === 'undefined') return ''
+  const prefix = 'bosmax_csrf='
+  const item = document.cookie.split('; ').find((value) => value.startsWith(prefix))
+  return item ? decodeURIComponent(item.slice(prefix.length)) : ''
+}
+
+function requestHeaders(options?: RequestInit): HeadersInit {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options?.headers as Record<string, string> | undefined),
+  }
+  const method = (options?.method ?? 'GET').toUpperCase()
+  const token = csrfToken()
+  if (token && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    headers['X-CSRF-Token'] = token
+  }
+  return headers
+}
+
 export async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
+    credentials: 'same-origin',
+    headers: requestHeaders(options),
   })
   if (!res.ok) {
     const err = await res.text().catch(() => res.statusText)
@@ -25,7 +46,11 @@ export async function postAPI<T>(path: string, body: any): Promise<T> {
 }
 
 export async function deleteAPI(path: string): Promise<void> {
-  const res = await fetch(`${BASE}${path}`, { method: 'DELETE' })
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    headers: requestHeaders({ method: 'DELETE' }),
+  })
   if (!res.ok) {
     const err = await res.text().catch(() => res.statusText)
     throw new Error(`API ${res.status}: ${err}`)
@@ -33,8 +58,11 @@ export async function deleteAPI(path: string): Promise<void> {
 }
 
 export async function postMultipartAPI<T>(path: string, body: FormData): Promise<T> {
+  const token = csrfToken()
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
+    credentials: 'same-origin',
+    headers: token ? { 'X-CSRF-Token': token } : undefined,
     body,
   })
   if (!res.ok) {

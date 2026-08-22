@@ -22,6 +22,23 @@ vi.mock("../api/staffIdentity", () => ({
 	createStaffProfile: vi.fn(),
 }));
 
+vi.mock("../api/auth", () => ({
+	fetchCurrentSession: vi.fn().mockResolvedValue({
+		authenticated: true,
+		setup_required: false,
+		user: {
+			user_id: "user_test_operator",
+			staff_id: "staff_test_operator",
+			display_name: "Test Operator",
+			email: "operator@example.test",
+			account_status: "ACTIVE",
+			staff_active: true,
+			role_codes: ["OWNER"],
+			permissions: ["poster.create", "poster.execute", "poster.read"],
+		},
+	}),
+}));
+
 vi.mock("../api/executionApproval", () => {
 	const snap = (state: string, text: string) => ({
 		snapshot_id: "eas_test",
@@ -146,14 +163,12 @@ function renderPage() {
 	);
 }
 
-describe("PosterBuilderPage V2-only cutover", () => {
+	describe("PosterBuilderPage V2-only cutover", () => {
 	afterEach(() => {
-		window.localStorage.removeItem("bosmax.staff_identity.v1");
 		cleanup();
 	});
 
 	beforeEach(() => {
-		window.localStorage.setItem("bosmax.staff_identity.v1", "staff_test_operator");
 		vi.mocked(createPosterPromptDraft).mockReset().mockResolvedValue(promptResponse);
 		vi.mocked(composePosterV2).mockReset().mockResolvedValue({
 				deliverable: {
@@ -195,7 +210,7 @@ describe("PosterBuilderPage V2-only cutover", () => {
 	it("preserves the explicit live-action confirmation gate", async () => {
 		renderPage();
 		await waitFor(() =>
-			expect(screen.getByTestId("staff-identity-select")).toHaveValue("staff_test_operator"),
+			expect(screen.getByTestId("staff-identity-bar")).toHaveTextContent("staff_test_operator"),
 		);
 		fireEvent.click(screen.getByRole("button", { name: "Select Test Product" }));
 		fireEvent.click(screen.getByRole("button", { name: "Prove V2 binding" }));
@@ -235,7 +250,7 @@ describe("PosterBuilderPage V2-only cutover", () => {
 	it("uses exact V2 prompt and compose routes without a legacy copy id", async () => {
 		renderPage();
 		await waitFor(() =>
-			expect(screen.getByTestId("staff-identity-select")).toHaveValue("staff_test_operator"),
+			expect(screen.getByTestId("staff-identity-bar")).toHaveTextContent("staff_test_operator"),
 		);
 		fireEvent.click(screen.getByRole("button", { name: "Select Test Product" }));
 		fireEvent.click(screen.getByRole("button", { name: "Prove V2 binding" }));

@@ -141,11 +141,11 @@ class MontageExecuteRequest(MontagePlanRequest):
 async def _require_montage_staff(staff_id: str | None) -> dict[str, Any]:
     from agent.services.staff_identity_service import (
         StaffIdentityError,
-        resolve_staff_identity,
     )
+    from agent.security.access_control import resolve_request_staff
 
     try:
-        return await resolve_staff_identity(staff_id)
+        return await resolve_request_staff(staff_id)
     except StaffIdentityError as exc:
         raise HTTPException(
             status_code=exc.status_code,

@@ -2,8 +2,9 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
+from agent.security.access_control import get_current_auth_context
 from agent.services import production_output_reporting_service as svc
 
 router = APIRouter(prefix="/api/reporting/production", tags=["production-reporting"])
@@ -44,7 +45,22 @@ async def _report(
     start_date: Optional[str],
     end_date: Optional[str],
     filters: dict[str, str | None],
+    request: Request,
 ):
+    context = get_current_auth_context() or getattr(request.state, "auth_context", None)
+    if context is None:
+        raise HTTPException(status_code=401, detail={"error": "AUTHENTICATION_REQUIRED"})
+    # OWNER and MANAGER may inspect the organization. Other roles receive only
+    # their own real StaffProfile lineage; arbitrary staff query parameters are
+    # never an impersonation/reporting authority.
+    if not ({"OWNER", "MANAGER"} & set(context.role_codes)):
+        requested_staff = str(filters.get("staff") or "").strip()
+        if requested_staff and requested_staff != context.staff_id:
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "REPORTING_STAFF_SCOPE_DENIED"},
+            )
+        filters["staff"] = context.staff_id
     try:
         return await svc.get_production_report(
             start_date=start_date,
@@ -59,6 +75,7 @@ async def _report(
 @router.get("/")
 @router.get("/summary")
 async def production_output_summary(
+    request: Request,
     start_date: Optional[str] = Query(None, description="Inclusive Malaysia calendar date: YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="Inclusive Malaysia calendar date: YYYY-MM-DD"),
     staff: Optional[str] = Query(None),
@@ -82,11 +99,12 @@ async def production_output_summary(
         status,
         qa_status,
     )
-    return await _report(start_date=start_date, end_date=end_date, filters=filters)
+    return await _report(start_date=start_date, end_date=end_date, filters=filters, request=request)
 
 
 @router.get("/ledger")
 async def production_output_ledger(
+    request: Request,
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     staff: Optional[str] = Query(None),
@@ -113,6 +131,14 @@ async def production_output_ledger(
         qa_status,
     )
     try:
+        context = get_current_auth_context() or getattr(request.state, "auth_context", None)
+        if context is None:
+            raise HTTPException(status_code=401, detail={"error": "AUTHENTICATION_REQUIRED"})
+        if not ({"OWNER", "MANAGER"} & set(context.role_codes)):
+            requested_staff = str(filters.get("staff") or "").strip()
+            if requested_staff and requested_staff != context.staff_id:
+                raise HTTPException(status_code=403, detail={"error": "REPORTING_STAFF_SCOPE_DENIED"})
+            filters["staff"] = context.staff_id
         return await svc.get_production_ledger(
             start_date=start_date,
             end_date=end_date,
