@@ -20,6 +20,7 @@ import {
 	type PiQualityClass,
 } from "../api/reporting";
 import { FailedGenerationsPanel } from "../components/reporting/FailedGenerationsPanel";
+import CopyAuthorityActivationReport from "../components/reporting/CopyAuthorityActivationReport";
 
 // Operational Intelligence — exception-first. Show what's broken, count it, and drill
 // into the exact product list. Every exception widget owns its own fetch.
@@ -326,6 +327,8 @@ function OperationsInner() {
 			</div>
 
 			<RegistrationQueueBacklog />
+
+			<CopyAuthorityActivationReport />
 
 			<IntelQualityDebt
 				selected={selected}

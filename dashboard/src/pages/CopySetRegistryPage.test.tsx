@@ -34,8 +34,6 @@ vi.mock("../api/copyRegisterV2", () => ({
 	listCopyRegisterBlueprints: vi.fn(),
 	regenerateFormulaStage: vi.fn(),
 	approveFormulaBlueprint: vi.fn(),
-	fetchCopyActivationCandidates: vi.fn(),
-	batchActivateCopyBlueprints: vi.fn(),
 }));
 
 import { fetchProductCatalog, fetchProductDetail } from "../api/products";
@@ -47,8 +45,6 @@ import {
 	generateCopyRegisterAngles,
 	generateFormulaCopyBlueprint,
 	listCopyRegisterBlueprints,
-	fetchCopyActivationCandidates,
-	batchActivateCopyBlueprints,
 } from "../api/copyRegisterV2";
 
 const mockedCatalog = vi.mocked(fetchProductCatalog);
@@ -60,8 +56,6 @@ const mockedAngles = vi.mocked(generateCopyRegisterAngles);
 const mockedGenerate = vi.mocked(generateFormulaCopyBlueprint);
 const mockedList = vi.mocked(listCopyRegisterBlueprints);
 const mockedApprove = vi.mocked(approveFormulaBlueprint);
-const mockedActivationCandidates = vi.mocked(fetchCopyActivationCandidates);
-const mockedBatchActivate = vi.mocked(batchActivateCopyBlueprints);
 
 const product = {
 	id: "p1",
@@ -150,32 +144,6 @@ function blueprint(status: string = "DRAFT") {
 	};
 }
 
-function activationCandidate(
-	state: "NONE" | "CURRENT" | "STALE" = "NONE",
-	activatable = state !== "STALE",
-) {
-	return {
-		blueprint_id: "bpv2_test",
-		revision: 1,
-		product_id: "p1",
-		product_name: "Synthetic Product",
-		status: "PRODUCTION_VALID",
-		formula_id: "PAS",
-		angle: { angle_id: "angle:test:0", definition: "formula ringan" },
-		activatable,
-		activation_allowed: activatable,
-		current_authority_state: state,
-		blocked_reason: state === "STALE" ? "COPY_V2_TAXONOMY_AUTHORITY_STALE" : null,
-		current_authority_reason: state === "STALE" ? "COPY_V2_TAXONOMY_AUTHORITY_STALE" : null,
-		current_authority_mismatches: [],
-		active_blueprint_id: state === "CURRENT" ? "bpv2_test" : null,
-		active_revision: state === "CURRENT" ? 1 : null,
-		active_lane_count: state === "CURRENT" ? 8 : 0,
-		required_lane_count: 8,
-		draft_preview: null,
-	};
-}
-
 // A DRAFT whose current authority is NOT valid (product truth stale/incomplete):
 // it cannot be approved as-is and must render "Approval Blocked" with the reason.
 function blockedDraftBlueprint() {
@@ -250,8 +218,6 @@ describe("CopySetRegistryPage V2 cutover", () => {
 				activated_at: null,
 			},
 		});
-		mockedActivationCandidates.mockResolvedValue({ items: [activationCandidate()], total: 1, max_batch_size: 50, provider_calls: 0, credit_spend: 0, activation_mutations: 0 });
-		mockedBatchActivate.mockResolvedValue({ results: [{ blueprint_id: "bpv2_test", activated: true, idempotent: false, status: "ACTIVATED", lane_count: 8, error_code: null }], activated_count: 1, idempotent_count: 0, failed_count: 0, activation_mutations: 1, bound_lane_count: 8, provider_calls: 0, credit_spend: 0 });
 		mockedAngles.mockResolvedValue({
 			angles: [{ angle_id: "angle:test:0", definition: "formula ringan", evidence_fact_ids: [fact.fact_id], source: "APPROVED_PRODUCT_TRUTH" }],
 			facts: [fact],
@@ -293,17 +259,11 @@ describe("CopySetRegistryPage V2 cutover", () => {
 			readiness_proof: expect.objectContaining({ safety_validated: true }),
 		})));
 		expect(await screen.findByText("CURRENT · PRODUCTION_VALID")).toBeInTheDocument();
-		// Phase 3 activation is routed through the owner-gated bulk queue.
-		fireEvent.click(await screen.findByTestId("open-activation-queue-from-review"));
-		fireEvent.change(screen.getByTestId("activation-confirmation-phrase"), { target: { value: "ACTIVATE_COPY_AUTHORITY_BATCH" } });
-		fireEvent.click(screen.getByTestId("activation-owner-authorization"));
-		fireEvent.click(screen.getByTestId("activation-review-selection"));
-		fireEvent.click(await screen.findByTestId("activation-confirm-submit"));
-		await waitFor(() => expect(mockedBatchActivate).toHaveBeenCalledWith({ blueprint_ids: ["bpv2_test"], confirmation_phrase: "ACTIVATE_COPY_AUTHORITY_BATCH", owner_authorization: true }));
-		expect(await screen.findByTestId("activation-results")).toHaveTextContent("ACTIVATED");
+		// Bulk activation is a Reporting concern; Copy Authority stays focused on copy work.
+		expect(screen.queryByTestId("activation-queue")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("copy-authority-activation-report")).not.toBeInTheDocument();
 	});
-
-	// SMART auto-anchor: generating angles auto-selects the top angle AND its grounded
+	// Test: generating angles auto-selects the top angle AND its grounded
 	// evidence facts, so the operator never maps facts one-by-one. Generation uses the
 	// angle's facts; the manual editor stays available for adjustment.
 	it("auto-anchors the angle's evidence facts so generation needs no manual fact mapping", async () => {
@@ -376,15 +336,12 @@ describe("CopySetRegistryPage V2 cutover", () => {
 				activated_at: "2026-08-15T00:00:00Z",
 			},
 		});
-		mockedActivationCandidates.mockResolvedValue({ items: [activationCandidate("CURRENT")], total: 1, max_batch_size: 50, provider_calls: 0, credit_spend: 0, activation_mutations: 0 });
 		renderPage();
 		// Activation lives in the default Authority Library tab; the latest blueprint
 		// is the review target on load.
 		await screen.findByTestId("copy-library-view");
 
 		expect(await screen.findByTestId("library-card-bpv2_test")).toHaveTextContent("ACTIVE");
-		expect(screen.getByTestId("activation-select-bpv2_test")).toBeDisabled();
-		expect(mockedBatchActivate).not.toHaveBeenCalled();
 	});
 });
 
@@ -421,8 +378,6 @@ describe("Task B — Copy Authority surface consolidation", () => {
 			items: [],
 			activation: { active_blueprint_id: null, active_revision: null, active_lane_count: 0, required_lane_count: 8, activated_at: null },
 		});
-		mockedActivationCandidates.mockResolvedValue({ items: [activationCandidate()], total: 1, max_batch_size: 50, provider_calls: 0, credit_spend: 0, activation_mutations: 0 });
-		mockedBatchActivate.mockResolvedValue({ results: [{ blueprint_id: "bpv2_test", activated: true, idempotent: false, status: "ACTIVATED", lane_count: 8, error_code: null }], activated_count: 1, idempotent_count: 0, failed_count: 0, activation_mutations: 1, bound_lane_count: 8, provider_calls: 0, credit_spend: 0 });
 	});
 
 	// Test B — Copy Authority signposts itself as the ADVANCED console.
@@ -459,30 +414,14 @@ describe("Task B — Copy Authority surface consolidation", () => {
 		expect(link).toHaveAttribute("href", "/creative/storyboard-landbank-v3?product_id=p1");
 	});
 
-	// Test E — global activation from the Library routes into the owner-gated queue.
-	it("requires phrase and owner authorization before global activation", async () => {
-		mockedList.mockResolvedValue({
-			product_id: "p1",
-			items: [blueprint("PRODUCTION_VALID")],
-			activation: { active_blueprint_id: null, active_revision: null, active_lane_count: 0, required_lane_count: 8, activated_at: null },
-		});
+	// Test E — the global activation/report surface is intentionally absent here.
+	it("keeps the activation report out of the Copy Authority workspace", async () => {
 		renderPage();
-
-		fireEvent.click(await screen.findByTestId("library-activate-bpv2_test"));
-		const review = screen.getByTestId("activation-review-selection");
-		expect(review).toBeDisabled();
-		fireEvent.change(screen.getByTestId("activation-confirmation-phrase"), { target: { value: "ACTIVATE_COPY_AUTHORITY_BATCH" } });
-		expect(review).toBeDisabled();
-		fireEvent.click(screen.getByTestId("activation-owner-authorization"));
-		expect(review).toBeEnabled();
-		fireEvent.click(review);
-		expect(await screen.findByTestId("activation-confirm-overlay")).toBeInTheDocument();
-		fireEvent.click(screen.getByTestId("activation-confirm-cancel"));
-		await waitFor(() => expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument());
-		fireEvent.click(screen.getByTestId("activation-review-selection"));
-		fireEvent.click(await screen.findByTestId("activation-confirm-submit"));
-		await waitFor(() => expect(mockedBatchActivate).toHaveBeenCalledWith(expect.objectContaining({ blueprint_ids: ["bpv2_test"], owner_authorization: true })));
+		await screen.findByTestId("copy-library-view");
+		expect(screen.queryByTestId("activation-queue")).not.toBeInTheDocument();
+		expect(screen.queryByText("Copy authority activation report")).not.toBeInTheDocument();
 	});
+
 });
 
 describe("Copy Authority Library — current-authority activation gate", () => {
@@ -513,8 +452,6 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 			provider_calls: 0,
 		});
 		mockedTruth.mockResolvedValue(truth);
-		mockedActivationCandidates.mockResolvedValue({ items: [activationCandidate()], total: 1, max_batch_size: 50, provider_calls: 0, credit_spend: 0, activation_mutations: 0 });
-		mockedBatchActivate.mockResolvedValue({ results: [{ blueprint_id: "bpv2_test", activated: true, idempotent: false, status: "ACTIVATED", lane_count: 8, error_code: null }], activated_count: 1, idempotent_count: 0, failed_count: 0, activation_mutations: 1, bound_lane_count: 8, provider_calls: 0, credit_spend: 0 });
 	});
 
 	function noActivation() {
@@ -541,8 +478,6 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		expect(stale).toHaveTextContent(/current Product Truth/i);
 		// Clicking the disabled control opens NO confirmation and calls NO activation.
 		fireEvent.click(activate);
-		expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument();
-		expect(mockedBatchActivate).not.toHaveBeenCalled();
 	});
 
 	// A stale approved blueprint is never a dead end — it offers a Generate-fresh-copy
@@ -577,61 +512,15 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		expect(activate).toHaveTextContent("Review / revalidate");
 		expect(screen.getByTestId("library-stale-bpv2_test")).toBeInTheDocument();
 		fireEvent.click(activate);
-		expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument();
-		expect(mockedBatchActivate).not.toHaveBeenCalled();
 	});
 
-	// TEST 3 — a current PRODUCTION_VALID blueprint routes through the governed queue.
-	it("TEST 3 — current PRODUCTION_VALID activates only after phrase, owner checkbox, and confirm", async () => {
+	// TEST 3 — a current PRODUCTION_VALID blueprint routes to Reporting for activation.
+	it("current PRODUCTION_VALID points to the Reporting activation report", async () => {
 		mockedList.mockResolvedValue({ product_id: "p1", items: [blueprint("PRODUCTION_VALID")], activation: noActivation() });
 		renderPage();
 		await screen.findByTestId("copy-library-view");
-
 		const activate = await screen.findByTestId("library-activate-bpv2_test");
-		expect(activate).toBeEnabled();
-		expect(activate).toHaveTextContent("Open activation queue");
-		fireEvent.click(activate);
-		const review = screen.getByTestId("activation-review-selection");
-		expect(review).toBeDisabled();
-		fireEvent.change(screen.getByTestId("activation-confirmation-phrase"), { target: { value: "ACTIVATE_COPY_AUTHORITY_BATCH" } });
-		fireEvent.click(screen.getByTestId("activation-owner-authorization"));
-		fireEvent.click(review);
-		expect(await screen.findByTestId("activation-confirm-overlay")).toBeInTheDocument();
-		fireEvent.click(screen.getByTestId("activation-confirm-cancel"));
-		await waitFor(() => expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument());
-		fireEvent.click(screen.getByTestId("activation-review-selection"));
-		fireEvent.click(await screen.findByTestId("activation-confirm-submit"));
-		await waitFor(() => expect(mockedBatchActivate).toHaveBeenCalledWith(expect.objectContaining({ blueprint_ids: ["bpv2_test"], confirmation_phrase: "ACTIVATE_COPY_AUTHORITY_BATCH", owner_authorization: true })));
-	});
-
-	it("activation queue disables stale candidates and gates review on phrase plus owner", async () => {
-		mockedActivationCandidates.mockResolvedValue({
-			items: [
-				{ ...activationCandidate("STALE", false), blueprint_id: "bp-stale", product_name: "Stale Product" },
-				{ ...activationCandidate("NONE", true), blueprint_id: "bp-ready", product_name: "Ready Product" },
-			],
-			total: 2,
-			max_batch_size: 50,
-			provider_calls: 0,
-			credit_spend: 0,
-			activation_mutations: 0,
-		});
-		renderPage();
-
-		const staleCheckbox = await screen.findByTestId("activation-select-bp-stale");
-		const readyCheckbox = screen.getByTestId("activation-select-bp-ready");
-		expect(staleCheckbox).toBeDisabled();
-		expect(screen.getByTestId("activation-candidate-bp-stale")).toHaveTextContent("COPY_V2_TAXONOMY_AUTHORITY_STALE");
-		expect(readyCheckbox).toBeEnabled();
-		const review = screen.getByTestId("activation-review-selection");
-		expect(review).toBeDisabled();
-
-		fireEvent.click(readyCheckbox);
-		expect(review).toBeDisabled();
-		fireEvent.change(screen.getByTestId("activation-confirmation-phrase"), { target: { value: "ACTIVATE_COPY_AUTHORITY_BATCH" } });
-		expect(review).toBeDisabled();
-		fireEvent.click(screen.getByTestId("activation-owner-authorization"));
-		expect(review).toBeEnabled();
+		expect(activate).toHaveTextContent("Open activation report");
 	});
 
 	// TEST 4 — an active, current blueprint renders a truthful ACTIVE state, no redundant activation.
@@ -650,7 +539,6 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		expect(activate).toHaveTextContent("Active — view");
 		expect(screen.queryByTestId("library-stale-bpv2_test")).not.toBeInTheDocument();
 		fireEvent.click(activate);
-		expect(mockedBatchActivate).not.toHaveBeenCalled();
 	});
 
 	// TEST 5 — an active but now-stale blueprint must NOT render a clean ACTIVE state.
@@ -666,8 +554,6 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		expect(activate).toBeEnabled();
 		expect(activate).toHaveTextContent("Review / revalidate");
 		fireEvent.click(activate);
-		expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument();
-		expect(mockedBatchActivate).not.toHaveBeenCalled();
 	});
 
 	// TEST 6 — a reviewable DRAFT offers an ACTIONABLE "Review & Approve" (never a
@@ -690,49 +576,9 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		expect(screen.getByTestId("review-target-indicator")).toHaveTextContent("bpv2_test");
 		// It NEVER auto-approves or auto-activates.
 		expect(mockedApprove).not.toHaveBeenCalled();
-		expect(mockedBatchActivate).not.toHaveBeenCalled();
 	});
 
-	// TEST 7 — a per-item activation failure stays visible and fail-closed.
-	it("TEST 7 — per-item stale rejection is surfaced without a silent success", async () => {
-		mockedList.mockResolvedValue({ product_id: "p1", items: [blueprint("PRODUCTION_VALID")], activation: noActivation() });
-		mockedBatchActivate.mockResolvedValue({
-			results: [{ blueprint_id: "bpv2_test", activated: false, idempotent: false, status: "FAILED", lane_count: 0, error_code: "COPY_V2_EVIDENCE_STALE" }],
-			activated_count: 0,
-			idempotent_count: 0,
-			failed_count: 1,
-			activation_mutations: 0,
-			bound_lane_count: 0,
-			provider_calls: 0,
-			credit_spend: 0,
-		});
-		renderPage();
-		await screen.findByTestId("copy-library-view");
 
-		const activate = await screen.findByTestId("library-activate-bpv2_test");
-		expect(activate).toBeEnabled();
-		fireEvent.click(activate);
-		fireEvent.change(screen.getByTestId("activation-confirmation-phrase"), { target: { value: "ACTIVATE_COPY_AUTHORITY_BATCH" } });
-		fireEvent.click(screen.getByTestId("activation-owner-authorization"));
-		fireEvent.click(screen.getByTestId("activation-review-selection"));
-		fireEvent.click(await screen.findByTestId("activation-confirm-submit"));
-		await waitFor(() => expect(mockedBatchActivate).toHaveBeenCalled());
-		expect(await screen.findByTestId("activation-results")).toHaveTextContent(/COPY_V2_EVIDENCE_STALE/);
-	});
-
-	// TEST 8 — activation flows exclusively through the bounded V2 bulk contract.
-	it("TEST 8 — activation uses the owner-gated V2 bulk contract only", async () => {
-		mockedList.mockResolvedValue({ product_id: "p1", items: [blueprint("PRODUCTION_VALID")], activation: noActivation() });
-		renderPage();
-		await screen.findByTestId("copy-library-view");
-
-		fireEvent.click(await screen.findByTestId("library-activate-bpv2_test"));
-		fireEvent.change(screen.getByTestId("activation-confirmation-phrase"), { target: { value: "ACTIVATE_COPY_AUTHORITY_BATCH" } });
-		fireEvent.click(screen.getByTestId("activation-owner-authorization"));
-		fireEvent.click(screen.getByTestId("activation-review-selection"));
-		fireEvent.click(await screen.findByTestId("activation-confirm-submit"));
-		await waitFor(() => expect(mockedBatchActivate).toHaveBeenCalledWith({ blueprint_ids: ["bpv2_test"], confirmation_phrase: "ACTIVATE_COPY_AUTHORITY_BATCH", owner_authorization: true }));
-	});
 });
 
 describe("Copy Authority — module forensic closure (RULE 2 / RULE 3 / RULE 4)", () => {
@@ -746,8 +592,6 @@ describe("Copy Authority — module forensic closure (RULE 2 / RULE 3 / RULE 4)"
 		});
 		mockedProviderStatus.mockResolvedValue({ lane: "text_assist", status: "READY", configured: true, provider_id: "p", model_id: "m", execution_enabled: true, provider_calls: 0 });
 		mockedTruth.mockResolvedValue(truth);
-		mockedActivationCandidates.mockResolvedValue({ items: [activationCandidate()], total: 1, max_batch_size: 50, provider_calls: 0, credit_spend: 0, activation_mutations: 0 });
-		mockedBatchActivate.mockResolvedValue({ results: [{ blueprint_id: "bpv2_test", activated: true, idempotent: false, status: "ACTIVATED", lane_count: 8, error_code: null }], activated_count: 1, idempotent_count: 0, failed_count: 0, activation_mutations: 1, bound_lane_count: 8, provider_calls: 0, credit_spend: 0 });
 		mockedApprove.mockResolvedValue({ blueprint: blueprint("PRODUCTION_VALID"), production_valid: true, badge: "V2 PRODUCTION_VALID" });
 	});
 
@@ -816,7 +660,6 @@ describe("Copy Authority — module forensic closure (RULE 2 / RULE 3 / RULE 4)"
 		expect(screen.queryByTestId("library-stale-bpv2_test")).not.toBeInTheDocument();
 		fireEvent.click(btn);
 		expect(mockedApprove).not.toHaveBeenCalled();
-		expect(screen.queryByTestId("activation-confirm-overlay")).not.toBeInTheDocument();
 	});
 
 	// RULE 3 — a blueprint_id deep-link resolves to the EXACT blueprint and opens review.
@@ -884,7 +727,7 @@ describe("Copy Authority — module forensic closure (RULE 2 / RULE 3 / RULE 4)"
 		fireEvent.click(screen.getByTestId("approve-v2-blueprint"));
 		await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith(expect.objectContaining({ blueprint_id: "bpv2_test", approved_by: "operator" })));
 		expect(await screen.findByTestId("copy-registry-success")).toHaveTextContent(/PRODUCTION_VALID/i);
-		expect(await screen.findByTestId("open-activation-queue-from-review")).toBeInTheDocument();
+		expect(await screen.findByTestId("open-activation-report-from-review")).toBeInTheDocument();
 	});
 });
 
