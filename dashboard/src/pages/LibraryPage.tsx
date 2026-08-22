@@ -1,6 +1,7 @@
 import { Download, RefreshCw, Timer, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { deleteImageArtifact } from "../api/imgFactory";
+import { surfaceDisplayLabel } from "../utils/videoSurfaceProvenance";
 
 // LIBRARY — the single collection point for finished Google Flow results.
 // Workspace pages are for WORK; results live here. Videos are retained 48 hours;
@@ -10,6 +11,11 @@ interface LibraryArtifact {
 	media_id: string;
 	job_id: string | null;
 	mode: string | null;
+	surface_lane: string | null;
+	surface_label: string | null;
+	transport_mode: string | null;
+	source_mode: string | null;
+	provider_generation_type: string | null;
 	artifact_kind: "video" | "image";
 	size_mb: number | null;
 	model_used: string | null;
@@ -23,7 +29,14 @@ interface LibraryPageProps {
 	kind: "video" | "image";
 }
 
-const MODE_FILTERS = ["ALL", "T2V", "F2V", "I2V", "IMG"] as const;
+const VIDEO_SURFACE_FILTERS = [
+	"ALL",
+	"HYBRID",
+	"FACELESS",
+	"MONTAGE",
+	"PRODUCTION_STUDIO_P6",
+] as const;
+const IMAGE_FILTERS = ["ALL", "IMG"] as const;
 
 function expiryTone(hours: number | null): string {
 	if (hours == null) return "text-slate-400";
@@ -34,7 +47,8 @@ function expiryTone(hours: number | null): string {
 
 export default function LibraryPage({ kind }: LibraryPageProps) {
 	const [artifacts, setArtifacts] = useState<LibraryArtifact[]>([]);
-	const [modeFilter, setModeFilter] = useState<(typeof MODE_FILTERS)[number]>("ALL");
+	const [surfaceFilter, setSurfaceFilter] = useState<string>("ALL");
+	const filterOptions = kind === "video" ? VIDEO_SURFACE_FILTERS : IMAGE_FILTERS;
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [deletingMediaId, setDeletingMediaId] = useState<string | null>(null);
@@ -44,7 +58,9 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 		setError(null);
 		try {
 			const params = new URLSearchParams({ limit: "60", kind });
-			if (modeFilter !== "ALL") params.set("mode", modeFilter);
+			if (surfaceFilter !== "ALL") {
+				params.set(kind === "video" ? "surface_lane" : "mode", surfaceFilter);
+			}
 			const response = await fetch(`/api/flow/artifacts?${params.toString()}`);
 			if (!response.ok) throw new Error(`HTTP ${response.status}`);
 			const data = await response.json();
@@ -54,7 +70,11 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 		} finally {
 			setIsLoading(false);
 		}
-	}, [kind, modeFilter]);
+	}, [kind, surfaceFilter]);
+
+	useEffect(() => {
+		if (!filterOptions.includes(surfaceFilter as never)) setSurfaceFilter("ALL");
+	}, [filterOptions, surfaceFilter]);
 
 	useEffect(() => {
 		const loadWhenVisible = () => {
@@ -108,16 +128,22 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 				</div>
 				<div className="flex items-center gap-2">
 					<select
-						title="Filter by job mode"
-						value={modeFilter}
+						 title={kind === "video" ? "Filter by production surface" : "Filter by image type"}
+						 value={surfaceFilter}
 						onChange={(e) =>
-							setModeFilter(e.target.value as (typeof MODE_FILTERS)[number])
+							setSurfaceFilter(e.target.value)
 						}
 						className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-100"
 					>
-						{MODE_FILTERS.map((m) => (
+						{filterOptions.map((m) => (
 							<option key={m} value={m}>
-								{m === "ALL" ? "Semua mode" : m}
+								{m === "ALL"
+									? "Semua surface"
+									: m === "PRODUCTION_STUDIO_P6"
+										? "Production Studio / P6"
+										: m === "FACELESS"
+											? "Faceless Video"
+											: m[0] + m.slice(1).toLowerCase()}
 							</option>
 						))}
 					</select>
@@ -172,7 +198,7 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 							) : (
 								<img
 									src={retrievedUrl}
-									alt={item.mode ?? "artifact"}
+									alt={item.surface_label ?? item.mode ?? "artifact"}
 									loading="lazy"
 									className="aspect-[9/16] w-full rounded-lg bg-black object-contain"
 								/>
@@ -180,7 +206,11 @@ export default function LibraryPage({ kind }: LibraryPageProps) {
 						</a>
 						<div className="mt-2 flex items-center justify-between text-[10px] text-slate-400">
 							<span className="font-semibold text-slate-300">
-								{item.mode ?? "?"}
+								{item.surface_label ?? surfaceDisplayLabel(
+									item.surface_lane,
+									item.transport_mode,
+									item.mode,
+								)}
 								{item.duration_used ? ` · ${item.duration_used}s` : ""}
 							</span>
 							<span>{item.size_mb != null ? `${item.size_mb}MB` : ""}</span>

@@ -2028,7 +2028,13 @@ async def _fail_extend_item(wgp_id: str, reason: str) -> dict:
     return {"ok": False, "error": reason}
 
 
-async def _fire_extend_via_video_jobs(item: dict, cfg: dict, wgp_id: str) -> dict:
+async def _fire_extend_via_video_jobs(
+    item: dict,
+    cfg: dict,
+    wgp_id: str,
+    *,
+    surface_lane: str = "PRODUCTION_STUDIO_P6",
+) -> dict:
     """Fire ONE multi-block EXTEND item through the durable /video-jobs orchestrator.
 
     Returns the SAME outcome shape as _fire_and_wait so the queue loop is unchanged.
@@ -2092,6 +2098,7 @@ async def _fire_extend_via_video_jobs(item: dict, cfg: dict, wgp_id: str) -> dic
                 requested_total_duration_seconds=total_seconds,
                 model=cfg.get("model"),
                 aspect_ratio=aspect_ratio,
+                surface_lane=surface_lane,
                 client_request_nonce=wgp_id,
             ),
             trust_client_authority=False,

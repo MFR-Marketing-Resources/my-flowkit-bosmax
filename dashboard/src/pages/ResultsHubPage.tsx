@@ -162,7 +162,9 @@ function ResultDetailModal({
 	const settingsBlob = useMemo(() => {
 		if (!snap) return "";
 		const lines = [
+			snap.surface_label ? `Surface: ${snap.surface_label}` : "",
 			snap.mode ? `Mode: ${snap.mode}` : "",
+			snap.transport_mode ? `Transport: ${snap.transport_mode}` : "",
 			snap.model_label ? `Model: ${snap.model_label}` : "",
 			snap.aspect_ratio ? `Aspect: ${snap.aspect_ratio}` : "",
 			snap.duration_s ? `Duration: ${snap.duration_s}s` : "",
@@ -289,7 +291,9 @@ function ResultDetailModal({
 								<div className="space-y-3">
 									<div className="space-y-1">
 										<SettingRow label="Product" value={snap.product_name} />
+										<SettingRow label="Surface" value={snap.surface_label} />
 										<SettingRow label="Mode" value={snap.mode} />
+										<SettingRow label="Transport" value={snap.transport_mode} />
 										<SettingRow label="Model" value={snap.model_label} />
 										<SettingRow label="Aspect" value={snap.aspect_ratio} />
 										<SettingRow
@@ -401,7 +405,7 @@ function ResultCard({
 					</div>
 				)}
 				<span className="absolute left-2 top-2 rounded border border-slate-700 bg-slate-950/80 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-slate-300">
-					{item.mode ?? item.artifact_kind}
+					{item.surface_label ?? "Legacy/Internal"}
 				</span>
 			</div>
 			<div className="min-w-0 space-y-1">
@@ -419,7 +423,9 @@ function ResultCard({
 					)}
 				</div>
 				<div className="truncate text-[10px] text-slate-600">
-					{item.model_label ?? "—"} · {fmtDate(item.created_at)}
+					{item.model_label ?? "—"}
+					{item.duration_s ? ` · ${item.duration_s}s` : ""}
+					{item.transport_mode ? ` · ${item.transport_mode}` : ""} · {fmtDate(item.created_at)}
 				</div>
 			</div>
 		</button>

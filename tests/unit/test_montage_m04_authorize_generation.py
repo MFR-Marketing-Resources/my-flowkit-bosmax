@@ -140,7 +140,7 @@ async def test_authorize_dispatch_calls_generate_with_start_asset_and_binds() ->
         "bulk_run_id": "run-m04b",
         "kind": KIND,
         "status": "PREPARED",
-        "config_json": json.dumps({"product_id": "p1", "product_media_id": "pm1", "model": "Veo 3.1 - Lite", "duration_seconds": 8}),
+        "config_json": json.dumps({"product_id": "p1", "product_media_id": "pm1", "staff_id": "staff_m04_fixture", "staff_display_name": "M04 Fixture", "model": "Veo 3.1 - Lite", "duration_seconds": 8}),
     }
     items = _pkg_items()
 
@@ -187,6 +187,8 @@ async def test_authorize_dispatch_calls_generate_with_start_asset_and_binds() ->
             expected_provider_operations=2,
             dry_run=False,
             generate_fn=gen_fn,
+            staff_id="staff_m04_fixture",
+            staff_display_name_snapshot="M04 Fixture",
         )
         assert out["ok"] is True
         assert out["credit_spend"] is True

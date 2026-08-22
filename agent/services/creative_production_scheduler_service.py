@@ -927,6 +927,7 @@ async def _build_item_payload(
                         requested_total_duration_seconds=total_seconds,
                         model=model_key,
                         aspect_ratio=aspect,
+                        surface_lane="PRODUCTION_STUDIO_P6",
                         client_request_nonce=str(wgp_id),
                     ),
                     trust_client_authority=False,
@@ -1421,6 +1422,7 @@ async def _fire_montage_recipe(
                 staff_id=staff_id,
                 aspect="9:16",
                 source_mode=kwargs.get("source_mode") or None,
+                surface_lane="PRODUCTION_STUDIO_P6",
                 workspace_execution_package_id=(
                     kwargs.get("workspace_execution_package_id")
                     or payload.get("workspace_execution_package_id")
@@ -1522,6 +1524,9 @@ async def _fire_montage_recipe(
                 logical_job_key=logical_key,
                 status="CREATED",
                 requested_duration_seconds=requested_seconds,
+                surface_lane="PRODUCTION_STUDIO_P6",
+                transport_mode="MONTAGE",
+                provider_generation_type="production_studio_p6_final_timeline",
                 product_id=item.get("product_id"),
                 staff_id=staff_id,
                 staff_display_name_snapshot=staff_display_name or None,
@@ -1565,6 +1570,7 @@ async def _fire_montage_recipe(
                     result,
                     job_id=effective_job_id,
                     mode="MONTAGE",
+                    surface_lane="PRODUCTION_STUDIO_P6",
                     project_id=payload.get("project_id"),
                     request_id=f"p6:{attempt['attempt_id']}:montage:{run_id}",
                     product_id=item.get("product_id") or payload.get("product_id"),
@@ -1667,6 +1673,7 @@ async def _dispatch_attempt(
                         project_id=payload.get("project_id") or None,
                         product_id=item.get("product_id") or payload.get("product_id"),
                         source_mode=payload.get("source_mode"),
+                        surface_lane="PRODUCTION_STUDIO_P6",
                         workspace_execution_package_id=payload.get(
                             "workspace_execution_package_id"
                         ),
@@ -1759,6 +1766,7 @@ async def _dispatch_attempt(
                     runtime_payload.get("production_recipe")
                     or item.get("production_recipe")
                 ),
+                surface_lane="PRODUCTION_STUDIO_P6",
                 request_id=f"p6:{attempt['attempt_id']}",
                 idempotency_key=str(attempt.get("idempotency_key") or attempt["attempt_id"]),
                 manifest_id=_manifest_id,

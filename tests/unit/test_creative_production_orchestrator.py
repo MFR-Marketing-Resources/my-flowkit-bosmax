@@ -736,6 +736,7 @@ async def test_extend_compile_creates_durable_video_job_plan_without_single_queu
     request = video_job_plan.await_args.args[0]
     assert request.requested_total_duration_seconds == 16
     assert request.client_request_nonce == "wgp-p6-extend"
+    assert request.surface_lane == "PRODUCTION_STUDIO_P6"
     assert video_job_plan.await_args.kwargs["trust_client_authority"] is False
     assert evidence["generation_mode"] == "EXTEND"
     assert evidence["video_job_id"] == "vj-p6-extend"

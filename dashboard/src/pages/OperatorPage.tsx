@@ -1631,6 +1631,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				body: JSON.stringify({
 					request_id: requestId,
 					mode: data.mode,
+					surface_lane: mode === "HYBRID" ? "HYBRID" : undefined,
 					prompt: data.prompt,
 					product_id: data.product_id,
 					visual_lane_id:
@@ -2955,6 +2956,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						>
 							{extendAuthority ? (
 								<NativeExtendPanel
+									surfaceLane={mode === "HYBRID" ? "HYBRID" : undefined}
 									backendRuntimeStale={backendRuntimeStale}
 									totalDurationSeconds={requestedTotalDuration}
 									productId={selectedProduct?.id ?? null}
@@ -4241,6 +4243,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					</div>
 					{extendAuthority ? (
 						<NativeExtendPanel
+							surfaceLane="HYBRID"
 							backendRuntimeStale={backendRuntimeStale}
 							totalDurationSeconds={requestedTotalDuration}
 							productId={selectedProduct?.id ?? null}

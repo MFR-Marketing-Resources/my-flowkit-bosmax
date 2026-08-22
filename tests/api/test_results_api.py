@@ -57,6 +57,34 @@ async def test_list_includes_file_only_artifact_without_record():
     assert "m3" in by_id
     assert by_id["m3"]["has_record"] is False
     assert by_id["m3"]["file_available"] is True
+    assert by_id["m3"]["surface_label"] == "Legacy/Internal"
+
+
+async def test_active_surface_label_is_not_replaced_by_transport_mode():
+    await crud.insert_generation_result(
+        "hybrid-provenance",
+        mode="F2V",
+        surface_lane="HYBRID",
+        transport_mode="F2V",
+        source_mode="HYBRID",
+        provider_generation_type="reference_frame_2_video",
+        artifact_kind="video",
+    )
+    await crud.insert_generated_artifact(
+        "hybrid-provenance",
+        job_id="g-hybrid",
+        mode="F2V",
+        surface_lane="HYBRID",
+        transport_mode="F2V",
+        source_mode="HYBRID",
+        provider_generation_type="reference_frame_2_video",
+        artifact_kind="video",
+    )
+    resp = await api.list_results(limit=200, surface_lane="HYBRID")
+    item = next(row for row in resp["results"] if row["media_id"] == "hybrid-provenance")
+    assert item["surface_label"] == "Hybrid"
+    assert item["surface_lane"] == "HYBRID"
+    assert item["transport_mode"] == "F2V"
 
 
 async def test_kind_filter():
