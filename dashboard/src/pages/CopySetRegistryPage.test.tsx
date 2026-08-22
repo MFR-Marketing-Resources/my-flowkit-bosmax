@@ -289,7 +289,7 @@ describe("CopySetRegistryPage V2 cutover", () => {
 		expect(screen.queryByTestId("activation-queue")).not.toBeInTheDocument();
 		expect(screen.queryByTestId("copy-authority-activation-report")).not.toBeInTheDocument();
 	});
-: generating angles auto-selects the top angle AND its grounded
+	// Test: generating angles auto-selects the top angle AND its grounded
 	// evidence facts, so the operator never maps facts one-by-one. Generation uses the
 	// angle's facts; the manual editor stays available for adjustment.
 	it("auto-anchors the angle's evidence facts so generation needs no manual fact mapping", async () => {
@@ -448,7 +448,6 @@ describe("Task B — Copy Authority surface consolidation", () => {
 		expect(screen.queryByText("Copy authority activation report")).not.toBeInTheDocument();
 	});
 
-	});
 });
 
 describe("Copy Authority Library — current-authority activation gate", () => {
