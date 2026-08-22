@@ -154,6 +154,30 @@ class FlowProviderReadinessRequest(BaseModel):
     mode: str = "T2V"
 
 
+_AGENT_T2V_PROVIDER_ROUTES_WITHOUT_UI_COMPOSER = frozenset(
+    {
+        "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+        "API_FIRST_GENERATIVE_REFERENCE",
+    }
+)
+
+
+def _provider_ui_composer_required(body: FlowProviderReadinessRequest) -> bool:
+    """Return whether provider readiness must prove the legacy DOM composer.
+
+    AGENT_T2V routes use the authenticated Flow-agent transport and the exact
+    project/session challenge; they do not drive the legacy Frames/Ingredients
+    composer.  Requiring that selector proof makes unrelated project-sidebar
+    labels look like an active sub-mode and blocks a valid agent route.
+    """
+    route = str(body.provider_execution_route or "").strip().upper()
+    scaffold = str(body.scene_scaffold_route or "").strip().upper()
+    return not (
+        scaffold == "AGENT_T2V"
+        and route in _AGENT_T2V_PROVIDER_ROUTES_WITHOUT_UI_COMPOSER
+    )
+
+
 class ReloadFlowTabRequest(BaseModel):
     pass
 
@@ -799,10 +823,7 @@ async def flow_provider_readiness(body: FlowProviderReadinessRequest):
         "extension_source_path": body.extension_source_path,
         "provider_execution_route": body.provider_execution_route,
         "scene_scaffold_route": body.scene_scaffold_route,
-        "ui_composer_required": not (
-            body.provider_execution_route == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
-            and body.scene_scaffold_route == "AGENT_T2V"
-        ),
+        "ui_composer_required": _provider_ui_composer_required(body),
         "runtime_sha": runtime.get("runtime_sha"),
         "origin_main": runtime.get("origin_main"),
         "runtime_current_main": runtime.get("runtime_current_main") is True,
