@@ -66,11 +66,13 @@ import {
 	WorkflowStep,
 } from "../components/workflow";
 import ResultsSidebar from "../components/workspace/ResultsSidebar";
+import StaffIdentityBar from "../components/StaffIdentityBar";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import CopySupplyPanel, {
 	type CopySupplyProduct,
 } from "../components/production-studio/CopySupplyPanel";
 import { collectProductionSessionResults } from "../utils/videoSessionResults";
+import { useStaffIdentity } from "../hooks/useStaffIdentity";
 
 const splitValues = (value: string) =>
 	value
@@ -223,6 +225,7 @@ type StudioMode =
 const P6_COHORT_PAGE_SIZE = 50;
 
 export default function CreativeProductionStudioPage() {
+	const staffIdentity = useStaffIdentity();
 	const searchParams = new URLSearchParams(window.location.search);
 	// V4 cockpit is the DEFAULT; `?classic=1`
 	// opts back into the legacy surface. Operators no longer need a magic `?v4=1`.
@@ -273,7 +276,7 @@ export default function CreativeProductionStudioPage() {
 	const [deepLinkError, setDeepLinkError] = useState("");
 	const [lastEvidence, setLastEvidence] = useState("");
 	const [livePhrase, setLivePhrase] = useState("");
-	const [operatorId, setOperatorId] = useState("p6-production-operator");
+	const operatorId = staffIdentity.staffId;
 	const [allocations, setAllocations] = useState<ProductVideoAllocation[]>([]);
 	const [videoModels, setVideoModels] = useState<VideoModelInfo[]>([]);
 	const [modelRegistryError, setModelRegistryError] = useState("");
@@ -862,6 +865,7 @@ export default function CreativeProductionStudioPage() {
 		const created = await createProductionPlan({
 			request_id: crypto.randomUUID(),
 			operator_id: operatorId,
+			staff_id: staffIdentity.staffId,
 			name: form.name,
 			campaign_key: form.campaignKey,
 			product_ids: allocations.map((allocation) => allocation.product_id),
@@ -1002,6 +1006,7 @@ export default function CreativeProductionStudioPage() {
 		studioMode !== "ACTIVE_PLAN" ||
 		!selectedPlan ||
 		selectedSnapshot?.completeness !== "COMPLETE" ||
+		!staffIdentity.hasStaff ||
 		Boolean(busy);
 	const liveEnabled =
 		liveExecutionCertified &&
@@ -1009,6 +1014,7 @@ export default function CreativeProductionStudioPage() {
 		selectedPlan?.status === "SCHEDULED" &&
 		selectedSnapshot?.completeness === "COMPLETE" &&
 		selectedSnapshot.plan_id === selectedPlan.plan_id &&
+		staffIdentity.hasStaff &&
 		Boolean(verifiedVideoLane) &&
 		hasDryRunProof &&
 		livePhrase === P6_LIVE_CONFIRMATION &&
@@ -1058,6 +1064,7 @@ export default function CreativeProductionStudioPage() {
 		hasDryRunProof,
 		livePhrase,
 		busy,
+		staffIdentity.hasStaff,
 	]);
 
 	const preflightSnapshot =
@@ -1543,10 +1550,11 @@ export default function CreativeProductionStudioPage() {
 					: "mx-auto max-w-[1680px] p-4 text-slate-100"
 			}
 		>
+			<StaffIdentityBar identity={staffIdentity} surface="PRODUCTION_STUDIO" />
 			{pendingLive && (
 				<ManifestApprovalModal
 					manifestId={pendingLive.manifestId}
-					approvedBy={operatorId}
+					approvedBy={staffIdentity.selectedStaff?.display_name ?? ""}
 					title="Review every item's final prompt"
 					onApproved={() => {
 						const deferred = pendingLive.action;
@@ -1882,15 +1890,6 @@ export default function CreativeProductionStudioPage() {
 										error={cohortError}
 									/>
 								</div>
-								<label className="text-xs text-slate-400">
-									Operator identity
-									<input
-										aria-label="P6 operator identity"
-										value={operatorId}
-										onChange={(event) => setOperatorId(event.target.value)}
-										className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"
-									/>
-								</label>
 								<div className="grid grid-cols-3 gap-2">
 									<div className="rounded-lg border border-cyan-500/30 bg-cyan-950/20 p-2">
 										<div className="text-[10px] text-slate-400">Videos</div>

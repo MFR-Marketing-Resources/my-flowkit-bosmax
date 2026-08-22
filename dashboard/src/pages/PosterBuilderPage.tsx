@@ -2,6 +2,7 @@ import { FileCheck2, ImageIcon, Loader2, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { FinalPromptApprovalModal } from "../components/execution-approval/FinalPromptApprovalModal";
+import StaffIdentityBar from "../components/StaffIdentityBar";
 import type { PrepareDispatchRequest } from "../api/executionApproval";
 import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
 import { resolveExactGenerationGate } from "../api/exactProductOutput";
@@ -21,6 +22,7 @@ import PosterRecipeSelector from "../components/poster/PosterRecipeSelector";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
 import { useProductCatalog } from "../hooks/useProductCatalog";
+import { useStaffIdentity } from "../hooks/useStaffIdentity";
 import type { PosterPromptDraftResponse } from "../types/posterPromptDraft";
 import {
 	PRODUCT_REFERENCE_IMAGE_REQUIRED,
@@ -47,6 +49,7 @@ function message(error: unknown, fallback: string): string {
 export default function PosterBuilderPage() {
 	const [searchParams, setSearchParams] = useSearchParams();
 	const { products, isLoadingProducts, productsError } = useProductCatalog(50);
+	const staffIdentity = useStaffIdentity();
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [selectedRecipeId, setSelectedRecipeId] = useState("");
 	const [copyReady, setCopyReady] = useState(false);
@@ -140,6 +143,10 @@ export default function PosterBuilderPage() {
 	};
 
 	const compose = async () => {
+		if (!staffIdentity.hasStaff) {
+			setComposeError("Select an active staff profile before composing a poster.");
+			return;
+		}
 		if (!selectedProduct || !selectedRecipe || !copyReady || !promptPackage) return;
 		setComposeLoading(true);
 		setComposeError("");
@@ -147,6 +154,7 @@ export default function PosterBuilderPage() {
 		try {
 			const result = await composePosterV2({
 				product_id: selectedProduct.id,
+				staff_id: staffIdentity.staffId,
 				recipe_id: selectedRecipe.recipe_id,
 				background_media_id: backgroundMediaId.trim() || undefined,
 				background_local_path: backgroundLocalPath.trim() || undefined,
@@ -165,6 +173,7 @@ export default function PosterBuilderPage() {
 
 	const generateLiveBackground = async (approved = false, approvedPrompt?: string) => {
 		if (
+			!staffIdentity.hasStaff ||
 			(!approved && !liveActionConfirmed) ||
 			!selectedProduct ||
 			!promptPackage?.poster_prompt ||
@@ -212,6 +221,7 @@ export default function PosterBuilderPage() {
 			const { job_id } = await startImgGeneration({
 				prompt,
 				product_id: selectedProduct.id,
+				staff_id: staffIdentity.staffId,
 				visual_lane_id: "POSTER_BUILDER",
 				aspect: "9:16",
 				count: 1,
@@ -241,6 +251,7 @@ export default function PosterBuilderPage() {
 
 	const hasBackground = Boolean(backgroundMediaId.trim() || backgroundLocalPath.trim());
 	const canCompose =
+		staffIdentity.hasStaff &&
 		copyReady &&
 		Boolean(promptPackage) &&
 		promptPackage?.production_allowed === true &&
@@ -255,7 +266,7 @@ export default function PosterBuilderPage() {
 			{pendingApproval && (
 				<FinalPromptApprovalModal
 					prepareRequest={pendingApproval}
-					approvedBy="operator"
+					approvedBy={staffIdentity.selectedStaff?.display_name ?? ""}
 					onApproved={(snap) => {
 						setPendingApproval(null);
 						void generateLiveBackground(true, snap.final_prompt_text);
@@ -296,6 +307,7 @@ export default function PosterBuilderPage() {
 					<span className="rounded border border-emerald-500/30 px-2 py-1">Live IMG: explicit confirmation only</span>
 				</div>
 			</header>
+			<StaffIdentityBar identity={staffIdentity} surface="POSTER_BUILDER" />
 
 			<div className="space-y-5">
 				<section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5">
@@ -358,7 +370,7 @@ export default function PosterBuilderPage() {
 					<button
 						type="button"
 						onClick={() => void buildPromptDraft()}
-						disabled={!selectedProduct || !selectedRecipe || !copyReady || promptLoading}
+						disabled={!staffIdentity.hasStaff || !selectedProduct || !selectedRecipe || !copyReady || promptLoading}
 						className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40"
 					>
 						{promptLoading ? <Loader2 className="mr-2 inline animate-spin" size={15} /> : null}
@@ -394,6 +406,7 @@ export default function PosterBuilderPage() {
 							setLiveConfirmOpen(true);
 						}}
 						disabled={
+							!staffIdentity.hasStaff ||
 							!copyReady ||
 							!promptPackage?.production_allowed ||
 							liveLoading

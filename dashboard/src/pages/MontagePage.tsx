@@ -34,11 +34,13 @@ import {
 	type WorkflowStepStatus,
 } from "../components/workflow";
 import ResultsSidebar from "../components/workspace/ResultsSidebar";
+import StaffIdentityBar from "../components/StaffIdentityBar";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import CopywritingSourceSelector from "../components/copywriting/CopywritingSourceSelector";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
 import { useProductCatalog } from "../hooks/useProductCatalog";
+import { useStaffIdentity } from "../hooks/useStaffIdentity";
 import {
 	defaultEngine,
 	modelsForSingle,
@@ -63,6 +65,7 @@ function labelOf(
 }
 
 export default function MontagePage() {
+	const staffIdentity = useStaffIdentity();
 	const {
 		settings,
 		loading: settingsLoading,
@@ -162,7 +165,8 @@ export default function MontagePage() {
 		Boolean(selectedProduct) &&
 		settingsAvailable &&
 		Boolean(validSelection) &&
-		v2CopyReady;
+		v2CopyReady &&
+		staffIdentity.hasStaff;
 	const packageCount =
 		run?.scenes?.filter((s) => s.workspace_execution_package_id).length ?? 0;
 
@@ -205,6 +209,10 @@ export default function MontagePage() {
 			: "upcoming";
 
 	const handlePlan = async () => {
+		if (!staffIdentity.hasStaff) {
+			setError("Select an active Staff Profile before planning Montage.");
+			return;
+		}
 		if (!selectedProduct || !settingsAvailable) return;
 		setBusy(true);
 		setError(null);
@@ -220,6 +228,7 @@ export default function MontagePage() {
 			if (!selectedProduct || !validSelection) return;
 			const next = await createMontagePlan({
 				product_id: selectedProduct.id,
+				staff_id: staffIdentity.staffId,
 				hook_id: hookId,
 				background_id: backgroundId,
 				product_media_id: selectedProduct.media_id ?? null,
@@ -239,6 +248,10 @@ export default function MontagePage() {
 	};
 
 	const handleStartRun = async () => {
+		if (!staffIdentity.hasStaff) {
+			setError("Select an active Staff Profile before preparing Montage.");
+			return;
+		}
 		if (!selectedProduct || !settingsAvailable) return;
 		setBusy(true);
 		setError(null);
@@ -253,6 +266,7 @@ export default function MontagePage() {
 			if (!selectedProduct || !validSelection) return;
 			const res = await createMontageRun({
 				product_id: selectedProduct.id,
+				staff_id: staffIdentity.staffId,
 				hook_id: hookId,
 				background_id: backgroundId,
 				product_media_id: selectedProduct.media_id ?? null,
@@ -314,6 +328,7 @@ export default function MontagePage() {
 		try {
 			const res: MontageAuthorizeGenerationResponse =
 				await authorizeMontageGeneration(run.montage_run_id, {
+					staff_id: staffIdentity.staffId,
 					confirm_credit_burn: true,
 					expected_video_generations: estimate.expected_video_generations,
 					expected_provider_operations:
@@ -442,7 +457,7 @@ export default function MontagePage() {
 			{pendingManifestId && (
 				<ManifestApprovalModal
 					manifestId={pendingManifestId}
-					approvedBy="operator"
+					approvedBy={staffIdentity.selectedStaff?.display_name ?? ""}
 					title="Review every scene's final prompt"
 					onApproved={() => {
 						setPendingManifestId(null);
@@ -464,6 +479,7 @@ export default function MontagePage() {
 					only after you confirm the operation count.
 				</p>
 			</header>
+			<StaffIdentityBar identity={staffIdentity} surface="MONTAGE" />
 
 			<div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
 				<div className="min-h-0 space-y-3 overflow-y-auto pr-1">

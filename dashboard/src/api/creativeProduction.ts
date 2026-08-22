@@ -78,6 +78,7 @@ export interface CreativePoolSelection {
 export interface CreateProductionPlanRequest {
 	request_id: string;
 	operator_id: string;
+	staff_id: string;
 	name: string;
 	campaign_key: string;
 	product_ids: string[];
@@ -356,6 +357,7 @@ function planAction(operatorId: string) {
 	return {
 		request_id: crypto.randomUUID(),
 		operator_id: operatorId,
+		staff_id: operatorId,
 	};
 }
 

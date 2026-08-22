@@ -39,6 +39,8 @@ from agent.services.creative_production_plan_service import (
     _stable_json,
     record_audit_event,
     resolve_item_treatment,
+    require_request_staff,
+    require_staff_values,
     require_complete_plan_snapshot,
 )
 
@@ -745,6 +747,20 @@ async def _build_item_payload(
                     v2_blockers.append("COPY_V2_BINDING_MISMATCH")
 
     def _with_v2(payload: dict[str, Any]) -> dict[str, Any]:
+        payload.setdefault(
+            "staff_id",
+            str(item.get("staff_id") or plan.get("staff_id") or "").strip()
+            or None,
+        )
+        payload.setdefault(
+            "staff_display_name_snapshot",
+            str(
+                item.get("staff_display_name_snapshot")
+                or plan.get("staff_display_name_snapshot")
+                or ""
+            ).strip()
+            or None,
+        )
         if isinstance(round3_selection, dict) and round3_selection.get("v2_blueprint_id"):
             # The P6 item carries its exact production-copy selection explicitly.
             payload["round3_copy_selection"] = round3_selection
@@ -1045,9 +1061,38 @@ async def _create_attempt(
     *,
     action_request_id: str,
     actor_id: str,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
     payload: dict[str, Any],
     credit_spend_intended: bool,
 ) -> dict[str, Any]:
+    canonical_staff_id = str(
+        staff_id or item.get("staff_id") or ""
+    ).strip()
+    if not canonical_staff_id:
+        raise CreativeProductionError(
+            "STAFF_IDENTITY_REQUIRED",
+            "A canonical staff identity is required for every generation attempt.",
+            status_code=422,
+        )
+    # Resolve again at the attempt boundary. The persisted snapshot is
+    # lineage, not authority: inactive profiles cannot start new attempts and
+    # the display name is always captured from the server registry.
+    from agent.services.staff_identity_service import (
+        StaffIdentityError,
+        resolve_staff_identity,
+    )
+
+    try:
+        staff_profile = await resolve_staff_identity(canonical_staff_id)
+    except StaffIdentityError as exc:
+        raise CreativeProductionError(
+            exc.code,
+            exc.message,
+            status_code=exc.status_code,
+        ) from exc
+    canonical_staff_name = str(staff_profile["display_name"])
+    actor_id = canonical_staff_id
     existing = await p6db.get_attempt_by_action(
         item["item_id"],
         action_request_id,
@@ -1090,6 +1135,8 @@ async def _create_attempt(
         {
             "attempt_id": f"p6attempt_{uuid.uuid4().hex[:20]}",
             "item_id": item["item_id"],
+            "staff_id": canonical_staff_id,
+            "staff_display_name_snapshot": canonical_staff_name or None,
             "attempt_number": attempt_number,
             "idempotency_key": idempotency_key,
             "action_request_id": action_request_id,
@@ -1126,6 +1173,7 @@ async def dry_run_plan(
     plan_id: str,
     body: DryRunRequest,
 ) -> dict[str, Any]:
+    staff_profile = await require_request_staff(body)
     plan = await _require_plan(plan_id)
     if plan["status"] not in {
         PlanStatus.APPROVED.value,
@@ -1158,7 +1206,9 @@ async def dry_run_plan(
         attempt = await _create_attempt(
             item,
             action_request_id=action_id,
-            actor_id=body.operator_id,
+            actor_id=staff_profile["staff_id"],
+            staff_id=staff_profile["staff_id"],
+            staff_display_name_snapshot=staff_profile["display_name"],
             payload=payload,
             credit_spend_intended=False,
         )
@@ -1176,7 +1226,9 @@ async def dry_run_plan(
     await record_audit_event(
         plan_id=plan_id,
         request_id=body.request_id,
-        actor_id=body.operator_id,
+        actor_id=staff_profile["staff_id"],
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         action="DRY_RUN_PLAN",
         source_state=str(plan["status"]),
         target_state=str(plan["status"]),
@@ -1316,6 +1368,18 @@ async def _fire_montage_recipe(
             "MONTAGE_RUN_ID_REQUIRED",
             "Montage dispatch requires its canonical durable run identity.",
         )
+    staff_id = str(item.get("staff_id") or payload.get("staff_id") or "").strip()
+    staff_display_name = str(
+        item.get("staff_display_name_snapshot")
+        or payload.get("staff_display_name_snapshot")
+        or ""
+    ).strip()
+    if not staff_id:
+        raise CreativeProductionError(
+            "STAFF_IDENTITY_REQUIRED",
+            "Montage dispatch requires the initiating staff identity.",
+            status_code=422,
+        )
     estimate = await montage_run_service.estimate_montage_run_generation(run_id)
     manifest_id = None
     from agent.services import execution_approval_service as _eas
@@ -1353,6 +1417,8 @@ async def _fire_montage_recipe(
                 ),
                 project_id=payload.get("project_id") or None,
                 product_id=kwargs.get("product_id") or item.get("product_id"),
+                production_recipe="MONTAGE",
+                staff_id=staff_id,
                 aspect="9:16",
                 source_mode=kwargs.get("source_mode") or None,
                 workspace_execution_package_id=(
@@ -1405,6 +1471,8 @@ async def _fire_montage_recipe(
         max_polls=120,
         poll_interval_s=5.0,
         async_worker=True,
+        staff_id=staff_id,
+        staff_display_name_snapshot=staff_display_name,
         manifest_id=manifest_id,
     )
     if not authorized.get("ok"):
@@ -1455,6 +1523,8 @@ async def _fire_montage_recipe(
                 status="CREATED",
                 requested_duration_seconds=requested_seconds,
                 product_id=item.get("product_id"),
+                staff_id=staff_id,
+                staff_display_name_snapshot=staff_display_name or None,
                 model=payload.get("model"),
                 aspect_ratio=payload.get("aspect") or "9:16",
                 segment_media_ids_json=json.dumps(segment_ids),
@@ -1463,6 +1533,8 @@ async def _fire_montage_recipe(
                         "execution_mode": "MONTAGE_DISCRETE",
                         "production_recipe": "MONTAGE",
                         "montage_run_id": run_id,
+                        "staff_id": staff_id,
+                        "staff_display_name": staff_display_name or None,
                         "requested_seconds": requested_seconds,
                         "segment_count": len(segment_ids),
                     }
@@ -1498,6 +1570,8 @@ async def _fire_montage_recipe(
                     product_id=item.get("product_id") or payload.get("product_id"),
                     prompt=str(payload.get("prompt") or ""),
                     aspect_ratio=payload.get("aspect") or "9:16",
+                    staff_id=staff_id,
+                    staff_display_name_snapshot=staff_display_name or None,
                 )
             except Exception as exc:  # noqa: BLE001 - final delivery is fail-closed
                 await crud.update_video_production_job_full(
@@ -1610,6 +1684,13 @@ async def _dispatch_attempt(
                         copy_v2_context=payload.get("copy_v2_context")
                         or {"lane": "FACELESS"},
                         execution_identity=payload.get("faceless_execution_identity"),
+                        production_recipe="FACELESS",
+                        staff_id=str(
+                            item.get("staff_id")
+                            or payload.get("staff_id")
+                            or ""
+                        ).strip()
+                        or None,
                     )
                 )
                 if not isinstance(result, dict):
@@ -1664,6 +1745,20 @@ async def _dispatch_attempt(
                 image_model=runtime_payload.get("image_model"),
                 product_id=item.get("product_id") or runtime_payload.get("product_id"),
                 source_mode=runtime_payload.get("source_mode"),
+                staff_id=str(
+                    item.get("staff_id") or runtime_payload.get("staff_id") or ""
+                ).strip()
+                or None,
+                staff_display_name_snapshot=str(
+                    item.get("staff_display_name_snapshot")
+                    or runtime_payload.get("staff_display_name_snapshot")
+                    or ""
+                ).strip()
+                or None,
+                production_recipe=(
+                    runtime_payload.get("production_recipe")
+                    or item.get("production_recipe")
+                ),
                 request_id=f"p6:{attempt['attempt_id']}",
                 idempotency_key=str(attempt.get("idempotency_key") or attempt["attempt_id"]),
                 manifest_id=_manifest_id,
@@ -1811,12 +1906,13 @@ async def start_plan(
     plan_id: str,
     body: StartPlanRequest,
 ) -> dict[str, Any]:
+    staff_profile = await require_request_staff(body)
     if not body.live:
         return await dry_run_plan(
             plan_id,
             DryRunRequest(
                 request_id=body.request_id,
-                operator_id=body.operator_id,
+                staff_id=staff_profile["staff_id"],
                 aspect=body.aspect,
             ),
         )
@@ -1886,7 +1982,9 @@ async def start_plan(
     attempt = await _create_attempt(
         item,
         action_request_id=f"{body.request_id}:{item['item_id']}:live",
-        actor_id=body.operator_id,
+        actor_id=staff_profile["staff_id"],
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         payload=payload,
         credit_spend_intended=True,
     )
@@ -1899,7 +1997,8 @@ async def start_plan(
     policy.update(
         {
             "live_media_authorization_granted": True,
-            "live_authorized_by": body.operator_id,
+            "live_authorized_by": staff_profile["staff_id"],
+            "live_authorized_staff_display_name": staff_profile["display_name"],
             "live_authorized_at": _now(),
             "live_authorization_request_id": body.request_id,
             "live_confirmation_hash": _sha(body.credit_confirmation or ""),
@@ -1915,7 +2014,9 @@ async def start_plan(
     await record_audit_event(
         plan_id=plan_id,
         request_id=body.request_id,
-        actor_id=body.operator_id,
+        actor_id=staff_profile["staff_id"],
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         action="START_LIVE_PLAN",
         source_state=PlanStatus.SCHEDULED.value,
         target_state=PlanStatus.RUNNING.value,
@@ -1935,6 +2036,7 @@ async def control_plan(
     action: str,
     body: PlanActionRequest,
 ) -> dict[str, Any]:
+    staff_profile = await require_request_staff(body)
     plan = await _require_plan(plan_id)
     now = _now()
     action = action.upper()
@@ -1996,7 +2098,8 @@ async def control_plan(
             {
                 **_loads(plan.get("compile_snapshot_json"), {}),
                 "last_control_request_id": body.request_id,
-                "last_control_operator_id": body.operator_id,
+                "last_control_operator_id": staff_profile["staff_id"],
+                "last_control_staff_display_name": staff_profile["display_name"],
             }
         ),
         updated_at=now,
@@ -2004,7 +2107,9 @@ async def control_plan(
     await record_audit_event(
         plan_id=plan_id,
         request_id=body.request_id,
-        actor_id=body.operator_id,
+        actor_id=staff_profile["staff_id"],
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         action=f"{action}_PLAN",
         source_state=str(plan["status"]),
         target_state=status,
@@ -2017,6 +2122,7 @@ async def transition_attempt(
     attempt_id: str,
     body: AttemptTransitionRequest,
 ) -> dict[str, Any]:
+    staff_profile = await require_request_staff(body)
     attempt = await p6db.get_attempt(attempt_id)
     if attempt is None:
         raise CreativeProductionError(
@@ -2068,7 +2174,9 @@ async def transition_attempt(
         ),
         failure_stage=body.failure_stage,
         failure_code=body.failure_code,
-        last_actor_id=body.operator_id,
+        last_actor_id=staff_profile["staff_id"],
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         last_action_request_id=body.request_id,
         updated_at=now,
         **timestamp_fields,
@@ -2078,7 +2186,9 @@ async def transition_attempt(
     await record_audit_event(
         plan_id=str(item["plan_id"]),
         request_id=body.request_id,
-        actor_id=body.operator_id,
+        actor_id=staff_profile["staff_id"],
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         action="TRANSITION_ATTEMPT",
         source_state=current,
         target_state=target,
@@ -2226,6 +2336,10 @@ async def reconcile_attempt(attempt_id: str) -> dict[str, Any]:
                     "qa_id": f"p6qa_{uuid.uuid4().hex[:20]}",
                     "item_id": attempt["item_id"],
                     "attempt_id": attempt_id,
+                    "staff_id": attempt.get("staff_id"),
+                    "staff_display_name_snapshot": attempt.get(
+                        "staff_display_name_snapshot"
+                    ),
                     "artifact_media_id": media_id,
                     "status": "QA_PENDING",
                     "checklist_json": "{}",
@@ -2303,6 +2417,10 @@ async def reconcile_attempt(attempt_id: str) -> dict[str, Any]:
                     "qa_id": f"p6qa_{uuid.uuid4().hex[:20]}",
                     "item_id": attempt["item_id"],
                     "attempt_id": attempt_id,
+                    "staff_id": attempt.get("staff_id"),
+                    "staff_display_name_snapshot": attempt.get(
+                        "staff_display_name_snapshot"
+                    ),
                     "artifact_media_id": media_id,
                     "status": "QA_PENDING",
                     "checklist_json": "{}",
@@ -2539,11 +2657,29 @@ async def scheduler_tick() -> dict[str, Any]:
         action_request_id = (
             f"auto:{plan['plan_id']}:{item['item_id']}:live"
         )
-        actor_id = str(policy.get("live_authorized_by") or "P6_SYSTEM")
+        from agent.services.staff_identity_service import (
+            StaffIdentityError,
+            resolve_staff_identity,
+        )
+
+        try:
+            plan_staff = await resolve_staff_identity(plan.get("staff_id"))
+        except StaffIdentityError:
+            # Historical plans and plans owned by an unknown/inactive profile
+            # are never auto-dispatched. In particular, there is no P6_SYSTEM
+            # fallback: no identity means no provider call and no credit spend.
+            logger.warning(
+                "P6 scheduler skipped plan %s: canonical staff identity unavailable",
+                plan["plan_id"],
+            )
+            continue
+        actor_id = plan_staff["staff_id"]
         attempt = await _create_attempt(
             item,
             action_request_id=action_request_id,
             actor_id=actor_id,
+            staff_id=plan_staff["staff_id"],
+            staff_display_name_snapshot=plan_staff["display_name"],
             payload=payload,
             credit_spend_intended=True,
         )
@@ -2580,6 +2716,7 @@ async def retry_attempt(
     attempt_id: str,
     body: PlanActionRequest,
 ) -> dict[str, Any]:
+    staff_profile = await require_request_staff(body)
     attempt = await p6db.get_attempt(attempt_id)
     if attempt is None:
         raise CreativeProductionError(
@@ -2608,7 +2745,9 @@ async def retry_attempt(
     replacement = await _create_attempt(
         item,
         action_request_id=f"{body.request_id}:{item['item_id']}:retry",
-        actor_id=body.operator_id,
+        actor_id=staff_profile["staff_id"],
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         payload=_loads(attempt["payload_snapshot_json"], {}),
         credit_spend_intended=False,
     )
@@ -2626,7 +2765,9 @@ async def retry_attempt(
     await record_audit_event(
         plan_id=str(item["plan_id"]),
         request_id=body.request_id,
-        actor_id=body.operator_id,
+        actor_id=staff_profile["staff_id"],
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         action="RETRY_ATTEMPT_STAGED",
         source_state=state,
         target_state=AttemptState.NOT_SUBMITTED.value,
@@ -2649,6 +2790,7 @@ async def qa_decision(
     item_id: str,
     body: QaDecisionRequest,
 ) -> dict[str, Any]:
+    staff_profile = await require_request_staff(body)
     item = await p6db.get_item(item_id)
     if item is None:
         raise CreativeProductionError(
@@ -2685,10 +2827,12 @@ async def qa_decision(
             "qa_id": f"p6qa_{uuid.uuid4().hex[:20]}",
             "item_id": item_id,
             "attempt_id": attempt["attempt_id"],
+            "staff_id": staff_profile["staff_id"],
+            "staff_display_name_snapshot": staff_profile["display_name"],
             "artifact_media_id": media_id,
             "status": body.decision,
             "checklist_json": "{}",
-            "reviewer_id": body.operator_id,
+            "reviewer_id": staff_profile["staff_id"],
             "reviewer_note": body.reviewer_note,
             "reviewed_at": now,
             "created_at": now,
@@ -2725,6 +2869,8 @@ async def qa_decision(
                     {
                         "item_id": replacement_id,
                         "plan_id": item["plan_id"],
+                        "staff_id": staff_profile["staff_id"],
+                        "staff_display_name_snapshot": staff_profile["display_name"],
                         "item_ordinal": len(current_items),
                         "product_id": item["product_id"],
                         "media_type": item["media_type"],
@@ -2762,7 +2908,9 @@ async def qa_decision(
     await record_audit_event(
         plan_id=str(item["plan_id"]),
         request_id=body.request_id,
-        actor_id=body.operator_id,
+        actor_id=staff_profile["staff_id"],
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         action="QA_DECISION",
         source_state=str(item["status"]),
         target_state=(

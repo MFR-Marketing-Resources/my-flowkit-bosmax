@@ -12,6 +12,8 @@ def _record(**values):
         media_type=values.get("media_type", "VIDEO"),
         production_recipe=values.get("production_recipe", "HYBRID"),
         origin_surface=values.get("origin_surface", "PRODUCTION_STUDIO"),
+        staff_id=values.get("staff_id"),
+        staff_display_name=values.get("staff_display_name"),
         operator_id=values.get("operator_id"),
         product_id=values.get("product_id", "prod-1"),
         product_name=values.get("product_name", "Real Product"),
@@ -74,6 +76,29 @@ def test_staff_metrics_exclude_unattributed_rows_and_do_not_rank_attempts():
     assert rows[0]["successful_outputs"] == 1
     assert rows[0]["failed_attempts"] == 1
     assert rows[0]["hybrid"] == 1
+
+
+def test_reporting_prefers_canonical_staff_identity_and_name_snapshot():
+    record = _record(
+        staff_id="staff_aisha",
+        staff_display_name="Aisha Rahman",
+        operator_id="system",
+    )
+
+    assert record["staff_id"] == "staff_aisha"
+    assert record["staff_display_name"] == "Aisha Rahman"
+    assert record["operator_id"] == "staff_aisha"
+    assert record["operator_display_name"] == "Aisha Rahman"
+    assert svc._staff_performance([record])[0]["staff"] == "staff_aisha"
+    assert svc._staff_performance([record])[0]["staff_display_name"] == "Aisha Rahman"
+
+
+def test_historical_generic_identity_is_not_fabricated_into_staff_performance():
+    record = _record(operator_id="p6-production-operator")
+
+    assert record["staff_id"] is None
+    assert record["operator_id"] is None
+    assert svc._staff_performance([record]) == []
 
 
 def test_filter_options_cannot_echo_internal_or_retired_values():

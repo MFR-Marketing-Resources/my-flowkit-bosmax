@@ -74,6 +74,8 @@ async def register_final_video_artifact(
     product_id: str | None = None,
     prompt: str = "",
     aspect_ratio: str | None = None,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
 ) -> dict[str, Any]:
     """Register one final video and return its durable identity.
 
@@ -109,6 +111,8 @@ async def register_final_video_artifact(
             file_sha256=evidence["sha256"],
             delivery_status="REGISTERED",
             readback_verified=True,
+            staff_id=staff_id,
+            staff_display_name_snapshot=staff_display_name_snapshot,
         )
         await crud.insert_generation_result(
             media_id,
@@ -121,6 +125,8 @@ async def register_final_video_artifact(
             aspect_ratio=aspect_ratio,
             duration_s=int(duration_s or 0),
             project_id=project_id,
+            staff_id=staff_id,
+            staff_display_name_snapshot=staff_display_name_snapshot,
         )
         if readback is not None and str(readback.get("local_path") or "") != local_path:
             raise FinalArtifactDeliveryError(

@@ -29,6 +29,7 @@ router = APIRouter(prefix="/faceless", tags=["faceless"])
 
 class FacelessPrepareRequest(BaseModel):
     product_id: str
+    staff_id: Optional[str] = None
     # Optional Advanced override only — not required for normal product-first path
     start_frame_asset_id: Optional[str] = None
     end_frame_asset_id: Optional[str] = None
@@ -49,9 +50,25 @@ class FacelessPrepareRequest(BaseModel):
     copy_v2_context: dict[str, Any] | None = None
 
 
+async def _require_faceless_staff(staff_id: str | None) -> dict[str, Any]:
+    from agent.services.staff_identity_service import (
+        StaffIdentityError,
+        resolve_staff_identity,
+    )
+
+    try:
+        return await resolve_staff_identity(staff_id)
+    except StaffIdentityError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error_code": exc.code, "message": exc.message},
+        ) from exc
+
+
 @router.post("/prepare")
 async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
     """Validate + resolve Hook/BG + create workspace execution package."""
+    staff_profile = await _require_faceless_staff(body.staff_id)
     if body.copy_set_id and not legacy_copy_maintenance_enabled():
         raise HTTPException(
             status_code=410,
@@ -216,6 +233,8 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
             aspect_ratio=body.aspect_ratio,
             model=str(body.model).strip(),
             manual_override=False,
+            staff_id=staff_profile["staff_id"],
+            staff_display_name_snapshot=staff_profile["display_name"],
             generation_mode=pkg_gen_mode,
             character_presence=fl.FACELESS_CHARACTER_PRESENCE,
             creator_persona="DEFAULT_CREATOR",
@@ -327,6 +346,8 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
         "avatar_id": None,
         "actor_profile": resolution.get("actor_profile"),
         "visual_law": fl.FACELESS_VISUAL_LAW,
+        "staff_id": staff_profile["staff_id"],
+        "staff_display_name": staff_profile["display_name"],
         # Debug-only internals (still returned for audit, FE hides from normal UI)
         "debug": {
             "transport_mode": transport_mode,
@@ -378,6 +399,7 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
 @router.post("/validate")
 async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
     """Credit-free fail-closed validation + resolve preview (no package write)."""
+    staff_profile = await _require_faceless_staff(body.staff_id)
     gen_mode = str(body.generation_mode or "SINGLE").strip().upper()
     reference_override = bool(str(body.start_frame_asset_id or "").strip())
     try:
@@ -515,4 +537,6 @@ async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
         "faceless_resolution": resolution.get("faceless_resolution"),
         "scene_context_override": fl.build_faceless_scene_context(resolution),
         "visual_law": fl.FACELESS_VISUAL_LAW,
+        "staff_id": staff_profile["staff_id"],
+        "staff_display_name": staff_profile["display_name"],
     }

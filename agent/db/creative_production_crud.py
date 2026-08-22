@@ -168,6 +168,8 @@ async def list_historical_dna(
 
 
 _ITEM_UPDATE_COLUMNS = {
+    "staff_id",
+    "staff_display_name_snapshot",
     "wave_id",
     "production_batch_id",
     "creative_dimensions_json",
@@ -381,6 +383,8 @@ async def list_attempts_for_reconciliation(
 
 
 _ATTEMPT_UPDATE_COLUMNS = {
+    "staff_id",
+    "staff_display_name_snapshot",
     "lane_id",
     "attempt_state",
     "credit_confirmation",
@@ -602,10 +606,14 @@ async def upsert_qa(values: dict[str, Any]) -> dict[str, Any]:
     db = await get_db()
     await db.execute(
         "INSERT INTO creative_output_qa "
-        "(qa_id,item_id,attempt_id,artifact_media_id,status,checklist_json,"
+        "(qa_id,item_id,attempt_id,staff_id,staff_display_name_snapshot,"
+        "artifact_media_id,status,checklist_json,"
         "reviewer_id,reviewer_note,reviewed_at,created_at,updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(item_id,attempt_id,artifact_media_id) DO UPDATE SET "
+        "staff_id=COALESCE(excluded.staff_id,creative_output_qa.staff_id),"
+        "staff_display_name_snapshot=COALESCE(excluded.staff_display_name_snapshot,"
+        "creative_output_qa.staff_display_name_snapshot),"
         "status=excluded.status,checklist_json=excluded.checklist_json,"
         "reviewer_id=excluded.reviewer_id,reviewer_note=excluded.reviewer_note,"
         "reviewed_at=excluded.reviewed_at,updated_at=excluded.updated_at",
@@ -613,6 +621,8 @@ async def upsert_qa(values: dict[str, Any]) -> dict[str, Any]:
             values["qa_id"],
             values["item_id"],
             values["attempt_id"],
+            values.get("staff_id"),
+            values.get("staff_display_name_snapshot"),
             values["artifact_media_id"],
             values["status"],
             values["checklist_json"],
@@ -653,9 +663,10 @@ async def record_audit_event(values: dict[str, Any]) -> dict[str, Any]:
     db = await get_db()
     await db.execute(
         "INSERT INTO creative_production_audit_event "
-        "(event_id,plan_id,item_id,attempt_id,request_id,actor_id,action,"
+        "(event_id,plan_id,item_id,attempt_id,request_id,actor_id,staff_id,"
+        "staff_display_name_snapshot,action,"
         "source_state,target_state,evidence_json,created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(plan_id,request_id,action) DO NOTHING",
         (
             values["event_id"],
@@ -664,6 +675,8 @@ async def record_audit_event(values: dict[str, Any]) -> dict[str, Any]:
             values.get("attempt_id"),
             values["request_id"],
             values["actor_id"],
+            values.get("staff_id"),
+            values.get("staff_display_name_snapshot"),
             values["action"],
             values.get("source_state"),
             values.get("target_state"),

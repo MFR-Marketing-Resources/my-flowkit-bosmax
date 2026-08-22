@@ -77,6 +77,50 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+async def require_request_staff(body: Any) -> dict[str, Any]:
+    """Resolve the canonical staff profile for a P6 request/action.
+
+    ``operator_id`` remains a read/write compatibility alias for old clients,
+    but it is never accepted as an arbitrary label: it must resolve to the same
+    registered StaffProfile as ``staff_id``.
+    """
+
+    from agent.services.staff_identity_service import resolve_staff_identity
+
+    return await require_staff_values(
+        getattr(body, "staff_id", None),
+        getattr(body, "operator_id", None),
+    )
+
+
+async def require_staff_values(
+    staff_id_value: Any,
+    operator_id_value: Any,
+) -> dict[str, Any]:
+    from agent.services.staff_identity_service import (
+        StaffIdentityError,
+        resolve_staff_identity,
+    )
+
+    staff_id = str(staff_id_value or "").strip()
+    operator_id = str(operator_id_value or "").strip()
+    if staff_id and operator_id and staff_id != operator_id:
+        raise CreativeProductionError(
+            "STAFF_IDENTITY_MISMATCH",
+            "staff_id and compatibility operator_id must identify the same profile.",
+            status_code=422,
+        )
+    candidate = staff_id or operator_id
+    try:
+        return await resolve_staff_identity(candidate)
+    except StaffIdentityError as exc:
+        raise CreativeProductionError(
+            exc.code,
+            exc.message,
+            status_code=exc.status_code,
+        ) from exc
+
+
 def _stable_json(value: Any) -> str:
     return json.dumps(
         value,
@@ -345,6 +389,8 @@ def _snapshot_from_plan_values(
         "purpose": str(plan.get("campaign_key") or "").strip() or None,
         "status": str(plan["status"]),
         "operator_id": str(plan["created_by"]),
+        "staff_id": str(plan.get("staff_id") or "") or None,
+        "staff_display_name": str(plan.get("staff_display_name_snapshot") or "") or None,
         "request_id": str(plan["request_id"]),
         "product_allocations": product_allocations,
         "target_video_count": target_video_count,
@@ -610,6 +656,12 @@ async def reconcile_legacy_plan_snapshots(
     operator_id: str,
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    audit_staff_id = str(operator_id or "").strip()
+    if not dry_run:
+        # Reconciliation writes an audit event, so its actor must be a current
+        # registered staff profile. It never supplies attribution to the
+        # historical plan itself.
+        audit_staff_id = (await require_staff_values(audit_staff_id, None))["staff_id"]
     product_names = await _catalog_product_names()
     results: list[dict[str, Any]] = []
     for plan in await p6db.list_plans(100_000):
@@ -659,7 +711,7 @@ async def reconcile_legacy_plan_snapshots(
             await record_audit_event(
                 plan_id=str(plan["plan_id"]),
                 request_id=f"{request_id}:{plan['plan_id']}",
-                actor_id=operator_id,
+                actor_id=audit_staff_id,
                 action="RECONCILE_PLAN_SNAPSHOT",
                 source_state=str(plan["status"]),
                 target_state=str(plan["status"]),
@@ -1316,6 +1368,7 @@ async def resolve_item_treatment(
 
 
 async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
+    staff_profile = await require_request_staff(body)
     try:
         recipe_adapter = resolve_production_recipe(body.production_recipe or "")
     except ProductionRecipeError as exc:
@@ -1430,7 +1483,9 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
     values: dict[str, Any] = {
         "plan_id": plan_id,
         "request_id": body.request_id,
-        "created_by": body.operator_id.strip(),
+        "created_by": staff_profile["staff_id"],
+        "staff_id": staff_profile["staff_id"],
+        "staff_display_name_snapshot": staff_profile["display_name"],
         "name": body.name.strip(),
         "campaign_key": body.campaign_key.strip(),
         "product_scope_json": _stable_json(body.product_ids),
@@ -1490,7 +1545,9 @@ async def create_plan(body: ProductionPlanCreateRequest) -> dict[str, Any]:
     await record_audit_event(
         plan_id=plan_id,
         request_id=body.request_id,
-        actor_id=body.operator_id,
+        actor_id=staff_profile["staff_id"],
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         action="CREATE_PLAN",
         source_state=None,
         target_state=PlanStatus.DRAFT.value,
@@ -1551,6 +1608,8 @@ async def record_audit_event(
     plan_id: str,
     request_id: str,
     actor_id: str,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
     action: str,
     source_state: str | None,
     target_state: str | None,
@@ -1566,6 +1625,8 @@ async def record_audit_event(
             "attempt_id": attempt_id,
             "request_id": request_id,
             "actor_id": actor_id.strip(),
+            "staff_id": staff_id or actor_id.strip(),
+            "staff_display_name_snapshot": staff_display_name_snapshot,
             "action": action,
             "source_state": source_state,
             "target_state": target_state,
@@ -1579,6 +1640,7 @@ async def update_plan(
     plan_id: str,
     body: ProductionPlanUpdateRequest,
 ) -> dict[str, Any]:
+    staff_profile = await require_request_staff(body)
     plan = await _require_plan(plan_id)
     current_recipe = recipe_for_plan(plan)
     requested_recipe = None
@@ -1626,7 +1688,9 @@ async def update_plan(
 
     patch = body.model_dump(mode="json", exclude_none=True)
     request_id = str(patch.pop("request_id"))
-    operator_id = str(patch.pop("operator_id"))
+    patch.pop("operator_id", None)
+    patch.pop("staff_id", None)
+    operator_id = str(staff_profile["staff_id"])
     request_sha = _sha(patch)
     policy = _loads(plan.get("execution_policy_json"), {})
     prior_request_id = policy.get("last_update_request_id")
@@ -1822,6 +1886,8 @@ async def update_plan(
         plan_id=plan_id,
         request_id=request_id,
         actor_id=operator_id,
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         action="UPDATE_PLAN",
         source_state=str(plan["status"]),
         target_state=PlanStatus.DRAFT.value,
@@ -3350,6 +3416,7 @@ async def run_capacity_preflight(
     plan_id: str,
     action: PlanActionRequest | None = None,
 ) -> CapacityPreflightResponse:
+    staff_profile = await require_request_staff(action) if action is not None else None
     plan = await _require_plan(plan_id)
     if plan["status"] not in {
         PlanStatus.DRAFT.value,
@@ -3520,7 +3587,9 @@ async def run_capacity_preflight(
         await record_audit_event(
             plan_id=plan_id,
             request_id=action.request_id,
-            actor_id=action.operator_id,
+            actor_id=staff_profile["staff_id"],
+            staff_id=staff_profile["staff_id"],
+            staff_display_name_snapshot=staff_profile["display_name"],
             action="RUN_CAPACITY_PREFLIGHT",
             source_state=str(plan["status"]),
             target_state=status,
@@ -3549,6 +3618,7 @@ async def materialize_content_matrix(
     plan_id: str,
     action: PlanActionRequest | None = None,
 ) -> dict[str, Any]:
+    staff_profile = await require_request_staff(action) if action is not None else None
     plan = await _require_plan(plan_id)
     existing = await p6db.list_items(plan_id)
     if existing:
@@ -3736,6 +3806,10 @@ async def materialize_content_matrix(
                     f"p6item_{_sha([plan_id, item_ordinal, dna])[:24]}"
                 ),
                 "plan_id": plan_id,
+                "staff_id": plan.get("staff_id"),
+                "staff_display_name_snapshot": plan.get(
+                    "staff_display_name_snapshot"
+                ),
                 "item_ordinal": item_ordinal,
                 "product_id": dimensions["product_id"],
                 "media_type": dimensions["media_type"],
@@ -3759,7 +3833,9 @@ async def materialize_content_matrix(
         await record_audit_event(
             plan_id=plan_id,
             request_id=action.request_id,
-            actor_id=action.operator_id,
+            actor_id=staff_profile["staff_id"],
+            staff_id=staff_profile["staff_id"],
+            staff_display_name_snapshot=staff_profile["display_name"],
             action="MATERIALIZE_CONTENT_MATRIX",
             source_state=PlanStatus.PREFLIGHT_READY.value,
             target_state=PlanStatus.PREFLIGHT_READY.value,
@@ -3813,8 +3889,12 @@ async def approve_plan(
     plan_id: str,
     *,
     request_id: str,
-    operator_id: str,
+    operator_id: str | None = None,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
 ) -> dict[str, Any]:
+    staff_profile = await require_staff_values(staff_id, operator_id)
+    operator_id = staff_profile["staff_id"]
     plan = await _require_plan(plan_id)
     if (
         plan["status"] == PlanStatus.APPROVED.value
@@ -3858,6 +3938,8 @@ async def approve_plan(
         plan_id=plan_id,
         request_id=request_id,
         actor_id=operator_id,
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         action="APPROVE_PLAN",
         source_state=str(plan["status"]),
         target_state=PlanStatus.APPROVED.value,
@@ -3870,6 +3952,7 @@ async def assign_waves(
     plan_id: str,
     body: WaveAssignmentRequest,
 ) -> dict[str, Any]:
+    staff_profile = await require_request_staff(body)
     plan = await _require_plan(plan_id)
     existing = await p6db.list_waves(plan_id)
     if existing:
@@ -3946,7 +4029,9 @@ async def assign_waves(
     await record_audit_event(
         plan_id=plan_id,
         request_id=body.request_id,
-        actor_id=body.operator_id,
+        actor_id=staff_profile["staff_id"],
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         action="ASSIGN_WAVES",
         source_state=str(plan["status"]),
         target_state=PlanStatus.SCHEDULED.value,

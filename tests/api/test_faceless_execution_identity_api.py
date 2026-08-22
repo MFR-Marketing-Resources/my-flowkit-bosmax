@@ -50,6 +50,8 @@ def test_generate_rejects_missing_faceless_identity_before_copy_resolution(
             "prompt": "provider-ready faceless prompt",
             "product_id": "p1",
             "source_mode": "HYBRID",
+            "production_recipe": "FACELESS",
+            "staff_id": "staff_pytest_operator",
             "workspace_execution_package_id": "wep_1",
         },
     )
@@ -82,6 +84,8 @@ def test_generate_rejects_mutated_faceless_identity_before_copy_resolution(
             "prompt": "provider-ready faceless prompt",
             "product_id": "p1",
             "source_mode": "HYBRID",
+            "production_recipe": "FACELESS",
+            "staff_id": "staff_pytest_operator",
             "workspace_execution_package_id": "wep_1",
             "execution_identity": {
                 **expected,

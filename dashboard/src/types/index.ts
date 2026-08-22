@@ -323,6 +323,9 @@ type DisplayFieldValue =
 
 export interface WorkspaceExecutePayload {
 	prompt: string;
+	/** Canonical server-resolved staff identity for active production lanes. */
+	staff_id?: string | null;
+	production_recipe?: "HYBRID" | "FACELESS" | "MONTAGE" | "POSTER_BUILDER";
 	orientation?: Orientation;
 	aspectRatio?: string;
 	model?: string;

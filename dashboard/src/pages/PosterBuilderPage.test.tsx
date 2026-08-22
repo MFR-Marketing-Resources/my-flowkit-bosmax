@@ -7,6 +7,21 @@ import { composePosterV2 } from "../api/posterV2";
 import { pollImgGenerationJob, startImgGeneration } from "../api/imgFactory";
 import PosterBuilderPage from "./PosterBuilderPage";
 
+vi.mock("../api/staffIdentity", () => ({
+	fetchStaffProfiles: vi.fn().mockResolvedValue({
+		profiles: [
+			{
+				staff_id: "staff_test_operator",
+				display_name: "Test Operator",
+				active: true,
+				created_at: "2026-08-01T00:00:00Z",
+				updated_at: "2026-08-01T00:00:00Z",
+			},
+		],
+	}),
+	createStaffProfile: vi.fn(),
+}));
+
 vi.mock("../api/executionApproval", () => {
 	const snap = (state: string, text: string) => ({
 		snapshot_id: "eas_test",
@@ -132,9 +147,13 @@ function renderPage() {
 }
 
 describe("PosterBuilderPage V2-only cutover", () => {
-	afterEach(cleanup);
+	afterEach(() => {
+		window.localStorage.removeItem("bosmax.staff_identity.v1");
+		cleanup();
+	});
 
 	beforeEach(() => {
+		window.localStorage.setItem("bosmax.staff_identity.v1", "staff_test_operator");
 		vi.mocked(createPosterPromptDraft).mockReset().mockResolvedValue(promptResponse);
 		vi.mocked(composePosterV2).mockReset().mockResolvedValue({
 				deliverable: {
@@ -175,6 +194,9 @@ describe("PosterBuilderPage V2-only cutover", () => {
 
 	it("preserves the explicit live-action confirmation gate", async () => {
 		renderPage();
+		await waitFor(() =>
+			expect(screen.getByTestId("staff-identity-select")).toHaveValue("staff_test_operator"),
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Select Test Product" }));
 		fireEvent.click(screen.getByRole("button", { name: "Prove V2 binding" }));
 		fireEvent.click(screen.getByRole("button", { name: "Resolve approved V2 copy" }));
@@ -212,6 +234,9 @@ describe("PosterBuilderPage V2-only cutover", () => {
 
 	it("uses exact V2 prompt and compose routes without a legacy copy id", async () => {
 		renderPage();
+		await waitFor(() =>
+			expect(screen.getByTestId("staff-identity-select")).toHaveValue("staff_test_operator"),
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Select Test Product" }));
 		fireEvent.click(screen.getByRole("button", { name: "Prove V2 binding" }));
 		fireEvent.click(screen.getByRole("button", { name: "Resolve approved V2 copy" }));

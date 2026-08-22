@@ -107,6 +107,7 @@ class MontageBeatInput(BaseModel):
 
 class MontagePlanRequest(BaseModel):
     product_id: str
+    staff_id: Optional[str] = None
     beats: list[MontageBeatInput] = Field(default_factory=list)
     default_policy: str = "PRODUCT_ANCHOR"
     product_media_id: Optional[str] = None
@@ -135,6 +136,21 @@ class MontageExecuteRequest(MontagePlanRequest):
     # Hard lock: API never auto-fires credit unless this is True AND a live
     # runner is wired. Default False = packages only.
     allow_live_generate: bool = False
+
+
+async def _require_montage_staff(staff_id: str | None) -> dict[str, Any]:
+    from agent.services.staff_identity_service import (
+        StaffIdentityError,
+        resolve_staff_identity,
+    )
+
+    try:
+        return await resolve_staff_identity(staff_id)
+    except StaffIdentityError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error_code": exc.code, "message": exc.message},
+        ) from exc
 
 
 class MontageSceneReadyInput(BaseModel):
@@ -263,6 +279,7 @@ def _parse_scenes(raw_scenes: list[MontageSceneReadyInput]) -> list[MontageScene
 @router.post("/plan")
 async def montage_plan(body: MontagePlanRequest) -> dict[str, Any]:
     """Expand beats into discrete scene execution plans (credit-free)."""
+    staff_profile = await _require_montage_staff(body.staff_id)
     if not str(body.product_id or "").strip():
         raise HTTPException(status_code=400, detail="product_id required")
     try:
@@ -310,6 +327,8 @@ async def montage_plan(body: MontagePlanRequest) -> dict[str, Any]:
     )
     return {
         "product_id": body.product_id,
+        "staff_id": staff_profile["staff_id"],
+        "staff_display_name": staff_profile["display_name"],
         "hook_id": body.hook_id,
         "background_id": body.background_id,
         "scene_count": len(plans),
@@ -345,6 +364,7 @@ async def montage_execute_scenes(body: MontageExecuteRequest) -> dict[str, Any]:
     allow_live_generate is set (still not wired to a credit runner here — fail
     closed).
     """
+    staff_profile = await _require_montage_staff(body.staff_id)
     if not str(body.product_id or "").strip():
         raise HTTPException(status_code=400, detail="product_id required")
     if body.allow_live_generate:
@@ -382,6 +402,8 @@ async def montage_execute_scenes(body: MontageExecuteRequest) -> dict[str, Any]:
         beats = body.beats or _default_beats()
     report = await orchestrate_montage_scenes(
         product_id=body.product_id,
+        staff_id=staff_profile["staff_id"],
+        staff_display_name_snapshot=staff_profile["display_name"],
         story_beats=beats,
         package_factory=create_workspace_execution_package,
         default_policy=default_policy,
@@ -491,6 +513,7 @@ class MontageRunAssembleRequest(BaseModel):
 @router.post("/runs")
 async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
     """M-02 durable path: plan → packages → persisted scene job ledger."""
+    staff_profile = await _require_montage_staff(body.staff_id)
     if not str(body.product_id or "").strip():
         raise HTTPException(status_code=400, detail="product_id required")
     if body.allow_live_generate:
@@ -520,6 +543,8 @@ async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
     try:
         return await create_montage_discrete_run(
             product_id=body.product_id,
+            staff_id=staff_profile["staff_id"],
+            staff_display_name_snapshot=staff_profile["display_name"],
             story_beats=beats,
             package_factory=create_workspace_execution_package,
             default_policy=default_policy,
@@ -614,6 +639,20 @@ async def montage_run_assemble(run_id: str, body: MontageRunAssembleRequest) -> 
         if not body.confirm_live_credit_burn:
             raise ValueError("ERR_MONTAGE_LIVE_CONCAT_CONFIRM_REQUIRED")
 
+        # The run's initiating staff identity is the authority for the final
+        # Montage output. Re-resolve it immediately before the provider concat
+        # boundary so an inactive profile cannot authorize a new operation, and
+        # so the final lifecycle/artifact rows receive the server snapshot.
+        from agent.services.staff_identity_service import (
+            StaffIdentityError,
+            resolve_staff_identity,
+        )
+
+        try:
+            final_staff = await resolve_staff_identity(cfg.get("staff_id"))
+        except StaffIdentityError as exc:
+            raise ValueError(exc.code) from exc
+
         # The existing final-timeline primitive owns concat submit, polling,
         # artifact save, and final identity persistence. Use the connected
         # client singleton and create only this run's lifecycle owner row.
@@ -635,6 +674,8 @@ async def montage_run_assemble(run_id: str, body: MontageRunAssembleRequest) -> 
                 status="CREATED",
                 requested_duration_seconds=requested_seconds,
                 product_id=cfg.get("product_id"),
+                staff_id=final_staff["staff_id"],
+                staff_display_name_snapshot=final_staff["display_name"],
                 model=cfg.get("model"),
                 aspect_ratio="9:16",
                 segment_media_ids_json=json.dumps(segment_ids),
@@ -670,6 +711,8 @@ async def montage_run_assemble(run_id: str, body: MontageRunAssembleRequest) -> 
                     product_id=cfg.get("product_id"),
                     prompt=str(cfg.get("scene_context_override") or ""),
                     aspect_ratio="9:16",
+                    staff_id=final_staff["staff_id"],
+                    staff_display_name_snapshot=final_staff["display_name"],
                 )
             except Exception as exc:  # noqa: BLE001 — final delivery is recoverable, not green
                 await crud.update_video_production_job_full(
@@ -712,6 +755,7 @@ class MontageAuthorizeGenerationRequest(BaseModel):
     """
 
     confirm_credit_burn: bool = False
+    staff_id: Optional[str] = None
     expected_video_generations: int
     expected_provider_operations: int
     dry_run: bool = True
@@ -740,7 +784,17 @@ async def montage_materialize_approval_manifest(
     derived = await build_montage_manifest_items(run_id)
     if not derived["items"]:
         raise HTTPException(422, "ERR_MONTAGE_NO_PENDING_SCENES")
-    created_by = request.headers.get("x-operator-id") or "operator"
+    run_snapshot = await get_montage_discrete_run(run_id)
+    run_config = run_snapshot.get("config") or {}
+    created_by = str(run_config.get("staff_id") or "").strip()
+    if not created_by:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "STAFF_IDENTITY_REQUIRED",
+                "message": "Historical montage runs without canonical staff identity cannot create a new manifest.",
+            },
+        )
     manifest = await _eas.create_manifest(
         surface="montage",
         run_ref=run_id,
@@ -763,6 +817,7 @@ async def montage_authorize_generation(
     Live path (dry_run=false) calls existing /api/flow/generate contract per scene
     with startAsset / image_media_ids from package snapshot — never package-id-only.
     """
+    staff_profile = await _require_montage_staff(body.staff_id)
     generate_fn = None
     poll_fn = None
     _run_manifest_id = None
@@ -798,6 +853,8 @@ async def montage_authorize_generation(
                     f"montage:{run_id}:{str(kwargs.get('scene_id') or '')}"
                 ),
                 product_id=kwargs.get("product_id") or None,
+                production_recipe="MONTAGE",
+                staff_id=staff_profile["staff_id"],
                 aspect="9:16",
                 # Thread the source lineage + package id the run persisted. For a
                 # mascot START_FRAME scene source_mode="FRAMES" makes the global
@@ -850,6 +907,8 @@ async def montage_authorize_generation(
             expected_video_generations=body.expected_video_generations,
             expected_provider_operations=body.expected_provider_operations,
             dry_run=body.dry_run,
+            staff_id=staff_profile["staff_id"],
+            staff_display_name_snapshot=staff_profile["display_name"],
             generate_fn=generate_fn,
             poll_fn=poll_fn,
             async_worker=not body.dry_run,

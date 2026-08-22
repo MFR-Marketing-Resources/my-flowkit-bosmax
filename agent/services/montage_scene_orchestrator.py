@@ -159,6 +159,8 @@ async def execute_scene_plan(
     plan: MontageSceneExecutionPlan,
     *,
     product_id: str,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
     package_factory: PackageFactory,
     image_prepare_fn: Optional[ImagePrepareFn] = None,
     generate_fn: Optional[GenerateFn] = None,
@@ -330,6 +332,11 @@ async def execute_scene_plan(
         "scene_context_override": scene_context_override,
         "copy_v2_context": resolved_copy_v2_context,
     }
+    # Optional identity is carried on active API calls, while legacy/provider-free
+    # package factories may not accept the newer kwargs when no profile is given.
+    if staff_id:
+        kwargs["staff_id"] = staff_id
+        kwargs["staff_display_name_snapshot"] = staff_display_name_snapshot
     # FRAMES/I2V need explicit start; HYBRID product-anchor does not take start_frame_asset_id
     if start_frame and mode in ("F2V", "I2V", "FRAMES") and str(source_mode or "").upper() != "HYBRID":
         kwargs["start_frame_asset_id"] = start_frame
@@ -453,6 +460,8 @@ async def execute_scene_plan(
 async def orchestrate_montage_scenes(
     *,
     product_id: str,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
     story_beats: Sequence[Any],
     package_factory: PackageFactory,
     default_policy: SceneReferencePolicy | str = SceneReferencePolicy.PRODUCT_ANCHOR,
@@ -516,6 +525,8 @@ async def orchestrate_montage_scenes(
         state = await execute_scene_plan(
             plan,
             product_id=product_id,
+            staff_id=staff_id,
+            staff_display_name_snapshot=staff_display_name_snapshot,
             package_factory=package_factory,
             image_prepare_fn=image_prepare_fn,
             generate_fn=generate_fn,

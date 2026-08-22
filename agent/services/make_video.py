@@ -213,6 +213,8 @@ async def _prepare_durable_single_job(
             project_id=job.get("project_id"),
             requested_duration_seconds=int(job.get("duration_s") or 8),
             product_id=job.get("product_id"),
+            staff_id=job.get("staff_id"),
+            staff_display_name_snapshot=job.get("staff_display_name_snapshot"),
             engine="GOOGLE_FLOW_API_FIRST",
             model=job.get("model"),
             aspect_ratio=job.get("aspect"),
@@ -222,6 +224,7 @@ async def _prepare_durable_single_job(
                         "mode": job.get("mode"),
                         "prompt": job.get("prompt"),
                         "source_mode": job.get("source_mode"),
+                        "production_recipe": job.get("production_recipe"),
                         "references": job.get("reference_media_ids")
                         or job.get("image_media_ids")
                         or [],
@@ -239,8 +242,11 @@ async def _prepare_durable_single_job(
                     "request_id": idempotency_key,
                     "mode": job.get("mode"),
                     "source_mode": job.get("source_mode"),
+                    "production_recipe": job.get("production_recipe"),
                     "product_id": job.get("product_id"),
                     "project_id": job.get("project_id"),
+                    "staff_id": job.get("staff_id"),
+                    "staff_display_name": job.get("staff_display_name_snapshot"),
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -1255,6 +1261,8 @@ async def _record_artifacts(job, mode, artifacts):
                 file_sha256=evidence["sha256"],
                 delivery_status="REGISTERED",
                 readback_verified=True,
+                staff_id=job.get("staff_id"),
+                staff_display_name_snapshot=job.get("staff_display_name_snapshot"),
             )
             if readback is not None and str(readback.get("local_path") or "") != str(art.get("local_path") or ""):
                 raise RuntimeError(
@@ -1268,6 +1276,8 @@ async def _record_artifacts(job, mode, artifacts):
                 art["media_id"],
                 job_id=job.get("job_id"),
                 request_id=job.get("request_id"),
+                staff_id=job.get("staff_id"),
+                staff_display_name_snapshot=job.get("staff_display_name_snapshot"),
                 mode=mode,
                 artifact_kind=("image" if mode == "IMG" else "video"),
                 product_id=job.get("product_id"),
@@ -1410,13 +1420,16 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          max_image_attempts: int = 8,
                          collect_image_variants: bool = False,
                          product_id: str = None, source_mode: str = None,
+                         staff_id: str | None = None,
+                         staff_display_name_snapshot: str | None = None,
                          copy_execution_binding: dict | None = None,
                          manifest_id: str | None = None,
                          asset_fingerprints: list[str] | None = None,
                          execution_identity: dict | None = None,
                          product_visual_custody: dict | None = None,
                          request_id: str | None = None,
-                         idempotency_key: str | None = None) -> dict:
+                         idempotency_key: str | None = None,
+                         production_recipe: str | None = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all.
@@ -1429,6 +1442,30 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     global _VIDEO_LANE_JOB
     _gc_jobs()
     mode = (mode or "").upper()
+    production_recipe = str(production_recipe or "").strip().upper() or None
+    if production_recipe:
+        if production_recipe not in {"HYBRID", "FACELESS", "MONTAGE", "POSTER_BUILDER"}:
+            return {
+                "status": "REJECTED",
+                "error": "PRODUCTION_RECIPE_UNSUPPORTED",
+                "pre_provider": {"provider_calls": 0, "credit_spend": False},
+            }
+        from agent.services.staff_identity_service import (
+            StaffIdentityError,
+            resolve_staff_identity,
+        )
+
+        try:
+            profile = await resolve_staff_identity(staff_id)
+        except StaffIdentityError as exc:
+            return {
+                "status": "REJECTED",
+                "error": exc.code,
+                "detail": exc.message,
+                "pre_provider": {"provider_calls": 0, "credit_spend": False},
+            }
+        staff_id = profile["staff_id"]
+        staff_display_name_snapshot = profile["display_name"]
     idempotency_key = idempotency_key or request_id
     strict_durable = bool(request_id or idempotency_key)
     num_videos = max(1, min(4, int(num_videos or 1)))
@@ -1620,6 +1657,9 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                      "max_image_attempts": max_image_attempts,
                      "collect_image_variants": bool(collect_image_variants),
                      "product_id": product_id, "source_mode": source_mode,
+                     "production_recipe": production_recipe,
+                     "staff_id": staff_id,
+                     "staff_display_name_snapshot": staff_display_name_snapshot,
                      "prompt": prompt, "aspect": aspect, "duration_s": duration_s,
                      "execution_identity": execution_identity,
                      "product_visual_custody": product_visual_custody,
@@ -3061,7 +3101,10 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
                                confirm_live_credit_burn: bool = False,
                                product_visual_custody: dict | None = None,
                                execution_identity: dict | None = None,
-                               request_id: str | None = None) -> dict:
+                               request_id: str | None = None,
+                               staff_id: str | None = None,
+                               staff_display_name_snapshot: str | None = None,
+                               production_recipe: str | None = None) -> dict:
     """LIVE-CAPTURE GATE (owner-authorized, DIRECT_VIDEO_CAPTURE_ENABLED): fire
     ONE direct batchAsync submit, return the RAW submit response for contract
     capture, and poll/retrieve/persist in the background so the spent credit
@@ -3069,6 +3112,21 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
     confirmation flag is mandatory; explicit model and duration settings are
     forwarded and fail closed when their direct contract is unproven."""
     global _VIDEO_LANE_JOB
+    production_recipe = str(production_recipe or "").strip().upper() or None
+    if production_recipe:
+        if production_recipe not in {"HYBRID", "FACELESS", "MONTAGE", "POSTER_BUILDER"}:
+            return {"ok": False, "error": "PRODUCTION_RECIPE_UNSUPPORTED", "provider_submit": False}
+        from agent.services.staff_identity_service import (
+            StaffIdentityError,
+            resolve_staff_identity,
+        )
+
+        try:
+            profile = await resolve_staff_identity(staff_id)
+        except StaffIdentityError as exc:
+            return {"ok": False, "error": exc.code, "detail": exc.message, "provider_submit": False}
+        staff_id = profile["staff_id"]
+        staff_display_name_snapshot = profile["display_name"]
     if not direct_capture_enabled():
         return {"ok": False, "error": "DIRECT_CAPTURE_DISABLED: set "
                                       "DIRECT_VIDEO_CAPTURE_ENABLED=1"}
@@ -3130,6 +3188,9 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
                          product_visual_custody or {}
                      ).get("product_id"),
                      "lane": "DIRECT_CAPTURE", "source_mode": source_mode,
+                     "staff_id": staff_id,
+                     "staff_display_name_snapshot": staff_display_name_snapshot,
+                     "production_recipe": production_recipe,
                      "product_visual_custody": product_visual_custody,
                      "execution_identity": execution_identity,
                      "request_id": request_id,

@@ -3,6 +3,7 @@ import type { PosterDeliverableRow } from "../types/posterCopySet";
 
 export interface PosterV2ComposeRequest {
 	product_id: string;
+	staff_id: string;
 	recipe_id: string;
 	background_media_id?: string;
 	background_local_path?: string;

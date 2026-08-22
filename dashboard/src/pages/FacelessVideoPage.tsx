@@ -26,6 +26,7 @@ import {
 } from "../components/workflow";
 import ResultsSidebar, { type SessionResult } from "../components/workspace/ResultsSidebar";
 import NativeExtendPanel from "../components/NativeExtendPanel";
+import StaffIdentityBar from "../components/StaffIdentityBar";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import CopywritingSourceSelector from "../components/copywriting/CopywritingSourceSelector";
 import CanonicalReferenceBindingControls, {
@@ -33,6 +34,7 @@ import CanonicalReferenceBindingControls, {
 	type CanonicalReferenceBinding,
 } from "../components/workspace/CanonicalReferenceBindingControls";
 import { useProductCatalog } from "../hooks/useProductCatalog";
+import { useStaffIdentity } from "../hooks/useStaffIdentity";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product, WorkspaceExecutionPackage } from "../types";
 import {
@@ -109,6 +111,7 @@ export default function FacelessVideoPage() {
 	const [v2CopyReady, setV2CopyReady] = useState(false);
 	const [isPreparing, setIsPreparing] = useState(false);
 	const [isExecuting, setIsExecuting] = useState(false);
+	const staffIdentity = useStaffIdentity();
 	const [notice, setNotice] = useState<Notice | null>(null);
 	const [completedUrl, setCompletedUrl] = useState<string | null>(null);
 	const [v4Open, setV4Open] = useState<Record<number, boolean>>({});
@@ -343,6 +346,15 @@ export default function FacelessVideoPage() {
 	const sGenerate: WorkflowStepStatus = workspacePackage ? "active" : "upcoming";
 
 	const handlePrepare = async () => {
+		if (!staffIdentity.hasStaff) {
+			setNotice({
+				tone: "warning",
+				title: "Select staff before production",
+				detail: "An active Staff Profile is required before preparing this production.",
+				requestId: null,
+			});
+			return;
+		}
 		if (!selectedProduct || blockers.length) {
 			setNotice({
 				tone: "error",
@@ -380,6 +392,7 @@ export default function FacelessVideoPage() {
 				copy_fallback_confirmed: false,
 				copy_v2_context: { lane: "FACELESS" },
 				actor_profile: actorProfile,
+				staff_id: staffIdentity.staffId,
 			});
 			const pkg = (prepared.package || {}) as unknown as WorkspaceExecutionPackage;
 			if (!pkg.workspace_execution_package_id || !pkg.prompt_text) {
@@ -479,6 +492,15 @@ export default function FacelessVideoPage() {
 	const [pendingApproval, setPendingApproval] = useState<ReviewEnvelope | null>(null);
 
 	const handleGenerate = async (approved = false, approvedPrompt?: string) => {
+		if (!staffIdentity.hasStaff) {
+			setNotice({
+				tone: "warning",
+				title: "Select staff before production",
+				detail: "An active Staff Profile is required before generating this production.",
+				requestId: null,
+			});
+			return;
+		}
 		if (sceneMode === "EXTEND") {
 			setNotice({
 				tone: "info",
@@ -535,6 +557,11 @@ export default function FacelessVideoPage() {
 				sceneMode,
 				extendTotalSeconds: extendTotalSec,
 			});
+			const attributedGenerateBody = {
+				...generateBody,
+				staff_id: staffIdentity.staffId,
+				production_recipe: "FACELESS" as const,
+			};
 			if (!approved) {
 				// Final Prompt Approval Gate: review the EXACT provider-ready body
 				// before spending a credit. The envelope is built from generateBody so
@@ -542,7 +569,7 @@ export default function FacelessVideoPage() {
 				// the approved (possibly edited) prompt.
 				executionInFlightRef.current = false;
 				setIsExecuting(false);
-				const gb = generateBody as {
+				const gb = attributedGenerateBody as {
 					mode?: string;
 					prompt?: string;
 					aspect?: string;
@@ -576,7 +603,7 @@ export default function FacelessVideoPage() {
 			const response = await fetch("/api/flow/generate", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ ...generateBody, request_id: requestId }),
+				body: JSON.stringify({ ...attributedGenerateBody, request_id: requestId }),
 			});
 			if (!response.ok) {
 				const err = await response.json().catch(() => ({}));
@@ -644,7 +671,7 @@ export default function FacelessVideoPage() {
 			{pendingApproval && (
 				<FinalPromptApprovalModal
 					envelope={pendingApproval}
-					approvedBy="operator"
+					approvedBy={staffIdentity.selectedStaff?.display_name ?? ""}
 					onApproved={(snap) => {
 						setPendingApproval(null);
 						void handleGenerate(true, snap.final_prompt_text);
@@ -669,6 +696,7 @@ export default function FacelessVideoPage() {
 					<span className="text-[11px] text-slate-500">Loading settings…</span>
 				) : null}
 			</header>
+			<StaffIdentityBar identity={staffIdentity} surface="FACELESS" />
 
 			<div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
 				<div className="min-h-0 space-y-3 overflow-y-auto pr-1">
@@ -1057,7 +1085,12 @@ export default function FacelessVideoPage() {
 						) : null}
 						<button
 							type="button"
-							disabled={Boolean(blockers.length) || isPreparing || !selectedProduct}
+							disabled={
+								Boolean(blockers.length) ||
+								isPreparing ||
+								!selectedProduct ||
+								!staffIdentity.hasStaff
+							}
 							onClick={() => void handlePrepare()}
 							className="rounded-xl border border-v4-accent/40 bg-v4-accent/15 px-4 py-2.5 text-[12px] font-bold text-v4-accent-ink hover:bg-v4-accent/25 disabled:cursor-not-allowed disabled:opacity-40"
 							data-testid="faceless-prepare"
@@ -1107,7 +1140,8 @@ export default function FacelessVideoPage() {
 									disabled={
 										!workspacePackage?.prompt_text ||
 										isExecuting ||
-										blockers.length > 0
+										blockers.length > 0 ||
+										!staffIdentity.hasStaff
 									}
 									onClick={() => void handleGenerate()}
 									className="w-full rounded-xl bg-gradient-to-br from-v4-accent to-v4-auto px-4 py-3 text-[13px] font-bold text-slate-950 shadow-lg shadow-v4-accent/20 transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-40"

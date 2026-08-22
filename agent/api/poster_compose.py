@@ -41,6 +41,7 @@ def _http(exc: Exception, code: str, status_code: int) -> HTTPException:
 
 class ComposeRequest(BaseModel):
     product_id: str
+    staff_id: str | None = None
     # Legacy callers may still provide an approved poster Copy Set.  V2
     # callers bind from the explicit blueprint context and do not need a
     # legacy identifier.
@@ -100,6 +101,18 @@ async def compose_poster(req: ComposeRequest):
     if req.poster_copy_set_id:
         require_legacy_copy_maintenance()
     try:
+        from agent.services.staff_identity_service import (
+            StaffIdentityError,
+            resolve_staff_identity,
+        )
+
+        try:
+            staff_profile = await resolve_staff_identity(req.staff_id)
+        except StaffIdentityError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"error": exc.code, "message": exc.message},
+            ) from exc
         resolution = await resolve_persisted_copy_execution_binding(
             req.product_id,
             "POSTER_BUILDER",
@@ -114,6 +127,8 @@ async def compose_poster(req: ComposeRequest):
             image_model=req.image_model,
             creative_mode=req.creative_mode,
             settings=req.settings,
+            staff_id=staff_profile["staff_id"],
+            staff_display_name_snapshot=staff_profile["display_name"],
             copy_v2_projection=(
                 {
                     **resolution.projection.model_dump(mode="json"),

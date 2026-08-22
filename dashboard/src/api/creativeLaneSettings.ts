@@ -129,6 +129,7 @@ export async function prepareFacelessPackage(input: {
 	copy_fallback_confirmed?: boolean;
 	copy_v2_context?: Record<string, unknown> | null;
 	actor_profile?: string | null;
+	staff_id: string;
 }): Promise<FacelessPrepareResponse> {
 	return postAPI("/api/faceless/prepare", {
 		product_id: input.product_id,
@@ -143,6 +144,7 @@ export async function prepareFacelessPackage(input: {
 		copy_fallback_confirmed: false,
 		copy_v2_context: input.copy_v2_context ?? null,
 		actor_profile: input.actor_profile ?? "AUTO",
+		staff_id: input.staff_id,
 	});
 }
 
