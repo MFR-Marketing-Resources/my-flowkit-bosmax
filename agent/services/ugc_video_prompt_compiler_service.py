@@ -827,6 +827,9 @@ def compile_ugc_video_prompt(
     mode: str,
     camera_style: str | None = None,
     character_presence: str | None = None,
+    product_presence_type: str | None = None,
+    product_temporal_custody: dict[str, Any] | None = None,
+    shot_handling: str | Mapping[str, Any] | None = None,
     creator_persona: str | None = None,
     variation_index: int = 0,
     target_language: str | None = None,
@@ -860,6 +863,7 @@ def compile_ugc_video_prompt(
     # camera sections without replacing the product's scene-strategy authority.
     scene_template: dict[str, Any] | None = None,
     camera_preset: dict[str, Any] | None = None,
+    enforce_temporal_contract: bool = False,
 ) -> dict[str, Any]:
     normalized_mode = str(mode or "").strip().upper()
     if normalized_mode not in SUPPORTED_MODES:
@@ -868,6 +872,26 @@ def compile_ugc_video_prompt(
     resolved_generation_mode = normalize_generation_mode(generation_mode)
     resolved_camera_style = normalize_camera_style(camera_style)
     resolved_character_presence = normalize_character_presence(character_presence)
+    resolved_product_presence_type = str(product_presence_type or "PRODUCT_OBJECT").strip().upper()
+    if resolved_product_presence_type not in {"PRODUCT_OBJECT", "PRODUCT_MASCOT"}:
+        raise ValueError(f"UNSUPPORTED_PRODUCT_PRESENCE_TYPE:{resolved_product_presence_type}")
+    mascot_actor = resolved_product_presence_type == "PRODUCT_MASCOT"
+    from agent.services.video_continuity_contract import (
+        build_temporal_occupancy_receipt,
+        default_product_temporal_custody,
+        resolve_block_custody,
+        validate_custody_sequence,
+    )
+    if product_temporal_custody is None:
+        product_temporal_custody = default_product_temporal_custody(
+            product,
+            source_mode=str(source_mode or _SOURCE_MODE_BY_MODE.get(normalized_mode) or "HYBRID").upper(),
+            character_presence=resolved_character_presence,
+            product_presence_type=resolved_product_presence_type,
+            shot_type=shot_handling or "MCU",
+        )
+    if enforce_temporal_contract and dialogue_enabled and str(wps_mode).upper() != "SWEET":
+        raise ValueError("DIALOGUE_SWEETWPS_REQUIRED")
     resolved_creator_persona = normalize_creator_persona(creator_persona)
     resolved_target_language = normalize_target_language(target_language)
     treatment = dict(creative_treatment or {})
@@ -994,6 +1018,16 @@ def compile_ugc_video_prompt(
         _blk["start_s"] = _seg["start_s"]
         _blk["end_s"] = _seg["end_s"]
         _blk["is_final"] = _seg["is_final"]
+    custody_by_block = {
+        int(block["block_index"]): resolve_block_custody(
+            product_temporal_custody,
+            int(block["block_index"]),
+        )
+        for block in normalized_blocks
+    }
+    validate_custody_sequence(
+        [custody_by_block[int(block["block_index"])] for block in normalized_blocks]
+    )
     # ── ADR-008: THE canonical compiler renders every final engine-facing block.
     resolved_source_mode = (
         str(source_mode).strip().upper() if source_mode
@@ -1182,6 +1216,8 @@ def compile_ugc_video_prompt(
                     get_shot_policy(int(block["duration_seconds"]))["recommended"]
                     for block in normalized_blocks
                 ],
+                terminal_hold_seconds=0.25 if enforce_temporal_contract else 0.0,
+                seam_out_margin_seconds=0.35 if enforce_temporal_contract else None,
             )
             copy_planner_result = planner.to_dict()
             segment_allocations = list(copy_planner_result["block_allocations"])
@@ -1218,11 +1254,52 @@ def compile_ugc_video_prompt(
                 get_shot_policy(int(block["duration_seconds"]))["recommended"]
                 for block in normalized_blocks
             ],
+            terminal_hold_seconds=0.25 if enforce_temporal_contract else 0.0,
+            seam_out_margin_seconds=0.35 if enforce_temporal_contract else None,
         )
         planner_result = planner.to_dict()
         allocation_by_block = {
             allocation["block_index"]: allocation
             for allocation in planner_result["block_allocations"]
+        }
+
+    temporal_occupancy_receipt: dict[str, Any] | None = None
+    temporal_by_block: dict[int, dict[str, Any]] = {}
+    if enforce_temporal_contract and resolved_source_mode != "IMAGES":
+        occupancy_inputs: list[dict[str, Any]] = []
+        for block in normalized_blocks:
+            allocation = allocation_by_block.get(block["block_index"]) or {}
+            dialogue_text = _clean(allocation.get("exact_dialogue_slice"))
+            item: dict[str, Any] = {
+                **block,
+                "allocation": allocation,
+                "exact_dialogue_slice": dialogue_text,
+                "actual_dialogue_word_count": int(
+                    allocation.get("actual_dialogue_word_count")
+                    if allocation.get("actual_dialogue_word_count") is not None
+                    else len(dialogue_text.split())
+                ),
+            }
+            if dialogue_text and not (allocation.get("assigned_dialogue_utterances") or []):
+                item["assigned_dialogue_utterances"] = [{
+                    "utterance_id": f"ugc-block-{block['block_index']}",
+                    "start_s": float(block.get("start_s") or 0.0),
+                    "end_s": float(block.get("end_s") or block["duration_seconds"]) - 0.25,
+                    "text": dialogue_text,
+                    "word_count": len(dialogue_text.split()),
+                }]
+            occupancy_inputs.append(item)
+        temporal_occupancy_receipt = build_temporal_occupancy_receipt(
+            blocks=occupancy_inputs,
+            target_language=resolved_target_language,
+            wps_mode=wps_mode,
+            dialogue_enabled=dialogue_enabled,
+            strict=True,
+            required_terminal_hold_seconds=0.25,
+        )
+        temporal_by_block = {
+            int(item["block_index"]): item
+            for item in temporal_occupancy_receipt["blocks"]
         }
 
     compiled_blocks: list[dict[str, Any]] = []
@@ -1260,6 +1337,7 @@ def compile_ugc_video_prompt(
                 "active_segment_sha256": segment["segment_sha256"],
                 "active_segment_duration_seconds": segment["duration_seconds"],
             }
+        block_custody = custody_by_block[int(block["block_index"])]
         rendered = _canonical.render_block(
             source_mode=resolved_source_mode,
             engine="GOOGLE_FLOW",
@@ -1271,6 +1349,10 @@ def compile_ugc_video_prompt(
             copy=resolved_copy,
             presenter_profile=resolved_presenter,
             character_presence=resolved_character_presence,
+            product_presence_type=resolved_product_presence_type,
+            product_temporal_custody=block_custody,
+            shot_handling=shot_handling or block_custody.get("shot_type"),
+            temporal_occupancy=temporal_by_block.get(int(block["block_index"])),
             faceless_actor_profile=faceless_actor_profile,
             asset_role_map=_ingredient_roles,
             target_language=resolved_target_language,
@@ -1318,6 +1400,19 @@ def compile_ugc_video_prompt(
             "story_beat_ids": allocation["assigned_story_beat_ids"] if allocation else [],
             "dialogue_utterance_ids": allocation["assigned_dialogue_utterance_ids"] if allocation else [],
             "exact_dialogue_slice": allocation["exact_dialogue_slice"] if allocation else rendered["dialogue"],
+            "product_presence_type": resolved_product_presence_type,
+            "actor_contract": rendered.get("actor_contract"),
+            "shot_handling": rendered.get("shot_handling"),
+            "product_temporal_custody": rendered.get("product_temporal_custody"),
+            "temporal_occupancy": rendered.get("temporal_occupancy"),
+            "shot_custody": [
+                {
+                    "shot_index": shot_index,
+                    "shot_type": (rendered.get("shot_handling") or {}).get("shot_type"),
+                    "custody": rendered.get("product_temporal_custody"),
+                }
+                for shot_index, _shot in enumerate(shots, start=1)
+            ],
         }
         compiled_blocks.append(compiled)
         if previous_block_id:
@@ -1404,7 +1499,7 @@ def compile_ugc_video_prompt(
         # silently mutate approved wording and never send the known-blocked name.
         raise ValueError("PROVIDER_SAFETY_PROMPT_REVIEW_REQUIRED")
     warnings: list[str] = []
-    if resolved_character_presence == "FACELESS":
+    if resolved_character_presence == "FACELESS" and not mascot_actor:
         warnings.append("FACELESS_MODE_REQUIRES_EXPLICIT_OPERATOR_CHOICE")
     if provider_prompt_safety.get("applied"):
         warnings.append("PROVIDER_SAFETY_CREATOR_BYLINE_REMOVED")
@@ -1423,13 +1518,32 @@ def compile_ugc_video_prompt(
         "total_duration_seconds": sum(block["duration_seconds"] for block in compiled_blocks),
         "camera_style": resolved_camera_style,
         "character_presence": resolved_character_presence,
+        "product_presence_type": resolved_product_presence_type,
+        "actor_contract": (
+            "PRODUCT_MASCOT"
+            if mascot_actor
+            else ("FACELESS_HUMAN" if resolved_character_presence == "FACELESS" else "VISIBLE_HUMAN")
+        ),
         "creator_persona": resolved_creator_persona,
         "avatar_id": str(avatar_id or "").strip() or None,
-        "faceless_actor_profile": faceless_actor_profile if resolved_character_presence == "FACELESS" else None,
+        "faceless_actor_profile": (
+            faceless_actor_profile
+            if resolved_character_presence == "FACELESS" and not mascot_actor
+            else None
+        ),
         "scene_context_override_applied": bool(_clean(scene_context_override)),
         "scene_strategy": resolved_scene_strategy,
         "scene_choreography": scene_choreography_receipt,
         "target_language": resolved_target_language,
+        "wps_mode": str(wps_mode).upper(),
+        "dialogue_enabled": bool(dialogue_enabled),
+        "product_temporal_custody": product_temporal_custody,
+        "shot_handling": (
+            str(shot_handling).upper()
+            if isinstance(shot_handling, str)
+            else (shot_handling or product_temporal_custody.get("shot_type"))
+        ),
+        "temporal_occupancy": temporal_occupancy_receipt,
         "shot_plan": [
             {
                 "block_index": block["block_index"],

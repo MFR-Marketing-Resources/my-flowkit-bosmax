@@ -840,6 +840,9 @@ def _ensure_packable_clause_specs(
 def _allocate_dialogue_utterances(
     dialogue_plan: FullDialoguePlan,
     resolved_block_plan: Sequence[int],
+    *,
+    terminal_hold_seconds: float = 0.0,
+    seam_out_margin_seconds: float | None = None,
 ) -> tuple[FullDialoguePlan, tuple[tuple[DialogueUtterance, ...], ...]]:
     """Assign every finalized utterance to blocks without reordering or silent loss.
 
@@ -905,7 +908,18 @@ def _allocate_dialogue_utterances(
         # (first AND final) keeps the full block window unchanged, so its dialogue
         # timing is byte-identical to before.
         in_margin = 0.0 if is_first_block else _SEAM_IN_MARGIN_S
-        out_margin = 0.0 if is_final_block else _SEAM_OUT_MARGIN_S
+        out_margin = (
+            max(0.0, float(terminal_hold_seconds))
+            if is_final_block
+            else max(
+                0.0,
+                float(
+                    _SEAM_OUT_MARGIN_S
+                    if seam_out_margin_seconds is None
+                    else seam_out_margin_seconds
+                ),
+            )
+        )
         window_start = float(cursor) + in_margin
         window_end = float(cursor + int(seconds)) - out_margin
         speaking_window = window_end - window_start
@@ -1074,11 +1088,15 @@ def _allocate(
     dialogue_plan: FullDialoguePlan,
     product: dict[str, Any],
     normalized_copy: dict[str, Any],
+    terminal_hold_seconds: float = 0.0,
+    seam_out_margin_seconds: float | None = None,
 ) -> tuple[FullStoryPlan, FullDialoguePlan, tuple[BlockAllocation, ...]]:
     story_plan, story_by_block = _allocate_story_beats(story_plan)
     dialogue_plan, dialogue_by_block = _allocate_dialogue_utterances(
         dialogue_plan,
         story_plan.resolved_block_plan,
+        terminal_hold_seconds=terminal_hold_seconds,
+        seam_out_margin_seconds=seam_out_margin_seconds,
     )
     allocations: list[BlockAllocation] = []
     allocated_beats: list[StoryBeat] = []
@@ -1184,6 +1202,8 @@ def plan_full_storyboard(
     dialogue_enabled: bool = True,
     approved_dialogue: str | None = None,
     shot_count_by_block: Sequence[int] | None = None,
+    terminal_hold_seconds: float = 0.0,
+    seam_out_margin_seconds: float | None = None,
 ) -> PlannerResult:
     """Build one complete story and dialogue plan before rendering any block."""
     source_mode = _clean(source_mode).upper()
@@ -1211,6 +1231,12 @@ def plan_full_storyboard(
             "dialogue_enabled": dialogue_enabled,
             "approved_dialogue": _clean(approved_dialogue),
             "shot_count_by_block": list(shot_count_by_block),
+            "terminal_hold_seconds": float(terminal_hold_seconds),
+            "seam_out_margin_seconds": (
+                None
+                if seam_out_margin_seconds is None
+                else float(seam_out_margin_seconds)
+            ),
         }
     )
     story_plan = _build_story_plan(
@@ -1238,6 +1264,8 @@ def plan_full_storyboard(
         dialogue_plan=dialogue_plan,
         product=product,
         normalized_copy=normalized_copy,
+        terminal_hold_seconds=terminal_hold_seconds,
+        seam_out_margin_seconds=seam_out_margin_seconds,
     )
     draft = PlannerResult(
         plan_version=PLAN_VERSION,

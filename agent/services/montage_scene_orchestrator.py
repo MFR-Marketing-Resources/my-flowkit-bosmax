@@ -352,6 +352,12 @@ async def execute_scene_plan(
         # Presenter-free: the mascot is the on-screen product character, not a
         # human creator. Never inherit the generic VISIBLE_CREATOR default.
         kwargs["character_presence"] = "FACELESS"
+        # Keep the legacy transport presence field for package/API compatibility,
+        # but make the provider-facing compiler contract unambiguously mascot-owned.
+        kwargs["product_presence_type"] = "PRODUCT_MASCOT"
+        kwargs["compiler_source_mode"] = "FRAMES"
+        kwargs["wps_mode"] = "SWEET"
+        kwargs["enforce_temporal_contract"] = True
         kwargs["avatar_id"] = None
         if mascot_block_count:
             # V1.1 Creative Grammar: compose a DISTINCT per-scene direction —

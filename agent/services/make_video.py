@@ -1547,7 +1547,16 @@ async def _record_artifacts(job, mode, artifacts):
                         scene_artifact=raw_artifact,
                         product_visual_custody=custody,
                         job_id=job.get("job_id"),
-                        foreground_masks=(raw_artifact.get("foreground_masks") or []),
+                        foreground_masks=(
+                            raw_artifact.get("foreground_masks")
+                            or plan.get("foreground_masks")
+                            or []
+                        ),
+                        transform_track=(
+                            raw_artifact.get("transform_track")
+                            or raw_artifact.get("frame_transform_track")
+                            or plan.get("transform_track")
+                        ),
                     )
                 )
             if not final_artifacts:

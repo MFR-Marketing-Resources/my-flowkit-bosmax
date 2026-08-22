@@ -165,6 +165,38 @@ def _attach_v2_package_metadata(
     return result
 
 
+def _attach_video_continuity_metadata(
+    result: dict[str, Any],
+    compiler_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Expose the shared video contract on the legacy package projection."""
+    blocks = compiler_result.get("prompt_blocks") or []
+    ordered_hashes = [
+        hashlib.sha256(
+            str(
+                block.get("engine_prompt_text")
+                or block.get("compiled_prompt_text")
+                or ""
+            ).encode("utf-8")
+        ).hexdigest()
+        for block in blocks
+        if isinstance(block, dict)
+    ]
+    result.update(
+        {
+            "wps_mode": compiler_result.get("wps_mode"),
+            "dialogue_enabled": compiler_result.get("dialogue_enabled"),
+            "product_presence_type": compiler_result.get("product_presence_type"),
+            "actor_contract": compiler_result.get("actor_contract"),
+            "product_temporal_custody": compiler_result.get("product_temporal_custody"),
+            "temporal_occupancy": compiler_result.get("temporal_occupancy"),
+            "shot_handling": compiler_result.get("shot_handling"),
+            "ordered_prompt_sha256s": ordered_hashes,
+        }
+    )
+    return result
+
+
 def _fingerprint(*parts: str) -> str:
     return hashlib.sha1(
         "||".join(str(part or "") for part in parts).encode("utf-8")
@@ -312,8 +344,13 @@ async def create_f2v_generation_package(
     generation_mode: str = "SINGLE",
     duration_seconds: int = 8,
     target_language: str = "BM_MS",
+    wps_mode: str = "SWEET",
     camera_style: str = "UGC_IPHONE_RAW",
     character_presence: str = "VISIBLE_CREATOR",
+    product_presence_type: str | None = None,
+    product_temporal_custody: dict[str, Any] | None = None,
+    shot_handling: str | dict[str, Any] | None = None,
+    enforce_temporal_contract: bool = False,
     creator_persona: str = "DEFAULT_CREATOR",
     overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
@@ -382,8 +419,12 @@ async def create_f2v_generation_package(
         duration_seconds=duration_seconds,
         generation_mode=generation_mode,
         target_language=target_language,
+        wps_mode=wps_mode,
         camera_style=camera_style,
         character_presence=character_presence,
+        product_presence_type=product_presence_type,
+        product_temporal_custody=product_temporal_custody,
+        shot_handling=shot_handling,
         creator_persona=creator_persona,
         overlay_enabled=overlay_enabled,
         dialogue_enabled=dialogue_enabled,
@@ -395,6 +436,7 @@ async def create_f2v_generation_package(
         copy_intelligence=copy_intelligence,
         approved_dialogue=(v2_resolution.approved_dialogue if v2_resolution.v2_enabled else None),
         creative_treatment=creative_treatment,
+        enforce_temporal_contract=enforce_temporal_contract,
     )
 
     final_prompt_text: str = compiler_result.get("final_compiled_prompt_text", "")
@@ -569,7 +611,10 @@ async def create_f2v_generation_package(
         batch_run_id=batch_run_id,
     )
 
-    return _attach_v2_package_metadata(row, v2_resolution, copy_v2_context)
+    return _attach_video_continuity_metadata(
+        _attach_v2_package_metadata(row, v2_resolution, copy_v2_context),
+        compiler_result,
+    )
 
 
 # ─── I2V Package ─────────────────────────────────────────────
@@ -583,8 +628,13 @@ async def create_i2v_generation_package(
     generation_mode: str = "SINGLE",
     duration_seconds: int = 8,
     target_language: str = "BM_MS",
+    wps_mode: str = "SWEET",
     camera_style: str = "UGC_IPHONE_RAW",
     character_presence: str = "VISIBLE_CREATOR",
+    product_presence_type: str | None = None,
+    product_temporal_custody: dict[str, Any] | None = None,
+    shot_handling: str | dict[str, Any] | None = None,
+    enforce_temporal_contract: bool = False,
     creator_persona: str = "DEFAULT_CREATOR",
     overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
@@ -680,8 +730,12 @@ async def create_i2v_generation_package(
         duration_seconds=duration_seconds,
         generation_mode=generation_mode,
         target_language=target_language,
+        wps_mode=wps_mode,
         camera_style=camera_style,
         character_presence=character_presence,
+        product_presence_type=product_presence_type,
+        product_temporal_custody=product_temporal_custody,
+        shot_handling=shot_handling,
         creator_persona=creator_persona,
         overlay_enabled=overlay_enabled,
         dialogue_enabled=dialogue_enabled,
@@ -691,6 +745,7 @@ async def create_i2v_generation_package(
         copy_intelligence=copy_intelligence,
         approved_dialogue=(v2_resolution.approved_dialogue if v2_resolution.v2_enabled else None),
         creative_treatment=creative_treatment,
+        enforce_temporal_contract=enforce_temporal_contract,
     )
 
     base_prompt: str = compiler_result.get("final_compiled_prompt_text", "")
@@ -852,7 +907,10 @@ async def create_i2v_generation_package(
         batch_run_id=batch_run_id,
     )
 
-    return _attach_v2_package_metadata(row, v2_resolution, copy_v2_context)
+    return _attach_video_continuity_metadata(
+        _attach_v2_package_metadata(row, v2_resolution, copy_v2_context),
+        compiler_result,
+    )
 
 
 # ─── Read ────────────────────────────────────────────────────
@@ -956,8 +1014,13 @@ async def create_t2v_generation_package(
     generation_mode: str = "SINGLE",
     duration_seconds: int = 8,
     target_language: str = "BM_MS",
+    wps_mode: str = "SWEET",
     camera_style: str = "UGC_IPHONE_RAW",
     character_presence: str = "VISIBLE_CREATOR",
+    product_presence_type: str | None = None,
+    product_temporal_custody: dict[str, Any] | None = None,
+    shot_handling: str | dict[str, Any] | None = None,
+    enforce_temporal_contract: bool = False,
     creator_persona: str = "DEFAULT_CREATOR",
     overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
@@ -1019,8 +1082,12 @@ async def create_t2v_generation_package(
         duration_seconds=duration_seconds,
         generation_mode=generation_mode,
         target_language=target_language,
+        wps_mode=wps_mode,
         camera_style=camera_style,
         character_presence=character_presence,
+        product_presence_type=product_presence_type,
+        product_temporal_custody=product_temporal_custody,
+        shot_handling=shot_handling,
         creator_persona=creator_persona,
         overlay_enabled=overlay_enabled,
         dialogue_enabled=dialogue_enabled,
@@ -1031,6 +1098,7 @@ async def create_t2v_generation_package(
         copy_intelligence=copy_intelligence,
         approved_dialogue=(v2_resolution.approved_dialogue if v2_resolution.v2_enabled else None),
         creative_treatment=creative_treatment,
+        enforce_temporal_contract=enforce_temporal_contract,
         scene_template=_recipe.resolve_scene_template(scene_template_id),
         camera_preset=_recipe.resolve_camera_preset(camera_preset_code),
     )
@@ -1127,7 +1195,10 @@ async def create_t2v_generation_package(
         batch_run_id=batch_run_id,
     )
 
-    return _attach_v2_package_metadata(row, v2_resolution, copy_v2_context)
+    return _attach_video_continuity_metadata(
+        _attach_v2_package_metadata(row, v2_resolution, copy_v2_context),
+        compiler_result,
+    )
 
 
 # ─── IMG ─────────────────────────────────────────────────────

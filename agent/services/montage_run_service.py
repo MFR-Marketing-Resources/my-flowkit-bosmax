@@ -22,7 +22,10 @@ from agent.services.montage_assembly_readiness import (
     MontageSceneReadiness,
     assess_montage_assembly_readiness,
 )
-from agent.services.montage_discrete_assembly import assemble_montage_discrete
+from agent.services.montage_discrete_assembly import (
+    assemble_montage_discrete,
+    validate_final_edit_cadence,
+)
 from agent.services.montage_scene_orchestrator import (
     MontageOrchestrationReport,
     SceneJobState,
@@ -134,6 +137,19 @@ async def create_montage_discrete_run(
     composed_context = "\n".join(context_bits)
 
     model_label, dur = _resolve_montage_single_settings(model, duration_seconds)
+    mascot_duration_plan: dict[str, Any] | None = None
+    if mascot_start_asset is not None or mascot_block_count:
+        from agent.services.montage_mascot_creative_grammar import (
+            resolve_final_duration_plan,
+        )
+
+        final_seconds = dur * int(mascot_block_count or len(story_beats))
+        mascot_duration_plan = resolve_final_duration_plan(
+            final_seconds,
+            engine="GOOGLE_FLOW",
+            language="BM_MS",
+            wps_mode="SWEET",
+        ).to_dict()
 
     report = await orchestrate_montage_scenes(
         product_id=pid,
@@ -195,6 +211,15 @@ async def create_montage_discrete_run(
                 if scene.copy_architecture_v2
             ),
             None,
+        ),
+        "final_edit_cadence": (
+            {
+                "segment_count": mascot_duration_plan["final_edit_segment_count"],
+                "segments": mascot_duration_plan["final_edit_segments"],
+                "internal_final_edit_only": True,
+            }
+            if mascot_duration_plan
+            else None
         ),
     }
     await crud.create_bulk_generation_run(
@@ -1424,6 +1449,14 @@ async def _finalize_single_block_montage_run(
             blockers=[{"error_code": "ERR_MONTAGE_MISSING_SCENE_CLIP"}],
         )
     effective_job = job_id or f"montage-run-{run_id[:8]}"
+    cadence_receipt = (
+        validate_final_edit_cadence(
+            cfg["final_edit_cadence"],
+            requested_seconds=int(cfg.get("duration_seconds") or 0),
+        )
+        if isinstance(cfg.get("final_edit_cadence"), dict)
+        else None
+    )
     payload: dict[str, Any] = {
         "ok": True,
         "assembly_path": "SINGLE_FINALIZE",
@@ -1434,6 +1467,7 @@ async def _finalize_single_block_montage_run(
         "concat": {"status": "SINGLE_CLIP_PROMOTED", "invoked": False},
         "credit_spend": False,
         "dry_run": bool(dry_run),
+        "final_edit_cadence": cadence_receipt,
     }
     if not dry_run:
         persisted_staff_id = str(cfg.get("staff_id") or "").strip()
@@ -1500,6 +1534,7 @@ async def assemble_from_montage_run(
         job_id=job_id or f"montage-run-{run_id[:8]}",
         requested_seconds=requested_seconds,
         segment_seconds=duration_s,
+        final_edit_cadence=cfg.get("final_edit_cadence"),
         dry_run=dry_run,
     )
     result["montage_run_id"] = run_id

@@ -77,6 +77,23 @@ def _stable_json(value: Any) -> str:
     )
 
 
+def _ordered_prompt_sha256s(prompt_blocks: Any) -> list[str]:
+    """Return deterministic hashes for the ordered engine-facing prompt blocks."""
+    if not isinstance(prompt_blocks, list):
+        return []
+    hashes: list[str] = []
+    for block in prompt_blocks:
+        if not isinstance(block, dict):
+            continue
+        prompt = str(
+            block.get("engine_prompt_text")
+            or block.get("compiled_prompt_text")
+            or ""
+        )
+        hashes.append(hashlib.sha256(prompt.encode("utf-8")).hexdigest())
+    return hashes
+
+
 def _workspace_execution_package_id(
     product_id: str,
     mode: str,
@@ -93,6 +110,11 @@ def _workspace_execution_package_id(
     faceless_resolution: dict[str, Any] | None = None,
     product_visual_custody: dict[str, Any] | None = None,
     staff_id: str | None = None,
+    product_presence_type: str | None = None,
+    product_temporal_custody: dict[str, Any] | None = None,
+    shot_handling: str | dict[str, Any] | None = None,
+    wps_mode: str | None = None,
+    compiler_source_mode: str | None = None,
 ) -> str:
     # asset_fingerprints are part of the package identity: two packages with
     # different operator-selected reference bindings must never share one id
@@ -121,6 +143,16 @@ def _workspace_execution_package_id(
     # callers byte-compatible when they do not supply a canonical profile.
     if staff_id:
         parts.append(str(staff_id))
+    if product_presence_type:
+        parts.append(str(product_presence_type).strip().upper())
+    if product_temporal_custody is not None:
+        parts.append(_stable_json(product_temporal_custody))
+    if shot_handling is not None:
+        parts.append(_stable_json(shot_handling) if isinstance(shot_handling, dict) else str(shot_handling))
+    if wps_mode:
+        parts.append(str(wps_mode).strip().upper())
+    if compiler_source_mode:
+        parts.append(str(compiler_source_mode).strip().upper())
     digest = _fingerprint(*parts)
     return f"wep_{digest[:16]}"
 
@@ -382,8 +414,13 @@ async def create_workspace_execution_package(
     staff_display_name_snapshot: str | None = None,
     generation_mode: str = "SINGLE",
     target_language: str = "BM_MS",
+    wps_mode: str = "SWEET",
     camera_style: str = "UGC_IPHONE_RAW",
     character_presence: str = "VISIBLE_CREATOR",
+    product_presence_type: str | None = None,
+    product_temporal_custody: dict[str, Any] | None = None,
+    shot_handling: str | dict[str, Any] | None = None,
+    enforce_temporal_contract: bool = True,
     creator_persona: str = "DEFAULT_CREATOR",
     overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
     dialogue_enabled: bool = True,
@@ -396,6 +433,7 @@ async def create_workspace_execution_package(
     style_reference_asset_id: str | None = None,
     blocks: list[dict[str, Any]] | None = None,
     source_mode: str | None = None,
+    compiler_source_mode: str | None = None,
     engine_duration_target: str | None = None,
     requested_total_duration_seconds: int | None = None,
     copy_set_id: str | None = None,
@@ -467,14 +505,20 @@ async def create_workspace_execution_package(
         duration_seconds=duration_seconds,
         generation_mode=generation_mode,
         target_language=target_language,
+        wps_mode=wps_mode,
         camera_style=camera_style,
         character_presence=character_presence,
+        product_presence_type=product_presence_type,
+        product_temporal_custody=product_temporal_custody,
+        shot_handling=shot_handling,
+        enforce_temporal_contract=enforce_temporal_contract,
         creator_persona=creator_persona,
         overlay_enabled=overlay_enabled,
         dialogue_enabled=dialogue_enabled,
         blocks=blocks or [],
         approved_package=package,
         source_mode=resolved_source_mode,
+        compiler_source_mode=compiler_source_mode,
         engine_duration_target=engine_duration_target,
         requested_total_duration_seconds=requested_total_duration_seconds,
         avatar_id=avatar_id,
@@ -774,6 +818,11 @@ async def create_workspace_execution_package(
         faceless_resolution,
         product_visual_custody,
         staff_id,
+        product_presence_type,
+        product_temporal_custody,
+        shot_handling,
+        wps_mode,
+        compiler_source_mode,
     )
     request_lineage_payload = {
         "product_id": product_id,
@@ -789,13 +838,20 @@ async def create_workspace_execution_package(
             "total_duration_seconds": compiler_result["total_duration_seconds"],
             "camera_style": compiler_result["camera_style"],
             "character_presence": compiler_result["character_presence"],
+            "actor_contract": compiler_result.get("actor_contract"),
             "creator_persona": compiler_result["creator_persona"],
-        "avatar_id": (str(avatar_id).strip() if avatar_id else None),
-        "scene_context_code": (str(scene_context_code).strip() if scene_context_code else None),
-        "scene_context_override_applied": bool(str(scene_context_override or "").strip()),
+            "avatar_id": (str(avatar_id).strip() if avatar_id else None),
+            "scene_context_code": (str(scene_context_code).strip() if scene_context_code else None),
+            "scene_context_override_applied": bool(str(scene_context_override or "").strip()),
             "target_language": compiler_result["target_language"],
+            "wps_mode": compiler_result.get("wps_mode", wps_mode),
+            "product_presence_type": compiler_result.get("product_presence_type"),
+            "product_temporal_custody": compiler_result.get("product_temporal_custody"),
+            "temporal_occupancy": compiler_result.get("temporal_occupancy"),
+            "shot_handling": compiler_result.get("shot_handling"),
             "dialogue_word_budget_per_block": compiler_result["dialogue_word_budget_per_block"],
             "prompt_blocks": compiler_result["prompt_blocks"],
+            "ordered_prompt_sha256s": _ordered_prompt_sha256s(compiler_result["prompt_blocks"]),
             "shot_plan": compiler_result["shot_plan"],
             "continuation_lineage": compiler_result["continuation_lineage"],
             "warnings": compiler_result["warnings"],
@@ -974,11 +1030,18 @@ async def create_workspace_execution_package(
         "total_duration_seconds": compiler_result["total_duration_seconds"],
         "camera_style": compiler_result["camera_style"],
         "character_presence": compiler_result["character_presence"],
+        "actor_contract": compiler_result.get("actor_contract"),
         "creator_persona": compiler_result["creator_persona"],
         "target_language": compiler_result["target_language"],
+        "wps_mode": compiler_result.get("wps_mode", wps_mode),
+        "product_presence_type": compiler_result.get("product_presence_type"),
+        "product_temporal_custody": compiler_result.get("product_temporal_custody"),
+        "temporal_occupancy": compiler_result.get("temporal_occupancy"),
+        "shot_handling": compiler_result.get("shot_handling"),
         "shot_plan": compiler_result["shot_plan"],
         "dialogue_word_budget_per_block": compiler_result["dialogue_word_budget_per_block"],
         "prompt_blocks": compiler_result["prompt_blocks"],
+        "ordered_prompt_sha256s": _ordered_prompt_sha256s(compiler_result["prompt_blocks"]),
         "warnings": compiler_result["warnings"],
         "compiler_blockers": compiler_result["blockers"],
         "continuation_lineage": compiler_result["continuation_lineage"],
@@ -1067,8 +1130,13 @@ async def compile_workspace_prompt_preview(
     duration_seconds: int,
     generation_mode: str = "SINGLE",
     target_language: str = "BM_MS",
+    wps_mode: str = "SWEET",
     camera_style: str = "UGC_IPHONE_RAW",
     character_presence: str = "VISIBLE_CREATOR",
+    product_presence_type: str | None = None,
+    product_temporal_custody: dict[str, Any] | None = None,
+    shot_handling: str | dict[str, Any] | None = None,
+    enforce_temporal_contract: bool = True,
     variation_index: int = 0,
     creator_persona: str = "DEFAULT_CREATOR",
     overlay_enabled: bool = False,  # NO_OVERLAY law (ADR-008)
@@ -1076,6 +1144,7 @@ async def compile_workspace_prompt_preview(
     blocks: list[dict[str, Any]] | None = None,
     approved_package: dict[str, Any] | None = None,
     source_mode: str | None = None,
+    compiler_source_mode: str | None = None,
     engine_duration_target: str | None = None,
     requested_total_duration_seconds: int | None = None,
     copy_set_id: str | None = None,
@@ -1114,6 +1183,8 @@ async def compile_workspace_prompt_preview(
     # modes (F2V/I2V) fall through to their documented compiler defaults.
     _lineage_warning = _source_lineage_default_warning(mode, source_mode)
     source_mode = _resolve_preview_source_mode(mode, source_mode)
+    if compiler_source_mode:
+        source_mode = _resolve_preview_source_mode(mode, compiler_source_mode)
     product = await crud.get_product(product_id)
     if not product:
         raise ValueError("PRODUCT_NOT_FOUND")
@@ -1171,9 +1242,13 @@ async def compile_workspace_prompt_preview(
             mode=normalized_mode,
             camera_style=camera_style,
             character_presence=character_presence,
+            product_presence_type=product_presence_type,
+            product_temporal_custody=product_temporal_custody,
+            shot_handling=shot_handling,
             variation_index=variation_index,
             creator_persona=creator_persona,
             target_language=target_language,
+            wps_mode=wps_mode,
             generation_mode=generation_mode,
             duration_seconds=duration_seconds,
             blocks=blocks or [],
@@ -1192,6 +1267,7 @@ async def compile_workspace_prompt_preview(
             approved_dialogue=approved_dialogue,
             faceless_actor_profile=faceless_actor_profile,
             creative_treatment=creative_treatment,
+            enforce_temporal_contract=enforce_temporal_contract,
             scene_template=scene_template,
             camera_preset=camera_preset,
         )

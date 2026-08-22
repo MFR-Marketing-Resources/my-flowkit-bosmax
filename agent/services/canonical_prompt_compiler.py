@@ -1642,6 +1642,7 @@ def _default_shot_plan(
     trigger_id: str,
     cta_type: str,
     character_presence: str = "VISIBLE_CREATOR",
+    product_presence_type: str | None = None,
 ) -> list[str]:
     pname = _product_visual_alias(product, family)
     focus = _family_focus_terms(family)
@@ -1649,6 +1650,22 @@ def _default_shot_plan(
     mode_polish = _mode_story_polish(source_mode)
     scene_native = _family_t2v_scene_clause(family)
     is_final = block_index == total_blocks
+    is_mascot = str(product_presence_type or "").strip().upper() == "PRODUCT_MASCOT"
+    if is_mascot:
+        mascot_templates = [
+            f"Product-mascot opening beat: the same active mascot and exactly one {pname} are already visible at 0.0 seconds; the mascot begins the declared action inside {focus['context']} while preserving the product's real geometry.",
+            f"Product-mascot medium close-up of {pname} and the same mascot identity; use one clear camera or action change while the label and mascot face remain stable and the scene continues {story['middle']}.",
+            f"Continue the same mascot, product scale, label orientation, limbs and shoes through the declared action; no human presenter, human voice-over or replacement product enters while {story['middle']} lands.",
+            f"End on a stable product-mascot hero hold with exactly one {pname}, the same mascot identity and the final gesture completed so {story['closing']} lands without a new reveal.",
+        ]
+        if block_index > 1:
+            mascot_templates[0] = (
+                f"Continue immediately from the previous block with the same active mascot, exactly one {pname}, product scale, label orientation, limbs, shoes, lighting and camera path already in progress; do not reset or introduce a second product."
+            )
+        selected = mascot_templates[: max(1, shot_count)]
+        if is_final:
+            selected[-1] = mascot_templates[-1]
+        return selected
     if str(character_presence or "").strip().upper() == "FACELESS":
         faceless_templates = [
             f"Product-first opening beat with {pname} already entering the frame in consistent hands, matching the uploaded product image exactly while the first spoken line lands inside a {focus['context']} setup driven by {story['opening']}; keep the head and face outside the frame.",
@@ -1736,12 +1753,34 @@ def _section_3_continuity(
     scene_context: str,
     character_presence: str = "VISIBLE_CREATOR",
     faceless_actor_profile: dict[str, Any] | None = None,
+    product_presence_type: str | None = None,
 ) -> str:
     """Naturalized source-mode prose — NO taxonomy labels, per retained law."""
     lines: list[str] = []
     pname = _product_line(product)
     is_faceless = str(character_presence or "").strip().upper() == "FACELESS"
-    if is_faceless and source_mode in {"HYBRID", "FRAMES"}:
+    is_mascot = str(product_presence_type or "").strip().upper() == "PRODUCT_MASCOT"
+    is_faceless_human = is_faceless and not is_mascot
+    if is_mascot:
+        lines.append(
+            f"Use the approved mascot reference and the exact product truth for {pname}; exactly one product and one unchanged mascot identity remain present from 0.0 seconds through the end of the shot."
+        )
+        lines.append(
+            "Product Mascot continuity law: the mascot is the active on-screen actor, with its face and mouth visible for its own speech; no human presenter, human voice-over, human face or human body contract is used."
+        )
+        lines.append(
+            "Preserve the same mascot face, limbs, shoes, product geometry, label, scale, screen direction, lighting, environment and camera relationship across every shot."
+        )
+        if scene_context:
+            lines.append(
+                re.sub(
+                    r"\b(?:faceless|voice[- ]over|presenter|creator|human speaker)\b",
+                    "mascot",
+                    _clean(scene_context),
+                    flags=re.IGNORECASE,
+                )
+            )
+    elif is_faceless and source_mode in {"HYBRID", "FRAMES"}:
         lines.append(
             f"Use the uploaded product image as the exact visual reference for {pname}: match its colour, label, cap, shape, material, and scale precisely in every shot."
         )
@@ -1817,7 +1856,11 @@ def _section_3_continuity(
         lines.append(_mode_story_polish(source_mode)["continuity"])
         if presenter_prose:
             lines.append(presenter_prose)
-    if is_continuation and is_faceless:
+    if is_continuation and is_mascot:
+        lines.append(
+            "This block continues the previous clip. Start from the exact final visible state: same mascot face, limbs, shoes, exactly one product, product scale, label orientation, camera distance, lighting, environment and motion direction. The first half second contains active continuation with no reset, dead air or replacement product."
+        )
+    elif is_continuation and is_faceless:
         lines.append(
             "This block continues the previous clip. Start from the exact final visible state: same hands and forearms, same grip and product position, same camera distance, same lighting, same environment, same voice profile, and same motion direction. The head and face remain outside the frame with no pause, dead air, or freeze."
         )
@@ -1862,9 +1905,18 @@ def _section_8_end_frame(
     trigger_id: str,
     cta_type: str,
     character_presence: str = "VISIBLE_CREATOR",
+    product_presence_type: str | None = None,
 ) -> str:
     story = _visual_story_terms(family, angle_signal, trigger_id, cta_type)
     scene_native = _family_t2v_scene_clause(family)
+    if str(product_presence_type or "").strip().upper() == "PRODUCT_MASCOT":
+        if not is_final:
+            return (
+                f"End on a seam-ready hold with the same active mascot and exactly one {pname} in the same physical relationship, product scale, label orientation and motion direction; do not close the commercial arc yet."
+            )
+        return (
+            f"End on a stable product-mascot hero hold: the same mascot face, limbs and shoes remain visible with exactly one {pname} at honest scale, the final gesture is complete and the product label remains unchanged while the closing line lands."
+        )
     if str(character_presence or "").strip().upper() == "FACELESS":
         if not is_final:
             return (
@@ -2063,6 +2115,10 @@ def render_block(
     presenter_profile: dict | None = None,
     character_presence: str = "VISIBLE_CREATOR",
     faceless_actor_profile: dict[str, Any] | None = None,
+    product_presence_type: str | None = None,
+    product_temporal_custody: Mapping[str, Any] | None = None,
+    shot_handling: str | Mapping[str, Any] | None = None,
+    temporal_occupancy: Mapping[str, Any] | None = None,
     asset_role_map: dict | None = None,
     style_scene_source: str | None = None,
     target_language: str = "BM_MS",
@@ -2090,6 +2146,26 @@ def render_block(
             raise ValueError("BLOCK_ALLOCATION_DURATION_MISMATCH")
     treatment = dict(creative_treatment or {})
     is_faceless = str(character_presence or "").strip().upper() == "FACELESS"
+    is_mascot = str(product_presence_type or "").strip().upper() == "PRODUCT_MASCOT"
+    is_faceless_human = is_faceless and not is_mascot
+    from agent.services.video_continuity_contract import (
+        custody_prompt_lines,
+        default_product_temporal_custody,
+        resolve_shot_handling,
+        validate_product_temporal_custody,
+    )
+    resolved_shot_handling = resolve_shot_handling(shot_handling or "MCU")
+    resolved_custody = (
+        validate_product_temporal_custody(product_temporal_custody)
+        if product_temporal_custody
+        else default_product_temporal_custody(
+            product,
+            source_mode=mode,
+            character_presence=character_presence,
+            product_presence_type=product_presence_type,
+            shot_type=resolved_shot_handling["shot_type"],
+        )
+    )
     treatment_format = str(treatment.get("format") or "").upper()
     if treatment:
         if treatment_format not in {"UGC", "PGC", "CINEMATIC"}:
@@ -2131,7 +2207,7 @@ def render_block(
     presenter = None
     presenter_text = None
     family = _infer_product_family(product, norm_copy)
-    if (not is_faceless) and (
+    if (not is_faceless) and (not is_mascot) and (
         (mode in ("HYBRID", "T2V") and treatment_format != "PGC")
         or (mode == "IMAGES" and presenter_profile)
     ):
@@ -2174,7 +2250,11 @@ def render_block(
                 "motivated camera movement, lighting continuity, and visual rhythm."
             ),
         }[treatment_format]
-        if is_faceless:
+        if is_mascot:
+            format_objective = (
+                "Use the approved product-mascot grammar with one stable mascot identity, visible mascot speech when dialogue is present, and exactly one truthful product in the declared physical relationship."
+            )
+        elif is_faceless:
             format_objective = (
                 "Use a product-first faceless grammar with controlled hand interaction, "
                 "consistent forearms and torso styling, and no head or face in frame."
@@ -2196,6 +2276,7 @@ def render_block(
     s2_lines.extend(product_lock_builder.section_2_lock_lines(
         product, is_video=is_video, has_product_reference=has_product_reference,
     ))
+    s2_lines.extend(custody_prompt_lines(resolved_custody, product_name=pname)[:2])
     if handling_notes:
         s2_lines.append(handling_notes)
     s2_lines.append("Never redesign, restyle, resize, or invent packaging.")
@@ -2206,7 +2287,14 @@ def render_block(
         is_continuation=is_continuation, scene_context=_clean(scene_context),
         character_presence=character_presence,
         faceless_actor_profile=faceless_actor_profile,
+        product_presence_type=product_presence_type,
     )
+    s3 = "\n".join([s3, *custody_prompt_lines(resolved_custody, product_name=pname)[2:]])
+    if mode == "HYBRID" and not is_faceless_human and not is_mascot:
+        s3 = "\n".join([
+            s3,
+            f"Presenter-and-product visual anchor: the approved presenter and exactly one {pname} are co-present from frame one; the product is already held or supported at 0.0 seconds and never receives a product-only opening or late reveal.",
+        ])
     # Reference-image truth lock + per-frame persistence lock (video modes) so the
     # product cannot grow, round out, or morph across frames or away from the ref.
     s3_lock_lines = product_lock_builder.section_3_lock_lines(
@@ -2238,14 +2326,14 @@ def render_block(
                     and step.get("end_time_seconds") is not None
                     else ""
                 )
-                + f": {(_sanitize_faceless_provider_text(step.get('action_text')) if is_faceless else _clean(step.get('action_text')))}; "
-                f"actor={('hands/forearms' if is_faceless else _clean(step.get('actor_role')))}; "
-                f"hands={_clean(step.get('support_hand'))}/{_clean(step.get('active_hand'))}; "
-                f"state={(_sanitize_faceless_provider_text(step.get('initial_state')) if is_faceless else _clean(step.get('initial_state')))} -> "
-                f"{(_sanitize_faceless_provider_text(step.get('resulting_state')) if is_faceless else _clean(step.get('resulting_state')))}; "
+                + f": {(_sanitize_faceless_provider_text(step.get('action_text')) if is_faceless and not is_mascot else _clean(step.get('action_text')))}; "
+                f"actor={('PRODUCT MASCOT' if is_mascot else ('hands/forearms' if is_faceless else _clean(step.get('actor_role'))))}; "
+                f"hands={'mascot limbs' if is_mascot else _clean(step.get('support_hand')) + '/' + _clean(step.get('active_hand'))}; "
+                f"state={(_sanitize_faceless_provider_text(step.get('initial_state')) if is_faceless and not is_mascot else _clean(step.get('initial_state')))} -> "
+                f"{(_sanitize_faceless_provider_text(step.get('resulting_state')) if is_faceless and not is_mascot else _clean(step.get('resulting_state')))}; "
                 "continuity="
                 + "; ".join(
-                    (_sanitize_faceless_provider_text(value) if is_faceless else _clean(value))
+                    (_sanitize_faceless_provider_text(value) if is_faceless and not is_mascot else _clean(value))
                     for value in step.get("continuity_requirements") or []
                 )
             )
@@ -2264,10 +2352,10 @@ def render_block(
         shots = _treatment_shot_lines(treatment)
         if allocation_data:
             entry_text = _allocation_state_text(
-                allocation_data.get("entry_continuity_state"), faceless=is_faceless
+                allocation_data.get("entry_continuity_state"), faceless=is_faceless_human
             )
             exit_text = _allocation_state_text(
-                allocation_data.get("exit_continuity_state"), faceless=is_faceless
+                allocation_data.get("exit_continuity_state"), faceless=is_faceless_human
             )
             if entry_text and exit_text:
                 s3 = "\n".join([
@@ -2281,17 +2369,17 @@ def render_block(
             raise ValueError("BLOCK_ALLOCATION_STORY_BEATS_MISSING")
         shots = [
             _sanitize_faceless_provider_text(beat.get("visual_action"))
-            if is_faceless else _clean(beat.get("visual_action"))
+            if is_faceless_human else _clean(beat.get("visual_action"))
             for beat in allocated_beats
             if _clean(beat.get("visual_action"))
         ]
         if not shots:
             raise ValueError("BLOCK_ALLOCATION_STORY_BEATS_MISSING")
         entry_text = _allocation_state_text(
-            allocation_data.get("entry_continuity_state"), faceless=is_faceless
+            allocation_data.get("entry_continuity_state"), faceless=is_faceless_human
         )
         exit_text = _allocation_state_text(
-            allocation_data.get("exit_continuity_state"), faceless=is_faceless
+            allocation_data.get("exit_continuity_state"), faceless=is_faceless_human
         )
         if entry_text and exit_text:
             s3 = "\n".join([
@@ -2315,8 +2403,9 @@ def render_block(
             trigger_id=trigger_id,
             cta_type=cta_type,
             character_presence=character_presence,
+            product_presence_type=product_presence_type,
         )
-    if is_faceless:
+    if is_faceless and not is_mascot:
         shots = [_sanitize_faceless_provider_text(shot) for shot in shots]
     s4 = "\n".join(f"Shot {i + 1}: {s}" for i, s in enumerate(shots))
     if mode == "IMAGES":
@@ -2331,6 +2420,12 @@ def render_block(
         s5_lines = [
             "Clean commercial framing with the product sharply in focus.",
             f"{still_camera_note} {lens_note}",
+        ]
+    elif is_mascot:
+        s5_lines = [
+            "Product-mascot vertical 9:16 framing with deliberate, readable action changes and one continuous mascot/product relationship.",
+            camera_notes or "Use a stable commercial camera path with one clear composition change at a time; no flash, no hard fill.",
+            "Keep the same mascot face, limbs, shoes, product geometry, label orientation and honest scale throughout; the mascot is a distinct non-human product actor and its own mouth may remain visible for its speech.",
         ]
     elif is_faceless:
         s5_lines = [
@@ -2371,9 +2466,13 @@ def render_block(
                 camera_notes or "Eye-level medium close-up to close-up range; soft natural light; no flash, no hard fill.",
                 "Keep the product within the intended continuous creator scene at its true scale.",
             ]
-    if is_continuation and is_faceless:
+    if is_continuation and is_faceless_human:
         s5_lines.append(
             "For the first half second, continue the exact motion already in progress. Keep the same hands, forearms, product state, camera distance, and lighting; the head and face remain outside the frame and there is no product-only reset."
+        )
+    elif is_continuation and is_mascot:
+        s5_lines.append(
+            "For the first half second, continue the exact motion already in progress with the same mascot face, mouth, limbs, shoes and product relationship; there is no human reset, dead air, or replacement product."
         )
     elif is_continuation:
         s5_lines.append(
@@ -2382,6 +2481,8 @@ def render_block(
             "synchronized to every spoken word — the product may stay near chest level, but "
             "there is no product-only shot during the opening spoken line."
         )
+    if mode != "IMAGES":
+        s5_lines.extend(custody_prompt_lines(resolved_custody, product_name=pname)[4:])
     s5 = "\n".join(s5_lines)
     if approved_dialogue is not None:
         dialogue = _clean(approved_dialogue)
@@ -2406,6 +2507,9 @@ def render_block(
         (
             f"Use the approved {treatment_format} audio grammar. "
             + (
+                f"The Product Mascot is the visible on-screen speaker in {lang}; synchronize its visible mouth and expressions to the approved dialogue. No human presenter and no human voice-over."
+                if is_mascot
+                else
                 f"Use controlled {lang} voice-over/narration over the product handling; no visible mouth or on-camera speaker."
                 if is_faceless
                 else f"The presenter speaks {lang} directly and naturally; no voice-over."
@@ -2421,15 +2525,30 @@ def render_block(
             f"Use a controlled {lang} voice-over/narration in short, natural, conversational phrasing over the product handling. "
             f"{family_voice + ' ' if family_voice else ''}"
             "No visible mouth, no on-camera speaker, and no head or face entering frame."
-            if is_faceless
+            if is_faceless_human
+            else
+            f"The Product Mascot speaks {lang} on screen with visible mouth synchronization and the same mascot identity; no human presenter and no human voice-over."
+            if is_mascot
             else
             f"The presenter speaks {lang} only, direct to camera, in short, natural, conversational phrasing — present in the moment, never narrating from outside it. "
             f"{family_voice + ' ' if family_voice else ''}"
             "No voice-over. No off-camera speech. No audio-only dialogue."
         )
     ) if mode != "IMAGES" else "Not applicable — still image output."
+    if temporal_occupancy and mode != "IMAGES":
+        speech_start = temporal_occupancy.get("first_utterance_start_s")
+        speech_end = temporal_occupancy.get("estimated_speech_end_s")
+        hold = temporal_occupancy.get("terminal_hold_seconds")
+        if speech_start is not None and speech_end is not None:
+            s7 += (
+                f" Speech timing authority mode is {str(temporal_occupancy.get('wps_mode') or wps_mode).upper()}. Timing is explicit: begin the approved spoken line at {float(speech_start):.2f} seconds, "
+                f"finish the final word at {float(speech_end):.2f} seconds, then hold the unchanged product position, "
+                f"fixed grip or support, {resolved_custody['label_orientation']}, completed gesture, locked camera or continuous ambience for {float(hold or 0):.2f} seconds."
+            )
+        else:
+            s7 += " The full visual timeline remains occupied by the declared product custody hold with no improvisational gap."
     s8 = _clean(allocation_data.get("end_frame_instruction")) if allocation_data else ""
-    if is_faceless and s8:
+    if is_faceless and not is_mascot and s8:
         s8 = _sanitize_faceless_provider_text(s8)
     if not s8:
         s8 = _section_8_end_frame(
@@ -2443,6 +2562,7 @@ def render_block(
             trigger_id=trigger_id,
             cta_type=cta_type,
             character_presence=character_presence,
+            product_presence_type=product_presence_type,
         )
     # UI-chrome ban shared by both branches. Live leak (owner-reported): an
     # output rendered a social-app interface — like/comment/share icons, a
@@ -2475,7 +2595,7 @@ def render_block(
             "ONLY."
         )
 
-    if is_faceless:
+    if is_faceless and not is_mascot:
         s1 = _sanitize_faceless_provider_text(s1)
         s2 = _sanitize_faceless_provider_text(s2)
         s3 = _sanitize_faceless_provider_text(s3)
@@ -2489,7 +2609,7 @@ def render_block(
         f"{header}\n{body}" for header, body in zip(CANONICAL_SECTIONS, bodies)
     )
     violations = scrub_check(engine_text)
-    if is_faceless:
+    if is_faceless and not is_mascot:
         structural_text = "\n".join(
             [s1, s2, s3, s4, s5, s7, s8, s9]
         )
@@ -2506,6 +2626,11 @@ def render_block(
         "presenter": presenter,
         "creative_treatment": treatment or None,
         "compiled_shot_grammar": shots if treatment else None,
+        "product_presence_type": product_presence_type or "PRODUCT_OBJECT",
+        "actor_contract": "PRODUCT_MASCOT" if is_mascot else ("FACELESS_HUMAN" if is_faceless_human else "VISIBLE_HUMAN"),
+        "shot_handling": resolved_shot_handling,
+        "product_temporal_custody": resolved_custody,
+        "temporal_occupancy": dict(temporal_occupancy or {}),
         "scrub_violations": violations,
         "sections": dict(zip(CANONICAL_SECTIONS, bodies)),
     }
@@ -2525,6 +2650,9 @@ def compile_prompt_set(
     presenter_profile: dict | None = None,
     character_presence: str = "VISIBLE_CREATOR",
     faceless_actor_profile: dict[str, Any] | None = None,
+    product_presence_type: str | None = None,
+    product_temporal_custody: Mapping[str, Any] | None = None,
+    shot_handling: str | Mapping[str, Any] | None = None,
     asset_role_map: dict | None = None,
     style_scene_source: str | None = None,
     target_language: str = "BM_MS",
@@ -2534,6 +2662,10 @@ def compile_prompt_set(
     camera_notes: str = "",
     handling_notes: str = "",
     creative_treatment: Mapping[str, Any] | None = None,
+    dialogue_enabled: bool = True,
+    enforce_temporal_contract: bool = False,
+    terminal_hold_seconds: float = 0.25,
+    seam_out_margin_seconds: float = 0.35,
 ) -> dict[str, Any]:
     """Compile one complete canonical 9-section prompt per governed block."""
     mode = str(source_mode or "").strip().upper()
@@ -2585,8 +2717,29 @@ def compile_prompt_set(
             preferred_lane=preferred_lane,
         )
     is_faceless = str(character_presence or "").strip().upper() == "FACELESS"
-    resolved_profile = None if is_faceless else presenter_profile
-    if mode in ("HYBRID", "T2V") and not resolved_profile and not is_faceless:
+    is_mascot = str(product_presence_type or "").strip().upper() == "PRODUCT_MASCOT"
+    is_faceless_human = is_faceless and not is_mascot
+    from agent.services.video_continuity_contract import (
+        default_product_temporal_custody,
+        resolve_block_custody,
+        resolve_shot_handling,
+        validate_custody_sequence,
+    )
+    if product_temporal_custody is None:
+        product_temporal_custody = default_product_temporal_custody(
+            product,
+            source_mode=mode,
+            character_presence=character_presence,
+            product_presence_type=product_presence_type,
+            shot_type=shot_handling or "MCU",
+        )
+    block_custodies = [
+        resolve_block_custody(product_temporal_custody, index)
+        for index in range(1, len(plan) + 1)
+    ]
+    validate_custody_sequence(block_custodies)
+    resolved_profile = None if (is_faceless or is_mascot) else presenter_profile
+    if mode in ("HYBRID", "T2V") and not resolved_profile and not is_faceless and not is_mascot:
         resolved_profile = avatar_registry.resolve_presenter(
             avatar_id,
             usage_context=_clean(product.get("category")),
@@ -2642,10 +2795,13 @@ def compile_prompt_set(
                 wps_mode=wps_mode,
                 scene_context=scene_context,
                 approved_dialogue=approved_dialogue,
+                dialogue_enabled=dialogue_enabled,
                 shot_count_by_block=[
                     min(4, max(2, round(seconds / 4)))
                     for seconds in plan
                 ],
+                terminal_hold_seconds=terminal_hold_seconds if enforce_temporal_contract else 0.0,
+                seam_out_margin_seconds=seam_out_margin_seconds if enforce_temporal_contract else None,
             ).to_dict()
             allocations = list(copy_planner_result["block_allocations"])
             planner_result = {
@@ -2672,13 +2828,63 @@ def compile_prompt_set(
             target_language=target_language,
             wps_mode=wps_mode,
             scene_context=scene_context,
+            dialogue_enabled=dialogue_enabled,
             approved_dialogue=approved_dialogue,
             shot_count_by_block=[
                 min(4, max(2, round(seconds / 4)))
                 for seconds in plan
             ],
+            terminal_hold_seconds=terminal_hold_seconds if enforce_temporal_contract else 0.0,
+            seam_out_margin_seconds=seam_out_margin_seconds if enforce_temporal_contract else None,
         ).to_dict()
         allocations = list(planner_result["block_allocations"])
+    temporal_occupancy_receipt: dict[str, Any] | None = None
+    temporal_by_block: dict[int, dict[str, Any]] = {}
+    if enforce_temporal_contract and mode != "IMAGES":
+        from agent.services.video_continuity_contract import (
+            build_temporal_occupancy_receipt,
+        )
+
+        occupancy_inputs: list[dict[str, Any]] = []
+        cursor = 0.0
+        for index, seconds in enumerate(plan, start=1):
+            allocation = allocations[index - 1] or {}
+            dialogue_text = _clean(
+                allocation.get("exact_dialogue_slice")
+                or (treatment.get("dialogue_text") if treatment else "")
+                or approved_dialogue
+            )
+            item: dict[str, Any] = {
+                "block_index": index,
+                "duration_seconds": seconds or duration_seconds,
+                "start_s": cursor,
+                "end_s": cursor + (seconds or duration_seconds),
+                "allocation": allocation,
+                "exact_dialogue_slice": dialogue_text,
+                "actual_dialogue_word_count": len(dialogue_text.split()) if dialogue_text else 0,
+            }
+            if dialogue_text and not (allocation.get("assigned_dialogue_utterances") or []):
+                item["assigned_dialogue_utterances"] = [{
+                    "utterance_id": f"direct-block-{index}",
+                    "start_s": cursor,
+                    "end_s": cursor + float(seconds or duration_seconds) - float(terminal_hold_seconds),
+                    "text": dialogue_text,
+                    "word_count": len(dialogue_text.split()),
+                }]
+            occupancy_inputs.append(item)
+            cursor += float(seconds or duration_seconds)
+        temporal_occupancy_receipt = build_temporal_occupancy_receipt(
+            blocks=occupancy_inputs,
+            target_language=target_language,
+            wps_mode=wps_mode,
+            dialogue_enabled=dialogue_enabled,
+            strict=True,
+            required_terminal_hold_seconds=terminal_hold_seconds,
+        )
+        temporal_by_block = {
+            int(block["block_index"]): block
+            for block in temporal_occupancy_receipt["blocks"]
+        }
     blocks = []
     for index, seconds in enumerate(plan, start=1):
         allocation = allocations[index - 1]
@@ -2717,6 +2923,10 @@ def compile_prompt_set(
                 presenter_profile=resolved_profile,
                 character_presence=character_presence,
                 faceless_actor_profile=faceless_actor_profile,
+                product_presence_type=product_presence_type,
+                product_temporal_custody=block_custodies[index - 1],
+                shot_handling=shot_handling,
+                temporal_occupancy=temporal_by_block.get(index),
                 asset_role_map=asset_role_map,
                 style_scene_source=style_scene_source,
                 target_language=target_language,
@@ -2750,6 +2960,20 @@ def compile_prompt_set(
         "block_plan": plan if mode != "IMAGES" else [],
         "total_blocks": total,
         "wps_mode": str(wps_mode).upper(),
+        "dialogue_enabled": bool(dialogue_enabled),
+        "product_presence_type": product_presence_type or "PRODUCT_OBJECT",
+        "actor_contract": (
+            "PRODUCT_MASCOT"
+            if is_mascot
+            else ("FACELESS_HUMAN" if is_faceless_human else "VISIBLE_HUMAN")
+        ),
+        "shot_handling": resolve_shot_handling(shot_handling or "MCU"),
+        "product_temporal_custody": (
+            product_temporal_custody
+            if product_temporal_custody is not None
+            else None
+        ),
+        "temporal_occupancy": temporal_occupancy_receipt,
         "target_language": target_language,
         "presenter": resolved_profile,
         "blocks": blocks,
