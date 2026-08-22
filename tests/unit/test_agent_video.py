@@ -139,11 +139,24 @@ def test_decide_waits_on_empty():
     assert k == "wait" and a is None
 
 
+def test_decide_never_approves_unsteered_permission():
+    """The historical Phase-B proposal passes the cost cap, but not the hard
+    pre-approval settings invariant."""
+    kind, msg, action = av.decide(
+        _perm(10), "omni_flash", 10, settings_confirmed=False
+    )
+    assert kind == "reject"
+    assert action == av.DENIED
+    assert "Gemini Omni Flash" in msg
+    assert "10 seconds" in msg
+
+
 # --- dry-lane short-circuit regression (Codex finding): soft-phrase started must NOT
 #     suppress would_approve; only a real generation toolInvocation may bail pre-approve. ---
 
 _SOFT_PLUS_PROPOSAL = (
-    'data: {"text": "Sure, I\'m generating your video concept now."}\n'   # soft phrase, no tool
+    'data: {"text": "Sure, I\'m generating your video concept now. I will use '
+    'Veo 3.1 - Lite for 8 seconds."}\n'   # soft phrase, no tool
     'data: {"agentMessage": {"agentEvents": [{"eventId": "p","toolInvocation": '
     '{"toolName": "ask_for_permission","toolArguments": '
     '{"num_videos": 1,"num_images": 0,"total_cost": 10,"num_total": 1}}}],"responseId": "p"}}\n'
@@ -360,11 +373,117 @@ def test_negotiate_prepends_text_only_directive_when_no_media():
 
 
 def test_negotiate_does_not_add_directive_when_reference_present():
-    """F2V/I2V: a reference is attached, so the directive must NOT appear — the sent
-    text is the creative prompt verbatim."""
+    """Reference runs carry settings + creative text while preserving media IDs."""
     client = _CaptureClient()
     _run(av.negotiate_and_generate(client, "proj", "sid", "MY CREATIVE PROMPT", ["m1"],
                                    target_model="Veo 3.1 - Lite", target_duration_s=8))
     first = client.sent[0]["text"]
-    assert first == "MY CREATIVE PROMPT"
+    assert first.startswith("Use exactly Veo 3.1 - Lite at 8 seconds.")
+    assert "MY CREATIVE PROMPT" in first
+    assert client.sent[0]["media_ids"] == ["m1"]
     assert av._TEXT_ONLY_DIRECTIVE not in first
+
+
+def test_target_directive_uses_registry_defaults_and_supported_settings():
+    default_ref = av.build_target_settings_directive(has_reference=True)
+    assert "Veo 3.1 - Lite" in default_ref
+    assert "8 seconds" in default_ref
+    assert "using the attached reference image" in default_ref
+
+    omni_ref = av.build_target_settings_directive(
+        "omni_flash", 10, 1, has_reference=True
+    )
+    assert "Gemini Omni Flash" in omni_ref
+    assert "10 seconds" in omni_ref
+    assert "text-only" not in omni_ref
+
+
+_PHASE_B_FIRST_PERMISSION = (
+    'data: {"agentMessage": {"agentEvents": [{"eventId": "phase-b-1",'
+    '"toolInvocation": {"toolCallId": "ask-1",'
+    '"toolName": "ask_for_permission", "toolArguments": {'
+    '"num_videos": 1, "num_images": 0, "total_cost": 10, "num_total": 1}}}],'
+    '"responseId": "phase-b-response-1"}}\n'
+)
+
+_PHASE_B_REVISED_PERMISSION = (
+    'data: {"text": "Confirmed: use Gemini Omni Flash for 10 seconds, preserve '
+    'the attached reference image, and generate exactly one video."}\n'
+    'data: {"agentMessage": {"agentEvents": [{"eventId": "phase-b-2",'
+    '"toolInvocation": {"toolCallId": "ask-2",'
+    '"toolName": "ask_for_permission", "toolArguments": {'
+    '"num_videos": 1, "num_images": 0, "total_cost": 10, "num_total": 1}}}],'
+    '"responseId": "phase-b-response-2"}}\n'
+)
+
+
+class _PhaseBReplayClient:
+    """Provider-free replay of the exact old proposal and corrected proposal."""
+
+    def __init__(self, revised_sse=_PHASE_B_REVISED_PERMISSION):
+        self.sent = []
+        self.revised_sse = revised_sse
+
+    async def agent_stream_chat(self, session_id, project_id, turn, text,
+                                media_ids=None, permission_action=None):
+        self.sent.append({
+            "turn": turn,
+            "text": text,
+            "media_ids": media_ids,
+            "permission_action": permission_action,
+        })
+        if len(self.sent) == 1:
+            return {"data": _PHASE_B_FIRST_PERMISSION}
+        if permission_action == av.DENIED:
+            return {"data": 'data: {"text": "Permission denied; restate the exact settings."}\n'}
+        return {"data": self.revised_sse}
+
+
+def test_phase_b_live_failure_shape_is_denied_then_resteered_without_approval():
+    """1 video/0 images/cost 10 is not model or duration proof."""
+    client = _PhaseBReplayClient()
+    result = _run(av.negotiate_and_generate(
+        client, "project", "session", "AQUABLANCE creative prompt", ["ref-1"],
+        target_model="omni_flash", target_duration_s=10, approve=False,
+    ))
+
+    assert result["would_approve"] == {
+        "num_videos": 1, "num_images": 0, "total_cost": 10, "num_total": 1,
+    }
+    assert result["provider_submit"] is False
+    assert result["credit_spend"] is False
+    state = result["negotiation_state"]
+    assert state["target_settings_communicated"] is True
+    assert state["target_settings_resteered"] is True
+    assert state["permission_after_target_steer"] is True
+    assert state["target_settings_acknowledged"] is True
+
+    assert len(client.sent) == 3
+    assert "Gemini Omni Flash" in client.sent[0]["text"]
+    assert "10 seconds" in client.sent[0]["text"]
+    assert "AQUABLANCE creative prompt" in client.sent[0]["text"]
+    assert client.sent[0]["media_ids"] == ["ref-1"]
+    assert client.sent[1]["permission_action"] == av.DENIED
+    assert client.sent[1]["media_ids"] == ["ref-1"]
+    assert "Gemini Omni Flash" in client.sent[2]["text"]
+    assert "10 seconds" in client.sent[2]["text"]
+    assert client.sent[2]["media_ids"] == ["ref-1"]
+    assert all(item["permission_action"] != av.APPROVED for item in client.sent)
+
+
+def test_permission_after_target_steer_without_ack_fails_before_provider_submit():
+    no_ack = (
+        'data: {"agentMessage": {"agentEvents": [{"toolInvocation": {'
+        '"toolName": "ask_for_permission", "toolArguments": {'
+        '"num_videos": 1, "num_images": 0, "total_cost": 10, "num_total": 1}}}]}}\n'
+    )
+    client = _PhaseBReplayClient(revised_sse=no_ack)
+    result = _run(av.negotiate_and_generate(
+        client, "project", "session", "prompt", ["ref-1"],
+        target_model="omni_flash", target_duration_s=10, approve=True,
+    ))
+    assert result["ok"] is False
+    assert result["error"] == av.PRE_APPROVAL_SETTINGS_ACK_REQUIRED
+    assert result["provider_submit"] is False
+    assert result["credit_spend"] is False
+    assert all(item["permission_action"] != av.APPROVED for item in client.sent)

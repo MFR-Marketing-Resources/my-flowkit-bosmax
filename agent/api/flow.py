@@ -2528,6 +2528,7 @@ async def bind_check():
 class NegotiateJobRequest(BaseModel):
     prompt: str = "Vertical 9:16 cinematic product video. Slow push-in on the product, soft light, subtle motion. Make 1 video."
     image_prompt: Optional[str] = None  # None → pure T2V dry capture (no start frame)
+    reference_media_ids: Optional[list[str]] = None  # reuse existing provider refs; no upload
     dry: bool = True
     model: Optional[str] = None         # steer the agent to this model (patch I4a)
     duration_s: Optional[int] = None
@@ -2548,9 +2549,16 @@ async def negotiate_job(body: NegotiateJobRequest):
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
+    if body.image_prompt and body.reference_media_ids:
+        raise HTTPException(
+            422,
+            "NEGOTIATION_REFERENCE_INPUT_AMBIGUOUS: use reference_media_ids or "
+            "image_prompt, not both",
+        )
     return await _mv.start_negotiate(
         body.prompt, body.image_prompt, body.dry,
-        model=body.model, duration_s=body.duration_s, project_id=body.project_id)
+        model=body.model, duration_s=body.duration_s, project_id=body.project_id,
+        reference_media_ids=body.reference_media_ids)
 
 
 @router.get("/negotiate-job/{job_id}")
