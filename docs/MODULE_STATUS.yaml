@@ -92,6 +92,7 @@ domains:
       - scripts/verify-gate.ps1
       - agent/services/bulk_generation_service.py
       - tests/unit/test_phase_b_hybrid_omni10_capture.py
+      - tests/unit/test_flow_provider_readiness.py
       - agent/services/creative_production_scheduler_service.py
       - agent/services/production_queue_service.py
       - agent/services/google_flow_native_extend_runtime.py
