@@ -1614,6 +1614,55 @@ async def _dispatch_attempt(
     *,
     credit_confirmation: str,
 ) -> dict[str, Any]:
+    # Re-evaluate the current release + readiness decision immediately before
+    # acquiring a dispatch lease.  The plan may have been prepared while the
+    # product was eligible and released, then hidden or degraded before a
+    # queued/scheduled attempt reached this durable provider boundary.  This
+    # check is intentionally auth-context independent because scheduler workers
+    # are internal and have no HTTP session context.
+    from agent.services.product_release_service import (
+        ProductReleaseError,
+        load_product_release_state,
+    )
+
+    product_id = str(item.get("product_id") or "").strip()
+    if not product_id:
+        raise CreativeProductionError(
+            "PRODUCT_NOT_OPERATIONALLY_VISIBLE",
+            "A canonical product identity is required before production dispatch.",
+            status_code=409,
+            details={"lane": "PRODUCTION_STUDIO_P6"},
+        )
+    try:
+        product_state = await load_product_release_state(product_id)
+    except ProductReleaseError as exc:
+        raise CreativeProductionError(
+            "PRODUCT_NOT_OPERATIONALLY_VISIBLE",
+            "Product release/readiness could not be proven before production dispatch.",
+            status_code=409,
+            details={
+                "product_id": product_id,
+                "lane": "PRODUCTION_STUDIO_P6",
+                "source_error": exc.code,
+            },
+        ) from exc
+    if not product_state.get("operationally_visible"):
+        raise CreativeProductionError(
+            "PRODUCT_NOT_OPERATIONALLY_VISIBLE",
+            "Product is hidden or currently blocked for operational production.",
+            status_code=409,
+            details={
+                "product_id": product_id,
+                "lane": "PRODUCTION_STUDIO_P6",
+                "staff_release_status": product_state.get("staff_release_status"),
+                "minimum_eligibility_status": product_state.get(
+                    "minimum_eligibility_status"
+                ),
+                "visibility_reason": product_state.get("visibility_reason"),
+                "blocker_codes": product_state.get("blocker_codes") or [],
+            },
+        )
+
     lane, lease = await _acquire_item_lease(item, attempt)
     now = _now()
     await p6db.update_attempt(

@@ -387,6 +387,21 @@ async def send_to_production(
                 "error": "COPY_INELIGIBLE:" + ",".join(_elig["reasons"]),
             })
             continue
+        from agent.services.product_release_service import (
+            ProductOperationalVisibilityError,
+            require_product_operational_visibility,
+        )
+        try:
+            await require_product_operational_visibility(
+                row.get("product_id"), lane="PRODUCTION_QUEUE_ENQUEUE"
+            )
+        except ProductOperationalVisibilityError as exc:
+            refused.append({
+                "package_id": wgp_id,
+                "error": f"{exc.code}:{exc}",
+                "details": exc.details,
+            })
+            continue
         eligible.append(row)
     if not eligible:
         raise ValueError("NO_APPROVED_PACKAGES:" + _json(refused))
@@ -848,6 +863,16 @@ async def _resolve_and_upload_image_slots(item: dict, cfg: dict) -> list[str]:
     engine_mode = planner.ENGINE_MODES.get(logical_mode)
     if engine_mode not in ("F2V", "I2V"):
         return []
+    from agent.services.product_release_service import (
+        ProductOperationalVisibilityError,
+        require_product_operational_visibility,
+    )
+    try:
+        await require_product_operational_visibility(
+            item.get("product_id"), lane="PRODUCTION_QUEUE_IMAGE_UPLOAD"
+        )
+    except ProductOperationalVisibilityError as exc:
+        return [f"{exc.code}:{exc}"]
     slots = _loads(item.get("resolved_engine_slots_json"), {})
     if not isinstance(slots, dict) or not slots:
         return []
@@ -1815,6 +1840,27 @@ async def _fire_and_wait(make_video, payload: dict, wgp_id: str) -> dict:
 
 
 async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
+    from agent.services.product_release_service import (
+        ProductOperationalVisibilityError,
+        require_product_operational_visibility,
+    )
+
+    async def _assert_visible() -> None:
+        try:
+            await require_product_operational_visibility(
+                payload.get("product_id"), lane="PRODUCTION_QUEUE_DISPATCH"
+            )
+        except ProductOperationalVisibilityError as exc:
+            reason = f"{exc.code}:{exc}"
+            await crud.update_workspace_generation_package(
+                wgp_id, production_status="FAILED", production_error=reason,
+            )
+            raise ProductOperationalVisibilityError(exc.code, reason, details=exc.details) from exc
+
+    try:
+        await _assert_visible()
+    except ProductOperationalVisibilityError as exc:
+        return {"ok": False, "error": str(exc)}
     runtime_payload, transport_blockers = await materialize_official_visual_transport(
         payload
     )
@@ -1836,6 +1882,10 @@ async def _fire_and_wait_inner(make_video, payload: dict, wgp_id: str) -> dict:
     )
     attempts = 0
     while True:
+        try:
+            await _assert_visible()
+        except ProductOperationalVisibilityError as exc:
+            return {"ok": False, "error": str(exc)}
         result = await make_video.start_generate(
             runtime_payload["mode"], runtime_payload["prompt"],
             image_media_ids=runtime_payload.get("image_media_ids"),

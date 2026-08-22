@@ -353,6 +353,42 @@ async def load_session_context(raw_token: str | None, *, touch: bool = True) -> 
     )
 
 
+async def session_csrf_valid(raw_session_token: str | None, raw_csrf_token: str | None) -> bool:
+    """Validate a mutation token against the active session's stored hash."""
+    session_token = _text(raw_session_token)
+    csrf_token = _text(raw_csrf_token)
+    if len(session_token) < 32 or len(csrf_token) < 16:
+        return False
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT csrf_token_hash FROM auth_session "
+        "WHERE token_hash=? AND revoked_at IS NULL",
+        (hash_session_token(session_token),),
+    )
+    row = await cursor.fetchone()
+    return bool(row and hmac.compare_digest(str(row[0] or ""), hash_session_token(csrf_token)))
+
+
+async def rotate_session_csrf_token(
+    raw_session_token: str | None,
+    raw_csrf_token: str,
+) -> bool:
+    """Rotate the browser CSRF token while it remains bound to its session."""
+    session_token = _text(raw_session_token)
+    csrf_token = _text(raw_csrf_token)
+    if len(session_token) < 32 or len(csrf_token) < 16:
+        return False
+    db = await get_db()
+    async with _db_lock:
+        cursor = await db.execute(
+            "UPDATE auth_session SET csrf_token_hash=? "
+            "WHERE token_hash=? AND revoked_at IS NULL",
+            (hash_session_token(csrf_token), hash_session_token(session_token)),
+        )
+        await db.commit()
+    return bool(cursor.rowcount)
+
+
 async def _create_session_in_db(db: Any, user_id: str) -> tuple[str, str, dict[str, str]]:
     raw_token = secrets.token_urlsafe(32)
     raw_csrf = secrets.token_urlsafe(32)

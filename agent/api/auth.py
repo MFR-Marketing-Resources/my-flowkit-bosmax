@@ -60,9 +60,14 @@ def _safe_session_response(result: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/csrf")
 async def csrf(request: Request, response: Response) -> dict[str, bool]:
+    csrf_token = secrets.token_urlsafe(32)
+    await access.rotate_session_csrf_token(
+        request.cookies.get(access.SESSION_COOKIE_NAME),
+        csrf_token,
+    )
     response.set_cookie(
         access.CSRF_COOKIE_NAME,
-        secrets.token_urlsafe(32),
+        csrf_token,
         max_age=access.SESSION_TTL_SECONDS,
         httponly=False,
         secure=_secure_cookie(request),

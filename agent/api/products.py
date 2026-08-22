@@ -109,6 +109,34 @@ from agent.utils.paths import product_image_path
 router = APIRouter(prefix="/products", tags=["products"])
 
 
+async def _require_product_read_visibility(
+    product_id: str,
+    *,
+    lane: str,
+    operational: bool = False,
+) -> None:
+    """Apply the product read context at every product-id API boundary."""
+    from agent.security.access_control import get_current_auth_context
+    from agent.services.product_release_service import (
+        ProductReleaseError,
+        ensure_product_operationally_visible,
+    )
+
+    context = get_current_auth_context()
+    if context is None:
+        return
+    roles = {str(role).upper() for role in context.role_codes}
+    if not operational and roles & {"OWNER", "EDITOR"}:
+        return
+    try:
+        await ensure_product_operationally_visible(product_id, lane=lane)
+    except ProductReleaseError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "message": exc.message, "details": exc.details},
+        ) from exc
+
+
 @router.get("/catalog-state/{identifier:path}")
 async def get_product_catalog_state(identifier: str):
     """Product Truth Gateway read-model endpoint.
@@ -125,6 +153,9 @@ async def get_product_catalog_state(identifier: str):
     disagree, and a cross-worktree storage split surfaces as zero authority ids.
     """
     from agent.services import product_catalog_read_model as _prm
+
+    if not is_fastmoss_reference_product_id(identifier):
+        await _require_product_read_visibility(identifier, lane="PRODUCT_CATALOG_STATE")
 
     authority_ids = {p["id"] for p in await crud.list_products(limit=5000)}
     return await _prm.resolve_product_state(identifier, authority_ids=authority_ids)
@@ -214,7 +245,6 @@ class ProductPatchRequest(BaseModel):
     image_asset_status: str | None = None
     image_failure_detail: str | None = None
     asset_status: str | None = None
-    local_image_path: str | None = None
     product_type: str | None = None
     product_type_id: str | None = None
     copywriting_product_type_code: str | None = None
@@ -714,9 +744,59 @@ async def _list_products_response(
     product_truth: str | None = None,
     sort: str | None = None,
     catalog_view: str | None = None,
+    visibility_context: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ):
+    from agent.security.access_control import get_current_auth_context
+
+    auth_context = get_current_auth_context()
+    requested_visibility = str(visibility_context or "").strip().upper()
+    if requested_visibility and requested_visibility not in {
+        "OWNER_RELEASE_CONTROL",
+        "AUTHORING_MAINTENANCE",
+        "OPERATIONAL_PRODUCTION",
+    }:
+        raise HTTPException(status_code=400, detail="INVALID_VISIBILITY_CONTEXT")
+    if requested_visibility == "OWNER_RELEASE_CONTROL":
+        if (
+            auth_context is None
+            or "OWNER" not in {str(role).upper() for role in auth_context.role_codes}
+            or "products.release" not in auth_context.permission_codes
+        ):
+            raise HTTPException(status_code=403, detail="OWNER_REQUIRED")
+        resolved_visibility = "OWNER_RELEASE_CONTROL"
+    elif requested_visibility == "AUTHORING_MAINTENANCE":
+        if auth_context is None:
+            resolved_visibility = None
+        elif {str(role).upper() for role in auth_context.role_codes} & {"OWNER", "EDITOR"}:
+            resolved_visibility = "AUTHORING_MAINTENANCE"
+        else:
+            resolved_visibility = "OPERATIONAL_PRODUCTION"
+    elif requested_visibility == "OPERATIONAL_PRODUCTION":
+        resolved_visibility = "OPERATIONAL_PRODUCTION" if auth_context is not None else None
+    elif (purpose or "").strip().upper() == "GENERATION":
+        # Real HTTP production requests always have AuthContext from the
+        # middleware.  Preserve the isolated router-test seam when a helper is
+        # called directly without a request context.
+        resolved_visibility = "OPERATIONAL_PRODUCTION" if auth_context is not None else None
+    elif (catalog_view or "").strip().upper() == "REGISTRY" and auth_context is not None:
+        roles = {str(role).upper() for role in auth_context.role_codes}
+        resolved_visibility = (
+            "AUTHORING_MAINTENANCE"
+            if roles & {"OWNER", "EDITOR"}
+            else "OPERATIONAL_PRODUCTION"
+        )
+    elif auth_context is None:
+        resolved_visibility = None
+    else:
+        roles = {str(role).upper() for role in auth_context.role_codes}
+        resolved_visibility = (
+            "AUTHORING_MAINTENANCE"
+            if roles & {"OWNER", "EDITOR"}
+            else "OPERATIONAL_PRODUCTION"
+        )
+
     requested_source = (source or "").strip().upper() or None
     requested_source_lane = (source_lane or "").strip().upper() or None
     db_source = _normalize_source(requested_source) if requested_source in {"FASTMOSS", "MANUAL", "TIKTOKSHOP", "IMPORTED"} else None
@@ -874,6 +954,26 @@ async def _list_products_response(
         approved_by_product=approved_by_product,
         drafts_by_product=drafts_by_product,
     )
+    release_visibility_attached = False
+    if resolved_visibility == "OPERATIONAL_PRODUCTION":
+        from agent.services.product_release_service import annotate_product_release_state
+
+        await annotate_product_release_state(filtered_all, attach_truth=False)
+        filtered_all = [
+            product
+            for product in filtered_all
+            if not product.get("reference_only")
+            and bool(product.get("operationally_visible"))
+        ]
+        # Facets are part of the operational response contract too; do not
+        # disclose hidden product values through selector metadata.
+        facet_source = filtered_all
+        release_visibility_attached = True
+    elif resolved_visibility == "OWNER_RELEASE_CONTROL":
+        from agent.services.product_release_service import annotate_product_release_state
+
+        await annotate_product_release_state(filtered_all, attach_truth=False)
+        release_visibility_attached = True
     if product_truth:
         filtered_all = [
             product
@@ -982,7 +1082,8 @@ async def _list_products_response(
         annotate_products_visual_readiness,
     )
 
-    await annotate_products_visual_readiness(enriched)
+    if not release_visibility_attached:
+        await annotate_products_visual_readiness(enriched)
 
     return {
         "total_count": total,
@@ -1352,6 +1453,7 @@ async def list_products(
     ),
     sort: str | None = Query(default=None),
     view: str | None = Query(default=None),
+    visibility_context: str | None = Query(default=None),
     limit: int = Query(default=50),
     offset: int = Query(default=0),
 ):
@@ -1378,6 +1480,7 @@ async def list_products(
         product_truth=product_truth,
         sort=sort,
         catalog_view=view,
+        visibility_context=visibility_context,
         limit=limit,
         offset=offset,
     )
@@ -1391,6 +1494,7 @@ async def search_products(
     purpose: str | None = Query(default=None),
     include_archived: bool = Query(default=False),
     lifecycle_status: str | None = Query(default=None),
+    visibility_context: str | None = Query(default=None),
     limit: int = Query(default=25),
     offset: int = Query(default=0),
 ):
@@ -1401,6 +1505,7 @@ async def search_products(
         purpose=purpose,
         include_archived=include_archived,
         lifecycle_status=lifecycle_status,
+        visibility_context=visibility_context,
         limit=limit,
         offset=offset,
     )
@@ -2000,6 +2105,7 @@ async def import_image_map(file: UploadFile = File(...)):
 
 @router.get("/{product_id}/mapping")
 async def get_product_mapping(product_id: str):
+    await _require_product_read_visibility(product_id, lane="PRODUCT_MAPPING")
     product = await crud.get_product(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -2023,6 +2129,7 @@ async def get_product_mapping(product_id: str):
 
 @router.get("/{product_id}/physics")
 async def get_product_physics(product_id: str):
+    await _require_product_read_visibility(product_id, lane="PRODUCT_PHYSICS")
     product = await crud.get_product(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -2039,7 +2146,45 @@ async def get_product_physics(product_id: str):
 
 
 @router.get("/{product_id}")
-async def get_product(product_id: str):
+async def get_product(
+    product_id: str,
+    visibility_context: str | None = Query(default=None),
+):
+    from agent.security.access_control import get_current_auth_context
+    from agent.services.product_release_service import (
+        ProductReleaseError,
+        ensure_product_operationally_visible,
+    )
+
+    auth_context = get_current_auth_context()
+    if auth_context is not None:
+        roles = {str(role).upper() for role in auth_context.role_codes}
+        requested_context = str(visibility_context or "").strip().upper()
+        if requested_context and requested_context not in {
+            "OWNER_RELEASE_CONTROL",
+            "AUTHORING_MAINTENANCE",
+            "OPERATIONAL_PRODUCTION",
+        }:
+            raise HTTPException(status_code=400, detail="INVALID_VISIBILITY_CONTEXT")
+        if requested_context == "OWNER_RELEASE_CONTROL" and (
+            "OWNER" not in roles or "products.release" not in auth_context.permission_codes
+        ):
+            raise HTTPException(status_code=403, detail="OWNER_REQUIRED")
+        if requested_context == "AUTHORING_MAINTENANCE" and not roles & {"OWNER", "EDITOR"}:
+            raise HTTPException(status_code=403, detail="AUTHORING_MAINTENANCE_NOT_ALLOWED")
+        if requested_context == "OPERATIONAL_PRODUCTION" or (
+            not requested_context and not roles & {"OWNER", "EDITOR"}
+        ):
+            try:
+                await ensure_product_operationally_visible(
+                    product_id,
+                    lane="PRODUCT_DETAIL",
+                )
+            except ProductReleaseError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail={"error": exc.code, "message": exc.message, "details": exc.details},
+                ) from exc
     product = await crud.get_product(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -2062,6 +2207,13 @@ async def get_product(product_id: str):
             "warnings": [str(exc)],
             "provider_operations": 0,
         }
+    from agent.services.product_release_service import annotate_product_release_state
+
+    await annotate_product_release_state(
+        [enriched],
+        attach_truth=True,
+        visual_already_attached=True,
+    )
     return enriched
 
 
@@ -2076,6 +2228,7 @@ async def get_product_strategy_taxonomy(
     """Read the official taxonomy, optionally enforcing the future P3 gate."""
 
     try:
+        await _require_product_read_visibility(product_id, lane="PRODUCT_STRATEGY_TAXONOMY")
         if require_verified:
             return await require_verified_product_strategy_taxonomy(product_id)
         return await get_product_strategy_taxonomy_read_model(product_id)
@@ -2105,6 +2258,7 @@ async def post_product_strategy_taxonomy_review(
 
 @router.get("/{product_id}/lifecycle")
 async def get_product_lifecycle_status(product_id: str):
+    await _require_product_read_visibility(product_id, lane="PRODUCT_LIFECYCLE")
     return await get_product_lifecycle(product_id)
 
 
@@ -2146,14 +2300,29 @@ async def delete_product(product_id: str, data: ProductLifecycleActionRequest):
 
 @router.get("/{product_id}/image")
 async def get_product_image(product_id: str):
+    await _require_product_read_visibility(product_id, lane="PRODUCT_IMAGE")
     product = await crud.get_product(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
     enriched = await _enrich_product(product)
     cached_path = resolve_cached_image_path(enriched)
-    if cached_path and cached_path.exists():
-        return FileResponse(cached_path)
+    if cached_path:
+        try:
+            resolved_path = cached_path.resolve(strict=False)
+            allowed_root = (BASE_DIR / "data" / "products" / "images").resolve(strict=False)
+        except OSError:
+            resolved_path = None
+            allowed_root = None
+        if (
+            resolved_path is not None
+            and allowed_root is not None
+            and resolved_path.parent == allowed_root
+            and resolved_path.stem == product_id
+            and resolved_path.suffix.casefold() in {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+            and resolved_path.exists()
+        ):
+            return FileResponse(resolved_path)
 
     raise HTTPException(
         status_code=404,
@@ -2260,6 +2429,7 @@ async def get_product_intelligence_snapshot(
     product_id: str,
 ) -> ProductIntelligenceLatestSnapshotResponse:
     try:
+        await _require_product_read_visibility(product_id, lane="PRODUCT_INTELLIGENCE")
         return await get_latest_snapshot_response(product_id)
     except ValueError as exc:
         if str(exc) == "PRODUCT_NOT_FOUND":
@@ -2274,6 +2444,7 @@ async def get_product_intelligence_snapshots(
     limit: int = Query(default=20, ge=1, le=100),
 ) -> ProductIntelligenceSnapshotListResponse:
     try:
+        await _require_product_read_visibility(product_id, lane="PRODUCT_INTELLIGENCE_SNAPSHOTS")
         return await get_snapshot_list_response(product_id, status=status, limit=limit)
     except ValueError as exc:
         if str(exc) == "PRODUCT_NOT_FOUND":
@@ -2351,6 +2522,7 @@ async def get_product_intelligence_review_drafts(
     limit: int = Query(default=20, ge=1, le=100),
 ) -> ProductIntelligenceReviewDraftListResponse:
     try:
+        await _require_product_read_visibility(product_id, lane="PRODUCT_INTELLIGENCE_REVIEW_DRAFTS")
         return await list_review_drafts(product_id, limit=limit)
     except ValueError as exc:
         if str(exc) == "PRODUCT_NOT_FOUND":
@@ -2360,6 +2532,11 @@ async def get_product_intelligence_review_drafts(
 
 @router.post("/{product_id}/resolve-assets")
 async def resolve_assets(product_id: str):
+    await _require_product_read_visibility(
+        product_id,
+        lane="PRODUCT_RESOLVE_ASSETS",
+        operational=True,
+    )
     product = await crud.get_product(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -2370,6 +2547,11 @@ async def resolve_assets(product_id: str):
 
 @router.post("/{product_id}/upload-to-flow")
 async def upload_to_flow(product_id: str):
+    await _require_product_read_visibility(
+        product_id,
+        lane="PRODUCT_UPLOAD_TO_FLOW",
+        operational=True,
+    )
     product = await crud.get_product(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -2380,6 +2562,7 @@ async def upload_to_flow(product_id: str):
 
 @router.get("/{product_id}/prompt")
 async def get_generated_prompt(product_id: str, mode: str = "F2V"):
+    await _require_product_read_visibility(product_id, lane="PRODUCT_PROMPT")
     product = await _find_product_by_lookup(product_id)
     if not product:
         mapping = resolve_product_mapping(product_name=product_id, source_hint="MANUAL")
@@ -2416,6 +2599,7 @@ async def get_generated_prompt(product_id: str, mode: str = "F2V"):
 
 @router.get("/{product_id}/claim-safe-rewrite-preview")
 async def get_claim_safe_rewrite_preview(product_id: str):
+    await _require_product_read_visibility(product_id, lane="PRODUCT_CLAIM_SAFE_PREVIEW")
     product = await crud.get_product(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -2488,6 +2672,11 @@ async def post_production_prompt_approval(product_id: str, request: ProductionPr
 
 @router.get("/{product_id}/approved-package")
 async def get_product_approved_package(product_id: str, mode: str = "T2V"):
+    await _require_product_read_visibility(
+        product_id,
+        lane="PRODUCT_APPROVED_PACKAGE",
+        operational=True,
+    )
     product = await crud.get_product(product_id)
     if not product and not is_fastmoss_reference_product_id(product_id):
         raise HTTPException(status_code=404, detail="Product not found")
@@ -2510,6 +2699,7 @@ async def get_product_approved_package(product_id: str, mode: str = "T2V"):
 
 @router.get("/{product_id}/prompt-dryrun")
 async def get_prompt_dryrun(product_id: str, mode: str = "T2V"):
+    await _require_product_read_visibility(product_id, lane="PRODUCT_PROMPT_DRYRUN")
     product = await crud.get_product(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -2532,6 +2722,7 @@ async def get_prompt_dryrun(product_id: str, mode: str = "T2V"):
 
 @router.get("/{product_id}/prompt-readiness")
 async def get_product_prompt_readiness(product_id: str):
+    await _require_product_read_visibility(product_id, lane="PRODUCT_PROMPT_READINESS")
     product = await _find_product_by_lookup(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -2539,6 +2730,7 @@ async def get_product_prompt_readiness(product_id: str):
 
 @router.get("/{product_id}/truth-audit")
 async def get_product_truth_audit(product_id: str):
+    await _require_product_read_visibility(product_id, lane="PRODUCT_TRUTH_AUDIT")
     product = await _find_product_by_lookup(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")

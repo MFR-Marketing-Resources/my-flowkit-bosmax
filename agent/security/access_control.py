@@ -88,8 +88,11 @@ MODULE_PREFIXES: tuple[tuple[str, str], ...] = (
     ("/api/faceless", "production"),
     ("/api/montage", "production"),
     ("/api/creative-production", "production"),
+    ("/api/workspace/production-queue", "jobs"),
     ("/api/workspace", "production"),
     ("/api/bulk", "jobs"),
+    ("/api/bulk-generation", "jobs"),
+    ("/api/batches", "jobs"),
     ("/api/production-queue", "jobs"),
     ("/api/flow", "production"),
     ("/api/execution-approval", "production"),
@@ -136,6 +139,8 @@ def _action_for_path(path: str, method: str, module: str) -> str:
     lower_path = path.casefold()
     if any(marker in lower_path for marker in ("/approve", "/approval", "/publish")):
         return "approve" if module in {"copy", "production", "poster"} else "execute"
+    if "/unarchive" in lower_path:
+        return "archive"
     if any(marker in lower_path for marker in ("/archive", "/delete", "/retire", "/remove")):
         return "archive"
     if any(marker in lower_path for marker in ("/start", "/generate", "/execute", "/dispatch", "/compose", "/commit", "/fire")):
@@ -159,6 +164,10 @@ def _action_for_path(path: str, method: str, module: str) -> str:
 def required_permission(path: str, method: str) -> str:
     normalized = path.rstrip("/") or "/"
     upper_method = method.upper()
+    # Product release is a separate owner-governed authority.  It must never
+    # inherit products.create/update from the generic /api/product-* mapper.
+    if _path_has_prefix(normalized, "/api/product-release"):
+        return "products.release"
     if _path_has_prefix(normalized, "/api/system/staff-access"):
         if "/roles" in normalized:
             return "roles.read" if upper_method == "GET" else "roles.manage"
@@ -305,8 +314,14 @@ async def access_control_middleware(
     if permission not in context.permission_codes:
         await _record_permission_denied(context, request.url.path, request.method, permission)
         return _error(403, "PERMISSION_DENIED", "The authenticated role cannot perform this action.", permission=permission)
-    if is_mutation and not csrf_valid(request):
-        return _error(403, "CSRF_REQUIRED", "A valid same-origin CSRF proof is required.")
+    if is_mutation:
+        from agent.services.access_control_service import session_csrf_valid
+
+        if not await session_csrf_valid(
+            request.cookies.get(SESSION_COOKIE_NAME),
+            request.headers.get("x-csrf-token", ""),
+        ):
+            return _error(403, "CSRF_REQUIRED", "A valid session-bound CSRF proof is required.")
     request.state.auth_context = context
     token = _AUTH_CONTEXT.set(context)
     try:

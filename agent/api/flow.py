@@ -2,8 +2,10 @@
 import base64
 import copy
 import hashlib
+import ipaddress
 import json
 import re
+import socket
 import tempfile
 import time
 from pathlib import Path
@@ -24,6 +26,94 @@ __all__ = ["router", "cleanup_old_staging_files"]
 router = APIRouter(prefix="/flow", tags=["flow"])
 _ERROR_CODE_RE = re.compile(r"\b(ERR_[A-Z0-9_]+)\b")
 _UPLOAD_STAGING_DIR = Path(tempfile.gettempdir()) / "flowkit-upload-staging"
+_MAX_REMOTE_IMAGE_BYTES = 20 * 1024 * 1024
+_MAX_LOCAL_UPLOAD_BYTES = 20 * 1024 * 1024
+
+
+async def _require_flow_product(product_id: str | None, *, lane: str) -> dict:
+    """Require the current released/readiness-approved product at production doors.
+
+    HTTP middleware installs an AuthContext for externally reachable routes.  The
+    no-context branch keeps direct unit/router calls provider-free; worker paths use
+    ``require_product_operational_visibility`` directly and therefore never inherit
+    this compatibility seam.
+    """
+    from agent.security.access_control import get_current_auth_context
+    from agent.services.product_release_service import (
+        ProductOperationalVisibilityError,
+        require_product_operational_visibility,
+    )
+
+    if get_current_auth_context() is None:
+        return {}
+    try:
+        return await require_product_operational_visibility(product_id, lane=lane)
+    except ProductOperationalVisibilityError as exc:
+        status_code = 404 if exc.code == "PRODUCT_NOT_FOUND" else exc.status_code
+        raise HTTPException(
+            status_code=status_code,
+            detail={"error": exc.code, "message": exc.message, "details": exc.details},
+        ) from exc
+
+
+def _assert_public_remote_url(source_url: str) -> None:
+    """Reject credentialed, private, loopback, and metadata URL targets."""
+    parsed = urlparse(str(source_url or "").strip())
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("ERR_REMOTE_MATERIALIZE_BAD_URL")
+    if parsed.username or parsed.password:
+        raise ValueError("ERR_REMOTE_MATERIALIZE_CREDENTIALS_FORBIDDEN")
+    hostname = parsed.hostname.rstrip(".")
+    try:
+        addresses = {
+            ipaddress.ip_address(info[4][0])
+            for info in socket.getaddrinfo(hostname, parsed.port, type=socket.SOCK_STREAM)
+        }
+    except (OSError, ValueError) as exc:
+        raise ValueError("ERR_REMOTE_MATERIALIZE_HOST_UNRESOLVED") from exc
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ValueError("ERR_REMOTE_MATERIALIZE_PRIVATE_TARGET")
+
+
+def _safe_local_upload_path(file_path: str) -> tuple[Path, str]:
+    """Resolve only server-controlled image roots and return path plus MIME."""
+    candidate = Path(str(file_path or ""))
+    if not candidate.is_absolute():
+        raise HTTPException(400, "ERR_UPLOAD_PATH_NOT_ALLOWED")
+    try:
+        resolved = candidate.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "ERR_UPLOAD_FILE_NOT_FOUND") from exc
+    from agent.config import BASE_DIR
+    allowed_roots = (
+        _UPLOAD_STAGING_DIR.resolve(),
+        (BASE_DIR / "data" / "products" / "images").resolve(),
+        (BASE_DIR / "data" / "product_registration" / "drafts").resolve(),
+    )
+    if not any(resolved == root or root in resolved.parents for root in allowed_roots):
+        raise HTTPException(403, "ERR_UPLOAD_PATH_NOT_ALLOWED")
+    try:
+        size = resolved.stat().st_size
+    except OSError as exc:
+        raise HTTPException(400, "ERR_UPLOAD_FILE_UNREADABLE") from exc
+    if size <= 0 or size > _MAX_LOCAL_UPLOAD_BYTES:
+        raise HTTPException(413, "ERR_UPLOAD_IMAGE_SIZE_INVALID")
+    try:
+        with resolved.open("rb") as handle:
+            header = handle.read(16)
+    except OSError as exc:
+        raise HTTPException(400, "ERR_UPLOAD_FILE_UNREADABLE") from exc
+    if header.startswith(b"\xff\xd8\xff"):
+        mime_type = "image/jpeg"
+    elif header.startswith(b"\x89PNG\r\n\x1a\n"):
+        mime_type = "image/png"
+    elif header.startswith((b"GIF87a", b"GIF89a")):
+        mime_type = "image/gif"
+    elif header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        mime_type = "image/webp"
+    else:
+        raise HTTPException(415, "ERR_UPLOAD_NOT_IMAGE")
+    return resolved, mime_type
 
 
 def cleanup_old_staging_files(max_age_seconds: int = 3600) -> int:
@@ -56,6 +146,7 @@ class GenerateImageRequest(BaseModel):
     aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT"
     user_paygate_tier: str = "PAYGATE_TIER_ONE"
     character_media_ids: Optional[list[str]] = None
+    product_id: Optional[str] = None
 
 
 class GenerateVideoRequest(BaseModel):
@@ -66,6 +157,7 @@ class GenerateVideoRequest(BaseModel):
     aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT"
     end_image_media_id: Optional[str] = None
     user_paygate_tier: str = "PAYGATE_TIER_ONE"
+    product_id: Optional[str] = None
 
 
 class GenerateVideoRefsRequest(BaseModel):
@@ -75,6 +167,7 @@ class GenerateVideoRefsRequest(BaseModel):
     scene_id: str
     aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT"
     user_paygate_tier: str = "PAYGATE_TIER_ONE"
+    product_id: Optional[str] = None
 
 
 class HybridReferenceOmni10ContractCaptureRequest(BaseModel):
@@ -105,6 +198,7 @@ class UpscaleVideoRequest(BaseModel):
     scene_id: str
     aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT"
     resolution: str = "VIDEO_RESOLUTION_4K"
+    product_id: Optional[str] = None
 
 
 class ExtendBlockModel(BaseModel):
@@ -120,6 +214,7 @@ class ExtendRunRequest(BaseModel):
     """Native Flow Extend CHAIN — THE single authoritative execution surface.
     DRY_RUN by default; a live run requires explicit confirm + bounded op count."""
     project_id: str
+    product_id: Optional[str] = None
     scene_id: str
     source_operation_id: str
     blocks: list[ExtendBlockModel]
@@ -150,6 +245,7 @@ class UploadImageRequest(BaseModel):
     file_path: str  # absolute path to local image file
     project_id: str = ""
     file_name: str = "image.png"
+    product_id: Optional[str] = None
 
 
 class UploadImageBase64Request(BaseModel):
@@ -175,6 +271,7 @@ class EditImageRequest(BaseModel):
     project_id: str
     aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT"
     user_paygate_tier: str = "PAYGATE_TIER_ONE"
+    product_id: Optional[str] = None
 
 
 class CreateProjectRawRequest(BaseModel):
@@ -470,10 +567,11 @@ async def get_credits():
 @router.post("/generate-image")
 async def generate_image(body: GenerateImageRequest):
     """Generate image directly (bypasses queue)."""
+    await _require_flow_product(body.product_id, lane="FLOW_GENERATE_IMAGE")
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
-    result = await client.generate_images(**body.model_dump())
+    result = await client.generate_images(**body.model_dump(exclude={"product_id"}))
     if result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400):
         raise HTTPException(result.get("status", 502), result.get("error", result.get("data")))
     return result.get("data", result)
@@ -496,6 +594,7 @@ class GenerateImageOneshotRequest(BaseModel):
     user_paygate_tier: str = "PAYGATE_TIER_TWO"
     reference_media_ids: list[str] = []   # blend refs (from /upload-image-base64)
     project_id: str = ""                  # minted if empty
+    product_id: Optional[str] = None
 
 
 def _extract_project_id(obj) -> str:
@@ -617,11 +716,13 @@ def _deep_find(obj, *keys):
 class AgentDebugRequest(BaseModel):
     prompt: str = "Vertical 9:16 handheld. Slow push-in on the product, soft natural light, subtle motion."
     image_prompt: str = "A premium product on a clean surface, soft studio light, vertical 9:16. No text, no labels."
+    product_id: Optional[str] = None
 
 
 @router.post("/agent-debug-turn1")
 async def agent_debug_turn1(body: AgentDebugRequest):
     """DEBUG: drive flowCreationAgent turn 1 and return raw responses to learn the SSE format."""
+    await _require_flow_product(body.product_id, lane="FLOW_AGENT_DEBUG")
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
@@ -653,6 +754,7 @@ class AgentNegotiateRequest(BaseModel):
     prompt: str = "Vertical 9:16 handheld. Slow push-in on the product, soft natural light, subtle motion."
     image_prompt: str = "A premium product on a clean surface, soft studio light, vertical 9:16. No text, no labels."
     dry: bool = True
+    product_id: Optional[str] = None
 
 
 @router.post("/agent-negotiate")
@@ -663,6 +765,7 @@ async def agent_negotiate(body: AgentNegotiateRequest):
     dry=False → approve → the agent generates the video (~10 credits, Veo 3.1 Lite).
     """
     from agent.services import agent_video
+    await _require_flow_product(body.product_id, lane="FLOW_AGENT_NEGOTIATE")
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
@@ -780,12 +883,14 @@ async def harvest_video():
 class MakeVideoRequest(BaseModel):
     prompt: str = "Vertical 9:16 handheld. Slow push-in on the product, soft natural light, subtle motion, premium feel."
     image_prompt: str = "A premium product on a clean surface, soft studio light, vertical 9:16. No text, no labels, no watermark."
+    product_id: Optional[str] = None
 
 
 @router.post("/make-video")
 async def make_video(body: MakeVideoRequest):
     """Full auto pipeline (negotiate → approve → render → harvest → download). → job_id."""
     from agent.services import make_video as _mv
+    await _require_flow_product(body.product_id, lane="FLOW_MAKE_VIDEO")
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
@@ -793,7 +898,7 @@ async def make_video(body: MakeVideoRequest):
     tier = (cred.get("data", cred) or {}).get("userPaygateTier", "") if isinstance(cred, dict) else ""
     if tier not in ("PAYGATE_TIER_ONE", "PAYGATE_TIER_TWO"):
         raise HTTPException(500, f"Account tier '{tier}' cannot generate video — needs Pro/Ultra")
-    return await _mv.start(body.prompt, body.image_prompt)
+    return await _mv.start(body.prompt, body.image_prompt, product_id=body.product_id)
 
 
 @router.get("/video-job/{job_id}")
@@ -813,6 +918,7 @@ class MakeVideoExistingRequest(BaseModel):
     prompt: str = "Cinematic vertical 9:16 product video. Slow push-in on the product, soft natural light, gentle motion, premium feel. Make 1 video."
     model: Optional[str] = None
     duration_s: Optional[int] = None
+    product_id: Optional[str] = None
 
 
 @router.post("/make-video-existing")
@@ -821,6 +927,7 @@ async def make_video_existing(body: MakeVideoExistingRequest):
     Poll GET /api/flow/video-job/{id}."""
     from agent.services import make_video as _mv
     from agent.services import video_models as _vm
+    await _require_flow_product(body.product_id, lane="FLOW_MAKE_VIDEO_EXISTING")
     # Same fail-closed model+duration validation as /generate (patch I2a/I5), BEFORE the
     # connectivity check so 422 stays deterministic on this legacy lane too.
     try:
@@ -835,7 +942,8 @@ async def make_video_existing(body: MakeVideoExistingRequest):
     # unguarded start_on_existing path.
     result = await _mv.start_generate(
         "I2V", body.prompt, project_id=body.project_id,
-        image_media_ids=[body.image_media_id], model=body.model, duration_s=body.duration_s)
+        image_media_ids=[body.image_media_id], model=body.model, duration_s=body.duration_s,
+        product_id=body.product_id)
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         raise HTTPException(409, result.get("error") or "rejected")
     return result
@@ -1017,6 +1125,8 @@ async def hybrid_reference_omni10_contract_capture(
         reject("CAPTURE_REQUEST_ID_REQUIRED")
     if not str(body.prompt or "").strip():
         reject("CAPTURE_PROMPT_REQUIRED")
+
+    await _require_flow_product(body.product_id, lane="HYBRID_REFERENCE_CAPTURE")
 
     client = get_flow_client()
     if not client.connected:
@@ -1740,6 +1850,10 @@ async def generate(body: GenerateRequest):
                 status_code=exc.status_code,
                 detail={"error": exc.code, "message": exc.message},
             ) from exc
+    if _production_recipe or get_current_auth_context() is not None:
+        await _require_flow_product(
+            body.product_id, lane=_production_recipe or "FLOW_GENERATE"
+        )
     if body.execution_identity is not None:
         if (
             not isinstance(body.execution_identity, dict)
@@ -2606,10 +2720,13 @@ async def create_project_raw(body: CreateProjectRawRequest):
 @router.post("/generate-video")
 async def generate_video(body: GenerateVideoRequest):
     """Submit video generation (returns operations for polling)."""
+    await _require_flow_product(body.product_id, lane="FLOW_GENERATE_VIDEO")
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
-    result = await client.generate_video(**body.model_dump(exclude_none=True))
+    result = await client.generate_video(
+        **body.model_dump(exclude_none=True, exclude={"product_id"})
+    )
     if result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400):
         raise HTTPException(result.get("status", 502), result.get("error", result.get("data")))
     return result.get("data", result)
@@ -2618,10 +2735,13 @@ async def generate_video(body: GenerateVideoRequest):
 @router.post("/generate-video-refs")
 async def generate_video_refs(body: GenerateVideoRefsRequest):
     """Submit r2v video generation from reference images."""
+    await _require_flow_product(body.product_id, lane="FLOW_GENERATE_VIDEO_REFS")
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
-    result = await client.generate_video_from_references(**body.model_dump())
+    result = await client.generate_video_from_references(
+        **body.model_dump(exclude={"product_id"})
+    )
     if result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400):
         raise HTTPException(result.get("status", 502), result.get("error", result.get("data")))
     return result.get("data", result)
@@ -2630,10 +2750,11 @@ async def generate_video_refs(body: GenerateVideoRefsRequest):
 @router.post("/upscale-video")
 async def upscale_video(body: UpscaleVideoRequest):
     """Submit video upscale (returns operations for polling)."""
+    await _require_flow_product(body.product_id, lane="FLOW_UPSCALE_VIDEO")
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
-    result = await client.upscale_video(**body.model_dump())
+    result = await client.upscale_video(**body.model_dump(exclude={"product_id"}))
     if result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400):
         raise HTTPException(result.get("status", 502), result.get("error", result.get("data")))
     return result.get("data", result)
@@ -2641,7 +2762,7 @@ async def upscale_video(body: UpscaleVideoRequest):
 
 def _native_extend_chain_request(body: ExtendRunRequest, runtime):
     return runtime.ExtendChainRequest(
-        project_id=body.project_id, scene_id=body.scene_id,
+        project_id=body.project_id, product_id=body.product_id, scene_id=body.scene_id,
         source_operation_id=body.source_operation_id,
         blocks=[runtime.ExtendBlock(
             block_index=b.block_index, position=b.position, prompt=b.prompt,
@@ -2725,6 +2846,8 @@ async def extend_run(body: ExtendRunRequest):
     """
     from agent.services import extend_route_planner as _routes
     from agent.services import google_flow_native_extend_runtime as _nx
+    if not body.dry_run:
+        await _require_flow_product(body.product_id, lane="NATIVE_EXTEND")
     # NOTE: no connection pre-check here — the runtime runs ALL fail-closed gates
     # (capability -> confirm -> flag -> bounded count) FIRST, so an unauthorized live
     # request is rejected with its precise 4xx regardless of extension state. A genuine
@@ -3084,11 +3207,68 @@ _PLAN_422_CODES = {
 }
 
 
+_VIDEO_JOB_SECRET_FIELDS = {
+    "authorization_token", "live_authorization_token", "authorization_id",
+}
+
+
+def _sanitize_video_job(value: Any) -> Any:
+    """Never expose durable single-use provider authorization material."""
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_video_job(item)
+            for key, item in value.items()
+            if key not in _VIDEO_JOB_SECRET_FIELDS
+        }
+    if isinstance(value, list):
+        return [_sanitize_video_job(item) for item in value]
+    return value
+
+
+async def _require_video_job_access(
+    job: dict,
+    *,
+    require_operational: bool = False,
+) -> dict:
+    """Bind durable jobs to StaffProfile and prevent cross-staff IDOR."""
+    from agent.security.access_control import get_current_auth_context
+
+    context = get_current_auth_context()
+    if context is None:
+        return job
+    roles = {str(role).upper() for role in context.role_codes}
+    staff_id = str(getattr(context, "staff_id", "") or "").strip()
+    owner = "OWNER" in roles
+    job_staff_id = str(job.get("staff_id") or "").strip()
+    if job_staff_id and not owner and job_staff_id != staff_id:
+        raise HTTPException(403, "VIDEO_JOB_ACCESS_DENIED")
+    if not job_staff_id and staff_id:
+        from agent.services.staff_identity_service import resolve_staff_identity
+
+        profile = await resolve_staff_identity(staff_id)
+        await crud.update_video_production_job_full(
+            job["job_id"],
+            staff_id=profile["staff_id"],
+            staff_display_name_snapshot=profile["display_name"],
+        )
+        job = {**job, "staff_id": profile["staff_id"],
+               "staff_display_name_snapshot": profile["display_name"]}
+    if require_operational:
+        await _require_flow_product(
+            job.get("product_id"), lane="VIDEO_JOB_OPERATIONAL_ACCESS"
+        )
+    return job
+
+
 async def _plan_video_job(body: "VideoJobPlanRequest", *, trust_client_authority: bool):
     from agent.services import video_production_orchestrator as _orch
     try:
-        return await _orch.plan_job(
+        result = await _orch.plan_job(
             _job_intent(body), trust_client_authority=trust_client_authority)
+        job = await crud.get_video_production_job(result.get("job_id"))
+        if job:
+            await _require_video_job_access(job)
+        return result
     except _orch.OrchestratorError as exc:
         if exc.code in _PLAN_422_CODES:
             raise HTTPException(422, {"code": exc.code, "detail": exc.detail})
@@ -3128,6 +3308,7 @@ async def lookup_video_job(body: VideoJobPlanRequest):
     job = await crud.get_video_production_job_by_logical_key(key)
     if not job:
         return {"found": False, "logical_job_key": key}
+    await _require_video_job_access(job)
     plan = None
     if job.get("whole_plan_json"):
         try:
@@ -3147,6 +3328,10 @@ async def authorize_video_job(job_id: str, body: VideoJobAuthorizeRequest):
     the whole reviewed plan. A changed plan (product/asset/prompt/duration/count) is
     rejected with 409."""
     from agent.services import video_production_orchestrator as _orch
+    job = await crud.get_video_production_job(job_id)
+    if not job:
+        raise HTTPException(404, "VIDEO_JOB_NOT_FOUND")
+    await _require_video_job_access(job, require_operational=True)
     try:
         return await _orch.authorize_job(
             job_id, confirmed_plan_fingerprint=body.confirmed_plan_fingerprint)
@@ -3364,6 +3549,17 @@ async def _production_initial_generator(job: dict) -> dict:
     if not getattr(client, "connected", False):
         raise InitialGenerationError("Extension not connected")
 
+    from agent.services.product_release_service import (
+        ProductOperationalVisibilityError,
+        require_product_operational_visibility,
+    )
+    try:
+        await require_product_operational_visibility(
+            job.get("product_id"), lane="VIDEO_JOB_INITIAL_PROVIDER"
+        )
+    except ProductOperationalVisibilityError as exc:
+        raise InitialGenerationError(f"{exc.code}:{exc}") from exc
+
     submit = await _mv.start_generate(
         mode=mode, prompt=prompt, project_id=job.get("project_id") or None,
         image_media_ids=refs or None,
@@ -3460,6 +3656,7 @@ async def start_video_job(job_id: str, background_tasks: BackgroundTasks):
     job = await crud.get_video_production_job(job_id)
     if not job:
         raise HTTPException(404, "VIDEO_JOB_NOT_FOUND")
+    await _require_video_job_access(job, require_operational=True)
     token = job.get("authorization_token")
     if not token:
         raise HTTPException(409, "VIDEO_JOB_NOT_AUTHORIZED")
@@ -3470,7 +3667,7 @@ async def start_video_job(job_id: str, background_tasks: BackgroundTasks):
         background_tasks.add_task(_drive_video_job, job_id, token)  # first start only
     elif not consumed["already"]:
         raise HTTPException(409, "VIDEO_JOB_AUTHORIZATION_ROTATED")
-    return await _orch.get_job_status(job_id)
+    return _sanitize_video_job(await _orch.get_job_status(job_id))
 
 
 @router.get("/video-jobs/{job_id}/status")
@@ -3478,7 +3675,13 @@ async def video_job_status(job_id: str):
     """Structured, refresh-safe status the UI restores on mount (never auto-starts)."""
     from agent.services import video_production_orchestrator as _orch
     try:
-        return await _orch.get_job_status(job_id)
+        job = await crud.get_video_production_job(job_id)
+        if not job:
+            raise HTTPException(404, "VIDEO_JOB_NOT_FOUND")
+        await _require_video_job_access(job)
+        return _sanitize_video_job(await _orch.get_job_status(job_id))
+    except HTTPException:
+        raise
     except _orch.OrchestratorError:
         raise HTTPException(404, "VIDEO_JOB_NOT_FOUND")
 
@@ -3493,6 +3696,7 @@ async def create_video_job(body: VideoJobCreateRequest):
     from agent.services import google_flow_native_extend_runtime as _nx
     from agent.services import google_flow_final_timeline_runtime as _ft
     from agent.services import flow_mode_reference_contract as _refc
+    await _require_flow_product(body.product_id, lane="VIDEO_JOB_CREATE")
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
@@ -3545,6 +3749,9 @@ async def create_video_job(body: VideoJobCreateRequest):
         status=status, initial_media_id=src_media,
         segment_media_ids_json=_json.dumps(segments),
         product_id=body.product_id, product_name=body.product_name)
+    created_job = await crud.get_video_production_job(job_id)
+    if created_job:
+        await _require_video_job_access(created_job)
     # A System-B assembly job binds pre-existing clips; the source-mode
     # certification belongs to whatever ORIGINAL generation produced the source,
     # so this job is honestly LEGACY_UNTYPED and is never per-mode certification.
@@ -3560,7 +3767,13 @@ async def create_video_job(body: VideoJobCreateRequest):
 
 @router.get("/video-jobs")
 async def list_video_jobs(limit: int = 20):
-    return {"jobs": await crud.list_video_production_jobs(limit=limit)}
+    rows = await crud.list_video_production_jobs(limit=limit)
+    from agent.security.access_control import get_current_auth_context
+    context = get_current_auth_context()
+    if context is not None and "OWNER" not in {str(role).upper() for role in context.role_codes}:
+        staff_id = str(getattr(context, "staff_id", "") or "").strip()
+        rows = [row for row in rows if str(row.get("staff_id") or "") == staff_id]
+    return {"jobs": [_sanitize_video_job(row) for row in rows]}
 
 
 @router.get("/video-jobs/{job_id}")
@@ -3568,7 +3781,8 @@ async def get_video_job(job_id: str):
     job = await crud.get_video_production_job(job_id)
     if not job:
         raise HTTPException(404, "VIDEO_JOB_NOT_FOUND")
-    return job
+    await _require_video_job_access(job)
+    return _sanitize_video_job(job)
 
 
 @router.post("/video-jobs/{job_id}/finalize")
@@ -3584,6 +3798,7 @@ async def finalize_video_job(job_id: str, body: VideoJobFinalizeRequest):
     job = await crud.get_video_production_job(job_id)
     if not job:
         raise HTTPException(404, "VIDEO_JOB_NOT_FOUND")
+    await _require_video_job_access(job, require_operational=not body.dry_run)
     segments = _json.loads(job.get("segment_media_ids_json") or "[]")
     client = get_flow_client()
     if not body.dry_run and not client.connected:
@@ -3680,6 +3895,7 @@ async def get_media(media_id: str):
 @router.post("/edit-image")
 async def edit_image(body: EditImageRequest):
     """Edit an existing image using IMAGE_INPUT_TYPE_BASE_IMAGE (bypasses queue)."""
+    await _require_flow_product(body.product_id, lane="FLOW_EDIT_IMAGE")
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
@@ -3696,17 +3912,18 @@ async def edit_image(body: EditImageRequest):
 @router.post("/upload-image")
 async def upload_image(body: UploadImageRequest):
     """Upload a local image file to Google Flow and get a media_id."""
-    import base64, mimetypes
+    import base64
+    safe_path, mime = _safe_local_upload_path(body.file_path)
+    await _require_flow_product(body.product_id, lane="FLOW_UPLOAD_IMAGE")
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
     try:
-        with open(body.file_path, "rb") as f:
+        with safe_path.open("rb") as f:
             image_bytes = f.read()
-    except FileNotFoundError:
-        raise HTTPException(404, f"File not found: {body.file_path}")
+    except OSError as exc:
+        raise HTTPException(400, "ERR_UPLOAD_FILE_UNREADABLE") from exc
     b64 = base64.b64encode(image_bytes).decode()
-    mime = mimetypes.guess_type(body.file_path)[0] or "image/png"
     result = await client.upload_image(b64, mime_type=mime, project_id=body.project_id, file_name=body.file_name)
     if result.get("error") or (isinstance(result.get("status"), int) and result["status"] >= 400):
         raise HTTPException(result.get("status", 502), result.get("error", result.get("data")))
@@ -3757,12 +3974,14 @@ class ShootOneshotRequest(BaseModel):
     aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT"
     user_paygate_tier: str = "PAYGATE_TIER_ONE"
     start_frame: dict = {}
+    product_id: Optional[str] = None
 
 
 @router.post("/shoot-oneshot")
 async def shoot_oneshot(body: ShootOneshotRequest):
     """Async one-shot video: envelope -> job_id. Poll GET /flow/job/{id}. Contract §4.1."""
     from agent.services import shoot_oneshot as _os
+    await _require_flow_product(body.product_id, lane="FLOW_SHOOT_ONESHOT")
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
@@ -3778,7 +3997,7 @@ async def shoot_oneshot(body: ShootOneshotRequest):
             f"Account tier '{real_tier}' cannot generate video — "
             "needs a paid (Pro/Ultra) subscription.",
         )
-    return await _os.start_job(body.model_dump(), real_tier)
+    return await _os.start_job(body.model_dump(exclude={"product_id"}), real_tier)
 
 
 @router.get("/job/{job_id}")
@@ -3834,20 +4053,37 @@ async def _materialize_remote_url_to_staging(
     before dispatch. Returns {local_file_path, file_name, mime_type}.
     """
     source_url = str(source_url or "").strip()
-    if not re.match(r"^https?://", source_url, re.IGNORECASE):
-        raise ValueError("ERR_REMOTE_MATERIALIZE_BAD_URL")
+    _assert_public_remote_url(source_url)
     timeout = aiohttp.ClientTimeout(total=20)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.get(source_url) as resp:
+        async with session.get(source_url, allow_redirects=False) as resp:
+            if resp.status >= 300:
+                raise ValueError("ERR_REMOTE_MATERIALIZE_REDIRECT_UNSAFE")
             if resp.status >= 400:
                 raise ValueError(f"ERR_REMOTE_MATERIALIZE_FETCH_FAILED: HTTP_{resp.status}")
-            raw_bytes = await resp.read()
+            content_length = resp.headers.get("Content-Length")
+            if content_length and int(content_length) > _MAX_REMOTE_IMAGE_BYTES:
+                raise ValueError("ERR_REMOTE_MATERIALIZE_TOO_LARGE")
+            if getattr(resp, "content", None) is not None and hasattr(resp.content, "iter_chunked"):
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    total += len(chunk)
+                    if total > _MAX_REMOTE_IMAGE_BYTES:
+                        raise ValueError("ERR_REMOTE_MATERIALIZE_TOO_LARGE")
+                    chunks.append(chunk)
+                raw_bytes = b"".join(chunks)
+            else:
+                raw_bytes = await resp.read()
+                if len(raw_bytes) > _MAX_REMOTE_IMAGE_BYTES:
+                    raise ValueError("ERR_REMOTE_MATERIALIZE_TOO_LARGE")
             if not raw_bytes:
                 raise ValueError("ERR_REMOTE_MATERIALIZE_FETCH_FAILED: EMPTY_BODY")
             mime_type = (
-                (resp.headers.get("Content-Type") or "image/png").split(";", 1)[0].strip()
-                or "image/png"
+                (resp.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
             )
+            if mime_type and mime_type not in {"image/jpeg", "image/png", "image/gif", "image/webp"}:
+                raise ValueError("ERR_REMOTE_MATERIALIZE_CONTENT_TYPE_UNSAFE")
     parsed = urlparse(source_url)
     default_name = Path(parsed.path).name or "asset"
     file_name = Path(file_name or default_name).name
@@ -3855,6 +4091,8 @@ async def _materialize_remote_url_to_staging(
         ext = (mime_type.split("/", 1)[-1] or "png").lower().replace("jpeg", "jpg")
         file_name = f"{file_name}.{ext}"
     ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else "png"
+    if ext not in {"jpg", "jpeg", "png", "gif", "webp"}:
+        raise ValueError("ERR_REMOTE_MATERIALIZE_CONTENT_TYPE_UNSAFE")
     _UPLOAD_STAGING_DIR.mkdir(parents=True, exist_ok=True)
     temp_file_path = _UPLOAD_STAGING_DIR / f"{uuid4().hex}.{ext}"
     temp_file_path.write_bytes(raw_bytes)
@@ -4819,6 +5057,11 @@ async def execute_flow_job(body: dict):
         body["staff_id"] = _manual_staff["staff_id"]
         body["staff_display_name_snapshot"] = _manual_staff["display_name"]
         body["production_recipe"] = _raw_recipe
+    if _raw_recipe or get_current_auth_context() is not None:
+        await _require_flow_product(
+            body.get("product_id"), lane=_raw_recipe or "FLOW_EXECUTE"
+        )
+    await _require_flow_product(body.product_id, lane="FLOW_GENERATE_IMAGE_ONESHOT")
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")

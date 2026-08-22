@@ -36,6 +36,7 @@ from agent.api.local_agent import (
 )
 from agent.api.operator import router as operator_router
 from agent.api.products import router as products_router
+from agent.api.product_release import router as product_release_router
 from agent.api.product_mascot import router as product_mascot_router
 from agent.api.prompt_library import router as prompt_library_router
 from agent.api.taxonomy import router as taxonomy_router
@@ -402,6 +403,7 @@ app.middleware("http")(access_control_middleware)
 app.include_router(auth_router, prefix="/api")
 app.include_router(staff_access_router, prefix="/api")
 app.include_router(products_router, prefix="/api")
+app.include_router(product_release_router, prefix="/api")
 app.include_router(product_mascot_router, prefix="/api")
 app.include_router(prompt_library_router, prefix="/api")
 app.include_router(taxonomy_router, prefix="/api")
@@ -490,6 +492,12 @@ async def ext_callback(request: Request):
     Extension POSTs {id, status, data, error} here instead of sending via WS.
     Requires X-Callback-Secret header matching the secret sent to extension on WS connect.
     """
+    supplied_secret = request.headers.get("x-callback-secret", "")
+    if not supplied_secret or not _secrets.compare_digest(supplied_secret, _CALLBACK_SECRET):
+        return JSONResponse(
+            {"detail": {"error": "CALLBACK_AUTHENTICATION_REQUIRED"}},
+            status_code=401,
+        )
     data = await request.json()
     client = get_flow_client()
     req_id = data.get("id")

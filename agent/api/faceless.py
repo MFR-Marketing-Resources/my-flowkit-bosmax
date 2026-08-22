@@ -69,6 +69,18 @@ async def _require_faceless_staff(staff_id: str | None) -> dict[str, Any]:
 async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
     """Validate + resolve Hook/BG + create workspace execution package."""
     staff_profile = await _require_faceless_staff(body.staff_id)
+    from agent.services.product_release_service import (
+        ProductReleaseError,
+        ensure_product_operationally_visible,
+    )
+
+    try:
+        await ensure_product_operationally_visible(body.product_id, lane="FACELESS")
+    except ProductReleaseError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "message": exc.message, "details": exc.details},
+        ) from exc
     if body.copy_set_id and not legacy_copy_maintenance_enabled():
         raise HTTPException(
             status_code=410,
@@ -400,6 +412,18 @@ async def faceless_prepare(body: FacelessPrepareRequest) -> dict[str, Any]:
 async def faceless_validate(body: FacelessPrepareRequest) -> dict[str, Any]:
     """Credit-free fail-closed validation + resolve preview (no package write)."""
     staff_profile = await _require_faceless_staff(body.staff_id)
+    from agent.services.product_release_service import (
+        ProductReleaseError,
+        ensure_product_operationally_visible,
+    )
+
+    try:
+        await ensure_product_operationally_visible(body.product_id, lane="FACELESS")
+    except ProductReleaseError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "message": exc.message, "details": exc.details},
+        ) from exc
     gen_mode = str(body.generation_mode or "SINGLE").strip().upper()
     reference_override = bool(str(body.start_frame_asset_id or "").strip())
     try:

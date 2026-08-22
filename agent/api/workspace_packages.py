@@ -38,6 +38,21 @@ from agent.services.approved_product_package_service import (
 router = APIRouter(prefix="/workspace", tags=["workspace"])
 
 
+async def _guard_operational_products(product_ids: list[str], *, lane: str) -> None:
+    from agent.services.product_release_service import (
+        ProductReleaseError,
+        ensure_products_operationally_visible,
+    )
+
+    try:
+        await ensure_products_operationally_visible(product_ids, lane=lane)
+    except ProductReleaseError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "message": exc.message, "details": exc.details},
+        ) from exc
+
+
 class WorkspacePromptBlockRequest(BaseModel):
     block_index: int
     duration_seconds: int
@@ -128,6 +143,7 @@ class QuantityPreviewRequest(BaseModel):
 
 @router.post("/execution-package")
 async def post_workspace_execution_package(request: WorkspaceExecutionPackageRequest):
+    await _guard_operational_products([request.product_id], lane="WORKSPACE_EXECUTION_PACKAGE")
     try:
         _rd = _recipe.resolve_recipe_descriptors(
             request.scene_template_id, request.camera_preset_code
@@ -190,6 +206,7 @@ async def get_workspace_execution_packages(
 async def post_workspace_package_readiness(
     request: WorkspacePackageReadinessRequest,
 ):
+    await _guard_operational_products(request.product_ids, lane="WORKSPACE_PACKAGE_READINESS")
     normalized_mode = normalize_mode(request.mode)
     items = []
     for product_id in request.product_ids:
@@ -214,6 +231,7 @@ async def get_workspace_prompt_compiler_config():
 
 @router.post("/ugc-video-prompt-compile")
 async def post_workspace_prompt_compile(request: WorkspacePromptCompileRequest):
+    await _guard_operational_products([request.product_id], lane="WORKSPACE_PROMPT_COMPILE")
     try:
         _rd = _recipe.resolve_recipe_descriptors(
             request.scene_template_id, request.camera_preset_code
@@ -258,6 +276,7 @@ async def post_quantity_preview(request: QuantityPreviewRequest):
     No provider call, no Flow call, no DB write, no approval, no enqueue, no live
     generation. Dialogue uniqueness is fail-closed — duplicate/pool<N dialogue is a
     BLOCKER, not a warning. Live bulk fan-out remains Stage 2 (unbuilt)."""
+    await _guard_operational_products([request.product_id], lane="WORKSPACE_QUANTITY_PREVIEW")
     try:
         return await preview_quantity_copy_plans(
             product_id=request.product_id,
@@ -288,6 +307,7 @@ async def post_copy_pool_readiness(request: QuantityPreviewRequest):
     the exact shortage instead of a bare DUPLICATE_DIALOGUE_BLOCKED. Compiles
     approved copy sets to count distinct dialogue (a copy set has no dialogue
     column). No provider call, no Flow call, no DB write, no approval, no credit."""
+    await _guard_operational_products([request.product_id], lane="WORKSPACE_COPY_POOL")
     try:
         return await evaluate_copy_pool_readiness(
             product_id=request.product_id,
@@ -319,6 +339,7 @@ async def post_bulk_fanout_plan(request: QuantityPreviewRequest):
     per-item status / per-item credit metadata. Fail-closed on copy-pool
     readiness and dialogue uniqueness. Plans only: no package created, nothing
     approved, nothing enqueued, no provider call, no Flow call, no credit."""
+    await _guard_operational_products([request.product_id], lane="WORKSPACE_BULK_FANOUT")
     try:
         return await plan_bulk_fanout_intents(
             product_id=request.product_id,
@@ -365,6 +386,7 @@ async def post_bulk_fanout_prepare(request: BulkFanoutPrepareRequest):
     Idempotent per plan. The run is created dry_run=1: no provider call, no Flow
     call, no live generation, no credit. Live firing still requires the
     BULK_FANOUT gate, which stops at the Stage 3 credit boundary."""
+    await _guard_operational_products([request.product_id], lane="WORKSPACE_BULK_FANOUT")
     try:
         return await prepare_bulk_fanout_packages(
             product_id=request.product_id,

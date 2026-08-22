@@ -153,6 +153,21 @@ async def _require_montage_staff(staff_id: str | None) -> dict[str, Any]:
         ) from exc
 
 
+async def _require_montage_product(product_id: str) -> None:
+    from agent.services.product_release_service import (
+        ProductReleaseError,
+        ensure_product_operationally_visible,
+    )
+
+    try:
+        await ensure_product_operationally_visible(product_id, lane="MONTAGE")
+    except ProductReleaseError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "message": exc.message, "details": exc.details},
+        ) from exc
+
+
 class MontageSceneReadyInput(BaseModel):
     scene_id: str
     mandatory: bool = True
@@ -282,6 +297,7 @@ async def montage_plan(body: MontagePlanRequest) -> dict[str, Any]:
     staff_profile = await _require_montage_staff(body.staff_id)
     if not str(body.product_id or "").strip():
         raise HTTPException(status_code=400, detail="product_id required")
+    await _require_montage_product(body.product_id)
     try:
         default_policy = parse_scene_reference_policy(body.default_policy)
     except ValueError as exc:
@@ -367,6 +383,7 @@ async def montage_execute_scenes(body: MontageExecuteRequest) -> dict[str, Any]:
     staff_profile = await _require_montage_staff(body.staff_id)
     if not str(body.product_id or "").strip():
         raise HTTPException(status_code=400, detail="product_id required")
+    await _require_montage_product(body.product_id)
     if body.allow_live_generate:
         raise HTTPException(
             status_code=403,
@@ -516,6 +533,7 @@ async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
     staff_profile = await _require_montage_staff(body.staff_id)
     if not str(body.product_id or "").strip():
         raise HTTPException(status_code=400, detail="product_id required")
+    await _require_montage_product(body.product_id)
     if body.allow_live_generate:
         raise HTTPException(
             status_code=403,
@@ -607,6 +625,16 @@ async def montage_run_assemble(run_id: str, body: MontageRunAssembleRequest) -> 
 
     state = await get_montage_discrete_run(run_id)
     cfg = state.get("config") or {}
+    run_product_id = str(cfg.get("product_id") or state.get("product_id") or "").strip()
+    if not run_product_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "PRODUCT_ID_REQUIRED",
+                "message": "A canonical product identity is required before Montage assembly.",
+            },
+        )
+    await _require_montage_product(run_product_id)
     from agent.services.montage_run_service import _resolve_montage_single_settings
 
     try:
@@ -686,6 +714,16 @@ async def montage_run_assemble(run_id: str, body: MontageRunAssembleRequest) -> 
                     "segment_count": len(segment_ids),
                 }),
             )
+        from agent.services.product_release_service import (
+            ProductOperationalVisibilityError,
+            require_product_operational_visibility,
+        )
+        try:
+            await require_product_operational_visibility(
+                run_product_id, lane="MONTAGE_CONCAT_PROVIDER"
+            )
+        except ProductOperationalVisibilityError as exc:
+            raise ValueError(f"{exc.code}:{exc}") from exc
         result = await finalize_timeline(
             get_flow_client(),
             job_id=effective_job_id,
@@ -785,6 +823,7 @@ async def montage_materialize_approval_manifest(
     derived = await build_montage_manifest_items(run_id)
     if not derived["items"]:
         raise HTTPException(422, "ERR_MONTAGE_NO_PENDING_SCENES")
+    await _require_montage_product(str(derived.get("product_id") or ""))
     run_snapshot = await get_montage_discrete_run(run_id)
     run_config = run_snapshot.get("config") or {}
     created_by = str(run_config.get("staff_id") or "").strip()
@@ -819,6 +858,21 @@ async def montage_authorize_generation(
     with startAsset / image_media_ids from package snapshot — never package-id-only.
     """
     staff_profile = await _require_montage_staff(body.staff_id)
+    run_snapshot = await get_montage_discrete_run(run_id)
+    run_product_id = str(
+        (run_snapshot or {}).get("product_id")
+        or ((run_snapshot or {}).get("config") or {}).get("product_id")
+        or ""
+    ).strip()
+    if not run_product_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "PRODUCT_ID_REQUIRED",
+                "message": "A canonical product identity is required before Montage generation.",
+            },
+        )
+    await _require_montage_product(run_product_id)
     generate_fn = None
     poll_fn = None
     _run_manifest_id = None
@@ -931,6 +985,22 @@ async def montage_authorize_generation(
 async def resume_montage_generation(run_id: str) -> dict[str, Any]:
     """Poll one durable scene job and advance its lease; never re-submit."""
     from agent.services import make_video
+
+    run_snapshot = await get_montage_discrete_run(run_id)
+    run_product_id = str(
+        (run_snapshot or {}).get("product_id")
+        or ((run_snapshot or {}).get("config") or {}).get("product_id")
+        or ""
+    ).strip()
+    if not run_product_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "PRODUCT_ID_REQUIRED",
+                "message": "A canonical product identity is required before Montage recovery.",
+            },
+        )
+    await _require_montage_product(run_product_id)
 
     async def poll_fn(job_id: str) -> dict[str, Any]:
         from agent.services import make_video

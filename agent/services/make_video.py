@@ -1245,12 +1245,15 @@ def _deep(obj, *keys):
     return None
 
 
-async def start(prompt: str, image_prompt: str) -> dict:
+async def start(prompt: str, image_prompt: str, product_id: str | None = None) -> dict:
     job_id = "v_" + uuid4().hex[:12]
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "stage": "queued",
-                     "project_id": None, "local_path": None, "video_media_id": None,
+                     "project_id": None, "product_id": product_id,
+                     "local_path": None, "video_media_id": None,
                      "size_mb": None, "error": None}
-    _JOBS[job_id]["_task"] = asyncio.create_task(_run(job_id, prompt, image_prompt))
+    _JOBS[job_id]["_task"] = asyncio.create_task(
+        _run(job_id, prompt, image_prompt, product_id)
+    )
     return {"job_id": job_id, "status": "SUBMITTED"}
 
 
@@ -2084,6 +2087,26 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
         routing_receipt=_routing_receipt,
         direct_plan=_direct_plan,
     )
+    # Provider-bound jobs must carry a current released/readiness-approved product.
+    # Legacy direct service tests without an HTTP AuthContext remain provider-free
+    # compatibility calls; every real route and worker supplies the identity.
+    from agent.security.access_control import get_current_auth_context
+    if product_id or get_current_auth_context() is not None:
+        from agent.services.product_release_service import (
+            ProductOperationalVisibilityError,
+            require_product_operational_visibility,
+        )
+        try:
+            await require_product_operational_visibility(
+                product_id, lane="MAKE_VIDEO_PROVIDER"
+            )
+        except ProductOperationalVisibilityError as exc:
+            return {
+                "status": "REJECTED",
+                "error": exc.code,
+                "detail": str(exc),
+                "pre_provider": {"provider_calls": 0, "credit_spend": False},
+            }
     # Final Prompt Approval Gate (WYSIWYG dispatch verification) is intentionally
     # skipped only for the owner-authorized capture boundary above.  That boundary
     # has its own exact class/flag/confirmation checks and is not reachable through
@@ -3594,6 +3617,19 @@ async def _run_generate_direct(job_id, mode, prompt, project_id, image_media_ids
     global _VIDEO_LANE_JOB
     job = _JOBS[job_id]
     client = get_flow_client()
+    if product_id:
+        from agent.services.product_release_service import (
+            ProductOperationalVisibilityError,
+            require_product_operational_visibility,
+        )
+        try:
+            await require_product_operational_visibility(
+                product_id, lane="MAKE_VIDEO_DIRECT_PROVIDER"
+            )
+        except ProductOperationalVisibilityError as exc:
+            job["status"] = "REJECTED"
+            job["error"] = f"{exc.code}:{exc}"
+            return
     generating = False
     try:
         refs = [m for m in (image_media_ids or []) if m]
@@ -3994,6 +4030,17 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
     client = get_flow_client()
     generating = False  # set True once we pass approval into the render/retrieve phase
     try:
+        if product_id:
+            from agent.services.product_release_service import (
+                ProductOperationalVisibilityError,
+                require_product_operational_visibility,
+            )
+            try:
+                await require_product_operational_visibility(
+                    product_id, lane="MAKE_VIDEO_AGENT_PROVIDER"
+                )
+            except ProductOperationalVisibilityError as exc:
+                raise RuntimeError(f"{exc.code}:{exc}") from exc
         if mode not in _ALL_MODES:
             raise RuntimeError(f"unknown mode '{mode}' (use IMG/T2V/I2V/F2V)")
         aspect_key = _IMG_ASPECT_MAP.get(aspect, "IMAGE_ASPECT_RATIO_PORTRAIT")
@@ -4606,11 +4653,21 @@ async def _run_negotiate(job_id, prompt, image_prompt=None, dry=True,
         job["status"], job["error"], job["stage"] = "FAILED", str(e), "failed"
 
 
-async def _run(job_id: str, prompt: str, image_prompt: str):
+async def _run(job_id: str, prompt: str, image_prompt: str, product_id: str | None = None):
     from agent.api.flow import _generate_image_with_recovery  # lazy (avoid circular)
     job = _JOBS[job_id]
     client = get_flow_client()
     try:
+        from agent.services.product_release_service import (
+            ProductOperationalVisibilityError,
+            require_product_operational_visibility,
+        )
+        try:
+            await require_product_operational_visibility(
+                product_id, lane="FLOW_MAKE_VIDEO_WORKER"
+            )
+        except ProductOperationalVisibilityError as exc:
+            raise RuntimeError(f"{exc.code}:{exc}") from exc
         # 1) project
         job["status"], job["stage"] = "SETUP", "creating project"
         proj = await client.create_project("auto-video")

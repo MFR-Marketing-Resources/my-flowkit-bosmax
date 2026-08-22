@@ -202,6 +202,21 @@ async def create_video_bulk_run(
         if st != "APPROVED":
             refused.append({"package_id": pid, "reason": f"NOT_APPROVED:{st}"})
             continue
+        from agent.services.product_release_service import (
+            ProductOperationalVisibilityError,
+            require_product_operational_visibility,
+        )
+        try:
+            await require_product_operational_visibility(
+                pkg.get("product_id"), lane="BULK_VIDEO_ENQUEUE"
+            )
+        except ProductOperationalVisibilityError as exc:
+            refused.append({
+                "package_id": pid,
+                "reason": f"{exc.code}:{exc}",
+                "details": exc.details,
+            })
+            continue
         eligible.append(pkg)
 
     if not eligible:
@@ -684,8 +699,23 @@ async def _fire_video_payload(
     payload: dict, wgp_id: str, *, manifest_id: str | None = None,
 ) -> dict:
     """Serial video lane: honour VIDEO_JOB_IN_FLIGHT retries like production queue."""
+    from agent.services.product_release_service import (
+        ProductOperationalVisibilityError,
+        require_product_operational_visibility,
+    )
+
     attempts = 0
     while True:
+        try:
+            await require_product_operational_visibility(
+                payload.get("product_id"), lane="BULK_VIDEO_DISPATCH"
+            )
+        except ProductOperationalVisibilityError as exc:
+            reason = f"{exc.code}:{exc}"
+            await crud.update_workspace_generation_package(
+                wgp_id, production_status="FAILED", production_error=reason,
+            )
+            return {"ok": False, "error": reason}
         result = await make_video.start_generate(
             payload["mode"],
             payload["prompt"],
@@ -804,6 +834,16 @@ async def _live_video_loop(run_id: str) -> None:
                 prod_st = (pkg.get("production_status") or "NONE").upper()
                 if prod_st != "APPROVED":
                     raise RuntimeError(f"NOT_APPROVED:{prod_st}")
+                from agent.services.product_release_service import (
+                    ProductOperationalVisibilityError,
+                    require_product_operational_visibility,
+                )
+                try:
+                    await require_product_operational_visibility(
+                        pkg.get("product_id"), lane="BULK_VIDEO_DISPATCH"
+                    )
+                except ProductOperationalVisibilityError as exc:
+                    raise RuntimeError(f"{exc.code}:{exc}") from exc
 
                 await crud.update_workspace_generation_package(
                     wgp_id, production_status="RUNNING", production_error=None,
