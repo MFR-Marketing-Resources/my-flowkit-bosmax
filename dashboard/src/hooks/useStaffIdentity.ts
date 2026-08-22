@@ -1,28 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-	createStaffProfile,
-	fetchStaffProfiles,
-	type StaffProfile,
-} from "../api/staffIdentity";
-
-const STAFF_STORAGE_KEY = "bosmax.staff_identity.v1";
-
-function storedStaffId(): string {
-	try {
-		return window.localStorage.getItem(STAFF_STORAGE_KEY)?.trim() ?? "";
-	} catch {
-		return "";
-	}
-}
-
-function persistStaffId(staffId: string): void {
-	try {
-		if (staffId) window.localStorage.setItem(STAFF_STORAGE_KEY, staffId);
-		else window.localStorage.removeItem(STAFF_STORAGE_KEY);
-	} catch {
-		// Selection convenience must never become a generation authority.
-	}
-}
+import { fetchCurrentSession } from "../api/auth";
+import type { StaffProfile } from "../api/staffIdentity";
 
 export interface StaffIdentityState {
 	profiles: StaffProfile[];
@@ -38,24 +16,26 @@ export interface StaffIdentityState {
 
 export function useStaffIdentity(): StaffIdentityState {
 	const [profiles, setProfiles] = useState<StaffProfile[]>([]);
-	const [selectedId, setSelectedId] = useState(storedStaffId);
+	const [selectedId, setSelectedId] = useState("");
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState("");
 
 	const refresh = useCallback(async () => {
 		setLoading(true);
 		try {
-			const response = await fetchStaffProfiles(false);
-			const activeProfiles = response.profiles.filter((profile) => profile.active);
-			setProfiles(activeProfiles);
-			setSelectedId((current) => {
-				const remembered = current || storedStaffId();
-				if (!activeProfiles.some((profile) => profile.staff_id === remembered)) {
-					persistStaffId("");
-					return "";
-				}
-				return remembered;
-			});
+			const response = await fetchCurrentSession();
+			const user = response.authenticated ? response.user : null;
+			const sessionProfile = user
+				? [{
+					staff_id: user.staff_id,
+					display_name: user.display_name,
+					active: user.staff_active,
+					created_at: "",
+					updated_at: "",
+				}]
+				: [];
+			setProfiles(sessionProfile);
+			setSelectedId(user?.staff_id ?? "");
 			setError("");
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : "Staff profiles unavailable.");
@@ -68,24 +48,16 @@ export function useStaffIdentity(): StaffIdentityState {
 		void refresh();
 	}, [refresh]);
 
-	const selectStaff = useCallback((staffId: string) => {
-		const normalized = staffId.trim();
-		setSelectedId(normalized);
-		persistStaffId(normalized);
+	const selectStaff = useCallback((_staffId: string) => {
+		// Deliberately no-op: authenticated session StaffProfile is the only
+		// production attribution authority. UI callers cannot switch identity.
 	}, []);
 
 	const createProfile = useCallback(
-		async (displayName: string) => {
-			const profile = await createStaffProfile(displayName.trim());
-			setProfiles((current) =>
-				[...current.filter((item) => item.staff_id !== profile.staff_id), profile].sort(
-					(a, b) => a.display_name.localeCompare(b.display_name),
-				),
-			);
-			selectStaff(profile.staff_id);
-			return profile;
+		async (_displayName: string) => {
+			throw new Error("Staff profiles are managed from System → Staff & Access.");
 		},
-		[selectStaff],
+		[],
 	);
 
 	const selectedStaff = useMemo(

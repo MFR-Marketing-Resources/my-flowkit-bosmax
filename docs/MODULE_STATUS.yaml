@@ -58,6 +58,22 @@ domains:
       - tests/unit/test_runtime_release.py
       - tests/unit/test_product_detail_tabs_contract.py
       - agent/api/flow.py
+      # Staff & Access V1 — UserAccount authentication, human RBAC, lifecycle,
+      # session-bound production attribution, and dashboard administration.
+      - agent/access_control_constants.py
+      - agent/api/auth.py
+      - agent/api/staff_access.py
+      - agent/models/access_control.py
+      - agent/security/__init__.py
+      - agent/security/access_control.py
+      - agent/services/access_control_service.py
+      - dashboard/src/api/auth.ts
+      - dashboard/src/auth/AuthContext.tsx
+      - dashboard/src/pages/LoginPage.tsx
+      - dashboard/src/pages/SetupOwnerPage.tsx
+      - dashboard/src/pages/StaffAccessPage.tsx
+      - docs/staff-access-v1-route-classification.md
+      - tests/security/test_staff_access_v1.py
       # Final Prompt Approval Gate (WYSIWYG per-dispatch execution approval):
       # approved execution-envelope SHA == dispatched, enforced at start_generate
       # and the FlowClient provider boundary. Ships observe-only (inert) until
