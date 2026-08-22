@@ -290,6 +290,9 @@ def _compiler_copy(blueprint: CopyBlueprintV2) -> dict[str, Any]:
     """Build only derived compatibility fields; authored text stays immutable."""
 
     derived = blueprint.derived_projections()
+    approved_by_stage = {
+        item.stage_key: item for item in blueprint.approved_execution_text
+    }
     return {
         "copy_source": "copy_blueprint_v2",
         "formula_id": blueprint.formula_id,
@@ -300,9 +303,18 @@ def _compiler_copy(blueprint: CopyBlueprintV2) -> dict[str, Any]:
         "usps": [derived.body] if derived.body else [],
         "cta": derived.cta,
         "approved_execution_text": [
-            {"stage_key": item.stage_key, "text": item.text}
-            for item in blueprint.approved_execution_text
+            {
+                "stage_key": stage.stage_key,
+                "formula_stage_key": stage.formula_stage_key,
+                "semantic_role": stage.semantic_role,
+                "text": approved_by_stage[stage.stage_key].text,
+            }
+            for stage in sorted(blueprint.stages, key=lambda item: item.order)
+            if stage.stage_key in approved_by_stage
         ],
+        "target_duration_seconds": blueprint.target_duration_seconds,
+        "estimated_word_count": blueprint.estimated_word_count,
+        "wps_profile": blueprint.wps_profile,
     }
 
 

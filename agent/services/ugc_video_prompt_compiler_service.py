@@ -1366,7 +1366,30 @@ def compile_ugc_video_prompt(
         # is not permission to rewrite or fall back.
         planner_mismatch = bool(planned_dialogue) and planned_dialogue != expected_dialogue
         if planner_mismatch or rendered_dialogue != expected_dialogue:
-            raise ValueError("COPY_V2_COMPILER_MUTATION")
+            raise ValueError(
+                "COPY_V2_COMPILER_MUTATION:"
+                + json.dumps(
+                    {
+                        "expected_sha256": hashlib.sha256(
+                            expected_dialogue.encode("utf-8")
+                        ).hexdigest(),
+                        "planned_sha256": hashlib.sha256(
+                            planned_dialogue.encode("utf-8")
+                        ).hexdigest()
+                        if planned_dialogue
+                        else None,
+                        "rendered_sha256": hashlib.sha256(
+                            rendered_dialogue.encode("utf-8")
+                        ).hexdigest(),
+                        "expected_word_count": len(expected_dialogue.split()),
+                        "planned_word_count": len(planned_dialogue.split()),
+                        "rendered_word_count": len(rendered_dialogue.split()),
+                        "planner_mismatch": planner_mismatch,
+                        "renderer_mismatch": rendered_dialogue != expected_dialogue,
+                    },
+                    sort_keys=True,
+                )
+            )
 
     # `compiled_prompt_text` (with internal directives) is preserved per-block for debugging.
     # `engine_prompt_text` is the independent-block representation for production automation.

@@ -329,7 +329,7 @@ def normalize_copy_intelligence(
         _infer_trigger_id(product, copy, family=family, angle=angle),
         family=family,
     )
-    return {
+    normalized = {
         "angle": angle,
         "hook": hook,
         "subhook": subhook,
@@ -343,6 +343,28 @@ def normalize_copy_intelligence(
         # (selected_copy_set) apart from fallback copy that needs bank support.
         "copy_source": _clean(copy.get("copy_source")),
     }
+    # Copy Blueprint V2 is the sole source of immutable execution wording. Keep
+    # its ordered stage receipt in the planner input; derived hook/body/CTA fields
+    # above remain compatibility hints only. Legacy callers do not carry this
+    # field and retain the existing normalization path.
+    approved_execution_text = copy.get("approved_execution_text")
+    if isinstance(approved_execution_text, list):
+        normalized["approved_execution_text"] = [
+            {
+                **{
+                    key: _clean(item.get(key))
+                    for key in ("stage_key", "formula_stage_key", "semantic_role")
+                    if _clean(item.get(key))
+                },
+                "text": _clean(item.get("text")),
+            }
+            for item in approved_execution_text
+            if isinstance(item, dict) and _clean(item.get("text"))
+        ]
+    for key in ("target_duration_seconds", "estimated_word_count", "wps_profile"):
+        if copy.get(key) is not None:
+            normalized[key] = copy.get(key)
+    return normalized
 
 
 def _is_low_signal_legacy_copy(text: str, *, product_name: str) -> bool:
