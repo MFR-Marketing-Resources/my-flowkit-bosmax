@@ -3002,6 +3002,7 @@ CREATE INDEX IF NOT EXISTS idx_batch_variant_status ON batch_variant(queue_statu
         telemetry_column_defs = {
             "prompt_package_snapshot_id": "TEXT",
             "workspace_execution_package_id": "TEXT",
+            "workspace_generation_package_id": "TEXT",
             "prompt_fingerprint": "TEXT",
             "asset_fingerprints": "TEXT",
             "request_lineage_payload": "TEXT",
