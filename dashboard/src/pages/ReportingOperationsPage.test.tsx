@@ -6,6 +6,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import ReportingOperationsPage from "./ReportingOperationsPage";
 import { useExceptionPage, usePiQuality } from "../api/reporting";
 
+vi.mock("../api/copyRegisterV2", () => ({
+	fetchCopyActivationCandidates: vi.fn(() => Promise.resolve({
+		items: [], total: 0, max_batch_size: 50, provider_calls: 0, credit_spend: 0, activation_mutations: 0,
+	})),
+	batchActivateCopyBlueprints: vi.fn(),
+}));
+
 // Mission-08D: the INTEL QUALITY DEBT card is the operator-visible face of the four-way
 // PI classification. These tests pin the contract: backend numbers rendered verbatim
 // (no frontend counting), legacy never relabelled, click drills into the matching kind.
