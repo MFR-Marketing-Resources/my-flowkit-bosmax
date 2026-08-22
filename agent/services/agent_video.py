@@ -3,7 +3,8 @@
 The current Flow video API is a conversational agent (flowCreationAgent). We send turn 1
 (prompt + start image), then READ each SSE response and respond like a real agent:
 - the agent proposes a config via `ask_for_permission` {total_cost, num_videos};
-- we steer it (reject + correction) to 1 video / Veo 3.1 Lite, then approve;
+- we steer it (reject + correction) to the exact user-selected model, duration, and count,
+  then approve only after a post-steer acknowledgement;
 - we KEEP READING until the agent's own reply confirms generation actually started.
 
 No claims without evidence: success is only declared when the agent's text says it is
@@ -11,6 +12,7 @@ generating (e.g. "generating", "in the queue"). Every turn's raw agent reply is 
 """
 import json
 import hashlib
+import re
 
 from agent.services import video_models
 
@@ -19,6 +21,7 @@ DENIED = "PERMISSION_ACTION_DENIED"
 APPROVED = "PERMISSION_ACTION_APPROVED"
 RATE_LIMITED = "RATE_LIMITED"
 SAFETY_FILTERED = "SAFETY_FILTERED"
+PRE_APPROVAL_SETTINGS_ACK_REQUIRED = "PRE_APPROVAL_SETTINGS_ACK_REQUIRED"
 
 # Google anti-abuse / rate-limiter signature on the flowCreationAgent stream. This fires
 # PRE-APPROVE (0 credits): a 403 PERMISSION_DENIED carrying reCAPTCHA / PUBLIC_ERROR_
@@ -70,6 +73,68 @@ _TEXT_ONLY_DIRECTIVE = (
     "Generate this strictly as a TEXT-TO-VIDEO. Do not attach, select, or reuse any "
     "existing image, start frame, or project media as a reference — produce the video "
     "purely from the description below.\n\n")
+
+
+def _duration_label(duration_s) -> str:
+    """Return a stable human-facing duration without a spurious `.0`."""
+    try:
+        value = float(duration_s)
+        if value.is_integer():
+            return str(int(value))
+    except (TypeError, ValueError):
+        pass
+    return str(duration_s)
+
+
+def build_target_settings_directive(target_model=None, target_duration_s=None,
+                                    desired_num=1, has_reference=False) -> str:
+    """Build the provider-facing settings directive from the SSOT registry.
+
+    The creative prompt is deliberately not accepted here. Callers prepend this
+    execution directive to the unchanged compiled prompt so correlation continues
+    to retain the operator's original prompt as its own anchor.
+    """
+    spec = video_models.resolve(target_model)
+    duration = (target_duration_s if target_duration_s is not None
+                else spec["default_duration_s"])
+    duration_text = _duration_label(duration)
+    count = max(1, int(desired_num or 1))
+    video_word = "video" if count == 1 else "videos"
+    if has_reference:
+        source_clause = (
+            "Generate this video using the attached reference image(s); preserve "
+            "every attached reference, and do not drop, replace, or convert the "
+            "reference into an unreferenced generation."
+        )
+    else:
+        source_clause = (
+            "Generate strictly text-to-video from the text prompt; no reference "
+            "image may be attached, selected, or reused."
+        )
+    return (
+        f"Use exactly {spec['agent_label']} at {duration_text} seconds. "
+        f"Generate exactly {count} {video_word}. {source_clause} "
+        "Do not generate separate image outputs."
+    )
+
+
+def _target_settings_acknowledged(text, target_model=None, target_duration_s=None) -> bool:
+    """Conservatively recognize an explicit model + duration acknowledgement."""
+    spec = video_models.resolve(target_model)
+    low = str(text or "").lower()
+    labels = {str(spec["agent_label"]).lower(), str(spec["ui_label"]).lower()}
+    if not any(label and label in low for label in labels):
+        return False
+    duration = _duration_label(
+        target_duration_s if target_duration_s is not None
+        else spec["default_duration_s"]
+    )
+    # Accept the common provider renderings: `10s`, `10 sec`, `10 second(s)`,
+    # and `10-second`; do not infer duration from credits.
+    return bool(re.search(
+        rf"(?<!\d){re.escape(duration)}\s*(?:-\s*)?(?:s|secs?|seconds?)\b",
+        low,
+    ))
 
 # Post-approve failure knowledge (captured live 2026-07-02, Faris' screenshots):
 # when the render dies server-side the agent posts a "Failed / Something went
@@ -330,7 +395,50 @@ def build_reference_contract_capture_evidence(
     refs = [str(item) for item in (reference_media_ids or []) if item]
     invocations = []
     transcript = negotiation.get("transcript") if isinstance(negotiation, dict) else []
+    negotiation_state = (
+        negotiation.get("negotiation_state")
+        if isinstance(negotiation, dict)
+        else None
+    )
+    negotiation_state = negotiation_state if isinstance(negotiation_state, dict) else {}
+    target_settings_directive = None
+    target_model = negotiation_state.get("target_model_key") or negotiation_state.get(
+        "target_model_label"
+    )
+    if target_model and negotiation_state.get("target_duration_s") is not None:
+        try:
+            target_settings_directive = build_target_settings_directive(
+                target_model,
+                negotiation_state.get("target_duration_s"),
+                negotiation_state.get("desired_num", 1),
+                has_reference=bool(refs),
+            )
+        except (TypeError, ValueError):
+            target_settings_directive = None
+    outbound_turns = []
     for turn in transcript if isinstance(transcript, list) else []:
+        if isinstance(turn, dict) and "turn" in turn:
+            turn_number = turn.get("turn")
+            if turn.get("target_settings_steer"):
+                sent_contract = "TARGET_SETTINGS_RESTEER"
+            elif turn.get("perm_sent"):
+                sent_contract = "PERMISSION_ACTION"
+            elif turn_number == 1:
+                sent_contract = "TARGET_SETTINGS_AND_CREATIVE_PROMPT"
+            else:
+                sent_contract = "CONVERSATION_TURN"
+            outbound_turns.append({
+                "turn": turn_number,
+                "sent_contract": sent_contract,
+                "sent_text_sha256": turn.get("sent_text_sha256"),
+                "sent_text_length": turn.get("sent_text_length"),
+                "sent_media_ids": [
+                    str(media_id) for media_id in (turn.get("sent_media_ids") or [])
+                    if media_id
+                ],
+                "permission_action": turn.get("perm_sent"),
+                "target_settings_steer": bool(turn.get("target_settings_steer")),
+            })
         raw = turn.get("raw_sse") if isinstance(turn, dict) else None
         if not isinstance(raw, str):
             continue
@@ -402,6 +510,9 @@ def build_reference_contract_capture_evidence(
         "reference_forwarded_to_generation": forwarded_refs == refs and bool(refs),
         "reference_aware_tool_observed": reference_tool and not text_only,
         "text_only_tool_observed": text_only,
+        "negotiation_state": negotiation_state,
+        "target_settings_directive": target_settings_directive,
+        "outbound_turns": outbound_turns,
         "transport_request_shape": {
             "agent_session_id": "present",
             "project_id": str(project_id),
@@ -424,7 +535,7 @@ def build_reference_contract_capture_evidence(
 
 
 def decide(permission, target_model=None, target_duration_s=None, desired_num=1,
-           has_reference=False):
+           has_reference=False, settings_confirmed=True):
     """Steer the agent to the USER-SELECTED model+duration and approve under a CAP-GATE
     (Layer A): num_videos==1, num_images==0, and cost <= ceiling(model, duration).
 
@@ -433,6 +544,11 @@ def decide(permission, target_model=None, target_duration_s=None, desired_num=1,
     (a promo cheaper price still passes), refuses multi-video / images, and NEVER puts a credit
     target in the steer text (that makes the agent inflate the video count to hit the number).
     The actual model AND duration are verified POST-approve (the proposal carries neither).
+    `settings_confirmed` is the negotiation invariant: the caller must keep it false
+    until the exact target settings were re-steered after a permission proposal and
+    the provider acknowledged the model + duration. A standalone cap decision keeps
+    its historical default (`True`); the approval path below always passes the live
+    state explicitly.
 
     STEER WORDING LAW (SEV-0/live incident): a correction must NEVER say "no images" —
     the agent reads that as "drop the attached reference image" and rewrites the run as a
@@ -446,16 +562,11 @@ def decide(permission, target_model=None, target_duration_s=None, desired_num=1,
     # count=2 means a 2-video proposal is the CORRECT one and costs ~2× the unit cap.
     ceiling = video_models.expected_cost(spec["key"], dur) * max(1, int(desired_num or 1))
     video_word = "video" if desired_num == 1 else "videos"
-    # STEER WORDING LAW, opposite direction (live g_7d71f6b020cb): the has_reference
-    # branch PRESERVES the F2V/I2V reference (unchanged). The no-reference branch must
-    # now be equally explicit that a T2V run is TEXT-ONLY — otherwise, in a shared/dirty
-    # Flow project, the agent acquires a stray reference and fires
-    # generate_video_with_references (R2V) for what must be text-only. The F2V path is
-    # byte-identical; only the T2V (else) wording gains a positive text-only instruction.
-    keep_ref = (" using the attached reference image" if has_reference
-                else " generated only from the text prompt, with no reference image")
-    steer = (f"{spec['agent_label']}, {dur} second {video_word}, "
-             f"{desired_num} {video_word} only{keep_ref}, no separate image generations")
+    # STEER WORDING LAW, opposite direction (live g_7d71f6b020cb): the reference
+    # branch preserves the F2V/I2V reference and the no-reference branch positively
+    # declares text-only routing, so a shared/dirty Flow project cannot change lanes.
+    steer = build_target_settings_directive(
+        target_model, dur, desired_num, has_reference=has_reference)
     if not permission:
         return ("wait", steer, None)
     nv = permission.get("num_videos")
@@ -463,16 +574,24 @@ def decide(permission, target_model=None, target_duration_s=None, desired_num=1,
         nv = permission.get("num_total")
     ni = permission.get("num_images")
     cost = permission.get("total_cost")
+    if not settings_confirmed:
+        return (
+            "reject",
+            "The permission proposal arrived before the exact target settings were "
+            f"confirmed. {steer} Please acknowledge the exact model and duration "
+            "before approval.",
+            DENIED,
+        )
     if not nv:  # None or 0 — image-only / unclear
-        return ("reject", f"do not generate images — generate the {video_word}{keep_ref}. {steer}", DENIED)
+        return ("reject", f"do not generate separate image outputs — {steer}", DENIED)
     if nv != desired_num:  # reject any count that differs from the USER's setting
         return ("reject", f"i want exactly {desired_num} {video_word}, not {nv}. {steer}", DENIED)
     if ni:  # a real video proposal must not also generate images
-        return ("reject", f"do not generate images — generate the {video_word}{keep_ref}. {steer}", DENIED)
+        return ("reject", f"do not generate separate image outputs — {steer}", DENIED)
     if cost is not None and cost > ceiling:  # CAP, not exact — promos may be cheaper
         return ("reject",
                 f"too expensive for {desired_num} {video_word} — "
-                f"i want {desired_num} {spec['ui_label']} only", DENIED)
+                f"{steer}", DENIED)
     return ("approve", "Approve", APPROVED)
 
 
@@ -486,16 +605,65 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
     """
     transcript = []
     turn = 0
+    refs = [str(media_id) for media_id in (media_ids or []) if media_id]
+    target_spec = video_models.resolve(target_model)
+    target_duration = (target_duration_s if target_duration_s is not None
+                       else target_spec["default_duration_s"])
+    target_settings_communicated = False
+    target_settings_resteered = False
+    permission_after_target_steer = False
+    target_settings_acknowledged = False
+    target_steer_turn = None
 
-    async def send(text, perm=None, media=None):
-        nonlocal turn
+    def _negotiation_state() -> dict:
+        return {
+            "target_settings_communicated": target_settings_communicated,
+            "target_settings_resteered": target_settings_resteered,
+            "permission_after_target_steer": permission_after_target_steer,
+            "target_settings_acknowledged": target_settings_acknowledged,
+            "target_model_key": target_spec["key"],
+            "target_model_label": target_spec["ui_label"],
+            "target_agent_label": target_spec["agent_label"],
+            "target_duration_s": target_duration,
+            "desired_num": max(1, int(desired_num or 1)),
+            "reference_media_ids": list(refs),
+            "target_steer_turn": target_steer_turn,
+        }
+
+    def _finish(payload: dict) -> dict:
+        result = dict(payload)
+        result.setdefault("transcript", transcript)
+        result["negotiation_state"] = _negotiation_state()
+        return result
+
+    async def send(text, perm=None, media=None, target_steer=False):
+        nonlocal turn, target_settings_resteered
+        nonlocal permission_after_target_steer, target_settings_acknowledged
+        nonlocal target_steer_turn
+        if target_steer:
+            target_settings_resteered = True
+            permission_after_target_steer = False
+            target_settings_acknowledged = False
+            target_steer_turn = turn + 1
         turn += 1
+        outbound_media = list(refs if media is None else (media or []))
         resp = await client.agent_stream_chat(
-            session_id, project_id, turn, text, media_ids=media, permission_action=perm)
+            session_id, project_id, turn, text,
+            media_ids=outbound_media or None, permission_action=perm)
         data = resp.get("data", resp) if isinstance(resp, dict) else resp
         st = parse_agent_sse(data)
         raw = data if isinstance(data, str) else json.dumps(data)
+        if target_settings_resteered and st.get("permission") is not None:
+            permission_after_target_steer = True
+        if target_settings_resteered and _target_settings_acknowledged(
+                st.get("text"), target_model, target_duration):
+            target_settings_acknowledged = True
         transcript.append({"turn": turn, "sent": text[:50], "perm_sent": perm,
+                           "sent_text_sha256": hashlib.sha256(
+                               str(text).encode("utf-8")).hexdigest(),
+                           "sent_text_length": len(str(text)),
+                           "sent_media_ids": outbound_media,
+                           "target_settings_steer": bool(target_steer),
                            "agent_text": st["text"], "permission": st["permission"],
                            "started": st["started"], "error": st["error"],
                            "raw_sse": raw[:40000]})
@@ -535,47 +703,84 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
     # rejected proposal; the agent's first tool choice is made from this send alone).
     # With no reference media, instruct text-to-video explicitly so the agent cannot
     # pick up a stray reference from a shared/dirty project and route to R2V. The
-    # directive is prepended only to what is SENT — the creative `prompt` (and thus the
-    # correlation anchor make_video captures) is untouched. F2V/I2V (media present) is
-    # unchanged.
-    initial_text = prompt if media_ids else _TEXT_ONLY_DIRECTIVE + prompt
-    state = await send(initial_text, media=media_ids)
+    # The directive is added only to what is SENT — the creative `prompt` (and thus the
+    # correlation anchor make_video captures) is untouched. Reference media are retained
+    # on the first and every subsequent conversational turn.
+    # The execution directive is provider-facing context only. Keep `prompt` intact
+    # for make_video's submitted_prompt correlation anchor and carry references on
+    # every conversational turn so a correction cannot silently become text-only.
+    settings_directive = build_target_settings_directive(
+        target_model, target_duration, desired_num, has_reference=bool(refs))
+    initial_text = (
+        ("" if refs else _TEXT_ONLY_DIRECTIVE)
+        + settings_directive + "\n\n" + prompt
+    )
+    state = await send(initial_text, media=refs)
+    target_settings_communicated = True
     while turn < max_turns:
         if state["error"]:
-            return {"ok": False, "stage": "error",
-                    "error_class": classify_provider_error(state["error"]),
-                    "error": provider_error_message(state["error"]),
-                    "error_raw": state["error"], "transcript": transcript}
+            return _finish({"ok": False, "stage": "error",
+                            "error_class": classify_provider_error(state["error"]),
+                            "error": provider_error_message(state["error"]),
+                            "error_raw": state["error"]})
         # PRE-approve bail: only a real generation toolInvocation (started_tool) may short-circuit
         # here. Soft text alone must NOT — else it suppresses would_approve on the dry lane (I4a).
         if state["started_tool"]:
-            return {"ok": True, "generation_started": True,
-                    **_verdict(state),
-                    "agent_text": state["text"], "transcript": transcript}
+            return _finish({"ok": True, "generation_started": True,
+                            **_verdict(state),
+                            "agent_text": state["text"]})
 
+        # A permission after the target steer that still does not acknowledge the
+        # exact registry model + duration is a fail-closed, pre-provider outcome.
+        # Cost is only a cap and can never stand in for either setting.
+        if (state["permission"] is not None
+                and permission_after_target_steer
+                and not target_settings_acknowledged):
+            return _finish({
+                "ok": False,
+                "stage": "pre_approval_acknowledgement",
+                "error": PRE_APPROVAL_SETTINGS_ACK_REQUIRED,
+                "detail": (
+                    "Provider returned a permission proposal without acknowledging "
+                    f"{target_spec['ui_label']} at {_duration_label(target_duration)} "
+                    "seconds after the exact target steer; approval was not sent."
+                ),
+                "provider_submit": False,
+                "credit_spend": False,
+            })
+
+        settings_confirmed = (
+            target_settings_communicated
+            and target_settings_resteered
+            and permission_after_target_steer
+            and target_settings_acknowledged
+        )
         kind, msg, perm_action = decide(state["permission"], target_model,
                                         target_duration_s, desired_num,
-                                        has_reference=bool(media_ids))
+                                        has_reference=bool(refs),
+                                        settings_confirmed=settings_confirmed)
         if kind == "approve":
             if not approve:
-                return {"ok": True, "dry": True, "would_approve": state["permission"],
-                        "transcript": transcript}
+                return _finish({"ok": True, "dry": True,
+                                "would_approve": state["permission"],
+                                "provider_submit": False,
+                                "credit_spend": False})
             # Approve EXACTLY ONCE — the generation is triggered server-side; never
             # re-approve (that would double-charge).
-            state = await send(msg, perm=perm_action)
-            return {"ok": True, "approved": True,
-                    "generation_started": state["started"],
-                    **_verdict(state),
-                    # The render can die INSIDE the approve stream (e.g. missing
-                    # reference image) — surface it so the caller fails fast.
-                    "failure_classification": classify_agent_failure(state["text"]),
-                    "turns_used": turn,
-                    "agent_text": state["text"], "transcript": transcript}
+            state = await send(msg, perm=perm_action, media=refs)
+            return _finish({"ok": True, "approved": True,
+                            "generation_started": state["started"],
+                            **_verdict(state),
+                            # The render can die INSIDE the approve stream (e.g. missing
+                            # reference image) — surface it so the caller fails fast.
+                            "failure_classification": classify_agent_failure(state["text"]),
+                            "turns_used": turn,
+                            "agent_text": state["text"]})
         if kind == "reject":
-            await send("Reject", perm=perm_action)   # decline the wrong proposal
-            state = await send(msg)                   # then send the correction
+            await send("Reject", perm=perm_action, media=refs)  # zero-credit denial
+            state = await send(msg, media=refs, target_steer=True)
         else:                                         # wait / open question
-            state = await send(msg)
+            state = await send(msg, media=refs, target_steer=True)
 
-    return {"ok": False, "stage": "max_turns",
-            "error": "agent never confirmed generation started", "transcript": transcript}
+    return _finish({"ok": False, "stage": "max_turns",
+                    "error": "agent never confirmed generation started"})

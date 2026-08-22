@@ -113,6 +113,57 @@ def test_capture_evidence_proves_reference_order_and_redacts_secrets():
     assert "do not persist this prompt" not in encoded
 
 
+def test_capture_evidence_records_sanitized_outbound_settings_turns():
+    evidence = agent_video.build_reference_contract_capture_evidence(
+        {
+            "negotiation_state": {
+                "target_settings_communicated": True,
+                "target_settings_resteered": True,
+                "permission_after_target_steer": True,
+                "target_settings_acknowledged": True,
+                "target_model_key": "omni_flash",
+                "target_model_label": "Omni Flash",
+                "target_duration_s": 10,
+                "desired_num": 1,
+            },
+            "transcript": [
+                {
+                    "turn": 1,
+                    "sent": "Use exactly Gemini Omni Flash at 10 seconds. prompt secret",
+                    "sent_text_sha256": "hash-1",
+                    "sent_text_length": 88,
+                    "sent_media_ids": ["ref-1"],
+                    "perm_sent": None,
+                    "target_settings_steer": False,
+                    "raw_sse": "",
+                },
+                {
+                    "turn": 2,
+                    "sent": "Reject",
+                    "sent_text_sha256": "hash-2",
+                    "sent_text_length": 6,
+                    "sent_media_ids": ["ref-1"],
+                    "perm_sent": agent_video.DENIED,
+                    "target_settings_steer": False,
+                    "raw_sse": "",
+                },
+            ],
+        },
+        ["ref-1"],
+        project_id="project-1",
+    )
+    assert evidence["negotiation_state"]["target_settings_acknowledged"] is True
+    assert evidence["target_settings_directive"].startswith(
+        "Use exactly Gemini Omni Flash at 10 seconds."
+    )
+    assert evidence["outbound_turns"][0]["sent_media_ids"] == ["ref-1"]
+    assert evidence["outbound_turns"][1]["permission_action"] == agent_video.DENIED
+    assert evidence["outbound_turns"][0]["sent_contract"] == (
+        "TARGET_SETTINGS_AND_CREATIVE_PROMPT"
+    )
+    assert "prompt secret" not in json.dumps(evidence)
+
+
 def test_capture_classification_does_not_promote_wrong_transport():
     job = {
         "approved": True,
@@ -126,6 +177,35 @@ def test_capture_classification_does_not_promote_wrong_transport():
         },
     }
     assert make_video._classify_reference_contract_capture(job) == "WRONG_TRANSPORT"
+
+
+def test_capture_classification_relabels_approved_wrong_model():
+    job = {
+        "approved": True,
+        "status": "FAILED",
+        "model_ok": False,
+        "duration_ok": False,
+        "error": "FAILED_WRONG_MODEL: expected omni_flash, got veo_3_1_r2v_lite",
+        "capture_contract_evidence": {
+            "text_only_tool_observed": False,
+            "reference_aware_tool_observed": True,
+            "reference_forwarded_to_generation": True,
+        },
+    }
+    assert (
+        make_video._classify_reference_contract_capture(job)
+        == "CAPTURE_WRONG_MODEL_AFTER_APPROVAL"
+    )
+    job["capture_contract_verdict"] = "PROVIDER_REJECTED"
+    public = make_video._durable_public_state(
+        {"job_id": "g_historical", "status": "FAILED", "error_code": job["error"]},
+        job,
+    )
+    assert public["capture_contract_verdict"] == "CAPTURE_WRONG_MODEL_AFTER_APPROVAL"
+    assert public["capture_contract_verdict_legacy"] == "PROVIDER_REJECTED"
+    assert public["capture_contract_verdict_provenance"]["kind"] == (
+        "DERIVED_VIEW_NO_HISTORICAL_REWRITE"
+    )
 
 
 @pytest.mark.parametrize("model,duration", [("veo_3_1_lite", 10), ("omni_flash", 8)])
