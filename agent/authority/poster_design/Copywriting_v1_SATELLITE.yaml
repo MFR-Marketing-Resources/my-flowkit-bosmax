@@ -1,0 +1,114 @@
+%YAML 1.2
+---
+id: KB-COPYWRITING-SEA-011
+title: Copywriting & Overlay Strategy (Malaysia + SEA)
+version: "1.0.0"
+type: satellite
+
+document_control:
+  enforcement_level: aligned_with_sovereign
+  region_scope: malaysia_sea
+  owner: BINA_POSTER_PROJECT
+  last_updated: "2026-06-01"
+
+description:
+  en: Copywriting support layer for commercial poster, hero shot, and listing prompt work across Malaysia and SEA, aligned with mobile-first selling clarity and truthful claims.
+
+governance:
+  truth_first_copy_policy: true
+  mobile_scan_priority: true
+  conversion_clarity_priority: high
+  sovereign_override_protocol: "must_yield_to_sovereign_conflict"
+
+copy_structure_rules:
+  max_headline_count: 1
+  max_support_line_count: 1
+  max_badge_count: 3
+  paragraph_overlay_prohibited: true
+  decorative_copy_without_selling_job: prohibited
+
+headline_classes:
+  pain_relief:
+    preferred_patterns:
+      - "Kurangkan [pain point]"
+      - "[pain point] Relief"
+  convenience:
+    preferred_patterns:
+      - "Mudah Guna"
+      - "Senang Simpan"
+  trust_heritage:
+    preferred_patterns:
+      - "Dipercayai Sejak [year]"
+      - "Warisan Yang Diyakini"
+  premium_quality:
+    preferred_patterns:
+      - "Premium [category]"
+      - "Dirumus Dengan Teliti"
+  value_stack:
+    preferred_patterns:
+      - "[X] Kegunaan. 1 [product]"
+      - "Lebih Nilai Dalam Satu Produk"
+
+support_line_rules:
+  max_word_count: 8
+  must_add_clarity_not_poetry: true
+  should_reinforce_primary_angle: true
+
+badge_logic:
+  badge_limit: 3
+  badge_style: short_scannable_utility
+  allowed_badge_types:
+    - benefit
+    - feature
+    - trust
+  prohibit_redundant_badges: true
+
+cta_policy:
+  allowed_when_platform_and_context_support_it: true
+  hard_sell_allowed: moderate
+  max_words: 4
+  preferred_verbs:
+    - Shop
+    - Buy
+    - Get
+    - Discover
+    - Cuba
+  prohibit_fake_urgency: true
+
+claim_safety:
+  prohibit_unverifiable_medical_claims: true
+  prohibit_fake_discount_language: true
+  prohibit_invented_certification: true
+  prohibit_unbacked_superlatives: true
+
+language_policy:
+  primary_modes:
+    - english
+    - malay
+    - bilingual
+  keep_copy_short_and_scannable: true
+  avoid_literal_translation_stiffness: true
+
+metadata_reference_targets:
+  - rule_id: headline_density_check
+    action: enforce_in_metadata_handoff
+  - rule_id: badge_count_check
+    action: enforce_in_metadata_handoff
+  - rule_id: unverifiable_claim_check
+    action: enforce_in_metadata_handoff
+  - rule_id: fake_urgency_check
+    action: enforce_in_metadata_handoff
+
+canonical_copy_templates:
+  - template_id: premium_trust_overlay
+    structure: "One bold trust headline, one short support line, no more than two small proof badges."
+  - template_id: utility_conversion_overlay
+    structure: "One utility-first headline, one concise support line, up to three short benefit badges."
+
+examples:
+  - scenario: tiktok_shop_poster
+    expected_behavior: "Short bold headline, concise support line, no clutter, no unverifiable claims."
+  - scenario: shopee_infographic_secondary
+    expected_behavior: "Benefit-led copy, short badges, no paragraph blocks, mobile readable."
+
+...
