@@ -19,6 +19,11 @@ _NEW_COLS = (
     "actual_cost",
 )
 
+_RECONCILED_COLUMNS = (
+    "workspace_generation_package_id",
+    "content_build_id",
+)
+
 
 async def _seed_request(rid: str):
     db = await get_db()
@@ -38,6 +43,8 @@ async def test_migration_added_cost_columns_and_is_idempotent():
     cols = {row[1] for row in await cur.fetchall()}
     for c in _NEW_COLS:
         assert c in cols, f"missing instrumentation column: {c}"
+    for c in _RECONCILED_COLUMNS:
+        assert c in cols, f"missing request telemetry reconciliation column: {c}"
     # Re-running init_db must be a no-op (PRAGMA-guarded ALTERs), never raise.
     await init_db()
 
