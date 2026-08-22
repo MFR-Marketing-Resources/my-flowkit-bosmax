@@ -167,7 +167,7 @@ if ($SkipMandor) {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     Push-Location $RepoRoot
     try {
-        & npx tsx scripts/mandor-check.ts *>&1 | Tee-Object -FilePath $log | Out-Null
+        & node --experimental-strip-types scripts/mandor-check.ts *>&1 | Tee-Object -FilePath $log | Out-Null
         $code = $LASTEXITCODE
     } finally { Pop-Location; $sw.Stop() }
     $out = (Get-Content $log -Raw -ErrorAction SilentlyContinue)
