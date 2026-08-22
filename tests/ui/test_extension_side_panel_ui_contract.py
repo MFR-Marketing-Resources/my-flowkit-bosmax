@@ -512,6 +512,22 @@ def test_background_gfv2_surface_classifier_rejects_root_shell_without_project_u
 	)
 
 
+def test_flow_provider_challenge_accepts_canonical_project_editor_route():
+	# The live Flow editor uses /project/<id>. Requiring the obsolete /edit/
+	# segment made the owner-profile nonce challenge fail even when the real
+	# project editor was open and the background router had selected that tab.
+	dom_source = _read("extension/content-flow-dom.js")
+	challenge_section = _section(
+		dom_source,
+		"function buildFlowProviderSessionChallengeResponse(nonce) {",
+		"function buildUiContractV2Proof(",
+	)
+
+	assert "const projectMatch = flowUrl.match(/\\/project\\/([^/?#]+)/i);" in challenge_section
+	assert "&& Boolean(flowProjectId);" in challenge_section
+	assert "flowUrl.indexOf('/edit/') >= 0" not in challenge_section
+
+
 def test_flow_dom_new_project_control_scan_is_deadline_bounded_and_single_pass():
 	# manual_efad2bb1 / manual_stkdiag1: findNewProjectControl ran up to 21
 	# forced-reflow full-document scans per OPEN_FLOW_NEW_PROJECT message and
