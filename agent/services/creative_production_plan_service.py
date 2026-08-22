@@ -112,7 +112,9 @@ async def require_staff_values(
         )
     candidate = staff_id or operator_id
     try:
-        return await resolve_staff_identity(candidate)
+        from agent.security.access_control import resolve_request_staff
+
+        return await resolve_request_staff(candidate)
     except StaffIdentityError as exc:
         raise CreativeProductionError(
             exc.code,

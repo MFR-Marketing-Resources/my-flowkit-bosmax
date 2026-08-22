@@ -24,6 +24,23 @@ vi.mock("../api/staffIdentity", () => ({
 	createStaffProfile: vi.fn(),
 }));
 
+vi.mock("../api/auth", () => ({
+	fetchCurrentSession: vi.fn().mockResolvedValue({
+		authenticated: true,
+		setup_required: false,
+		user: {
+			user_id: "user_test_operator",
+			staff_id: "staff_test_operator",
+			display_name: "Test Operator",
+			email: "operator@example.test",
+			account_status: "ACTIVE",
+			staff_active: true,
+			role_codes: ["OWNER"],
+			permissions: ["production.plan", "production.execute", "production.read"],
+		},
+	}),
+}));
+
 const fetchCohortAuthority = vi.fn();
 const fetchGovernedPoolAuthority = vi.fn();
 const fetchTreatmentAvailability = vi.fn();
@@ -626,7 +643,6 @@ async function selectPlan(planId: string) {
 }
 
 beforeEach(() => {
-	window.localStorage.setItem("bosmax.staff_identity.v1", "staff_test_operator");
 	copyV2State.ready = true;
 	vi.stubGlobal("crypto", {
 		randomUUID: () => "00000000-0000-4000-8000-000000000001",
@@ -635,7 +651,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	window.localStorage.removeItem("bosmax.staff_identity.v1");
 	cleanup();
 	vi.clearAllMocks();
 	vi.unstubAllGlobals();

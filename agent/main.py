@@ -50,6 +50,10 @@ from agent.api.montage import router as montage_router
 from agent.api.creative_lane_settings import router as creative_lane_settings_router
 from agent.api.faceless import router as faceless_router
 from agent.api.staff_identity import router as staff_identity_router
+from agent.api.auth import router as auth_router
+from agent.api.staff_access import router as staff_access_router
+from agent.security.access_control import access_control_middleware
+from agent.services.access_control_service import SESSION_COOKIE_NAME, load_session_context
 from agent.api.workspace_generation_packages import router as workspace_generation_packages_router
 from agent.api.production_queue import router as production_queue_router
 from agent.api.production_queue import (
@@ -381,11 +385,22 @@ app.include_router(product_readiness_router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8100",
+        "http://127.0.0.1:8100",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_origin_regex=r"^chrome-extension://[a-zA-Z0-9_-]+$",
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
 
+app.middleware("http")(access_control_middleware)
+
+app.include_router(auth_router, prefix="/api")
+app.include_router(staff_access_router, prefix="/api")
 app.include_router(products_router, prefix="/api")
 app.include_router(product_mascot_router, prefix="/api")
 app.include_router(prompt_library_router, prefix="/api")
@@ -547,6 +562,16 @@ async def dashboard_ws(websocket: WebSocket):
         "http://127.0.0.1", "http://localhost", "chrome-extension://",
     )):
         await websocket.close(code=4003, reason="Origin not allowed")
+        return
+    session = await load_session_context(
+        websocket.cookies.get(SESSION_COOKIE_NAME),
+        touch=False,
+    )
+    if session is None:
+        await websocket.close(code=4401, reason="Authentication required")
+        return
+    if "jobs.read" not in session.permission_codes:
+        await websocket.close(code=4403, reason="Dashboard permission required")
         return
     await websocket.accept()
 

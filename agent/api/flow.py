@@ -1711,27 +1711,29 @@ async def generate(body: GenerateRequest):
         elif str(body.visual_lane_id or "").strip().upper() == "POSTER_BUILDER":
             _production_recipe = "POSTER_BUILDER"
     _staff_profile = None
-    if _production_recipe:
-        if _production_recipe not in {
-            "HYBRID",
-            "FACELESS",
-            "MONTAGE",
-            "POSTER_BUILDER",
-        }:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "error": "PRODUCTION_RECIPE_UNSUPPORTED",
-                    "message": "Only HYBRID, FACELESS, MONTAGE, and POSTER_BUILDER are active production recipes.",
-                },
-            )
-        from agent.services.staff_identity_service import (
-            StaffIdentityError,
-            resolve_staff_identity,
+    if _production_recipe and _production_recipe not in {
+        "HYBRID",
+        "FACELESS",
+        "MONTAGE",
+        "POSTER_BUILDER",
+    }:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "PRODUCTION_RECIPE_UNSUPPORTED",
+                "message": "Only HYBRID, FACELESS, MONTAGE, and POSTER_BUILDER are active production recipes.",
+            },
         )
+    # Every authenticated human generation inherits the StaffProfile from the
+    # current session. The recipe field remains optional for compatibility with
+    # older callers, but it can never be used to omit attribution on an HTTP
+    # production dispatch or to supply a different staff identity.
+    from agent.security.access_control import get_current_auth_context, resolve_request_staff
+    if _production_recipe or get_current_auth_context() is not None:
+        from agent.services.staff_identity_service import StaffIdentityError
 
         try:
-            _staff_profile = await resolve_staff_identity(body.staff_id)
+            _staff_profile = await resolve_request_staff(body.staff_id)
         except StaffIdentityError as exc:
             raise HTTPException(
                 status_code=exc.status_code,
@@ -4156,14 +4158,12 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         _manual_source = str(body.get("source_mode") or "").strip().upper()
         if _manual_source in {"HYBRID", "FACELESS", "MONTAGE"}:
             _manual_recipe = _manual_source
-    if _manual_recipe:
-        from agent.services.staff_identity_service import (
-            StaffIdentityError,
-            resolve_staff_identity,
-        )
+    from agent.security.access_control import get_current_auth_context, resolve_request_staff
+    if _manual_recipe or get_current_auth_context() is not None:
+        from agent.services.staff_identity_service import StaffIdentityError
 
         try:
-            _manual_staff = await resolve_staff_identity(body.get("staff_id"))
+            _manual_staff = await resolve_request_staff(body.get("staff_id"))
         except StaffIdentityError as exc:
             await _fail_manual_request(
                 request_id, "API_LANE_REJECTED", exc.message, exc.code
@@ -4760,22 +4760,20 @@ async def execute_flow_job(body: dict):
         if _raw_source in {"HYBRID", "FACELESS", "MONTAGE"}:
             _raw_recipe = _raw_source
     _manual_staff = None
-    if _raw_recipe:
-        if _raw_recipe not in {"HYBRID", "FACELESS", "MONTAGE"}:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "error": "PRODUCTION_RECIPE_UNSUPPORTED",
-                    "message": "Only HYBRID, FACELESS, and MONTAGE are active production recipes.",
-                },
-            )
-        from agent.services.staff_identity_service import (
-            StaffIdentityError,
-            resolve_staff_identity,
+    if _raw_recipe and _raw_recipe not in {"HYBRID", "FACELESS", "MONTAGE"}:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "PRODUCTION_RECIPE_UNSUPPORTED",
+                "message": "Only HYBRID, FACELESS, and MONTAGE are active production recipes.",
+            },
         )
+    from agent.security.access_control import get_current_auth_context, resolve_request_staff
+    if _raw_recipe or get_current_auth_context() is not None:
+        from agent.services.staff_identity_service import StaffIdentityError
 
         try:
-            _manual_staff = await resolve_staff_identity(body.get("staff_id"))
+            _manual_staff = await resolve_request_staff(body.get("staff_id"))
         except StaffIdentityError as exc:
             raise HTTPException(
                 status_code=exc.status_code,

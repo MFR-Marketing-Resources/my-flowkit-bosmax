@@ -32,6 +32,7 @@ import {
 	Routes,
 	useLocation,
 } from "react-router-dom";
+import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { fetchAPI } from "./api/client";
 import {
 	useWebSocketContext,
@@ -77,6 +78,9 @@ import WorkspaceGenerationPackagesPage from "./pages/WorkspaceGenerationPackages
 import WorkspaceJobsPage from "./pages/WorkspaceJobsPage";
 import LibraryPage from "./pages/LibraryPage";
 import PromptSopLibraryPage from "./pages/PromptSopLibraryPage";
+import LoginPage from "./pages/LoginPage";
+import SetupOwnerPage from "./pages/SetupOwnerPage";
+import StaffAccessPage from "./pages/StaffAccessPage";
 import type { TelemetrySummary } from "./types";
 import {
 	isExactCopyAuthorityRoute,
@@ -86,6 +90,7 @@ import {
 const ALL_NAV_GROUPS = [
 	{
 		label: "VIDEO PRODUCTION",
+		permissions: ["production.read"],
 		items: [
 			{ to: "/operator/t2v", icon: Video, label: "Text to Video" },
 			{ to: "/operator/hybrid", icon: Sparkles, label: "Hybrid" },
@@ -98,6 +103,7 @@ const ALL_NAV_GROUPS = [
 	},
 	{
 		label: "IMAGE PRODUCTION",
+		permissions: ["assets.read", "poster.read"],
 		items: [
 			{ to: "/operator/img", icon: ImageIcon, label: "Image Gen" },
 			{ to: "/assets/img-cockpit", icon: Sparkles, label: "IMG Cockpit" },
@@ -111,12 +117,14 @@ const ALL_NAV_GROUPS = [
 	},
 	{
 		label: "COPYWRITING",
+		permissions: ["copy.read"],
 		items: [
 			{ to: "/creative/storyboard-landbank-v3", icon: Sparkles, label: "Copywriting Landbank" },
 		],
 	},
 	{
 		label: "LIBRARY",
+		permissions: ["assets.read"],
 		items: [
 			{ to: "/library/videos", icon: Video, label: "Video Library" },
 			{ to: "/library/images", icon: ImageIcon, label: "Image Library" },
@@ -126,6 +134,7 @@ const ALL_NAV_GROUPS = [
 	},
 	{
 		label: "PUBLISH & JOBS",
+		permissions: ["publishing.read", "jobs.read"],
 		items: [
 			{ to: "/postiz", icon: Send, label: "Postiz Publish" },
 			{ to: "/workspace/jobs", icon: Activity, label: "Workspace Jobs" },
@@ -133,6 +142,7 @@ const ALL_NAV_GROUPS = [
 	},
 	{
 		label: "PRODUCTS",
+		permissions: ["products.read"],
 		items: [
 			{ to: "/products", icon: PackageSearch, label: "Product Catalog" },
 			{
@@ -144,6 +154,7 @@ const ALL_NAV_GROUPS = [
 	},
 	{
 		label: "CREATIVE ASSETS",
+		permissions: ["assets.read"],
 		items: [
 			{
 				to: "/assets/creative-library",
@@ -155,6 +166,7 @@ const ALL_NAV_GROUPS = [
 	},
 	{
 		label: "REPORTING",
+		permissions: ["reporting.read"],
 		items: [
 			{ to: "/reporting/executive", icon: Gauge, label: "Executive" },
 			{ to: "/reporting/operations", icon: Siren, label: "Operations" },
@@ -164,6 +176,7 @@ const ALL_NAV_GROUPS = [
 	},
 	{
 		label: "ADVANCED",
+		permissions: ["production.read", "assets.read", "copy.read"],
 		items: [
 			{
 				to: "/workspace/generation-packages",
@@ -205,9 +218,11 @@ const ALL_NAV_GROUPS = [
 	},
 	{
 		label: "SYSTEM",
+		permissions: ["system.settings.read"],
 		items: [
 			{ to: "/home", icon: LayoutDashboard, label: "Overview", exact: true },
 			{ to: "/settings", icon: SettingsIcon, label: "Settings" },
+			{ to: "/system/staff-access", icon: Users, label: "Staff & Access", permission: "staff.read" },
 		],
 	},
 ];
@@ -278,6 +293,10 @@ function EmbeddedRouteReporter() {
 function Layout() {
 	const location = useLocation();
 	const { isConnected } = useWebSocketContext();
+	const auth = useAuth();
+	const visibleNavGroups = NAV_GROUPS.filter((group) =>
+		(group.permissions ?? []).some((permission) => auth.hasPermission(permission))
+	);
 	const isPortalMode =
 		new URLSearchParams(location.search).get("portal") === "side";
 	const [isCompactNav, setIsCompactNav] = useState(
@@ -290,7 +309,7 @@ function Layout() {
 		null,
 	);
 
-	const activeGroupLabel = NAV_GROUPS.find((navGroup) =>
+	const activeGroupLabel = visibleNavGroups.find((navGroup) =>
 		navGroup.items.some((item) =>
 			item.exact
 				? location.pathname === item.to
@@ -307,7 +326,7 @@ function Layout() {
 		}
 		// First visit: keep only the active group open so the sidebar stays compact.
 		return new Set(
-			NAV_GROUPS.map((navGroup) => navGroup.label).filter(
+			visibleNavGroups.map((navGroup) => navGroup.label).filter(
 				(label) => label !== activeGroupLabel,
 			),
 		);
@@ -398,22 +417,22 @@ function Layout() {
 		};
 	}, [isPortalMode]);
 
-	const portalQuickLinks = [
-		{ to: "/home", label: "Ops" },
-		{ to: "/operator/t2v", label: "T2V" },
-		{ to: "/operator/hybrid", label: "HYBRID" },
-		{ to: "/operator/f2v", label: "FRAMES" },
-		{ to: "/library/videos", label: "VIDEOS" },
-		{ to: "/library/images", label: "IMAGES" },
-		{ to: "/operator/i2v", label: "I2V" },
-		{ to: "/operator/img", label: "IMG" },
-		{ to: "/operator/faceless", label: "FACELESS" },
-		{ to: "/operator/montage", label: "MONTAGE" },
-		{ to: "/assets/creative-library", label: "Creative" },
-		{ to: "/workspace/generation-packages", label: "Bank" },
-		{ to: "/workspace/jobs", label: "Jobs" },
-		{ to: "/troubleshoot", label: "Issues" },
-	].filter((link) => !isDeactivatedSurfacePath(link.to));
+	const portalQuickLinks: Array<{ to: string; label: string; permission: string }> = [
+		{ to: "/home", label: "Ops", permission: "production.read" },
+		{ to: "/operator/t2v", label: "T2V", permission: "production.read" },
+		{ to: "/operator/hybrid", label: "HYBRID", permission: "production.read" },
+		{ to: "/operator/f2v", label: "FRAMES", permission: "production.read" },
+		{ to: "/library/videos", label: "VIDEOS", permission: "assets.read" },
+		{ to: "/library/images", label: "IMAGES", permission: "assets.read" },
+		{ to: "/operator/i2v", label: "I2V", permission: "production.read" },
+		{ to: "/operator/img", label: "IMG", permission: "assets.read" },
+		{ to: "/operator/faceless", label: "FACELESS", permission: "production.read" },
+		{ to: "/operator/montage", label: "MONTAGE", permission: "production.read" },
+		{ to: "/assets/creative-library", label: "Creative", permission: "assets.read" },
+		{ to: "/workspace/generation-packages", label: "Bank", permission: "production.read" },
+		{ to: "/workspace/jobs", label: "Jobs", permission: "jobs.read" },
+		{ to: "/troubleshoot", label: "Issues", permission: "system.settings.read" },
+	].filter((link) => !isDeactivatedSurfacePath(link.to) && auth.hasPermission(link.permission));
 
 	const portalLiveLabel = portalSummary
 		? `${portalSummary.processing + portalSummary.flow_running} live • ${portalSummary.queued + portalSummary.waiting_flow} waiting • ${portalSummary.failed} failed`
@@ -458,7 +477,7 @@ function Layout() {
 				</div>
 
 				<nav className="flex-1 overflow-y-auto px-3 space-y-6 pb-6">
-					{NAV_GROUPS.map((group) => {
+					{visibleNavGroups.map((group) => {
 						const collapsed = collapsedGroups.has(group.label);
 						return (
 							<div key={group.label}>
@@ -475,7 +494,7 @@ function Layout() {
 								</button>
 								{!collapsed && (
 									<div className="space-y-1">
-										{group.items.map(({ to, icon: Icon, label, exact }) => (
+										{group.items.filter((item) => !item.permission || auth.hasPermission(item.permission)).map(({ to, icon: Icon, label, exact }) => (
 											<NavLink
 												key={to}
 												to={withPortalQuery(to)}
@@ -541,6 +560,15 @@ function Layout() {
 							</h1>
 						</div>
 						<div className="flex items-center gap-3">
+							{auth.user && !isPortalMode ? (
+								<div className="hidden items-center gap-2 text-right sm:block">
+									<p className="text-xs font-semibold text-slate-200">{auth.user.display_name}</p>
+									<p className="text-[10px] uppercase tracking-wider text-slate-500">{auth.user.role_codes.join(" · ")}</p>
+								</div>
+							) : null}
+							{auth.user && !isPortalMode ? (
+								<button type="button" onClick={() => void auth.logout()} className="rounded-lg border border-slate-700 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:border-rose-400/50 hover:text-rose-200">Sign out</button>
+							) : null}
 							{isPortalMode && (
 								<div className="hidden rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-200 md:inline-flex">
 									{portalLiveLabel}
@@ -714,6 +742,7 @@ function Layout() {
 
 						{/* System Routes */}
 						<Route path="/settings" element={<SettingsPage />} />
+						<Route path="/system/staff-access" element={<StaffAccessPage />} />
 						<Route path="/troubleshoot" element={<TroubleshootPage />} />
 
 						{/* Default Dashboard */}
@@ -729,9 +758,33 @@ function Layout() {
 export default function App() {
 	return (
 		<BrowserRouter>
-			<WebSocketProvider>
-				<Layout />
-			</WebSocketProvider>
+			<AuthProvider>
+				<AuthBoundary />
+			</AuthProvider>
 		</BrowserRouter>
+	);
+}
+
+function AuthBoundary() {
+	const location = useLocation();
+	const auth = useAuth();
+	if (auth.loading) {
+		return <div className="flex min-h-screen items-center justify-center bg-slate-950 text-sm text-slate-400">Checking staff session…</div>;
+	}
+	if (auth.setupRequired) {
+		if (location.pathname === "/setup-owner") return <SetupOwnerPage />;
+		return <Navigate to="/setup-owner" replace />;
+	}
+	if (!auth.user) {
+		if (location.pathname === "/login") return <LoginPage />;
+		return <Navigate to="/login" replace />;
+	}
+	if (location.pathname === "/login" || location.pathname === "/setup-owner") {
+		return <Navigate to="/home" replace />;
+	}
+	return (
+		<WebSocketProvider>
+			<Layout />
+		</WebSocketProvider>
 	);
 }

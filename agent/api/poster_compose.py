@@ -103,11 +103,11 @@ async def compose_poster(req: ComposeRequest):
     try:
         from agent.services.staff_identity_service import (
             StaffIdentityError,
-            resolve_staff_identity,
         )
+        from agent.security.access_control import resolve_request_staff
 
         try:
-            staff_profile = await resolve_staff_identity(req.staff_id)
+            staff_profile = await resolve_request_staff(req.staff_id)
         except StaffIdentityError as exc:
             raise HTTPException(
                 status_code=exc.status_code,
