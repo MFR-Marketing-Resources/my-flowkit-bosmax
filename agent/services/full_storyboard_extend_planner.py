@@ -15,6 +15,7 @@ from typing import Any, Mapping, Sequence
 
 from agent.services import canonical_prompt_compiler as canonical
 from agent.services.canonical_cta_fitter import (
+    FIT_EXACT,
     FIT_BLOCKED,
     fit_spoken_cta,
 )
@@ -460,41 +461,121 @@ def _build_dialogue_plan(
         canonical.dialogue_word_budget(seconds, target_language, wps_mode=wps_mode)
         for seconds in story_plan.resolved_block_plan
     ]
-    canonical_cta = _clean(normalized_copy.get("cta"))
     final_block_budget = budgets[-1] if dialogue_enabled and budgets else 0
-    # When dialogue is disabled the CTA is not spoken; fit against a huge budget so
-    # provenance still records EXACT without failing closed.
-    fit_budget = final_block_budget if dialogue_enabled else 10**9
-    cta_fit = fit_spoken_cta(
-        canonical_cta_text=canonical_cta,
-        final_block_word_budget=fit_budget,
-        target_language=target_language,
-        wps_mode=wps_mode,
-        cta_type=normalized_copy.get("cta_type"),
-        resolved_block_plan=story_plan.resolved_block_plan,
+    immutable_v2 = (
+        dialogue_enabled
+        and approved_dialogue is not None
+        and str(normalized_copy.get("copy_source") or "").casefold()
+        == "copy_blueprint_v2"
     )
-    if dialogue_enabled and canonical_cta and cta_fit.fit_status == FIT_BLOCKED:
-        raise PlannerValidationError("FINAL_CTA_CANNOT_FIT_WPS_BUDGET")
-    spoken_cta = cta_fit.spoken_cta_text if dialogue_enabled else ""
-    clause_specs = _global_dialogue_clause_specs(
-        normalized_copy=normalized_copy,
-        approved_dialogue=approved_dialogue,
-        final_cta=spoken_cta,
-        canonical_cta=canonical_cta,
-        target_language=target_language,
-        family=canonical._infer_product_family(product, normalized_copy),
-    ) if dialogue_enabled else []
-    clause_specs = _compress_global_dialogue_clause_specs(
-        clause_specs=clause_specs,
-        total_budget=sum(budgets) if dialogue_enabled else 0,
-        final_block_budget=final_block_budget,
-        total_blocks=len(story_plan.resolved_block_plan),
-    )
-    clause_specs, omission_log = _ensure_packable_clause_specs(
-        clause_specs=clause_specs,
-        block_budgets=budgets if dialogue_enabled else [],
-        total_blocks=len(story_plan.resolved_block_plan),
-    )
+    compression_version = "dialogue_packable_compress_v1"
+    if immutable_v2:
+        bound_duration = normalized_copy.get("target_duration_seconds")
+        if bound_duration is not None and float(bound_duration) != float(
+            story_plan.total_duration_seconds
+        ):
+            raise PlannerValidationError(
+                "COPY_V2_DURATION_BINDING_MISMATCH",
+                ""
+                f"bound_duration_seconds={bound_duration};"
+                f"requested_duration_seconds={story_plan.total_duration_seconds};"
+                f"resolved_block_plan={list(story_plan.resolved_block_plan)}",
+            )
+        expected_dialogue = _clean(approved_dialogue)
+        stage_items = normalized_copy.get("approved_execution_text") or []
+        if not stage_items:
+            raise PlannerValidationError("COPY_V2_APPROVED_TEXT_MISSING")
+        clause_specs: list[tuple[str, str]] = []
+        for index, item in enumerate(stage_items):
+            if not isinstance(item, dict):
+                raise PlannerValidationError("COPY_V2_APPROVED_TEXT_MISSING")
+            text = _clean(item.get("text"))
+            if not text:
+                raise PlannerValidationError("COPY_V2_APPROVED_TEXT_MISSING")
+            semantic_role = _clean(item.get("semantic_role")).upper()
+            role = (
+                "CTA"
+                if semantic_role == "CTA" or index == len(stage_items) - 1
+                else "HOOK"
+                if index == 0
+                else "CONTEXT"
+            )
+            clause_specs.append((role, text))
+        reconstructed = " ".join(text for _, text in clause_specs)
+        if reconstructed != expected_dialogue:
+            raise PlannerValidationError(
+                "COPY_V2_APPROVED_TEXT_ORDER_MISMATCH",
+                f"approved_sha_text_mismatch;stage_count={len(clause_specs)}",
+            )
+        approved_word_count = len(expected_dialogue.split())
+        allowed_word_budget = sum(budgets)
+        if approved_word_count > allowed_word_budget:
+            raise PlannerValidationError(
+                "COPY_V2_APPROVED_DIALOGUE_EXCEEDS_DURATION_BUDGET",
+                ""
+                f"approved_words={approved_word_count};"
+                f"allowed_words={allowed_word_budget};"
+                f"block_budgets={budgets};"
+                f"duration_seconds={story_plan.total_duration_seconds};"
+                f"target_language={target_language};wps_mode={str(wps_mode).upper()};"
+                f"estimated_word_count={normalized_copy.get('estimated_word_count')}",
+            )
+        approved_cta = clause_specs[-1][1]
+        cta_fit = fit_spoken_cta(
+            canonical_cta_text=approved_cta,
+            final_block_word_budget=final_block_budget,
+            target_language=target_language,
+            wps_mode=wps_mode,
+            cta_type=normalized_copy.get("cta_type"),
+            resolved_block_plan=story_plan.resolved_block_plan,
+        )
+        if (
+            cta_fit.fit_status != FIT_EXACT
+            or cta_fit.spoken_cta_text != approved_cta
+        ):
+            raise PlannerValidationError(
+                "COPY_V2_COMPILER_MUTATION",
+                "approved CTA could not remain exact in the final block",
+            )
+        omission_log: list[dict[str, Any]] = []
+        compression_version = "immutable_approved_execution_text_v1"
+        canonical_cta = approved_cta
+        spoken_cta = approved_cta
+    else:
+        canonical_cta = _clean(normalized_copy.get("cta"))
+        # When dialogue is disabled the CTA is not spoken; fit against a huge budget so
+        # provenance still records EXACT without failing closed.
+        fit_budget = final_block_budget if dialogue_enabled else 10**9
+        cta_fit = fit_spoken_cta(
+            canonical_cta_text=canonical_cta,
+            final_block_word_budget=fit_budget,
+            target_language=target_language,
+            wps_mode=wps_mode,
+            cta_type=normalized_copy.get("cta_type"),
+            resolved_block_plan=story_plan.resolved_block_plan,
+        )
+        if dialogue_enabled and canonical_cta and cta_fit.fit_status == FIT_BLOCKED:
+            raise PlannerValidationError("FINAL_CTA_CANNOT_FIT_WPS_BUDGET")
+        spoken_cta = cta_fit.spoken_cta_text if dialogue_enabled else ""
+        clause_specs = _global_dialogue_clause_specs(
+            normalized_copy=normalized_copy,
+            approved_dialogue=approved_dialogue,
+            final_cta=spoken_cta,
+            canonical_cta=canonical_cta,
+            target_language=target_language,
+            family=canonical._infer_product_family(product, normalized_copy),
+        ) if dialogue_enabled else []
+        clause_specs = _compress_global_dialogue_clause_specs(
+            clause_specs=clause_specs,
+            total_budget=sum(budgets) if dialogue_enabled else 0,
+            final_block_budget=final_block_budget,
+            total_blocks=len(story_plan.resolved_block_plan),
+        )
+        clause_specs, omission_log = _ensure_packable_clause_specs(
+            clause_specs=clause_specs,
+            block_budgets=budgets if dialogue_enabled else [],
+            total_blocks=len(story_plan.resolved_block_plan),
+        )
     utterances = _timestamp_global_dialogue_utterances(
         clause_specs=clause_specs,
         total_duration=story_plan.total_duration_seconds,
@@ -520,7 +601,8 @@ def _build_dialogue_plan(
             "generated_once": True,
             "final_cta_required": bool(canonical_cta and dialogue_enabled),
             "omitted_utterances": omission_log if dialogue_enabled else [],
-            "compression_version": "dialogue_packable_compress_v1",
+            "compression_version": compression_version,
+            "approved_dialogue_immutable": immutable_v2,
             "cta_fit": cta_fit.to_dict(),
         },
     )
