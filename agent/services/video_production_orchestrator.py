@@ -681,7 +681,8 @@ async def advance_job(
             blocks = [_nx.ExtendBlock(block_index=position + 1, position=position,
                                       prompt=prompt, is_final=bool(cont.get("is_final")))]
             req = _nx.ExtendChainRequest(
-                project_id=job["project_id"], scene_id=job["scene_id"],
+                project_id=job["project_id"], product_id=job.get("product_id"),
+                scene_id=job["scene_id"],
                 source_operation_id=parent_op, blocks=blocks,
                 aspect_ratio=extend_aspect_ratio(job.get("aspect_ratio")))
             try:

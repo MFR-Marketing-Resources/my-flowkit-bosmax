@@ -46,6 +46,51 @@ def _http(exc: plans.CreativeProductionError) -> HTTPException:
     )
 
 
+async def _require_operational_products(product_ids: list[str], *, lane: str) -> None:
+    from agent.services.product_release_service import (
+        ProductReleaseError,
+        ensure_products_operationally_visible,
+    )
+
+    try:
+        await ensure_products_operationally_visible(product_ids, lane=lane)
+    except ProductReleaseError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "message": exc.message, "details": exc.details},
+        ) from exc
+
+
+async def _require_operational_plan(plan_id: str, *, lane: str) -> None:
+    """Re-check every product in a prepared plan before an operational action."""
+
+    try:
+        detail = await plans.get_plan_detail(plan_id)
+    except plans.CreativeProductionError as exc:
+        raise _http(exc) from exc
+
+    product_ids = [
+        str(allocation.product_id).strip()
+        for allocation in detail.snapshot.product_allocations
+        if str(allocation.product_id).strip()
+    ]
+    if not product_ids:
+        product_ids = [
+            str(item.get("product_id") or "").strip()
+            for item in detail.items
+            if str(item.get("product_id") or "").strip()
+        ]
+    if not product_ids:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "PRODUCT_SCOPE_REQUIRED",
+                "message": "The production plan has no canonical product scope.",
+            },
+        )
+    await _require_operational_products(sorted(set(product_ids)), lane=lane)
+
+
 @router.get(
     "/cohort-authority",
     response_model=P58CohortAuthorityResponse,
@@ -64,6 +109,7 @@ async def cohort_authority(
 
 @router.post("/plans", status_code=201)
 async def create_plan(body: ProductionPlanCreateRequest):
+    await _require_operational_products(body.product_ids, lane="PRODUCTION_STUDIO")
     try:
         return await plans.create_plan(body)
     except ProductionRecipeError as exc:
@@ -84,6 +130,7 @@ async def list_plans(
 
 @router.post("/pool-authority")
 async def pool_authority(body: PoolAuthorityRequest):
+    await _require_operational_products(body.product_ids, lane="PRODUCTION_STUDIO")
     try:
         return await plans.get_governed_pool_authority(body)
     except plans.CreativeProductionError as exc:
@@ -92,6 +139,10 @@ async def pool_authority(body: PoolAuthorityRequest):
 
 @router.post("/treatment-availability")
 async def treatment_availability(body: TreatmentAvailabilityRequest):
+    await _require_operational_products(
+        [item.product_id for item in body.product_video_allocations],
+        lane="PRODUCTION_STUDIO",
+    )
     try:
         recipe_adapter = resolve_production_recipe(body.production_recipe)
         return await plans.resolve_treatment_availability(
@@ -225,6 +276,7 @@ async def materialize_plan_approval_manifest(plan_id: str, body: DryRunRequest):
 
 @router.post("/plans/{plan_id}/start")
 async def start_plan(plan_id: str, body: StartPlanRequest):
+    await _require_operational_plan(plan_id, lane="PRODUCTION_STUDIO")
     try:
         return await scheduler.start_plan(plan_id, body)
     except plans.CreativeProductionError as exc:

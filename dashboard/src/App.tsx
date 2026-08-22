@@ -81,6 +81,7 @@ import PromptSopLibraryPage from "./pages/PromptSopLibraryPage";
 import LoginPage from "./pages/LoginPage";
 import SetupOwnerPage from "./pages/SetupOwnerPage";
 import StaffAccessPage from "./pages/StaffAccessPage";
+import ProductReleaseControlPage from "./pages/ProductReleaseControlPage";
 import type { TelemetrySummary } from "./types";
 
 const ALL_NAV_GROUPS = [
@@ -220,6 +221,7 @@ const ALL_NAV_GROUPS = [
 			{ to: "/home", icon: LayoutDashboard, label: "Overview", exact: true },
 			{ to: "/settings", icon: SettingsIcon, label: "Settings" },
 			{ to: "/system/staff-access", icon: Users, label: "Staff & Access", permission: "staff.read" },
+			{ to: "/system/product-release", icon: PackageSearch, label: "Product Release Control", permission: "products.release" },
 		],
 	},
 ];
@@ -736,6 +738,7 @@ function Layout() {
 						{/* System Routes */}
 						<Route path="/settings" element={<SettingsPage />} />
 						<Route path="/system/staff-access" element={<StaffAccessPage />} />
+						<Route path="/system/product-release" element={<ProductReleaseControlPage />} />
 						<Route path="/troubleshoot" element={<TroubleshootPage />} />
 
 						{/* Default Dashboard */}

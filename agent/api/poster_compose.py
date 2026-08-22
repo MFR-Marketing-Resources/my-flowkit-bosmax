@@ -31,8 +31,27 @@ from agent.services.copy_execution_resolver import (
     resolve_persisted_copy_execution_binding,
 )
 from agent.api.legacy_copy_guard import require_legacy_copy_maintenance
+from agent.db import crud
 
 router = APIRouter(prefix="/poster", tags=["poster-compose"])
+
+
+async def _require_deliverable_product(poster_deliverable_id: str, *, lane: str) -> dict:
+    row = await crud.get_poster_deliverable(poster_deliverable_id)
+    if not row:
+        raise HTTPException(404, "POSTER_DELIVERABLE_NOT_FOUND")
+    from agent.services.product_release_service import (
+        ProductOperationalVisibilityError,
+        require_product_operational_visibility,
+    )
+    try:
+        await require_product_operational_visibility(row.get("product_id"), lane=lane)
+    except ProductOperationalVisibilityError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "message": exc.message, "details": exc.details},
+        ) from exc
+    return row
 
 
 def _http(exc: Exception, code: str, status_code: int) -> HTTPException:
@@ -79,6 +98,18 @@ async def composition_plan_preview(req: CompositionPlanPreviewRequest):
     Read-only: resolves the SAME canonical plan a compile would preserve (same
     resolver, same constraint assembly). No mutation, no generation, no credit
     spend."""
+    from agent.services.product_release_service import (
+        ProductReleaseError,
+        ensure_product_operationally_visible,
+    )
+
+    try:
+        await ensure_product_operationally_visible(req.product_id, lane="POSTER_BUILDER")
+    except ProductReleaseError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "message": exc.message, "details": exc.details},
+        ) from exc
     if req.poster_copy_set_id:
         require_legacy_copy_maintenance()
     try:
@@ -98,6 +129,18 @@ async def composition_plan_preview(req: CompositionPlanPreviewRequest):
 
 @router.post("/compose")
 async def compose_poster(req: ComposeRequest):
+    from agent.services.product_release_service import (
+        ProductReleaseError,
+        ensure_product_operationally_visible,
+    )
+
+    try:
+        await ensure_product_operationally_visible(req.product_id, lane="POSTER_BUILDER")
+    except ProductReleaseError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "message": exc.message, "details": exc.details},
+        ) from exc
     if req.poster_copy_set_id:
         require_legacy_copy_maintenance()
     try:
@@ -228,6 +271,9 @@ async def campaign_variants(
     req: CampaignVariantsRequest = CampaignVariantsRequest(),
 ):
     require_legacy_copy_maintenance()
+    await _require_deliverable_product(
+        poster_deliverable_id, lane="POSTER_CAMPAIGN_VARIANTS"
+    )
     try:
         return await build_campaign_variants(poster_deliverable_id, req)
     except CampaignVariantError as exc:
@@ -237,6 +283,9 @@ async def campaign_variants(
 @router.get("/deliverables/{poster_deliverable_id}/variants/{variant_id}/output")
 async def campaign_variant_output(poster_deliverable_id: str, variant_id: str):
     require_legacy_copy_maintenance()
+    await _require_deliverable_product(
+        poster_deliverable_id, lane="POSTER_CAMPAIGN_VARIANT_OUTPUT"
+    )
     try:
         out_path, selected = await render_campaign_variant(
             poster_deliverable_id, variant_id

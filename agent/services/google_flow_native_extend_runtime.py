@@ -290,6 +290,7 @@ class ExtendChainRequest:
     workspace_generation_package_id: Optional[str] = None
     seed: Optional[int] = None
     user_paygate_tier: str = "PAYGATE_TIER_TWO"
+    product_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -684,6 +685,22 @@ async def _run_one_extend_block(
     # ── LIVE SUBMIT ─────────────────────────────────────────────────────────
     # Approval proven above (verify_and_bind_dispatch marked the async context
     # authorised for the provider-boundary backstop on the envelope-hash match).
+    from agent.services.product_release_service import (
+        ProductOperationalVisibilityError,
+        require_product_operational_visibility,
+    )
+    try:
+        await require_product_operational_visibility(
+            req.product_id, lane="NATIVE_EXTEND_PROVIDER"
+        )
+    except ProductOperationalVisibilityError as exc:
+        await _crud.update_extend_lineage(
+            lineage_id,
+            polling_state=STATE_FAILED,
+            error_code=exc.code,
+            error_message=str(exc),
+        )
+        raise NativeExtendError(exc.code, str(exc)) from exc
     resp = await client.generate_video_extend(
         source_operation_id=parent_op, project_id=req.project_id, scene_id=req.scene_id,
         position=block.position, prompt=block.prompt, aspect_ratio=req.aspect_ratio,

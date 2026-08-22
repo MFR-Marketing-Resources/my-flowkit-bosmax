@@ -114,6 +114,19 @@ async def build_scene_only_prompt(req: SceneOnlyPromptRequest):
 @router.post("/compose-from-plate")
 async def compose_from_plate(req: ComposeFromPlateRequest):
     """Insert canonical cutout onto a retrieved scene plate; return final only."""
+    from agent.services.product_release_service import (
+        ProductOperationalVisibilityError,
+        require_product_operational_visibility,
+    )
+    try:
+        await require_product_operational_visibility(
+            req.product_id, lane="EXACT_PRODUCT_OUTPUT"
+        )
+    except ProductOperationalVisibilityError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "detail": exc.message, "details": exc.details},
+        ) from exc
     try:
         return await svc.compose_final_for_product(
             product_id=req.product_id,

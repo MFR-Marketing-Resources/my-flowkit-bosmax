@@ -40,7 +40,9 @@ def test_product_image_endpoint_returns_honest_error_for_remote_only_product(mon
 
 
 def test_product_image_endpoint_returns_local_file(monkeypatch, tmp_path: Path):
-    image_path = tmp_path / "local-preview.jpg"
+    monkeypatch.setattr("agent.api.products.BASE_DIR", tmp_path)
+    image_path = tmp_path / "data" / "products" / "images" / "prod-local.jpg"
+    image_path.parent.mkdir(parents=True)
     image_path.write_bytes(b"fake-jpg-bytes")
 
     async def fake_get_product(product_id: str):

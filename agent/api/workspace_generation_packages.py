@@ -74,6 +74,21 @@ from agent.services.workspace_generation_package_service import (
 router = APIRouter(prefix="/workspace/generation-packages", tags=["workspace-generation-packages"])
 
 
+async def _guard_operational_products(product_ids: list[str], *, lane: str) -> None:
+    from agent.services.product_release_service import (
+        ProductReleaseError,
+        ensure_products_operationally_visible,
+    )
+
+    try:
+        await ensure_products_operationally_visible(product_ids, lane=lane)
+    except ProductReleaseError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"error": exc.code, "message": exc.message, "details": exc.details},
+        ) from exc
+
+
 class T2VGenerationPackageRequest(_BaseModel):
     product_id: str
     workspace_execution_package_id: str | None = None
@@ -152,6 +167,7 @@ async def list_packages(
 @router.post("/f2v")
 async def create_f2v_package(request: F2VGenerationPackageRequest):
     """Create a durable F2V generation package (Prompt Handoff Bank entry)."""
+    await _guard_operational_products([request.product_id], lane="GENERATION_PACKAGE")
     try:
         package = await create_f2v_generation_package(
             product_id=request.product_id,
@@ -185,6 +201,7 @@ async def create_f2v_package(request: F2VGenerationPackageRequest):
 @router.post("/i2v")
 async def create_i2v_package(request: I2VGenerationPackageRequest):
     """Create a durable I2V generation package (Prompt Handoff Bank entry)."""
+    await _guard_operational_products([request.product_id], lane="GENERATION_PACKAGE")
     try:
         package = await create_i2v_generation_package(
             product_id=request.product_id,
@@ -236,6 +253,7 @@ async def create_from_execution_package(
             raise HTTPException(status_code=404, detail=f"Execution package {workspace_execution_package_id!r} not found")
 
         product_id = wep.get("product_id", "")
+        await _guard_operational_products([str(product_id)], lane="GENERATION_PACKAGE")
         wep_mode = mode or wep.get("mode", "F2V")
         lineage = wep.get("request_lineage_payload") or {}
         if isinstance(lineage, str):
@@ -375,6 +393,7 @@ async def create_from_execution_package(
 @router.post("/t2v")
 async def create_t2v_package(request: T2VGenerationPackageRequest):
     """Create a durable T2V generation package (Prompt Handoff Bank entry)."""
+    await _guard_operational_products([request.product_id], lane="GENERATION_PACKAGE")
     try:
         package = await create_t2v_generation_package(
             product_id=request.product_id,
@@ -401,6 +420,7 @@ async def create_t2v_package(request: T2VGenerationPackageRequest):
 @router.post("/img")
 async def create_img_package(request: IMGGenerationPackageRequest):
     """Create a durable IMG generation package (Prompt Handoff Bank entry)."""
+    await _guard_operational_products([request.product_id], lane="GENERATION_PACKAGE")
     try:
         package = await create_img_generation_package(
             product_id=request.product_id,
@@ -443,6 +463,10 @@ async def start_batch(request: BatchGenerationRequest):
         raise HTTPException(status_code=400, detail="quantity_per_mode must be 1–100")
     if request.interval_seconds < 0 or request.interval_seconds > 60:
         raise HTTPException(status_code=400, detail="interval_seconds must be 0–60")
+    await _guard_operational_products(
+        [request.product_id, *(request.product_ids or [])],
+        lane="BATCH_GENERATION",
+    )
 
     try:
         run = await start_batch_generation(
@@ -559,6 +583,7 @@ async def start_batch_prompts(request: BatchPromptRequest):
         )
     if request.interval_seconds < 0 or request.interval_seconds > 60:
         raise HTTPException(status_code=400, detail="interval_seconds must be 0–60")
+    await _guard_operational_products([request.product_id], lane="BATCH_PROMPT_PRODUCTION")
     try:
         run = await start_batch_prompt_run(
             product_id=request.product_id,
@@ -664,6 +689,7 @@ async def create_scheduled_run(request: ScheduledBatchRequest):
         raise HTTPException(status_code=400, detail="product_ids must not be empty")
     if not request.modes:
         raise HTTPException(status_code=400, detail="modes must not be empty")
+    await _guard_operational_products(request.product_ids, lane="SCHEDULED_BATCH")
     try:
         run = await create_scheduled_batch_run(
             product_ids=request.product_ids,

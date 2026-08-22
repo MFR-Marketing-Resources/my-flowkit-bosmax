@@ -898,6 +898,17 @@ CREATE TABLE IF NOT EXISTS product (
     media_id            TEXT, -- Google Flow media_id after upload
     local_image_path    TEXT, -- Path to cached image
     image_failure_detail TEXT,
+    -- Owner-governed operational visibility is separate from lifecycle and
+    -- readiness. New and historical rows are hidden until explicitly released.
+    staff_release_status TEXT NOT NULL DEFAULT 'HIDDEN' CHECK(staff_release_status IN ('HIDDEN','RELEASED')),
+    released_by_user_id TEXT,
+    released_by_staff_id TEXT,
+    released_at TEXT,
+    hidden_by_user_id TEXT,
+    hidden_by_staff_id TEXT,
+    hidden_at TEXT,
+    release_note TEXT,
+    release_updated_at TEXT,
     visual_canvas_width INTEGER NOT NULL DEFAULT 1000,
     visual_canvas_height INTEGER NOT NULL DEFAULT 1000,
     visual_canvas_requirement TEXT NOT NULL DEFAULT 'Manual / Canva cutouts must be transparent PNG files on an exact 1000x1000 px canvas.',
@@ -2742,6 +2753,15 @@ CREATE TABLE IF NOT EXISTS product (
     media_id            TEXT,
     local_image_path    TEXT,
     image_failure_detail TEXT,
+    staff_release_status TEXT NOT NULL DEFAULT 'HIDDEN' CHECK(staff_release_status IN ('HIDDEN','RELEASED')),
+    released_by_user_id TEXT,
+    released_by_staff_id TEXT,
+    released_at TEXT,
+    hidden_by_user_id TEXT,
+    hidden_by_staff_id TEXT,
+    hidden_at TEXT,
+    release_note TEXT,
+    release_updated_at TEXT,
     visual_canvas_width INTEGER NOT NULL DEFAULT 1000,
     visual_canvas_height INTEGER NOT NULL DEFAULT 1000,
     visual_canvas_requirement TEXT NOT NULL DEFAULT 'Manual / Canva cutouts must be transparent PNG files on an exact 1000x1000 px canvas.',
@@ -2751,13 +2771,32 @@ CREATE TABLE IF NOT EXISTS product (
 CREATE INDEX IF NOT EXISTS idx_product_source ON product(source);
 CREATE INDEX IF NOT EXISTS idx_product_name ON product(product_short_name);
 """)
-            await db.execute("""
+            release_columns = (
+                "staff_release_status",
+                "released_by_user_id",
+                "released_by_staff_id",
+                "released_at",
+                "hidden_by_user_id",
+                "hidden_by_staff_id",
+                "hidden_at",
+                "release_note",
+                "release_updated_at",
+            )
+            if set(release_columns).issubset(product_columns):
+                release_insert = ", " + ", ".join(release_columns)
+                release_select = ", " + ", ".join(release_columns)
+            else:
+                release_insert = ", " + ", ".join(release_columns)
+                release_select = ", " + ", ".join(
+                    ["'HIDDEN'"] + ["NULL"] * (len(release_columns) - 1)
+                )
+            await db.execute(f"""
 INSERT INTO product (
     id, source, source_url, brand, raw_product_title, product_display_name, product_short_name,
     category, subcategory, type, shop_name, price, currency, commission_amount, commission_rate,
     price_min, price_max, commission, image_url, tiktok_product_url, fastmoss_source_file,
     image_asset_status, lifecycle_status, archived_at, archived_reason, archived_by, unarchived_at, unarchived_reason,
-    lifecycle_provenance, asset_status, media_id, local_image_path, image_failure_detail, created_at, updated_at
+    lifecycle_provenance, asset_status, media_id, local_image_path, image_failure_detail{release_insert}, created_at, updated_at
 )
 SELECT
     id,
@@ -2792,7 +2831,7 @@ SELECT
     asset_status,
     media_id,
     local_image_path,
-    NULL,
+    NULL{release_select},
     created_at,
     updated_at
 FROM _product_old
@@ -2858,6 +2897,34 @@ FROM _product_old
             logger.info(
                 "Migrated: added copywriting_product_type_code column to product table"
             )
+        if "staff_release_status" not in product_columns:
+            await db.execute(
+                "ALTER TABLE product ADD COLUMN staff_release_status TEXT NOT NULL DEFAULT 'HIDDEN'"
+            )
+            logger.info("Migrated: added staff_release_status column to product table")
+        if "released_by_user_id" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN released_by_user_id TEXT")
+        if "released_by_staff_id" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN released_by_staff_id TEXT")
+        if "released_at" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN released_at TEXT")
+        if "hidden_by_user_id" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN hidden_by_user_id TEXT")
+        if "hidden_by_staff_id" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN hidden_by_staff_id TEXT")
+        if "hidden_at" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN hidden_at TEXT")
+        if "release_note" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN release_note TEXT")
+        if "release_updated_at" not in product_columns:
+            await db.execute("ALTER TABLE product ADD COLUMN release_updated_at TEXT")
+        await db.execute(
+            "UPDATE product SET staff_release_status='HIDDEN' "
+            "WHERE staff_release_status IS NULL OR staff_release_status NOT IN ('HIDDEN','RELEASED')"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_product_staff_release ON product(staff_release_status)"
+        )
 
         # Migration: create/extend the workbook-backed copywriting authority
         # before its provenance migration runs. Existing rows are retained and
