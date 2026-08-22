@@ -146,6 +146,51 @@ def test_activation_candidates_get_forwards_read_only_projection(monkeypatch):
     assert response.json()["activation_mutations"] == 0
 
 
+def test_activation_candidates_diagnostics_view_is_read_only_and_excludes_current_and_ready(monkeypatch):
+    async def fake_list_activation_candidates():
+        return {
+            "items": [
+                {
+                    "blueprint_id": "bp-ready",
+                    "status": "PRODUCTION_VALID",
+                    "activatable": True,
+                    "current_authority_state": "NONE",
+                },
+                {
+                    "blueprint_id": "bp-current",
+                    "status": "PRODUCTION_VALID",
+                    "activatable": True,
+                    "current_authority_state": "CURRENT",
+                },
+                {
+                    "blueprint_id": "bp-stale",
+                    "status": "PRODUCTION_VALID",
+                    "activatable": False,
+                    "current_authority_state": "STALE",
+                    "blocked_reason": "COPY_V2_TAXONOMY_AUTHORITY_STALE",
+                },
+            ],
+            "total": 3,
+            "max_batch_size": 50,
+            "provider_calls": 0,
+            "credit_spend": 0,
+            "activation_mutations": 0,
+        }
+
+    monkeypatch.setattr(service, "list_activation_candidates", fake_list_activation_candidates)
+    response = _client().get(
+        "/api/copy-register/v2/bulk/activation-candidates?view=diagnostics"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["view"] == "diagnostics"
+    assert response.json()["total"] == 1
+    assert [item["blueprint_id"] for item in response.json()["items"]] == ["bp-stale"]
+    assert response.json()["provider_calls"] == 0
+    assert response.json()["credit_spend"] == 0
+    assert response.json()["activation_mutations"] == 0
+
+
 def test_activation_batch_post_forwards_owner_attestation_and_returns_per_item_results(monkeypatch):
     captured: dict[str, object] = {}
 

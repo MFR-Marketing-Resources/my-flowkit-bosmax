@@ -11,6 +11,27 @@ import { getAPI } from "../../api/client";
 
 const mockedGetAPI = vi.mocked(getAPI);
 
+const readyCandidate = {
+	blueprint_id: "bp-ready",
+	revision: 1,
+	product_id: "product-ready",
+	product_name: "Ready Product",
+	status: "PRODUCTION_VALID",
+	formula_id: "PAS",
+	activatable: true,
+	current_authority_state: "NONE",
+	blocked_reason: null,
+	current_authority_reason: null,
+};
+
+const currentCandidate = {
+	...readyCandidate,
+	blueprint_id: "bp-current",
+	product_id: "product-current",
+	product_name: "Current Product",
+	current_authority_state: "CURRENT",
+};
+
 const staleCandidate = {
 	blueprint_id: "bp-stale",
 	revision: 2,
@@ -35,8 +56,8 @@ describe("CopyAuthorityAttentionPanel", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockedGetAPI.mockResolvedValue({
-			items: [staleCandidate],
-			total: 1,
+			items: [staleCandidate, currentCandidate, readyCandidate],
+			total: 3,
 			view: "diagnostics",
 			max_batch_size: 50,
 			provider_calls: 0,
@@ -58,6 +79,11 @@ describe("CopyAuthorityAttentionPanel", () => {
 		);
 		expect(screen.getByText(/Taxonomy authority changed after this copy was approved/i)).toBeInTheDocument();
 		expect(screen.getByText("COPY_V2_TAXONOMY_AUTHORITY_STALE")).toBeInTheDocument();
+		expect(screen.queryByText("Current Product")).not.toBeInTheDocument();
+		expect(screen.queryByText("Ready Product")).not.toBeInTheDocument();
+		expect(screen.getByTestId("copy-authority-attention-safety")).toHaveTextContent(
+			"provider calls: 0 · credit spend: 0 · activation mutations: 0",
+		);
 		expect(screen.getByRole("link", { name: /Open in Copy Authority/i })).toHaveAttribute(
 			"href",
 			"/creative/copy-authority?product_id=product-stale&blueprint_id=bp-stale",

@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from agent.services import copy_register_bulk_service as svc
+from agent.services import copy_activation_candidate_view_service as candidate_views
 from agent.services import copy_register_review_queue_service as review_queue
 
 router = APIRouter(prefix="/copy-register/v2/bulk", tags=["copy-register-v2-bulk"])
@@ -119,9 +120,10 @@ async def approve_review_queue_batch(request: BatchApproveDraftsRequest):
 
 
 @router.get("/activation-candidates")
-async def get_activation_candidates():
+async def get_activation_candidates(view: str = Query(default="all")):
     try:
-        return await review_queue.list_activation_candidates()
+        candidates = await review_queue.list_activation_candidates()
+        return candidate_views.project_activation_candidate_view(candidates, view=view)
     except review_queue.CopyRegisterReviewQueueError as exc:
         detail: dict[str, Any] = {"error": exc.code, "detail": str(exc)}
         if exc.details is not None:

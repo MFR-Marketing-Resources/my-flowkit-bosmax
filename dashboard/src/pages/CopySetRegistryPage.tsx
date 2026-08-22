@@ -307,6 +307,14 @@ function BlueprintCard({
 
 const ACTIVATION_CONFIRMATION_PHRASE = "ACTIVATE_COPY_AUTHORITY_BATCH";
 
+function isActivationQueueCandidate(candidate: CopyActivationCandidateV2): boolean {
+	return (
+		candidate.status === "PRODUCTION_VALID" &&
+		candidate.activatable === true &&
+		candidate.current_authority_state === "NONE"
+	);
+}
+
 function CopyActivationQueue({
 	candidates,
 	selectedIds,
@@ -347,7 +355,7 @@ function CopyActivationQueue({
 	return (
 		<Section
 			title="Phase 3 · Bulk activate copy authority"
-			helper="Select current, approved blueprints to bind copy for the video and poster lanes. This action never generates media, calls a provider, or spends credits."
+			helper="Select activation-ready approved blueprints to bind copy for the video and poster lanes. This action never generates media, calls a provider, or spends credits."
 		>
 			<div ref={queueRef} data-testid="activation-queue" className="space-y-4">
 				{error ? (
@@ -356,41 +364,35 @@ function CopyActivationQueue({
 					</p>
 				) : null}
 				<div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
-					<span data-testid="activation-candidate-count">{candidates.length} PRODUCTION_VALID blueprint{candidates.length === 1 ? "" : "s"}</span>
+					<span data-testid="activation-candidate-count">{candidates.length} activation-ready PRODUCTION_VALID blueprint{candidates.length === 1 ? "" : "s"}</span>
 					<span>Exact phrase + explicit owner authorization required</span>
 				</div>
 				<div className="space-y-2" data-testid="activation-candidate-list">
 					{candidates.length === 0 ? (
-						<p className="rounded-lg border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">No PRODUCTION_VALID activation candidates are currently available.</p>
+						<p className="rounded-lg border border-dashed border-slate-800 px-3 py-4 text-xs text-slate-500">No activation-ready PRODUCTION_VALID blueprints are currently available.</p>
 					) : candidates.map((candidate) => {
-						const alreadyCurrent = candidate.current_authority_state === "CURRENT";
-						const selectable = candidate.activatable && !alreadyCurrent;
-						const disabledReason = alreadyCurrent
-							? "Already CURRENT for all required lanes; rerun is an idempotent no-op."
-							: candidate.blocked_reason || "Current authority is not activatable.";
 						return (
 							<label
 								key={`${candidate.blueprint_id}:${candidate.revision}`}
 								data-testid={`activation-candidate-${candidate.blueprint_id}`}
-								className={`block rounded-lg border p-3 ${selectable ? "border-slate-800 bg-slate-950/60" : "border-amber-500/30 bg-amber-500/5"}`}
+								className="block rounded-lg border border-slate-800 bg-slate-950/60 p-3"
 							>
 								<div className="flex items-start gap-3">
 									<input
 										type="checkbox"
 										data-testid={`activation-select-${candidate.blueprint_id}`}
 										checked={selectedIds.includes(candidate.blueprint_id)}
-										disabled={!selectable || busy}
+										disabled={busy}
 										onChange={() => onToggle(candidate.blueprint_id)}
 										className="mt-1"
 									/>
 									<div className="min-w-0 flex-1 text-xs">
 										<div className="flex flex-wrap items-center gap-2">
 											<span className="font-semibold text-slate-100">{candidate.product_name || candidate.product_id}</span>
-											<Badge tone={alreadyCurrent ? "success" : selectable ? "info" : "warn"}>{candidate.current_authority_state}</Badge>
+											<Badge tone="info">READY TO ACTIVATE</Badge>
 											<span className="font-mono text-[10px] text-slate-500">{candidate.blueprint_id} · rev {candidate.revision}</span>
 										</div>
 										<p className="mt-1 text-slate-400">{candidate.formula_id} · {candidate.required_lane_count} required lanes · {candidate.status}</p>
-										{!selectable ? <HelperText tone="warn" className="mt-1">Disabled: {disabledReason}</HelperText> : null}
 									</div>
 								</div>
 							</label>
@@ -526,6 +528,10 @@ export default function CopySetRegistryPage() {
 		[angles, selectedAngleId],
 	);
 	const latestBlueprint = blueprints[0] ?? null;
+	const activationQueueCandidates = useMemo(
+		() => activationCandidates.filter(isActivationQueueCandidate),
+		[activationCandidates],
+	);
 	// RULE 3: resolve the EXACT selected blueprint. Only when nothing is explicitly
 	// selected (fresh authoring) does this fall back to the newest blueprint.
 	const reviewTarget = useMemo(() => {
@@ -716,13 +722,14 @@ export default function CopySetRegistryPage() {
 	};
 
 	const openActivationQueueFor = (blueprint: CopyBlueprintV2Record) => {
-		const candidate = activationCandidates.find((item) => item.blueprint_id === blueprint.blueprint_id);
-		if (candidate?.activatable && candidate.current_authority_state !== "CURRENT") {
+		const candidate = activationQueueCandidates.find((item) => item.blueprint_id === blueprint.blueprint_id);
+		const sourceCandidate = activationCandidates.find((item) => item.blueprint_id === blueprint.blueprint_id);
+		if (candidate) {
 			setActivationSelectedIds([blueprint.blueprint_id]);
 			setActivationQueueError("");
 		} else {
 			setActivationSelectedIds([]);
-			setActivationQueueError(candidate?.blocked_reason || "This blueprint is not a current activation candidate.");
+			setActivationQueueError(sourceCandidate?.blocked_reason || "This blueprint is not activation-ready.");
 		}
 		activationQueueRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
 	};
@@ -1004,7 +1011,7 @@ export default function CopySetRegistryPage() {
 			</div>
 
 			<CopyActivationQueue
-				candidates={activationCandidates}
+				candidates={activationQueueCandidates}
 				selectedIds={activationSelectedIds}
 				confirmationPhrase={activationConfirmationPhrase}
 				ownerAuthorized={ownerAuthorization}
