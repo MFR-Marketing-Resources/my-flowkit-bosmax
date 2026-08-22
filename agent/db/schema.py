@@ -533,12 +533,24 @@ CREATE TABLE IF NOT EXISTS request (
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS staff_profile (
+    staff_id      TEXT PRIMARY KEY,
+    display_name  TEXT NOT NULL,
+    active        INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_staff_profile_active_name
+    ON staff_profile(active, display_name COLLATE NOCASE);
+
 CREATE TABLE IF NOT EXISTS request_telemetry (
     request_id    TEXT PRIMARY KEY REFERENCES request(id) ON DELETE CASCADE,
     project_id    TEXT REFERENCES project(id) ON DELETE CASCADE,
     video_id      TEXT REFERENCES video(id) ON DELETE CASCADE,
     scene_id      TEXT REFERENCES scene(id) ON DELETE CASCADE,
     product_id    TEXT REFERENCES product(id) ON DELETE SET NULL,
+    staff_id      TEXT,
+    staff_display_name_snapshot TEXT,
     request_type  TEXT NOT NULL,
     mode          TEXT,
     prompt_package_snapshot_id TEXT,
@@ -593,6 +605,8 @@ CREATE TABLE IF NOT EXISTS request_stage_event (
 CREATE TABLE IF NOT EXISTS workspace_execution_package (
     workspace_execution_package_id TEXT PRIMARY KEY,
     product_id    TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    staff_id      TEXT,
+    staff_display_name_snapshot TEXT,
     mode          TEXT NOT NULL,
     duration_seconds INTEGER NOT NULL DEFAULT 8,
     aspect_ratio  TEXT NOT NULL DEFAULT '9:16',
@@ -618,6 +632,8 @@ CREATE TABLE IF NOT EXISTS workspace_generation_package (
     workspace_generation_package_id TEXT PRIMARY KEY,
     mode          TEXT NOT NULL,
     product_id    TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    staff_id      TEXT,
+    staff_display_name_snapshot TEXT,
     product_name_snapshot TEXT NOT NULL DEFAULT '',
     source_lane   TEXT NOT NULL DEFAULT 'F2V',
     prompt_package_snapshot_id TEXT NOT NULL DEFAULT '',
@@ -1222,6 +1238,8 @@ CREATE TABLE IF NOT EXISTS batch_generation_run (
 CREATE TABLE IF NOT EXISTS generated_artifact (
     media_id       TEXT PRIMARY KEY,
     job_id         TEXT,
+    staff_id       TEXT,
+    staff_display_name_snapshot TEXT,
     mode           TEXT,
     artifact_kind  TEXT NOT NULL DEFAULT 'video' CHECK(artifact_kind IN ('video','image')),
     local_path     TEXT,
@@ -3770,6 +3788,8 @@ CREATE TABLE IF NOT EXISTS generation_result (
     media_id       TEXT PRIMARY KEY,
     job_id         TEXT,
     request_id     TEXT,
+    staff_id       TEXT,
+    staff_display_name_snapshot TEXT,
     mode           TEXT,
     artifact_kind  TEXT NOT NULL DEFAULT 'video'
                    CHECK(artifact_kind IN ('video','image')),
@@ -3854,6 +3874,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_extend_lineage_idem ON extend_lineage(idemp
 -- single full-duration MP4; segment media are internal diagnostics only.
 CREATE TABLE IF NOT EXISTS video_production_job (
     job_id                      TEXT PRIMARY KEY,
+    staff_id                    TEXT,
+    staff_display_name_snapshot TEXT,
     project_id                  TEXT,
     scene_id                    TEXT,
     requested_duration_seconds  INTEGER,
@@ -5087,6 +5109,8 @@ CREATE INDEX IF NOT EXISTS idx_product_intelligence_review_field_provenance_draf
         await db.executescript("""
 CREATE TABLE IF NOT EXISTS bulk_generation_run (
     bulk_run_id             TEXT PRIMARY KEY,
+    staff_id                TEXT,
+    staff_display_name_snapshot TEXT,
     kind                    TEXT NOT NULL
                             CHECK(kind IN ('AVATAR_IMAGE','IMG','VIDEO','MIXED','MONTAGE_DISCRETE')),
     status                  TEXT NOT NULL DEFAULT 'PENDING'
@@ -5109,6 +5133,8 @@ CREATE TABLE IF NOT EXISTS bulk_generation_run (
 CREATE TABLE IF NOT EXISTS bulk_generation_item (
     bulk_item_id            TEXT PRIMARY KEY,
     bulk_run_id             TEXT NOT NULL,
+    staff_id                TEXT,
+    staff_display_name_snapshot TEXT,
     item_type               TEXT NOT NULL
                             CHECK(item_type IN ('AVATAR_IMAGE','IMG','T2V','I2V','F2V','MONTAGE_SCENE')),
     source_ref              TEXT NOT NULL,
@@ -5174,6 +5200,8 @@ CREATE INDEX IF NOT EXISTS idx_poster_copy_set_product
 CREATE TABLE IF NOT EXISTS poster_deliverable (
     poster_deliverable_id   TEXT PRIMARY KEY,
     product_id              TEXT NOT NULL,
+    staff_id                TEXT,
+    staff_display_name_snapshot TEXT,
     poster_copy_set_id      TEXT NOT NULL DEFAULT '',
     copy_blueprint_id_v2    TEXT NOT NULL DEFAULT '',
     copy_blueprint_revision_v2 INTEGER CHECK(copy_blueprint_revision_v2 IS NULL OR copy_blueprint_revision_v2 >= 1),
@@ -5233,6 +5261,8 @@ CREATE TABLE IF NOT EXISTS creative_production_plan (
     plan_id                    TEXT PRIMARY KEY,
     request_id                 TEXT NOT NULL UNIQUE,
     created_by                 TEXT NOT NULL,
+    staff_id                   TEXT,
+    staff_display_name_snapshot TEXT,
     name                       TEXT NOT NULL,
     campaign_key               TEXT NOT NULL DEFAULT '',
     product_scope_json         TEXT NOT NULL DEFAULT '[]',
@@ -5308,6 +5338,8 @@ CREATE TABLE IF NOT EXISTS creative_production_batch (
 CREATE TABLE IF NOT EXISTS creative_production_item (
     item_id                    TEXT PRIMARY KEY,
     plan_id                    TEXT NOT NULL REFERENCES creative_production_plan(plan_id) ON DELETE CASCADE,
+    staff_id                   TEXT,
+    staff_display_name_snapshot TEXT,
     wave_id                    TEXT REFERENCES creative_production_wave(wave_id) ON DELETE SET NULL,
     production_batch_id        TEXT REFERENCES creative_production_batch(production_batch_id) ON DELETE SET NULL,
     item_ordinal               INTEGER NOT NULL,
@@ -5370,6 +5402,8 @@ CREATE TABLE IF NOT EXISTS creative_execution_lane (
 CREATE TABLE IF NOT EXISTS creative_generation_attempt (
     attempt_id                 TEXT PRIMARY KEY,
     item_id                    TEXT NOT NULL REFERENCES creative_production_item(item_id) ON DELETE CASCADE,
+    staff_id                   TEXT,
+    staff_display_name_snapshot TEXT,
     attempt_number             INTEGER NOT NULL CHECK(attempt_number >= 1),
     idempotency_key            TEXT NOT NULL UNIQUE,
     action_request_id          TEXT NOT NULL,
@@ -5439,6 +5473,8 @@ CREATE TABLE IF NOT EXISTS creative_output_qa (
     qa_id                      TEXT PRIMARY KEY,
     item_id                    TEXT NOT NULL REFERENCES creative_production_item(item_id) ON DELETE CASCADE,
     attempt_id                 TEXT NOT NULL REFERENCES creative_generation_attempt(attempt_id) ON DELETE CASCADE,
+    staff_id                   TEXT,
+    staff_display_name_snapshot TEXT,
     artifact_media_id          TEXT NOT NULL,
     status                     TEXT NOT NULL DEFAULT 'QA_PENDING'
                                CHECK(status IN ('QA_PENDING','QA_APPROVED','QA_REJECTED')),
@@ -5523,6 +5559,8 @@ CREATE TABLE IF NOT EXISTS creative_production_audit_event (
     attempt_id                 TEXT REFERENCES creative_generation_attempt(attempt_id) ON DELETE SET NULL,
     request_id                 TEXT NOT NULL,
     actor_id                   TEXT NOT NULL,
+    staff_id                   TEXT,
+    staff_display_name_snapshot TEXT,
     action                     TEXT NOT NULL,
     source_state               TEXT,
     target_state               TEXT,
@@ -5645,6 +5683,47 @@ CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_task_plan_status ON pro
 CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_task_product_type ON product_treatment_factory_task(product_id, task_type, status);
 CREATE INDEX IF NOT EXISTS idx_product_treatment_factory_event_plan ON product_treatment_factory_event(plan_id, created_at);
 """)
+
+        # Staff identity attribution is additive and intentionally nullable on
+        # every pre-existing ledger: old rows remain historically honest and are
+        # never backfilled from generic actor strings. New authoritative writers
+        # must populate both the stable id and the display-name snapshot.
+        staff_lineage_tables = (
+            "request_telemetry",
+            "workspace_execution_package",
+            "workspace_generation_package",
+            "generated_artifact",
+            "generation_result",
+            "video_production_job",
+            "bulk_generation_run",
+            "bulk_generation_item",
+            "poster_deliverable",
+            "creative_production_plan",
+            "creative_production_item",
+            "creative_generation_attempt",
+            "creative_output_qa",
+            "creative_production_audit_event",
+        )
+        for table_name in staff_lineage_tables:
+            staff_cursor = await db.execute(f"PRAGMA table_info({table_name})")
+            staff_columns = {row[1] for row in await staff_cursor.fetchall()}
+            if not staff_columns:
+                continue
+            if "staff_id" not in staff_columns:
+                await db.execute(
+                    f"ALTER TABLE {table_name} ADD COLUMN staff_id TEXT"
+                )
+                logger.info("Migrated: added staff_id column to %s", table_name)
+            if "staff_display_name_snapshot" not in staff_columns:
+                await db.execute(
+                    f"ALTER TABLE {table_name} "
+                    "ADD COLUMN staff_display_name_snapshot TEXT"
+                )
+                logger.info(
+                    "Migrated: added staff_display_name_snapshot column to %s",
+                    table_name,
+                )
+
         plan_cursor = await db.execute(
             "PRAGMA table_info(creative_production_plan)"
         )

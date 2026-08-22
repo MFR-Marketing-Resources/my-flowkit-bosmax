@@ -10,7 +10,7 @@ os.environ.setdefault("COPY_BLUEPRINT_V2_ENABLED", "0")
 
 import pytest
 from agent.config import DB_PATH
-from agent.db.schema import init_db, close_db
+from agent.db.schema import init_db, close_db, get_db
 
 def _unlink_db_safe() -> None:
     """Remove the test DB file, tolerating WinError 32 (file still held by OS)."""
@@ -28,6 +28,22 @@ def _unlink_db_safe() -> None:
 async def db_setup():
     _unlink_db_safe()
     await init_db()
+    # Active production API tests use a real registered profile rather than a
+    # generic actor fallback. This is test authority, not application seed data.
+    db = await get_db()
+    await db.execute(
+        "INSERT OR IGNORE INTO staff_profile "
+        "(staff_id, display_name, active, created_at, updated_at) "
+        "VALUES (?,?,?,?,?)",
+        (
+            "staff_pytest_operator",
+            "Pytest Operator",
+            1,
+            "2026-08-01T00:00:00Z",
+            "2026-08-01T00:00:00Z",
+        ),
+    )
+    await db.commit()
     yield
     await close_db()
     _unlink_db_safe()

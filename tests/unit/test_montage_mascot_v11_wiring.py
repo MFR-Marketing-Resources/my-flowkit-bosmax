@@ -124,7 +124,14 @@ async def test_single_block_finalize_live_registers_artifact(monkeypatch):
 
     monkeypatch.setattr(rs.crud, "insert_generated_artifact", fake_insert)
     result = await rs._finalize_single_block_montage_run(
-        "run-2", [object()], {"model": "Omni Flash", "duration_seconds": 10},
+        "run-2",
+        [object()],
+        {
+            "model": "Omni Flash",
+            "duration_seconds": 10,
+            "staff_id": "staff_pytest_operator",
+            "staff_display_name": "Pytest Operator",
+        },
         job_id="job-x", dry_run=False,
     )
     assert result["concat"]["status"] == "COMPLETE"

@@ -239,6 +239,8 @@ class ProductionPlanCanonicalSnapshot(BaseModel):
     purpose: str | None
     status: PlanStatus
     operator_id: str
+    staff_id: str | None = None
+    staff_display_name: str | None = None
     request_id: str
     product_allocations: list[ProductionPlanProductAllocationSnapshot]
     target_video_count: int
@@ -265,7 +267,8 @@ class ProductionPlanCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     request_id: str = Field(min_length=8, max_length=128)
-    operator_id: str = Field(min_length=2, max_length=160)
+    operator_id: str | None = Field(default=None, min_length=2, max_length=160)
+    staff_id: str | None = Field(default=None, min_length=1, max_length=80)
     name: str = Field(min_length=3, max_length=160)
     campaign_key: str = Field(default="", max_length=160)
     product_ids: list[str] = Field(min_length=1, max_length=P58_COHORT_COUNT)
@@ -390,7 +393,8 @@ class ProductionPlanUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     request_id: str = Field(min_length=8, max_length=128)
-    operator_id: str = Field(min_length=2, max_length=160)
+    operator_id: str | None = Field(default=None, min_length=2, max_length=160)
+    staff_id: str | None = Field(default=None, min_length=1, max_length=80)
     name: str | None = Field(default=None, min_length=3, max_length=160)
     campaign_key: str | None = Field(default=None, max_length=160)
     target_video_count: int | None = Field(default=None, ge=0, le=200)
@@ -458,7 +462,8 @@ class PlanActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     request_id: str = Field(min_length=8, max_length=128)
-    operator_id: str = Field(min_length=2, max_length=160)
+    operator_id: str | None = Field(default=None, min_length=2, max_length=160)
+    staff_id: str | None = Field(default=None, min_length=1, max_length=80)
 
 
 class WaveAssignmentRequest(PlanActionRequest):

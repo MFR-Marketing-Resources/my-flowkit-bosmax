@@ -282,6 +282,7 @@ export async function compileCreativeCampaignPrompt(
 
 export interface StartImgGenerationInput {
 	prompt: string;
+	staff_id?: string;
 	/** Server-side product lineage key; client never supplies truth bytes/status. */
 	product_id?: string;
 	/** Route context used only to select the server strategy; lock validation stays server-owned. */
@@ -342,6 +343,8 @@ export async function startImgGeneration(
 	return postAPI<StartImgGenerationResult>("/api/flow/generate", {
 		mode: "IMG",
 		prompt: input.prompt,
+		staff_id: input.staff_id,
+		production_recipe: input.visual_lane_id === "POSTER_BUILDER" ? "POSTER_BUILDER" : undefined,
 		product_id: input.product_id,
 		visual_lane_id: input.visual_lane_id,
 		image_media_ids: input.image_media_ids ?? [],

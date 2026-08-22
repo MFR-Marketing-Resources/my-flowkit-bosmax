@@ -92,12 +92,13 @@ def _workspace_execution_package_id(
     asset_fingerprints: list[str],
     faceless_resolution: dict[str, Any] | None = None,
     product_visual_custody: dict[str, Any] | None = None,
+    staff_id: str | None = None,
 ) -> str:
     # asset_fingerprints are part of the package identity: two packages with
     # different operator-selected reference bindings must never share one id
     # (a same-id create_or_replace silently swapped resolved assets under an
     # already-planned job's execution_package_id — PR#338 regression).
-    digest = _fingerprint(
+    parts = [
         product_id,
         mode,
         prompt_fingerprint,
@@ -115,7 +116,12 @@ def _workspace_execution_package_id(
         # reuse one WEP id.
         _stable_json(faceless_resolution) if faceless_resolution is not None else "",
         _stable_json(product_visual_custody) if product_visual_custody is not None else "",
-    )
+    ]
+    # Staff is part of a new authoritative package identity. Keep legacy
+    # callers byte-compatible when they do not supply a canonical profile.
+    if staff_id:
+        parts.append(str(staff_id))
+    digest = _fingerprint(*parts)
     return f"wep_{digest[:16]}"
 
 
@@ -372,6 +378,8 @@ async def create_workspace_execution_package(
     aspect_ratio: str,
     model: str,
     manual_override: bool,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
     generation_mode: str = "SINGLE",
     target_language: str = "BM_MS",
     camera_style: str = "UGC_IPHONE_RAW",
@@ -419,6 +427,7 @@ async def create_workspace_execution_package(
             status_code=410,
             detail="Client-selected legacy CopySet IDs are disabled; the persisted V2 binding is authoritative.",
         )
+
     # Preserve the existing flag-off production-copy gate exactly. V2-enabled
     # video requests never reach this branch: they carry a validated V2 binding.
     if (
@@ -764,6 +773,7 @@ async def create_workspace_execution_package(
         asset_fingerprints,
         faceless_resolution,
         product_visual_custody,
+        staff_id,
     )
     request_lineage_payload = {
         "product_id": product_id,
@@ -797,6 +807,11 @@ async def create_workspace_execution_package(
             "scene_choreography": compiler_result.get("scene_choreography"),
         },
     }
+    if staff_id:
+        request_lineage_payload["staff_identity"] = {
+            "staff_id": str(staff_id),
+            "staff_display_name": str(staff_display_name_snapshot or ""),
+        }
     if faceless_resolution is not None:
         request_lineage_payload["faceless_resolution"] = copy.deepcopy(
             faceless_resolution
@@ -874,6 +889,8 @@ async def create_workspace_execution_package(
     await crud.create_or_replace_workspace_execution_package(
         workspace_execution_package_id=execution_package_id,
         product_id=product_id,
+        staff_id=staff_id,
+        staff_display_name_snapshot=staff_display_name_snapshot,
         mode=normalized_mode,
         duration_seconds=total_duration_seconds,
         aspect_ratio=aspect_ratio,
@@ -906,6 +923,8 @@ async def create_workspace_execution_package(
     result = {
         "workspace_execution_package_id": execution_package_id,
         "product_id": product_id,
+        "staff_id": staff_id,
+        "staff_display_name": staff_display_name_snapshot,
         "product_name": package["product_name"],
         "mode": normalized_mode,
         "duration_seconds": total_duration_seconds,

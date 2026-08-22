@@ -49,6 +49,7 @@ from agent.api.scene_context_registry import router as scene_context_registry_ro
 from agent.api.montage import router as montage_router
 from agent.api.creative_lane_settings import router as creative_lane_settings_router
 from agent.api.faceless import router as faceless_router
+from agent.api.staff_identity import router as staff_identity_router
 from agent.api.workspace_generation_packages import router as workspace_generation_packages_router
 from agent.api.production_queue import router as production_queue_router
 from agent.api.production_queue import (
@@ -397,6 +398,7 @@ app.include_router(scene_context_registry_router, prefix="/api")
 app.include_router(montage_router, prefix="/api")
 app.include_router(creative_lane_settings_router, prefix="/api")
 app.include_router(faceless_router, prefix="/api")
+app.include_router(staff_identity_router, prefix="/api")
 app.include_router(workspace_generation_packages_router, prefix="/api")
 app.include_router(production_queue_router, prefix="/api")
 app.include_router(production_queue_materialize_router, prefix="/api")

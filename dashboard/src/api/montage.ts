@@ -168,6 +168,7 @@ export async function fetchMontageVideoCapability(): Promise<VideoCapabilityMatr
 
 export async function createMontagePlan(input: {
 	product_id: string;
+	staff_id: string;
 	hook_id?: string;
 	background_id?: string;
 	product_media_id?: string | null;
@@ -180,6 +181,7 @@ export async function createMontagePlan(input: {
 }): Promise<MontagePlanResponse> {
 	return postAPI("/api/montage/plan", {
 		product_id: input.product_id,
+		staff_id: input.staff_id,
 		hook_id: input.hook_id ?? "AUTO",
 		background_id: input.background_id ?? "AUTO",
 		product_media_id: input.product_media_id ?? null,
@@ -195,6 +197,7 @@ export async function createMontagePlan(input: {
 
 export async function executeMontageScenes(input: {
 	product_id: string;
+	staff_id: string;
 	hook_id?: string;
 	background_id?: string;
 	product_media_id?: string | null;
@@ -207,6 +210,7 @@ export async function executeMontageScenes(input: {
 }): Promise<MontageExecuteResponse> {
 	return postAPI("/api/montage/execute-scenes", {
 		product_id: input.product_id,
+		staff_id: input.staff_id,
 		hook_id: input.hook_id ?? "AUTO",
 		background_id: input.background_id ?? "AUTO",
 		product_media_id: input.product_media_id ?? null,
@@ -225,6 +229,7 @@ export async function executeMontageScenes(input: {
 /** M-02 durable ledger: packages + per-scene job state. */
 export async function createMontageRun(input: {
 	product_id: string;
+	staff_id: string;
 	hook_id?: string;
 	background_id?: string;
 	product_media_id?: string | null;
@@ -238,6 +243,7 @@ export async function createMontageRun(input: {
 }): Promise<MontageRunResponse> {
 	return postAPI("/api/montage/runs", {
 		product_id: input.product_id,
+		staff_id: input.staff_id,
 		hook_id: input.hook_id ?? "AUTO",
 		background_id: input.background_id ?? "AUTO",
 		product_media_id: input.product_media_id ?? null,
@@ -292,6 +298,7 @@ export async function fetchMontageGenerationEstimate(
 export async function authorizeMontageGeneration(
 	runId: string,
 	input: {
+		staff_id: string;
 		confirm_credit_burn: boolean;
 		expected_video_generations: number;
 		expected_provider_operations: number;
@@ -302,6 +309,7 @@ export async function authorizeMontageGeneration(
 		`/api/montage/runs/${encodeURIComponent(runId)}/authorize-generation`,
 		{
 			confirm_credit_burn: input.confirm_credit_burn,
+			staff_id: input.staff_id,
 			expected_video_generations: input.expected_video_generations,
 			expected_provider_operations: input.expected_provider_operations,
 			dry_run: input.dry_run ?? true,

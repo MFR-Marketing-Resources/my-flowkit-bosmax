@@ -170,6 +170,7 @@ async def approve_plan(plan_id: str, body: PlanActionRequest):
             plan_id,
             request_id=body.request_id,
             operator_id=body.operator_id,
+            staff_id=body.staff_id,
         )
     except plans.CreativeProductionError as exc:
         raise _http(exc) from exc
@@ -206,9 +207,19 @@ async def materialize_plan_approval_manifest(plan_id: str, body: DryRunRequest):
         raise _http(exc) from exc
     if not items:
         raise HTTPException(422, detail={"error": "NO_DISPATCHABLE_ITEMS"})
+    plan_detail = await plans.get_plan_detail(plan_id)
+    plan_staff_id = str(plan_detail.plan.get("staff_id") or "").strip()
+    if not plan_staff_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "STAFF_IDENTITY_REQUIRED",
+                "message": "Historical plans without canonical staff identity cannot create a new manifest.",
+            },
+        )
     return await _eas.create_manifest(
         surface="production_studio", run_ref=plan_id,
-        logical_mode="VIDEO", items=items, created_by="operator",
+        logical_mode="VIDEO", items=items, created_by=plan_staff_id,
     )
 
 

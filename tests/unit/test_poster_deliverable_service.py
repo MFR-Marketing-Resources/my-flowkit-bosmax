@@ -48,6 +48,22 @@ def _allow_tmp_background(tmp_path, monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _staff_identity_for_composition(monkeypatch):
+    """Bind legacy direct-service fixtures to the shared valid test profile."""
+    original = PosterDeliverableService.compose_poster
+
+    async def _compose_poster(**kwargs):
+        kwargs.setdefault("staff_id", "staff_pytest_operator")
+        return await original(**kwargs)
+
+    monkeypatch.setattr(
+        PosterDeliverableService,
+        "compose_poster",
+        staticmethod(_compose_poster),
+    )
+
+
 async def _seed_product() -> str:
     row = await crud.create_product(
         "Minyak Warisan Tok 25ml", source="MANUAL",

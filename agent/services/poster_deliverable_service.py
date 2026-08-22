@@ -560,9 +560,26 @@ class PosterDeliverableService:
         image_model: str = "",
         creative_mode: str | None = None,
         settings: dict[str, Any] | None = None,
+        staff_id: str | None = None,
+        staff_display_name_snapshot: str | None = None,
         copy_v2_projection: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         product_id = _norm(product_id)
+        from agent.services.staff_identity_service import (
+            StaffIdentityError,
+            resolve_staff_identity,
+        )
+
+        try:
+            staff_profile = await resolve_staff_identity(staff_id)
+        except StaffIdentityError as exc:
+            raise PosterDeliverableError(
+                exc.code,
+                exc.message,
+                status_code=exc.status_code,
+            ) from exc
+        staff_id = staff_profile["staff_id"]
+        staff_display_name_snapshot = staff_profile["display_name"]
         product = await crud.get_product(product_id)
         if not product:
             raise PosterDeliverableError("PRODUCT_NOT_FOUND", status_code=404)
@@ -632,6 +649,12 @@ class PosterDeliverableService:
             copy_set = serialize_poster_copy_set(pcs_row)
         campaign_mode = _norm(creative_mode).upper() == "CREATIVE_CAMPAIGN"
         settings = dict(settings or {})
+        # The caller may supply UI settings, but identity is server-owned and
+        # is overwritten with the resolved profile before persistence.
+        settings["staff_identity"] = {
+            "staff_id": staff_id,
+            "staff_display_name": staff_display_name_snapshot,
+        }
         if campaign_mode:
             settings.setdefault(
                 "pipeline", "CLEAN_KEY_VISUAL_THEN_DETERMINISTIC_COPY_COMPOSITE"
@@ -852,6 +875,8 @@ class PosterDeliverableService:
         )
         row = await crud.create_poster_deliverable(
             product_id,
+            staff_id=staff_id,
+            staff_display_name_snapshot=staff_display_name_snapshot,
             poster_copy_set_id=("" if v2_binding is not None else copy_set["poster_copy_set_id"]),
             copy_blueprint_id_v2=(v2_binding.blueprint_id if v2_binding else ""),
             copy_blueprint_revision_v2=(v2_binding.revision if v2_binding else None),

@@ -95,6 +95,8 @@ async def create_montage_discrete_run(
     mascot_block_count: Optional[int] = None,
     mascot_atomic_seconds: Optional[int] = None,
     mascot_has_dialogue: bool = True,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
 ) -> dict[str, Any]:
     """Orchestrate packages and persist a durable run + per-scene jobs."""
     pid = str(product_id or "").strip()
@@ -129,6 +131,8 @@ async def create_montage_discrete_run(
 
     report = await orchestrate_montage_scenes(
         product_id=pid,
+        staff_id=staff_id,
+        staff_display_name_snapshot=staff_display_name_snapshot,
         story_beats=story_beats,
         package_factory=package_factory,
         default_policy=default_policy,
@@ -155,6 +159,8 @@ async def create_montage_discrete_run(
     )
     config = {
         "product_id": pid,
+        "staff_id": staff_id,
+        "staff_display_name": staff_display_name_snapshot,
         "product_media_id": product_media_id,
         "default_policy": policy_val,
         "per_beat_policy": per_beat_policy or {},
@@ -188,6 +194,8 @@ async def create_montage_discrete_run(
     await crud.create_bulk_generation_run(
         run_id,
         kind=KIND,
+        staff_id=staff_id,
+        staff_display_name_snapshot=staff_display_name_snapshot,
         total_expected=len(report.scenes),
         max_parallel_images=1,
         max_parallel_videos=1,
@@ -205,6 +213,8 @@ async def create_montage_discrete_run(
         await crud.create_bulk_generation_item(
             item_id,
             bulk_run_id=run_id,
+            staff_id=staff_id,
+            staff_display_name_snapshot=staff_display_name_snapshot,
             item_type=ITEM_TYPE,
             source_ref=state.scene_id,
             prompt_snapshot=(state.detail or state.beat_id or "")[:2000],
@@ -480,6 +490,8 @@ async def authorize_montage_run_generation(
     max_polls: int = 120,
     poll_interval_s: float = 5.0,
     async_worker: bool = False,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
 ) -> dict[str, Any]:
     """M-04: explicit operator-authorized multi-scene generation.
 
@@ -540,6 +552,11 @@ async def authorize_montage_run_generation(
 
     state = await get_montage_discrete_run(run_id)
     cfg = state.get("config") or {}
+    persisted_staff_id = str(cfg.get("staff_id") or "").strip()
+    if not persisted_staff_id:
+        raise ValueError("STAFF_IDENTITY_REQUIRED")
+    if persisted_staff_id != str(staff_id or "").strip():
+        raise ValueError("STAFF_IDENTITY_MISMATCH")
     product_id = str(cfg.get("product_id") or state.get("product_id") or "").strip()
     model, duration_s = _resolve_montage_single_settings(
         cfg.get("model"), cfg.get("duration_seconds")
@@ -1122,9 +1139,20 @@ async def _finalize_single_block_montage_run(
         "dry_run": bool(dry_run),
     }
     if not dry_run:
+        persisted_staff_id = str(cfg.get("staff_id") or "").strip()
+        if not persisted_staff_id:
+            raise MontageAssemblyError(
+                "STAFF_IDENTITY_REQUIRED",
+                "A Montage final output cannot be promoted without its initiating staff identity.",
+                blockers=[{"error_code": "STAFF_IDENTITY_REQUIRED"}],
+            )
         await crud.insert_generated_artifact(
             clip_media_id,
             job_id=effective_job,
+            staff_id=persisted_staff_id,
+            staff_display_name_snapshot=(
+                str(cfg.get("staff_display_name") or "").strip() or None
+            ),
             mode="MONTAGE",
             artifact_kind="video",
             model_used=cfg.get("model"),

@@ -830,6 +830,10 @@ class GenerateRequest(BaseModel):
     product_id: Optional[str] = None
     visual_lane_id: Optional[str] = None
     source_mode: Optional[str] = None       # HYBRID | FRAMES | INGREDIENTS
+    # Business recipe identity. This is explicit for active production surfaces;
+    # the server still resolves the submitted staff_id against StaffProfile.
+    production_recipe: Optional[str] = None  # active recipe identity
+    staff_id: Optional[str] = None
     workspace_execution_package_id: Optional[str] = None
     image_media_ids: Optional[list] = None     # existing/uploaded refs (I2V/F2V)
     image_prompt: Optional[str] = None         # auto start-frame if no refs (I2V/F2V)
@@ -1489,6 +1493,45 @@ async def generate(body: GenerateRequest):
         raise HTTPException(422, f"unknown mode '{body.mode}' (use IMG/T2V/I2V/F2V)")
     if not body.prompt.strip():
         raise HTTPException(422, "prompt is required")
+    _production_recipe = str(body.production_recipe or "").strip().upper()
+    if not _production_recipe:
+        _source_recipe = str(body.source_mode or "").strip().upper()
+        if _source_recipe in {"HYBRID", "FACELESS", "MONTAGE"}:
+            _production_recipe = _source_recipe
+        elif (
+            isinstance(body.execution_identity, dict)
+            and str(body.execution_identity.get("lane") or "").upper() == "FACELESS"
+        ):
+            _production_recipe = "FACELESS"
+        elif str(body.visual_lane_id or "").strip().upper() == "POSTER_BUILDER":
+            _production_recipe = "POSTER_BUILDER"
+    _staff_profile = None
+    if _production_recipe:
+        if _production_recipe not in {
+            "HYBRID",
+            "FACELESS",
+            "MONTAGE",
+            "POSTER_BUILDER",
+        }:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "PRODUCTION_RECIPE_UNSUPPORTED",
+                    "message": "Only HYBRID, FACELESS, MONTAGE, and POSTER_BUILDER are active production recipes.",
+                },
+            )
+        from agent.services.staff_identity_service import (
+            StaffIdentityError,
+            resolve_staff_identity,
+        )
+
+        try:
+            _staff_profile = await resolve_staff_identity(body.staff_id)
+        except StaffIdentityError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"error": exc.code, "message": exc.message},
+            ) from exc
     if body.execution_identity is not None:
         if (
             not isinstance(body.execution_identity, dict)
@@ -1964,6 +2007,10 @@ async def generate(body: GenerateRequest):
         collect_image_variants=creative_campaign,
         product_id=body.product_id,
         source_mode=effective_source_mode,
+        staff_id=_staff_profile.get("staff_id") if _staff_profile else None,
+        staff_display_name_snapshot=(
+            _staff_profile.get("display_name") if _staff_profile else None
+        ),
         request_id=request_id,
         idempotency_key=request_id,
         product_visual_custody=product_visual_custody,
@@ -1974,6 +2021,7 @@ async def generate(body: GenerateRequest):
         ),
         manifest_id=body.manifest_id,
         execution_identity=body.execution_identity,
+        production_recipe=_production_recipe or None,
     )
     if isinstance(result, dict) and result.get("status") == "REJECTED":
         # single-flight video lane busy (patch H)
@@ -3610,6 +3658,11 @@ async def _persist_generation_results(snapshot, job, all_ids):
                 workspace_generation_package_id=snapshot.get(
                     "workspace_generation_package_id"),
                 project_id=snapshot.get("project_id"),
+                staff_id=snapshot.get("staff_id") or job.get("staff_id"),
+                staff_display_name_snapshot=(
+                    snapshot.get("staff_display_name_snapshot")
+                    or job.get("staff_display_name_snapshot")
+                ),
                 product_visual_custody=custody_payload,
             )
     except Exception:  # noqa: BLE001 — durable record is best-effort, never fatal
@@ -3638,6 +3691,17 @@ async def _bridge_generate_job_telemetry(request_id: str, job_id: str,
             job = await _mv.get_durable_job(job_id) or {}
         stage = str(job.get("stage") or "")
         status = str(job.get("status") or "")
+        _staff_id = (result_snapshot or {}).get("staff_id") or job.get("staff_id")
+        _staff_name = (
+            (result_snapshot or {}).get("staff_display_name_snapshot")
+            or job.get("staff_display_name_snapshot")
+        )
+        if _staff_id:
+            await crud.upsert_request_telemetry(
+                request_id,
+                staff_id=_staff_id,
+                staff_display_name_snapshot=_staff_name,
+            )
         if stage and stage != last_stage:
             last_stage = stage
             await crud.add_stage_event(
@@ -3831,6 +3895,26 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     from agent.services import make_video as _mv
     client = get_flow_client()
     request_id = body["request_id"]
+    _manual_staff = None
+    _manual_recipe = str(body.get("production_recipe") or "").strip().upper()
+    if not _manual_recipe:
+        _manual_source = str(body.get("source_mode") or "").strip().upper()
+        if _manual_source in {"HYBRID", "FACELESS", "MONTAGE"}:
+            _manual_recipe = _manual_source
+    if _manual_recipe:
+        from agent.services.staff_identity_service import (
+            StaffIdentityError,
+            resolve_staff_identity,
+        )
+
+        try:
+            _manual_staff = await resolve_staff_identity(body.get("staff_id"))
+        except StaffIdentityError as exc:
+            await _fail_manual_request(
+                request_id, "API_LANE_REJECTED", exc.message, exc.code
+            )
+        body["staff_id"] = _manual_staff["staff_id"]
+        body["staff_display_name_snapshot"] = _manual_staff["display_name"]
     v2_resolution = None
     try:
         from agent.services.copy_execution_resolver import (
@@ -4300,6 +4384,9 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             mode, prompt, capture_project_id, refs, aspect=aspect, tier=tier,
             source_mode=_authority_source_mode, model=model_key,
             duration_s=duration_s,
+            production_recipe=_manual_recipe or None,
+            staff_id=body.get("staff_id"),
+            staff_display_name_snapshot=body.get("staff_display_name_snapshot"),
             confirm_live_credit_burn=bool(body.get("confirm_live_credit_burn")),
             product_visual_custody=body.get("product_visual_custody"),
             execution_identity=body.get("execution_identity"),
@@ -4327,10 +4414,13 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         image_model=body.get("image_model") if creative_campaign else None,
         product_id=body.get("product_id"),
         source_mode=_authority_source_mode,
+        staff_id=body.get("staff_id"),
+        staff_display_name_snapshot=body.get("staff_display_name_snapshot"),
         request_id=request_id,
         idempotency_key=request_id,
         product_visual_custody=body.get("product_visual_custody"),
         execution_identity=body.get("execution_identity"),
+        production_recipe=_manual_recipe or None,
         copy_execution_binding=(
             v2_resolution.to_metadata(
                 consumer_context=body.get("copy_v2_context")
@@ -4376,6 +4466,8 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
             body.get("workspace_execution_package_id")
             or body.get("workspace_generation_package_id")),
         "project_id": created_project_id,
+        "staff_id": body.get("staff_id"),
+        "staff_display_name_snapshot": body.get("staff_display_name_snapshot"),
         "product_visual_custody": body.get("product_visual_custody") or {},
         "copy_architecture_v2": (
             v2_resolution.to_metadata(
@@ -4402,6 +4494,36 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
 @router.post("/execute-flow-job")
 async def execute_flow_job(body: dict):
     """Trigger manual DOM automation in the extension for a generation job."""
+    _raw_recipe = str(body.get("production_recipe") or "").strip().upper()
+    if not _raw_recipe:
+        _raw_source = str(body.get("source_mode") or "").strip().upper()
+        if _raw_source in {"HYBRID", "FACELESS", "MONTAGE"}:
+            _raw_recipe = _raw_source
+    _manual_staff = None
+    if _raw_recipe:
+        if _raw_recipe not in {"HYBRID", "FACELESS", "MONTAGE"}:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "PRODUCTION_RECIPE_UNSUPPORTED",
+                    "message": "Only HYBRID, FACELESS, and MONTAGE are active production recipes.",
+                },
+            )
+        from agent.services.staff_identity_service import (
+            StaffIdentityError,
+            resolve_staff_identity,
+        )
+
+        try:
+            _manual_staff = await resolve_staff_identity(body.get("staff_id"))
+        except StaffIdentityError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"error": exc.code, "message": exc.message},
+            ) from exc
+        body["staff_id"] = _manual_staff["staff_id"]
+        body["staff_display_name_snapshot"] = _manual_staff["display_name"]
+        body["production_recipe"] = _raw_recipe
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
@@ -4433,6 +4555,14 @@ async def execute_flow_job(body: dict):
         prompt_fingerprint=body.get("prompt_fingerprint"),
         asset_fingerprints=json.dumps(body.get("asset_fingerprints", [])),
         request_lineage_payload=json.dumps(body.get("request_lineage_payload", {})),
+        **(
+            {
+                "staff_id": _manual_staff["staff_id"],
+                "staff_display_name_snapshot": _manual_staff["display_name"],
+            }
+            if _manual_staff
+            else {}
+        ),
         status="WAITING_FLOW",
         queued_at=crud._now(),
         last_heartbeat_at=crud._now(),

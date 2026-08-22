@@ -260,11 +260,24 @@ domains:
       - agent/db/creative_production_crud.py
       - agent/models/creative_production.py
       - agent/api/creative_production.py
+      # Staff identity attribution authority and current production lineage.
+      # StaffProfile is the server source of truth; historical ledger fields stay
+      # nullable so existing unattributed rows remain honest.
+      - agent/api/staff_identity.py
+      - agent/models/staff_identity.py
+      - agent/services/staff_identity_service.py
       - agent/services/creative_production_plan_service.py
       - agent/services/creative_production_compile_service.py
       - agent/services/creative_production_scheduler_service.py
+      - agent/services/video_artifact_delivery_service.py
+      - agent/services/production_output_reporting_service.py
       - agent/services/video_models.py
       - dashboard/src/api/creativeProduction.ts
+      - dashboard/src/api/staffIdentity.ts
+      - dashboard/src/components/StaffIdentityBar.tsx
+      - dashboard/src/hooks/useStaffIdentity.ts
+      - tests/api/test_staff_identity_api.py
+      - tests/unit/test_staff_identity_service.py
       - dashboard/src/components/production-studio/ProductAllocationPicker.tsx
       - dashboard/src/components/production-studio/ProductAllocationPicker.test.tsx
       - dashboard/src/pages/CreativeProductionStudioPage.tsx

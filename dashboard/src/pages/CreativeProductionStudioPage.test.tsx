@@ -9,6 +9,21 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../api/staffIdentity", () => ({
+	fetchStaffProfiles: vi.fn().mockResolvedValue({
+		profiles: [
+			{
+				staff_id: "staff_test_operator",
+				display_name: "Test Operator",
+				active: true,
+				created_at: "2026-08-01T00:00:00Z",
+				updated_at: "2026-08-01T00:00:00Z",
+			},
+		],
+	}),
+	createStaffProfile: vi.fn(),
+}));
+
 const fetchCohortAuthority = vi.fn();
 const fetchGovernedPoolAuthority = vi.fn();
 const fetchTreatmentAvailability = vi.fn();
@@ -289,7 +304,7 @@ function makeSnapshot({
 		plan_name: name,
 		purpose: "P6.3-R2 fixture",
 		status,
-		operator_id: "p6-production-operator",
+		operator_id: "staff_test_operator",
 		request_id: `request-${planId}`,
 		product_allocations: allocations,
 		target_video_count: targetVideoCount,
@@ -611,6 +626,7 @@ async function selectPlan(planId: string) {
 }
 
 beforeEach(() => {
+	window.localStorage.setItem("bosmax.staff_identity.v1", "staff_test_operator");
 	copyV2State.ready = true;
 	vi.stubGlobal("crypto", {
 		randomUUID: () => "00000000-0000-4000-8000-000000000001",
@@ -619,6 +635,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	window.localStorage.removeItem("bosmax.staff_identity.v1");
 	cleanup();
 	vi.clearAllMocks();
 	vi.unstubAllGlobals();
@@ -1024,7 +1041,7 @@ describe("P6.3-R2 production plan state isolation", () => {
 		await waitFor(() =>
 			expect(materializeStudioPlanManifest).toHaveBeenCalledWith(
 				"plan-b",
-				"p6-production-operator",
+				"staff_test_operator",
 				"16:9",
 			),
 		);
@@ -1033,7 +1050,7 @@ describe("P6.3-R2 production plan state isolation", () => {
 		await waitFor(() =>
 			expect(startProductionPlan).toHaveBeenCalledWith(
 				"plan-b",
-				"p6-production-operator",
+				"staff_test_operator",
 				"AUTHORIZE_P6_LIVE_CREDIT_SPEND",
 				"16:9",
 			),

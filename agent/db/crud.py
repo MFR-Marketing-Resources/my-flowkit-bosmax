@@ -11,7 +11,7 @@ from agent.db.schema import get_db, _db_lock
 
 logger = logging.getLogger(__name__)
 
-_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "product_visual_truth_lock", "product_visual_truth_lock_history", "product_reference_pack", "product_cutout_preparation", "product_visual_onboarding_run", "canva_cutout_workflow", "canva_cutout_bulk_run", "canva_cutout_bulk_item", "image_generation_operation", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "copywriting_taxonomy_registry", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media", "product_cutout_target", "product_mascot_key_visual", "prompt_library_item", "prompt_library_attachment"})
+_VALID_TABLES = frozenset({"character", "project", "video", "scene", "request", "material", "product", "staff_profile", "product_visual_truth_lock", "product_visual_truth_lock_history", "product_reference_pack", "product_cutout_preparation", "product_visual_onboarding_run", "canva_cutout_workflow", "canva_cutout_bulk_run", "canva_cutout_bulk_item", "image_generation_operation", "request_telemetry", "request_stage_event", "workspace_execution_package", "creative_asset", "workspace_generation_package", "fastmoss_bulk_draft_status", "production_run", "bulk_generation_run", "bulk_generation_item", "postiz_publish_record", "social_copy_package", "copy_set", "copy_component", "copy_intelligence_seed", "product_intelligence_snapshot", "product_intelligence_field_provenance", "product_intelligence_review_draft", "product_intelligence_review_field_provenance", "copy_generation_batch", "content_combination", "avatar_product_fit", "creative_scene_prompt", "creative_camera_preset", "creative_product_selection", "product_strategy_taxonomy", "copywriting_taxonomy_registry", "poster_copy_set", "poster_deliverable", "extend_lineage", "product_source_media", "product_cutout_target", "product_mascot_key_visual", "prompt_library_item", "prompt_library_attachment"})
 
 
 def _validate_table(table: str) -> None:
@@ -46,21 +46,22 @@ _COLUMNS = {
     "product_visual_truth_lock_history": {"source_kind", "review_status", "canonical_media_id", "canonical_sha256", "source_width", "source_height", "canonical_source_path", "canonical_cutout_media_id", "canonical_cutout_sha256", "canonical_cutout_path", "alpha_mask_json", "anchor_point_json", "allowed_bbox_json", "provenance_json", "superseded_by_media_id", "superseded_reason"},
     "product_reference_pack": {"pack_id", "schema_version", "pack_status", "machine_qa_status", "machine_qa_json", "physical_width_mm", "physical_height_mm", "physical_depth_mm", "volume_ml", "scale_evidence_source", "scale_confidence", "geometry_json", "references_json", "provenance_json", "human_review_json", "updated_at"},
     "image_generation_operation": {"operation_record_id", "job_id", "product_id", "mode", "provider", "model", "variant_index", "provider_operation_id", "transport_batch_id", "operation_id_status", "provider_media_id", "response_status", "created_at"},
-    "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "request_type", "mode", "prompt_package_snapshot_id", "workspace_execution_package_id", "workspace_generation_package_id", "prompt_fingerprint", "asset_fingerprints", "request_lineage_payload", "git_sha", "background_build_id", "content_build_id", "last_checkpoint", "runtime_ready", "build_match", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message", "provider", "engine", "model_label", "credits_spent", "estimated_credits", "estimated_cost", "actual_cost"},
+    "staff_profile": {"display_name", "active", "updated_at"},
+    "request_telemetry": {"project_id", "video_id", "scene_id", "product_id", "staff_id", "staff_display_name_snapshot", "request_type", "mode", "prompt_package_snapshot_id", "workspace_execution_package_id", "workspace_generation_package_id", "prompt_fingerprint", "asset_fingerprints", "request_lineage_payload", "git_sha", "background_build_id", "content_build_id", "last_checkpoint", "runtime_ready", "build_match", "status", "google_flow_stage", "extension_stage", "worker_stage", "queued_at", "started_at", "last_heartbeat_at", "completed_at", "failed_at", "duration_seconds", "idle_seconds", "processing_seconds", "error_code", "error_message", "provider", "engine", "model_label", "credits_spent", "estimated_credits", "estimated_cost", "actual_cost"},
     "request_stage_event": {"request_id", "timestamp", "checkpoint", "stage", "status", "message", "git_sha", "background_build_id", "content_build_id", "runtime_ready", "build_match", "selector_used", "evidence_pointer", "fail_code", "first_fail_stage", "source"},
-    "workspace_execution_package": {"product_id", "mode", "duration_seconds", "aspect_ratio", "model", "manual_override", "prompt_text", "prompt_fingerprint", "prompt_package_snapshot_id", "asset_slots", "resolved_assets", "readiness", "execution_allowed", "production_generation_allowed", "manual_fallback", "blockers", "request_lineage_payload", "source_of_truth_notes", "updated_at"},
+    "workspace_execution_package": {"product_id", "staff_id", "staff_display_name_snapshot", "mode", "duration_seconds", "aspect_ratio", "model", "manual_override", "prompt_text", "prompt_fingerprint", "prompt_package_snapshot_id", "asset_slots", "resolved_assets", "readiness", "execution_allowed", "production_generation_allowed", "manual_fallback", "blockers", "request_lineage_payload", "source_of_truth_notes", "updated_at"},
     "creative_asset": {"semantic_role", "display_name", "description", "source_type", "storage_kind", "preview_url", "download_url", "media_id", "local_file_path", "remote_source_url", "product_id", "category", "silo", "product_type", "allowed_modes", "engine_slot_eligibility", "mode_a_metadata_handoff", "visual_dna_summary", "character_dna", "scene_context_dna", "style_mood_dna", "source_prompt_fingerprint", "source_workspace_execution_package_id", "source_prompt_package_snapshot_id", "asset_subtype", "generation_recipe_id", "source_character_asset_id", "source_scene_asset_id", "source_style_asset_id", "contains_rendered_text", "approved_for_video_support", "approved_for_poster", "product_truth_status", "identity_lock_status", "scale_truth_status", "claim_safety_status", "review_status", "status", "updated_at"},
     "fastmoss_bulk_draft_status": {"raw_product_title", "source_url", "tiktok_product_url", "image_url", "category", "cluster", "product_type_group", "claim_risk_level", "mapping_confidence", "image_readiness", "copy_route", "sold_count", "commission_rate", "sell_price", "commission_amount", "promotion_status", "draft_id", "committed_product_id", "suspected_existing_product_id", "suspected_existing_product_title", "suspected_existing_product_source", "suspected_existing_product_mapping_source", "duplicate_match_reason", "linked_product_id", "linked_product_title", "duplicate_resolution", "duplicate_resolved_at", "duplicate_resolution_note", "duplicate_ignore_product_id", "error_message", "batch_provenance", "recomputed_at", "recompute_previous_status", "recompute_previous_error", "ruleset_version", "input_fingerprint", "computed_ruleset_version", "computed_input_fingerprint", "recompute_state", "recompute_reason", "review_hold_reason", "recompute_started_at", "recompute_attempt_count", "updated_at"},
-    "workspace_generation_package": {"mode", "product_id", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "operator_notes", "batch_run_id", "logical_mode", "variation_strategy", "prompt_fingerprint", "variation_fingerprints_json", "anti_redundancy_json", "production_status", "production_run_id", "production_job_id", "production_error", "artifact_media_ids_json", "generation_identity_json", "approved_at", "sent_to_production_at", "updated_at"},
+    "workspace_generation_package": {"mode", "product_id", "staff_id", "staff_display_name_snapshot", "product_name_snapshot", "source_lane", "prompt_package_snapshot_id", "workspace_execution_package_id", "generation_mode", "final_prompt_text", "prompt_blocks_json", "selected_assets_json", "resolved_engine_slots_json", "resolver_output_json", "image_assets_json", "manual_handoff_json", "dom_handoff_payload_json", "blockers_json", "warnings_json", "status", "operator_notes", "batch_run_id", "logical_mode", "variation_strategy", "prompt_fingerprint", "variation_fingerprints_json", "anti_redundancy_json", "production_status", "production_run_id", "production_job_id", "production_error", "artifact_media_ids_json", "generation_identity_json", "approved_at", "sent_to_production_at", "updated_at"},
     "production_run": {"status", "dry_run", "max_parallel_jobs", "interval_min_seconds", "interval_max_seconds", "cooldown_after_n_jobs", "cooldown_seconds", "total_expected", "total_completed", "total_failed", "error_log_json", "config_json", "updated_at"},
-    "bulk_generation_run": {"kind", "status", "total_expected", "total_completed", "total_failed", "max_parallel_images", "max_parallel_videos", "confirm_credit_burn", "interval_min_seconds", "interval_max_seconds", "cooldown_after_n_jobs", "cooldown_seconds", "error_log_json", "config_json", "updated_at"},
-    "bulk_generation_item": {"bulk_run_id", "item_type", "source_ref", "prompt_snapshot", "payload_json", "status", "job_id", "media_id", "local_path", "creative_asset_id", "error", "retry_count", "started_at", "completed_at", "updated_at"},
+    "bulk_generation_run": {"staff_id", "staff_display_name_snapshot", "kind", "status", "total_expected", "total_completed", "total_failed", "max_parallel_images", "max_parallel_videos", "confirm_credit_burn", "interval_min_seconds", "interval_max_seconds", "cooldown_after_n_jobs", "cooldown_seconds", "error_log_json", "config_json", "updated_at"},
+    "bulk_generation_item": {"bulk_run_id", "staff_id", "staff_display_name_snapshot", "item_type", "source_ref", "prompt_snapshot", "payload_json", "status", "job_id", "media_id", "local_path", "creative_asset_id", "error", "retry_count", "started_at", "completed_at", "updated_at"},
     "postiz_publish_record": {"artifact_media_id", "source_local_path", "source_public_url", "upload_mode", "postiz_media_id", "postiz_media_path", "post_type", "scheduled_at", "content", "integration_ids_json", "provider_settings_json", "postiz_response_json", "status", "error", "updated_at"},
     "social_copy_package": {"artifact_media_id", "source_mode", "platform", "caption", "first_comment", "hashtags_json", "call_to_action", "tone", "language", "status", "compliance_status", "blockers_json", "warnings_json", "approval_note", "approved_at", "postiz_record_id", "updated_at"},
     "copy_set": {"angle", "hook", "subhook", "usp_set_json", "cta", "platform", "language", "route_type", "formula_family", "status", "dedupe_key", "source", "provenance_json", "claim_review_json", "reviewer_note", "approved_at", "approved_by", "usage_count", "last_used_at", "used_in_modes", "uniqueness_score", "similar_to_copy_set_id", "similarity_score", "archived", "pi_eligibility_status", "pi_ineligible_reasons", "pi_snapshot_id", "pi_snapshot_version", "pi_grounding_digest", "grounded_at", "revalidated_at", "revalidated_by", "revalidation_decision", "updated_at"},
     "copy_intelligence_seed": {"source_fingerprint", "source_workbook", "source_sheet", "source_row", "source_product_name", "reference_id", "target_product_id", "match_method", "confidence", "status", "target_avatar", "pain_point", "emotion_trigger", "dream_outcome", "key_ingredients_features", "hook_type", "hook_script", "body_script", "cta_type", "cta_script", "tone", "pronoun", "copy_angle", "provenance_json", "reviewed_by", "reviewed_at", "review_note", "previous_status", "review_action", "updated_at"},
     "poster_copy_set": {"campaign_id", "objective", "archetype", "angle", "primary_message", "support_message", "proof_points_json", "offer_json", "cta", "disclaimer", "tone", "language", "variants_json", "field_provenance_json", "ai_model", "prompt_version", "status", "version", "parent_poster_copy_set_id", "archived", "reject_reason", "approved_at", "approved_by", "updated_at"},
-    "poster_deliverable": {"poster_copy_set_id", "copy_blueprint_id_v2", "copy_blueprint_revision_v2", "copy_execution_binding_id_v2", "copy_approval_snapshot_id_v2", "recipe_id", "template_version", "composition_strategy", "render_manifest_json", "background_media_id", "background_local_path", "output_path", "output_sha256", "creative_asset_id", "qa_report_json", "settings_json", "status", "updated_at"},
+    "poster_deliverable": {"staff_id", "staff_display_name_snapshot", "poster_copy_set_id", "copy_blueprint_id_v2", "copy_blueprint_revision_v2", "copy_execution_binding_id_v2", "copy_approval_snapshot_id_v2", "recipe_id", "template_version", "composition_strategy", "render_manifest_json", "background_media_id", "background_local_path", "output_path", "output_sha256", "creative_asset_id", "qa_report_json", "settings_json", "status", "updated_at"},
     "product_intelligence_snapshot": {"product_id", "version", "status", "product_description", "benefits_json", "usp_json", "hook_angles_json", "cta_angles_json", "pain_points_json", "subhook_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text", "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes", "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock", "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json", "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json", "confidence_score", "completeness_score", "readiness_status", "created_from_review_draft_id", "created_by", "approved_by", "approved_at", "supersedes_snapshot_id", "updated_at"},
     "product_intelligence_field_provenance": {"snapshot_id", "product_id", "field_name", "declared_value", "normalized_value", "source_type", "source_url", "source_lane", "evidence_kind", "extraction_method", "confidence_score", "verification_status", "claim_risk_flag", "reviewer_decision", "reviewer_note", "updated_at"},
     "product_intelligence_review_draft": {"product_id", "review_status", "product_description", "benefits_json", "usp_json", "hook_angles_json", "cta_angles_json", "pain_points_json", "subhook_json", "usage_text", "ingredients_text", "warnings_text", "target_customer_text", "paste_anything_summary", "source_urls_json", "image_evidence_json", "package_notes", "size_or_volume", "product_form_factor", "packaging_description", "product_truth_lock", "claim_gate", "claim_risk_level", "claim_tokens_json", "allowed_claims_json", "blocked_claims_json", "buyer_persona_snapshot_json", "copy_strategy_summary_json", "confidence_score", "completeness_score", "readiness_status", "reviewer_note", "created_by", "reviewed_by", "approved_by", "approved_at", "rejected_by", "rejected_at", "updated_at"},
@@ -3000,6 +3001,8 @@ async def create_or_replace_workspace_execution_package(
     workspace_execution_package_id: str,
     *,
     product_id: str,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
     mode: str,
     duration_seconds: int,
     aspect_ratio: str,
@@ -3024,13 +3027,16 @@ async def create_or_replace_workspace_execution_package(
         await db.execute(
             """
             INSERT INTO workspace_execution_package (
-                workspace_execution_package_id, product_id, mode, duration_seconds, aspect_ratio, model,
+                workspace_execution_package_id, product_id, staff_id, staff_display_name_snapshot,
+                mode, duration_seconds, aspect_ratio, model,
                 manual_override, prompt_text, prompt_fingerprint, prompt_package_snapshot_id, asset_slots,
                 resolved_assets, readiness, execution_allowed, production_generation_allowed, manual_fallback,
                 blockers, request_lineage_payload, source_of_truth_notes, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(workspace_execution_package_id) DO UPDATE SET
                 product_id=excluded.product_id,
+                staff_id=excluded.staff_id,
+                staff_display_name_snapshot=excluded.staff_display_name_snapshot,
                 mode=excluded.mode,
                 duration_seconds=excluded.duration_seconds,
                 aspect_ratio=excluded.aspect_ratio,
@@ -3053,6 +3059,8 @@ async def create_or_replace_workspace_execution_package(
             (
                 workspace_execution_package_id,
                 product_id,
+                staff_id,
+                staff_display_name_snapshot,
                 mode,
                 duration_seconds,
                 aspect_ratio,
@@ -3327,6 +3335,8 @@ async def create_workspace_generation_package(
     *,
     mode: str,
     product_id: str,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
     product_name_snapshot: str,
     source_lane: str,
     prompt_package_snapshot_id: str,
@@ -3351,16 +3361,18 @@ async def create_workspace_generation_package(
         await db.execute(
             """
             INSERT INTO workspace_generation_package (
-                workspace_generation_package_id, mode, product_id, product_name_snapshot,
+                workspace_generation_package_id, mode, product_id, staff_id,
+                staff_display_name_snapshot, product_name_snapshot,
                 source_lane, prompt_package_snapshot_id, workspace_execution_package_id,
                 generation_mode, final_prompt_text, prompt_blocks_json, selected_assets_json,
                 resolved_engine_slots_json, resolver_output_json, image_assets_json,
                 manual_handoff_json, dom_handoff_payload_json, blockers_json, warnings_json,
                 status, batch_run_id, created_at, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
-                workspace_generation_package_id, mode, product_id, product_name_snapshot,
+                workspace_generation_package_id, mode, product_id, staff_id,
+                staff_display_name_snapshot, product_name_snapshot,
                 source_lane, prompt_package_snapshot_id, workspace_execution_package_id,
                 generation_mode, final_prompt_text, prompt_blocks_json, selected_assets_json,
                 resolved_engine_slots_json, resolver_output_json, image_assets_json,
@@ -4196,17 +4208,20 @@ async def insert_generated_artifact(media_id: str, job_id: str = None, mode: str
                                     model_used: str = None, duration_used: int = None,
                                     file_size_bytes: int = None, file_sha256: str = None,
                                     delivery_status: str = "REGISTERED",
-                                    readback_verified: bool = False) -> dict | None:
+                                    readback_verified: bool = False,
+                                    staff_id: str | None = None,
+                                    staff_display_name_snapshot: str | None = None) -> dict | None:
     """Register a finished generation in the system library (idempotent on media_id)."""
     db = await get_db()
     async with _db_lock:
         await db.execute(
             """INSERT OR REPLACE INTO generated_artifact
-               (media_id, job_id, mode, artifact_kind, local_path, size_mb,
+               (media_id, job_id, staff_id, staff_display_name_snapshot, mode,
+                artifact_kind, local_path, size_mb,
                 file_size_bytes, file_sha256, delivery_status, readback_verified,
                 project_id, model_used, duration_used, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (media_id, job_id, mode, artifact_kind, local_path, size_mb,
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (media_id, job_id, staff_id, staff_display_name_snapshot, mode, artifact_kind, local_path, size_mb,
              file_size_bytes, file_sha256, delivery_status, int(bool(readback_verified)),
              project_id, model_used, duration_used, _now()),
         )
@@ -4285,6 +4300,7 @@ async def create_video_production_job_full(job_id: str, *, logical_job_key: str,
         "project_id", "scene_id", "requested_duration_seconds", "product_id",
         "product_name", "execution_package_id", "approved_asset_id",
         "approved_asset_sha256", "engine", "model", "aspect_ratio",
+        "staff_id", "staff_display_name_snapshot",
         "plan_fingerprint", "whole_plan_json", "initial_media_id",
         "segment_media_ids_json",
         # production authority persisted at plan time (create-before-initial)
@@ -4292,6 +4308,7 @@ async def create_video_production_job_full(job_id: str, *, logical_job_key: str,
         "initial_asset_media_id", "initial_reference_media_ids_json",
         "initial_source_mode",
         "initial_lane_job_id", "initial_lane_project_id",
+        "staff_id", "staff_display_name_snapshot",
         "stage_state_json", "initial_correlation_json",
         "continuation_prompts_json",
     }
@@ -4315,6 +4332,7 @@ async def update_video_production_job_full(job_id: str, **fields) -> None:
         "plan_fingerprint", "whole_plan_json", "authorization_token",
         "authorization_expires_at", "initial_operation_id", "initial_workflow_id",
         "extend_child_operation_id", "extend_child_workflow_id", "stage_state_json",
+        "staff_id", "staff_display_name_snapshot",
         "initial_mode", "initial_prompt_text", "initial_prompt_fingerprint",
         "initial_asset_media_id", "initial_reference_media_ids_json",
         "initial_source_mode", "initial_correlation_json",
@@ -4794,6 +4812,8 @@ async def insert_generation_result(
     *,
     job_id: str = None,
     request_id: str = None,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
     mode: str = None,
     artifact_kind: str = "video",
     product_id: str = None,
@@ -4816,14 +4836,17 @@ async def insert_generation_result(
     async with _db_lock:
         await db.execute(
             """INSERT INTO generation_result
-               (media_id, job_id, request_id, mode, artifact_kind, product_id,
+               (media_id, job_id, request_id, staff_id, staff_display_name_snapshot,
+                mode, artifact_kind, product_id,
                 product_name, final_prompt_text, aspect_ratio, model_label,
                 duration_s, count_setting, reference_media_ids_json,
                 workspace_generation_package_id, project_id,
                 product_visual_custody_json, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(media_id) DO UPDATE SET
                  job_id=excluded.job_id, request_id=excluded.request_id,
+                 staff_id=excluded.staff_id,
+                 staff_display_name_snapshot=excluded.staff_display_name_snapshot,
                  mode=excluded.mode, artifact_kind=excluded.artifact_kind,
                  product_id=excluded.product_id, product_name=excluded.product_name,
                  final_prompt_text=excluded.final_prompt_text,
@@ -4833,7 +4856,8 @@ async def insert_generation_result(
                  workspace_generation_package_id=excluded.workspace_generation_package_id,
                  project_id=excluded.project_id,
                  product_visual_custody_json=excluded.product_visual_custody_json""",
-            (media_id, job_id, request_id, mode, artifact_kind, product_id,
+            (media_id, job_id, request_id, staff_id, staff_display_name_snapshot,
+             mode, artifact_kind, product_id,
              product_name, final_prompt_text or "", aspect_ratio, model_label,
              duration_s, count_setting, _json.dumps(reference_media_ids or []),
              workspace_generation_package_id, project_id,
@@ -5015,6 +5039,8 @@ async def create_bulk_generation_run(
     bulk_run_id: str,
     *,
     kind: str,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
     total_expected: int = 0,
     max_parallel_images: int = 2,
     max_parallel_videos: int = 1,
@@ -5030,14 +5056,17 @@ async def create_bulk_generation_run(
     async with _db_lock:
         await db.execute(
             """INSERT INTO bulk_generation_run
-               (bulk_run_id, kind, status, total_expected, total_completed, total_failed,
+               (bulk_run_id, kind, staff_id, staff_display_name_snapshot, status,
+                total_expected, total_completed, total_failed,
                 max_parallel_images, max_parallel_videos, confirm_credit_burn,
                 interval_min_seconds, interval_max_seconds, cooldown_after_n_jobs,
                 cooldown_seconds, error_log_json, config_json, created_at, updated_at)
-               VALUES (?,?,?,?,0,0,?,?,?,?,?,?,?,'[]',?,?,?)""",
+               VALUES (?,?,?,?,?,?,0,0,?,?,?,?,?,?,?,'[]',?,?,?)""",
             (
                 bulk_run_id,
                 kind,
+                staff_id,
+                staff_display_name_snapshot,
                 "PENDING",
                 total_expected,
                 max_parallel_images,
@@ -5078,6 +5107,8 @@ async def create_bulk_generation_item(
     bulk_item_id: str,
     *,
     bulk_run_id: str,
+    staff_id: str | None = None,
+    staff_display_name_snapshot: str | None = None,
     item_type: str,
     source_ref: str,
     prompt_snapshot: str | None = None,
@@ -5089,12 +5120,15 @@ async def create_bulk_generation_item(
     async with _db_lock:
         await db.execute(
             """INSERT INTO bulk_generation_item
-               (bulk_item_id, bulk_run_id, item_type, source_ref, prompt_snapshot,
+               (bulk_item_id, bulk_run_id, staff_id, staff_display_name_snapshot,
+                item_type, source_ref, prompt_snapshot,
                 payload_json, status, retry_count, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,0,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,0,?,?)""",
             (
                 bulk_item_id,
                 bulk_run_id,
+                staff_id,
+                staff_display_name_snapshot,
                 item_type,
                 source_ref,
                 prompt_snapshot,

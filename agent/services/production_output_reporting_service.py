@@ -46,7 +46,12 @@ _UNKNOWN_STAFF = {
     "operator",
     "system",
     "p6_system",
+    "p6-production-operator",
     "dashboard-operator",
+    "dashboard_operator",
+    "dashboard operator",
+    "none",
+    "null",
 }
 _TEST_PRODUCT_MARKERS = (
     "test product",
@@ -108,6 +113,16 @@ def _clean_staff(value: Any) -> str | None:
     if result is None or result.casefold() in _UNKNOWN_STAFF:
         return None
     return result
+
+
+def _resolve_staff(*candidates: tuple[Any, Any]) -> tuple[str | None, str | None]:
+    """Prefer persisted canonical staff columns, then use explicit legacy evidence."""
+
+    for staff_id, display_name in candidates:
+        canonical_id = _clean_staff(staff_id)
+        if canonical_id:
+            return canonical_id, _text(display_name) or canonical_id
+    return None, None
 
 
 def _is_test_product(product_id: Any, *names: Any) -> bool:
@@ -199,15 +214,24 @@ def _product_name(row: dict[str, Any]) -> str | None:
 
 
 def _base_record(**values: Any) -> dict[str, Any]:
+    staff_id, staff_display_name = _resolve_staff(
+        (
+            values.get("staff_id"),
+            values.get("staff_display_name") or values.get("staff_display_name_snapshot"),
+        ),
+        (values.get("operator_id"), values.get("operator_display_name")),
+    )
     record = {
         "output_id": _text(values.get("output_id")),
         "media_type": _text(values.get("media_type")),
         "production_recipe": _text(values.get("production_recipe")),
         "origin_surface": _text(values.get("origin_surface")),
-        "operator_id": _clean_staff(values.get("operator_id")),
-        "operator_display_name": _clean_staff(
-            values.get("operator_display_name") or values.get("operator_id")
-        ),
+        "staff_id": staff_id,
+        "staff_display_name": staff_display_name,
+        # Keep the reporting API's established aliases while sourcing them from
+        # canonical StaffProfile lineage whenever it is present.
+        "operator_id": staff_id,
+        "operator_display_name": staff_display_name,
         "product_id": _text(values.get("product_id")),
         "product_name": _text(values.get("product_name")),
         "plan_or_run_id": _text(values.get("plan_or_run_id")),
@@ -248,12 +272,20 @@ async def _production_studio_records(start: str, end: str, product_names: dict[s
     rows = await _rows(
         """SELECT a.attempt_id, a.item_id, a.attempt_number, a.attempt_state,
                   a.provider, a.engine, a.model_key, a.last_actor_id,
+                  a.staff_id AS attempt_staff_id,
+                  a.staff_display_name_snapshot AS attempt_staff_name,
                   a.artifact_media_id, a.failure_code, a.created_at,
                   a.generated_at, a.retrieved_at, a.registered_at, a.completed_at,
                   item.plan_id, item.product_id, item.media_type,
                   item.production_recipe AS item_recipe, item.status AS item_status,
                   item.output_media_id, plan.created_by,
+                  item.staff_id AS item_staff_id,
+                  item.staff_display_name_snapshot AS item_staff_name,
+                  plan.staff_id AS plan_staff_id,
+                  plan.staff_display_name_snapshot AS plan_staff_name,
                   qa.status AS qa_status,
+                  qa.staff_id AS qa_staff_id,
+                  qa.staff_display_name_snapshot AS qa_staff_name,
                   p.product_display_name, p.product_short_name, p.raw_product_title
            FROM creative_generation_attempt a
            JOIN creative_production_item item ON item.item_id = a.item_id
@@ -278,6 +310,14 @@ async def _production_studio_records(start: str, end: str, product_names: dict[s
         model = row.get("model_key") or row.get("engine")
         if _model_is_retired(model):
             continue
+        staff_id, staff_name = _resolve_staff(
+            (row.get("attempt_staff_id"), row.get("attempt_staff_name")),
+            (row.get("item_staff_id"), row.get("item_staff_name")),
+            (row.get("plan_staff_id"), row.get("plan_staff_name")),
+            (row.get("qa_staff_id"), row.get("qa_staff_name")),
+            (row.get("last_actor_id"), None),
+            (row.get("created_by"), None),
+        )
         state = str(row.get("attempt_state") or "").upper()
         item_status = str(row.get("item_status") or "").upper()
         artifact = row.get("artifact_media_id") or row.get("output_media_id")
@@ -289,7 +329,8 @@ async def _production_studio_records(start: str, end: str, product_names: dict[s
                 media_type=row.get("media_type"),
                 production_recipe=row.get("item_recipe"),
                 origin_surface="PRODUCTION_STUDIO",
-                operator_id=row.get("last_actor_id") or row.get("created_by"),
+                staff_id=staff_id,
+                staff_display_name=staff_name,
                 product_id=product_id,
                 product_name=product_names.get(str(product_id)) if product_id else _product_name(row),
                 plan_or_run_id=row.get("plan_id"),
@@ -363,16 +404,23 @@ def _lineage_recipe(*payloads: Any) -> str | None:
 
 
 def _lineage_staff(*payloads: Any) -> tuple[str | None, str | None]:
-    values: list[tuple[str | None, str | None]] = []
-    keys = {"operator_id", "operator", "staff_id", "actor_id", "created_by"}
+    canonical: list[tuple[Any, Any]] = []
+    legacy: list[tuple[Any, Any]] = []
+    keys = {"operator_id", "operator", "actor_id", "created_by"}
 
     def visit(value: Any) -> None:
         if isinstance(value, dict):
             for key, child in value.items():
-                if str(key).casefold() in keys and isinstance(child, (str, int)):
-                    cleaned = _clean_staff(child)
-                    if cleaned:
-                        values.append((cleaned, cleaned))
+                normalized_key = str(key).casefold()
+                if normalized_key == "staff_id" and isinstance(child, (str, int)):
+                    canonical.append(
+                        (
+                            child,
+                            value.get("staff_display_name_snapshot") or value.get("staff_display_name"),
+                        )
+                    )
+                elif normalized_key in keys and isinstance(child, (str, int)):
+                    legacy.append((child, value.get("operator_display_name")))
                 visit(child)
         elif isinstance(value, list):
             for child in value:
@@ -380,11 +428,16 @@ def _lineage_staff(*payloads: Any) -> tuple[str | None, str | None]:
 
     for payload in payloads:
         visit(_json(payload))
-    return values[0] if values else (None, None)
+    return _resolve_staff(*canonical, *legacy)
 
 
 def _package_columns(row: dict[str, Any]) -> tuple[Any, ...]:
     return (
+        {"staff_id": row.get("gr_staff_id"), "staff_display_name_snapshot": row.get("gr_staff_name")},
+        {"staff_id": row.get("ga_staff_id"), "staff_display_name_snapshot": row.get("ga_staff_name")},
+        {"staff_id": row.get("rt_staff_id"), "staff_display_name_snapshot": row.get("rt_staff_name")},
+        {"staff_id": row.get("wgp_staff_id"), "staff_display_name_snapshot": row.get("wgp_staff_name")},
+        {"staff_id": row.get("wep_staff_id"), "staff_display_name_snapshot": row.get("wep_staff_name")},
         row.get("rt_lineage"),
         row.get("wgp_source_lane"),
         row.get("wgp_mode"),
@@ -418,8 +471,8 @@ def _standalone_record(row: dict[str, Any], product_names: dict[str, str], *, fa
         media_type="VIDEO",
         production_recipe=recipe,
         origin_surface="STANDALONE",
-        operator_id=operator_id,
-        operator_display_name=operator_name,
+        staff_id=operator_id,
+        staff_display_name=operator_name,
         product_id=product_id,
         product_name=product_name,
         plan_or_run_id=row.get("workspace_generation_package_id") or row.get("job_id") or row.get("request_id"),
@@ -442,17 +495,29 @@ def _standalone_record(row: dict[str, Any], product_names: dict[str, str], *, fa
 
 _STANDALONE_SELECT = """SELECT gr.media_id, ga.media_id AS artifact_media_id,
              gr.job_id, gr.request_id, gr.mode,
+             gr.staff_id AS gr_staff_id,
+             gr.staff_display_name_snapshot AS gr_staff_name,
              gr.product_id, gr.product_name, gr.workspace_generation_package_id,
              gr.created_at AS gr_created_at,
+             ga.staff_id AS ga_staff_id,
+             ga.staff_display_name_snapshot AS ga_staff_name,
              ga.model_used AS artifact_model, ga.created_at AS artifact_created_at,
-             rt.product_id AS rt_product_id, rt.request_lineage_payload AS rt_lineage,
+             rt.product_id AS rt_product_id,
+             rt.staff_id AS rt_staff_id,
+             rt.staff_display_name_snapshot AS rt_staff_name,
+             rt.request_lineage_payload AS rt_lineage,
              rt.provider, rt.model_label, rt.completed_at, rt.failed_at,
              rt.error_code, rt.mode AS rt_mode,
              req.retry_count AS request_retry_count,
              wgp.source_lane AS wgp_source_lane, wgp.mode AS wgp_mode,
+             wgp.staff_id AS wgp_staff_id,
+             wgp.staff_display_name_snapshot AS wgp_staff_name,
              wgp.generation_identity_json AS wgp_generation_identity,
              wgp.resolver_output_json AS wgp_resolver_output,
-             wep.mode AS wep_mode, wep.request_lineage_payload AS wep_lineage,
+             wep.mode AS wep_mode,
+             wep.staff_id AS wep_staff_id,
+             wep.staff_display_name_snapshot AS wep_staff_name,
+             wep.request_lineage_payload AS wep_lineage,
              linked_item.item_id AS linked_p6_item_id,
              COALESCE(gr.created_at, ga.created_at, rt.completed_at, rt.failed_at) AS actual_created_at
       FROM generation_result gr
@@ -508,15 +573,23 @@ async def _standalone_success_records(start: str, end: str, product_names: dict[
 
 async def _standalone_failed_records(start: str, end: str, product_names: dict[str, str]) -> list[dict[str, Any]]:
     rows = await _rows(
-        """SELECT rt.request_id, rt.product_id, rt.request_lineage_payload AS rt_lineage,
+        """SELECT rt.request_id, rt.product_id,
+                  rt.staff_id AS rt_staff_id,
+                  rt.staff_display_name_snapshot AS rt_staff_name,
+                  rt.request_lineage_payload AS rt_lineage,
                   rt.provider, rt.model_label, rt.mode AS rt_mode, rt.created_at,
                   rt.completed_at, rt.failed_at, rt.error_code,
                   rt.workspace_generation_package_id,
                   req.retry_count AS request_retry_count,
                   wgp.source_lane AS wgp_source_lane, wgp.mode AS wgp_mode,
+                  wgp.staff_id AS wgp_staff_id,
+                  wgp.staff_display_name_snapshot AS wgp_staff_name,
                   wgp.generation_identity_json AS wgp_generation_identity,
                   wgp.resolver_output_json AS wgp_resolver_output,
-                  wep.mode AS wep_mode, wep.request_lineage_payload AS wep_lineage,
+                  wep.mode AS wep_mode,
+                  wep.staff_id AS wep_staff_id,
+                  wep.staff_display_name_snapshot AS wep_staff_name,
+                  wep.request_lineage_payload AS wep_lineage,
                   NULL AS media_id, NULL AS job_id,
                   COALESCE(rt.failed_at, rt.completed_at, rt.created_at) AS actual_created_at
            FROM request_telemetry rt
@@ -542,8 +615,12 @@ async def _standalone_failed_records(start: str, end: str, product_names: dict[s
 async def _montage_records(start: str, end: str, product_names: dict[str, str]) -> list[dict[str, Any]]:
     rows = await _rows(
         """SELECT r.bulk_run_id, r.status AS run_status, r.config_json,
+                  r.staff_id AS run_staff_id,
+                  r.staff_display_name_snapshot AS run_staff_name,
                   r.created_at AS run_created_at, r.updated_at AS run_updated_at,
                   i.bulk_item_id, i.status AS item_status, i.job_id, i.media_id,
+                  i.staff_id AS item_staff_id,
+                  i.staff_display_name_snapshot AS item_staff_name,
                   i.payload_json, i.error, i.retry_count, i.started_at,
                   i.completed_at, i.created_at AS item_created_at
            FROM bulk_generation_run r
@@ -583,13 +660,28 @@ async def _montage_records(start: str, end: str, product_names: dict[str, str]) 
             status in _MONTAGE_SUCCESS_STATUSES
             or (not row.get("bulk_item_id") and run_status in {"COMPLETE", "ASSEMBLY_READY"})
         ) and not failed
+        staff_id, staff_name = _resolve_staff(
+            (row.get("run_staff_id"), row.get("run_staff_name")),
+            (row.get("item_staff_id"), row.get("item_staff_name")),
+            (
+                config.get("staff_id"),
+                config.get("staff_display_name_snapshot") or config.get("staff_display_name"),
+            ),
+            (
+                payload.get("staff_id"),
+                payload.get("staff_display_name_snapshot") or payload.get("staff_display_name"),
+            ),
+            (config.get("operator_id"), None),
+            (payload.get("operator_id"), None),
+        )
         records.append(
             _base_record(
                 output_id=row.get("bulk_run_id"),
                 media_type="VIDEO",
                 production_recipe="MONTAGE",
                 origin_surface="STANDALONE",
-                operator_id=config.get("operator_id") or config.get("staff_id") or payload.get("operator_id"),
+                staff_id=staff_id,
+                staff_display_name=staff_name,
                 product_id=product_id,
                 product_name=product_name,
                 plan_or_run_id=row.get("bulk_run_id"),
@@ -630,6 +722,7 @@ def _poster_qa_status(value: Any) -> str:
 async def _poster_records(start: str, end: str, product_names: dict[str, str]) -> list[dict[str, Any]]:
     rows = await _rows(
         """SELECT d.poster_deliverable_id, d.product_id, d.output_path,
+                  d.staff_id, d.staff_display_name_snapshot,
                   d.output_sha256, d.creative_asset_id, d.qa_report_json,
                   d.settings_json, d.status, d.recipe_id, d.created_at, d.updated_at,
                   p.product_display_name, p.product_short_name, p.raw_product_title
@@ -651,7 +744,15 @@ async def _poster_records(start: str, end: str, product_names: dict[str, str]) -
         model = settings.get("image_model") or settings.get("model_key")
         if _model_is_retired(model):
             continue
-        operator_id = settings.get("operator_id") or settings.get("staff_id") or settings.get("created_by")
+        staff_id, staff_name = _resolve_staff(
+            (row.get("staff_id"), row.get("staff_display_name_snapshot")),
+            (
+                settings.get("staff_id"),
+                settings.get("staff_display_name_snapshot") or settings.get("staff_display_name"),
+            ),
+            (settings.get("operator_id"), None),
+            (settings.get("created_by"), None),
+        )
         artifact = row.get("creative_asset_id") or row.get("output_sha256") or row.get("output_path")
         records.append(
             _base_record(
@@ -659,7 +760,8 @@ async def _poster_records(start: str, end: str, product_names: dict[str, str]) -
                 media_type="POSTER",
                 production_recipe="POSTER_BUILDER",
                 origin_surface="POSTER_BUILDER",
-                operator_id=operator_id,
+                staff_id=staff_id,
+                staff_display_name=staff_name,
                 product_id=row.get("product_id"),
                 product_name=product_names.get(str(row.get("product_id"))) or _product_name(row),
                 plan_or_run_id=row.get("poster_deliverable_id"),
@@ -833,8 +935,16 @@ def _filter_options(records: list[dict[str, Any]]) -> dict[str, list[dict[str, s
         },
         key=lambda item: item[1].casefold(),
     )
+    staff_labels = {
+        str(record["operator_id"]): str(record.get("operator_display_name") or record["operator_id"])
+        for record in records
+        if record.get("operator_id")
+    }
     return {
-        "staff": [{"value": value, "label": value} for value in values("operator_id")],
+        "staff": [
+            {"value": value, "label": staff_labels.get(value, value)}
+            for value in values("operator_id")
+        ],
         "media_types": list(MEDIA_TYPES),
         "production_recipes": list(REPORTING_RECIPES),
         "origin_surfaces": list(ORIGIN_SURFACES),

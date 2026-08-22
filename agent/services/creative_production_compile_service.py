@@ -112,13 +112,15 @@ async def _create_p6_execution_bridge(
             "RECIPE_EXECUTION_PACKAGE_REQUIRED",
             "The canonical recipe authority returned no execution package identity.",
         )
-    bridge_id = f"p6recipe_{_prompt_sha(item['item_id'] + execution_package_id)[:24]}"
+    bridge_id = f"p6recipe_{_prompt_sha(item['item_id'] + execution_package_id + str(item.get('staff_id') or ''))[:24]}"
     existing = await core_crud.get_workspace_generation_package(bridge_id)
     if existing is None:
         await core_crud.create_workspace_generation_package(
             bridge_id,
             mode=str(package.get("mode") or "F2V").upper(),
             product_id=str(item["product_id"]),
+            staff_id=item.get("staff_id"),
+            staff_display_name_snapshot=item.get("staff_display_name_snapshot"),
             product_name_snapshot=str(package.get("product_name_snapshot") or ""),
             source_lane=source_lane,
             prompt_package_snapshot_id=str(
@@ -261,6 +263,8 @@ async def _compile_faceless_recipe(
         aspect_ratio=aspect,
         model=model,
         manual_override=False,
+        staff_id=item.get("staff_id"),
+        staff_display_name_snapshot=item.get("staff_display_name_snapshot"),
         generation_mode=str(orchestration["generation_mode"]),
         character_presence=faceless.FACELESS_CHARACTER_PRESENCE,
         creator_persona="DEFAULT_CREATOR",
@@ -363,6 +367,8 @@ async def _compile_montage_recipe(
         default_policy=SceneReferencePolicy.PRODUCT_ANCHOR,
         model=model,
         duration_seconds=engine_block_duration,
+        staff_id=item.get("staff_id"),
+        staff_display_name_snapshot=item.get("staff_display_name_snapshot"),
         copy_fallback_confirmed=False,
         copy_v2_context=lane_context,
     )
@@ -487,6 +493,8 @@ async def _compile_video(
             aspect_ratio=aspect,
             model=str(dimensions["model_key"]),
             manual_override=False,
+            staff_id=item.get("staff_id"),
+            staff_display_name_snapshot=item.get("staff_display_name_snapshot"),
             generation_mode="EXTEND",
             requested_total_duration_seconds=total_duration,
             source_mode=str(

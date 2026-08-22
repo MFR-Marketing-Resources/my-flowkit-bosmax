@@ -23,6 +23,7 @@ def client() -> TestClient:
 def _base_body(**extra):
     body = {
         "product_id": "p1",
+        "staff_id": "staff_pytest_operator",
         "hook_id": "AUTO",
         "background_id": "AUTO",
         "model": "Veo 3.1 - Lite",

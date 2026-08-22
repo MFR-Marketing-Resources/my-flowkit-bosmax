@@ -34,6 +34,7 @@ import {
 	fetchWorkspacePackageReadiness,
 } from "../api/workspacePackages";
 import BackendVersionBanner from "../components/BackendVersionBanner";
+import StaffIdentityBar from "../components/StaffIdentityBar";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import CopywritingSourceSelector from "../components/copywriting/CopywritingSourceSelector";
 import NativeExtendPanel from "../components/NativeExtendPanel";
@@ -75,6 +76,7 @@ import type {
 	WorkspacePromptPreviewResult,
 } from "../types";
 import { useProductCatalog } from "../hooks/useProductCatalog";
+import { useStaffIdentity } from "../hooks/useStaffIdentity";
 import { resolvePromptRepresentationPresentation } from "../utils/promptRepresentationUi";
 import { forgetGenerationJob, rememberGenerationJob } from "../utils/videoSessionResults";
 import {
@@ -669,6 +671,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const isPortalMode =
 		new URLSearchParams(location.search).get("portal") === "side";
 	const [isExecuting, setIsExecuting] = useState(false);
+	const staffIdentity = useStaffIdentity();
 	const [isSavingPackage, setIsSavingPackage] = useState(false);
 	const [savedGenPackage, setSavedGenPackage] =
 		useState<WorkspaceGenerationPackage | null>(null);
@@ -1241,6 +1244,23 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	} | null>(null);
 
 	const handleExecute = async (data: WorkspaceExecutePayload, approved = false) => {
+		const productionRecipe =
+			mode === "HYBRID"
+				? "HYBRID"
+				: String(data.visual_lane_id ?? data.lane ?? "").toUpperCase() ===
+					  "POSTER_BUILDER"
+					? "POSTER_BUILDER"
+					: undefined;
+		if (productionRecipe && !staffIdentity.hasStaff) {
+			setNotice({
+				tone: "warning",
+				title: "Select staff before production",
+				detail:
+					"An active Staff Profile is required before this production can be submitted.",
+				requestId: null,
+			});
+			return;
+		}
 		if (backendRuntimeStale) {
 			setNotice({
 				tone: "warning",
@@ -1581,6 +1601,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						...data,
 						request_id: requestId,
 						aspectRatio: data.aspectRatio || aspect,
+						staff_id: staffIdentity.staffId,
+						production_recipe: productionRecipe,
 					}),
 				});
 
@@ -1638,6 +1660,8 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							? undefined
 							: capabilityMatrix?.capability_matrix_version,
 					copy_v2_context: data.copy_v2_context,
+					staff_id: staffIdentity.staffId,
+					production_recipe: productionRecipe,
 				}),
 			});
 
@@ -2407,6 +2431,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				<div className="mb-4">
 					<BackendVersionBanner onRuntimeStaleChange={setBackendRuntimeStale} />
 				</div>
+				<StaffIdentityBar identity={staffIdentity} surface={mode} />
 				<div className="flex min-h-0 flex-1 flex-col gap-5 lg:flex-row">
 					<main className="min-w-0 space-y-3 pb-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
 						{/* Step 1 — Product */}
@@ -2977,7 +3002,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 														: undefined,
 											})
 										}
-										disabled={isExecuting || backendRuntimeStale}
+										disabled={
+											isExecuting || backendRuntimeStale || !staffIdentity.hasStaff
+										}
 										className="w-full rounded-xl bg-gradient-to-br from-v4-accent to-v4-auto px-4 py-3 text-[13px] font-bold text-slate-950 shadow-lg shadow-v4-accent/20 transition-opacity hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-40"
 									>
 										{isExecuting
@@ -3141,7 +3168,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			{pendingApproval && (
 				<FinalPromptApprovalModal
 					envelope={pendingApproval.envelope}
-					approvedBy="operator"
+					approvedBy={staffIdentity.selectedStaff?.display_name ?? ""}
 					onApproved={(snap) => {
 						const d = pendingApproval.data;
 						setPendingApproval(null);
@@ -3169,6 +3196,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			<div className="mb-4">
 				<BackendVersionBanner onRuntimeStaleChange={setBackendRuntimeStale} />
 			</div>
+			<StaffIdentityBar identity={staffIdentity} surface={mode} />
 
 			{isPortalMode && (
 				<div className="mb-4 grid grid-cols-2 gap-2 rounded-2xl border border-slate-800 bg-slate-900/40 p-2">
