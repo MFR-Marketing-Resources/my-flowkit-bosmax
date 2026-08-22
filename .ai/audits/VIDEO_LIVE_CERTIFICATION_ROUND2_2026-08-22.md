@@ -365,7 +365,7 @@ paid Google Flow operations until the provider-free correction below is green.
   UAT, push, or merge was performed after the owner steer.
 - Branch under correction: `codex/video-lifecycle-round2`.
 - Source SHA anchor: `0caaad6fb3c659ea67d03862bc710a0f8c25b636`; local correction
-  commit: `74d7c377a504d35f844852ae32e9ce118d9e2c01`. This commit is not pushed,
+  commit: `04e541f83ef0f4328ef0a63c568e47dacb516275`. This commit is not pushed,
   merged, or deployed and is not a release/runtime claim.
 - Total paid provider submits already consumed before the steer: **4**;
   observed credit movement `1068 -> 1013`, total **55 credits**. Post-steer
