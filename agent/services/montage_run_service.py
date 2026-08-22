@@ -8,7 +8,9 @@ No second video engine. No DOM lane. Credit fire is never automatic.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional, Sequence
@@ -35,6 +37,10 @@ KIND = "MONTAGE_DISCRETE"
 ITEM_TYPE = "MONTAGE_SCENE"
 
 PackageFactory = Callable[..., Awaitable[dict[str, Any]]]
+
+MONTAGE_SCHEDULER_POLL_SECONDS = 5.0
+_MONTAGE_SCHEDULER_LOCK = asyncio.Lock()
+logger = logging.getLogger(__name__)
 
 
 def _resolve_montage_single_settings(
@@ -492,6 +498,7 @@ async def authorize_montage_run_generation(
     async_worker: bool = False,
     staff_id: str | None = None,
     staff_display_name_snapshot: str | None = None,
+    manifest_id: str | None = None,
 ) -> dict[str, Any]:
     """M-04: explicit operator-authorized multi-scene generation.
 
@@ -562,8 +569,24 @@ async def authorize_montage_run_generation(
         cfg.get("model"), cfg.get("duration_seconds")
     )
 
+    # The API request that originally held the approved manifest callback may
+    # disappear on restart. Persist the authorization context needed by the
+    # server-owned worker before it returns from the first submit.
+    worker_config = dict(cfg)
+    worker_config.update({
+        "async_worker_authorized": bool(async_worker),
+        "approved_manifest_id": manifest_id or cfg.get("approved_manifest_id"),
+        "authorized_expected_video_generations": needed,
+        "authorized_expected_provider_operations": needed_provider,
+        "worker_poll_interval_s": float(poll_interval_s or 5.0),
+        "authorized_at": _now(),
+    })
+
     await crud.update_bulk_generation_run(
-        run_id, status="GENERATING", updated_at=_now()
+        run_id,
+        status="GENERATING",
+        config_json=json.dumps(worker_config),
+        updated_at=_now(),
     )
 
     async def _mark_scene(scene_id: str, *, status: str, **extra: Any) -> None:
@@ -669,16 +692,55 @@ async def authorize_montage_run_generation(
             entry["media_id"] = media_id
             active_job = job_id
 
+            provider_identity = {
+                **(
+                    gen.get("provider_identity")
+                    if isinstance(gen.get("provider_identity"), dict)
+                    else {}
+                ),
+                "provider_job_id": job_id,
+                "provider_generation_submit_count": 1,
+                "generation_resubmission_allowed": False,
+            }
+            for identity_key in (
+                "provider_operation_ids",
+                "direct_media_targets",
+                "generation_identity",
+            ):
+                if gen.get(identity_key) is not None:
+                    provider_identity[identity_key] = gen.get(identity_key)
+            # The canonical SINGLE row may already have captured the direct
+            # provider target by the time the generate boundary returns. Copy
+            # that identity into the Montage item as an audit convenience; the
+            # SINGLE row remains the authoritative recovery source.
+            if job_id and str(job_id).startswith("g_"):
+                try:
+                    from agent.services import make_video as _make_video
+
+                    memory_identity = _make_video.get_job(job_id) or {}
+                    durable_row = await crud.get_video_production_job(job_id)
+                    durable_state = _loads(
+                        (durable_row or {}).get("stage_state_json"), {}
+                    )
+                    for source in (memory_identity, durable_state):
+                        if not isinstance(source, dict):
+                            continue
+                        for identity_key in (
+                            "provider_operation_ids",
+                            "direct_media_targets",
+                            "generation_identity",
+                        ):
+                            if source.get(identity_key) is not None:
+                                provider_identity[identity_key] = source.get(identity_key)
+                except Exception:  # noqa: BLE001 — item still has the durable g_ id
+                    pass
+
             await _mark_scene(
                 scene_id,
                 status="VIDEO_SUBMITTED",
                 video_job_id=job_id,
                 provider_job_id=job_id,
-                provider_identity={
-                    "provider_job_id": job_id,
-                    "provider_calls": 1,
-                    "generation_resubmission_allowed": False,
-                },
+                provider_identity=provider_identity,
             )
 
             if async_worker and not media_id and job_id:
@@ -697,6 +759,7 @@ async def authorize_montage_run_generation(
                     poll_backoff_s=max(5.0, float(poll_interval_s or 5.0)),
                     next_action="POLL",
                     resubmission_allowed=False,
+                    provider_generation_submit_count=1,
                 )
                 entry.update({
                     "status": "VIDEO_SUBMITTED",
@@ -860,12 +923,14 @@ async def resume_montage_run(
     *,
     poll_fn: Callable[[str], Awaitable[dict[str, Any]]],
     max_items: int = 1,
+    generate_fn: Optional[Callable[..., Awaitable[dict[str, Any]]]] = None,
 ) -> dict[str, Any]:
-    """Reconcile active Montage scene jobs with poll-only provider calls.
+    """Reconcile active Montage scene jobs with bounded provider calls.
 
-    The durable item already owns the provider job id. This function never calls
-    ``generate_fn`` and never creates a new provider job; a pending response only
-    advances the persisted backoff lease.
+    The durable item already owns the provider job id. Polling never creates a
+    new provider job. When a server-owned worker supplies ``generate_fn``, the
+    next scene is dispatched only after the current scene's ``RESULT_BOUND``
+    update has committed.
     """
     if poll_fn is None:
         raise ValueError("ERR_MONTAGE_POLL_BOUNDARY_REQUIRED")
@@ -874,6 +939,7 @@ async def resume_montage_run(
     now_dt = datetime.now(timezone.utc)
     reconciled: list[dict[str, Any]] = []
     provider_calls = 0
+    bound_any = False
 
     for item in items:
         if len(reconciled) >= max(1, int(max_items or 1)):
@@ -954,6 +1020,7 @@ async def resume_montage_run(
                 result_kind="video",
                 job_id=job_id,
             )
+            bound_any = True
             reconciled.append({
                 "scene_id": scene_id,
                 "job_id": job_id,
@@ -1010,6 +1077,13 @@ async def resume_montage_run(
                 "resubmission_allowed": False,
             })
 
+    continuation = None
+    if bound_any and generate_fn is not None:
+        continuation = await _dispatch_next_authorized_scene(
+            run_id,
+            generate_fn=generate_fn,
+        )
+
     refreshed = await get_montage_discrete_run(run_id)
     scene_rows = refreshed.get("scenes") or []
     if scene_rows and all(
@@ -1029,10 +1103,226 @@ async def resume_montage_run(
         "run": refreshed,
         "reconciled": reconciled,
         "provider_calls": provider_calls,
-        "provider_generation_submits": 0,
+        "provider_generation_submits": int(
+            (continuation or {}).get("provider_generation_submits") or 0
+        ),
         "resubmission_allowed": False,
+        "continuation": continuation,
         "next_action": "POLL" if run_status == "GENERATING" else None,
     }
+
+
+async def _default_montage_poll_fn(job_id: str) -> dict[str, Any]:
+    """Canonical worker poll: memory first, durable provider reconciliation second."""
+    from agent.services import make_video
+
+    memory = make_video.get_job(job_id)
+    if isinstance(memory, dict):
+        status = str(memory.get("status") or "").upper()
+        if status in {"DONE", "ARTIFACT_PERSISTENCE_FAILED", "PRODUCT_FIDELITY_REVIEW_REQUIRED"}:
+            return memory
+        # A live process-local task still owns its in-flight state. On a restart
+        # this branch is absent and the durable provider handle below is used.
+        if status not in {"RECOVERY_REQUIRED", "RECOVERY_UNRECOVERABLE"}:
+            return memory
+    durable = await make_video.reconcile_durable_single_job(job_id)
+    return durable or {
+        "job_id": job_id,
+        "status": "FAILED",
+        "error": "ERR_MONTAGE_CANONICAL_JOB_NOT_FOUND",
+    }
+
+
+async def _default_montage_generate_fn(run_id: str, **kwargs: Any) -> dict[str, Any]:
+    """Recreate the approved API-first Montage scene dispatch after a restart."""
+    from agent.api.flow import GenerateRequest, generate as flow_generate
+
+    state = await get_montage_discrete_run(run_id)
+    cfg = state.get("config") or {}
+    start_asset = kwargs.get("start_asset")
+    image_media_ids: list[str] = []
+    mid = kwargs.get("image_media_id")
+    if mid:
+        image_media_ids.append(str(mid))
+    if isinstance(start_asset, dict):
+        start_mid = start_asset.get("mediaId") or start_asset.get("media_id")
+        if start_mid and str(start_mid) not in image_media_ids:
+            image_media_ids.append(str(start_mid))
+    body = GenerateRequest(
+        mode=str(kwargs.get("mode") or "F2V"),
+        prompt=str(kwargs.get("prompt") or f"Montage scene {kwargs.get('scene_id')}"),
+        request_id=f"montage:{run_id}:{str(kwargs.get('scene_id') or '')}",
+        product_id=kwargs.get("product_id") or None,
+        aspect="9:16",
+        source_mode=kwargs.get("source_mode") or None,
+        workspace_execution_package_id=kwargs.get("workspace_execution_package_id") or None,
+        model=kwargs.get("model") or None,
+        duration_s=kwargs.get("duration_s"),
+        generation_mode="SINGLE",
+        engine="GOOGLE_FLOW",
+        startAsset=start_asset if isinstance(start_asset, dict) else None,
+        image_media_ids=image_media_ids or None,
+        manifest_id=cfg.get("approved_manifest_id") or None,
+        manifest_item_key=str(kwargs.get("scene_id") or "") or None,
+    )
+    result = await flow_generate(body)
+    if not isinstance(result, dict):
+        return {"job_id": None, "media_id": None}
+    return {
+        "job_id": result.get("job_id") or result.get("id"),
+        "media_id": result.get("media_id")
+        or result.get("video_media_id")
+        or (result.get("result") or {}).get("media_id"),
+        **result,
+    }
+
+
+async def _montage_has_active_poll(run_id: str) -> bool:
+    for item in await crud.list_bulk_generation_items(run_id):
+        status = str(item.get("status") or "").upper()
+        payload = _loads(item.get("payload_json"), {})
+        if status in ("VIDEO_SUBMITTED", "GENERATING", "VIDEO_POLLING") and (
+            payload.get("next_action") == "POLL" or payload.get("async_worker")
+        ):
+            return True
+    return False
+
+
+async def _dispatch_next_authorized_scene(
+    run_id: str,
+    *,
+    generate_fn: Callable[..., Awaitable[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    """Continue an already-authorized run exactly once after RESULT_BOUND."""
+    state = await get_montage_discrete_run(run_id)
+    cfg = state.get("config") or {}
+    if not cfg.get("async_worker_authorized"):
+        return None
+    if await _montage_has_active_poll(run_id):
+        return {"status": "WAITING_ACTIVE_SCENE", "provider_generation_submits": 0}
+    estimate = await estimate_montage_run_generation(run_id)
+    if int(estimate.get("expected_image_operations") or 0) > 0:
+        # The original authorization explicitly excluded image work. Keep the
+        # worker fail-closed instead of silently inventing an image boundary.
+        return {
+            "status": "IMAGE_BOUNDARY_REQUIRED",
+            "error": "ERR_MONTAGE_IMAGE_BOUNDARY_REQUIRED",
+            "provider_generation_submits": 0,
+        }
+    if int(estimate.get("expected_video_generations") or 0) <= 0:
+        scene_statuses = {
+            str(scene.get("status") or "").upper()
+            for scene in state.get("scenes") or []
+        }
+        final_status = (
+            "COMPLETE"
+            if scene_statuses and scene_statuses.issubset({"RESULT_BOUND", "VIDEO_READY"})
+            else "PARTIAL"
+        )
+        await crud.update_bulk_generation_run(
+            run_id,
+            status=final_status,
+            updated_at=_now(),
+        )
+        return {"status": final_status, "provider_generation_submits": 0}
+    return await authorize_montage_run_generation(
+        run_id,
+        confirm_credit_burn=True,
+        expected_video_generations=int(estimate["expected_video_generations"]),
+        expected_provider_operations=int(estimate["expected_provider_operations"]),
+        dry_run=False,
+        generate_fn=generate_fn,
+        poll_fn=None,
+        async_worker=True,
+        poll_interval_s=float(cfg.get("worker_poll_interval_s") or 5.0),
+        manifest_id=cfg.get("approved_manifest_id"),
+    )
+
+
+async def montage_scheduler_tick(
+    *,
+    poll_fn: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
+    generate_fn: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+    max_runs: int = 50,
+) -> dict[str, Any]:
+    """Advance due, server-authorized Montage work without an API/button call."""
+    async with _MONTAGE_SCHEDULER_LOCK:
+        runs = await crud.list_bulk_generation_runs(limit=max(1, int(max_runs or 1)))
+        scanned = 0
+        advanced = 0
+        provider_calls = 0
+        provider_generation_submits = 0
+        errors: list[dict[str, Any]] = []
+        for run in runs:
+            if str(run.get("kind") or "").upper() != KIND:
+                continue
+            cfg = _loads(run.get("config_json"), {})
+            if not cfg.get("async_worker_authorized"):
+                continue
+            if str(run.get("status") or "").upper() not in {"GENERATING", "PARTIAL", "PREPARED"}:
+                continue
+            run_id = str(run.get("bulk_run_id") or "")
+            if not run_id:
+                continue
+            scanned += 1
+            effective_poll = poll_fn or _default_montage_poll_fn
+            if generate_fn is None:
+                async def _generate(**kwargs: Any) -> dict[str, Any]:
+                    return await _default_montage_generate_fn(run_id, **kwargs)
+                effective_generate = _generate
+            else:
+                effective_generate = generate_fn
+            try:
+                active = await _montage_has_active_poll(run_id)
+                if active:
+                    result = await resume_montage_run(
+                        run_id,
+                        poll_fn=effective_poll,
+                        max_items=1,
+                        generate_fn=effective_generate,
+                    )
+                    provider_calls += int(result.get("provider_calls") or 0)
+                    continuation = result.get("continuation") or {}
+                    provider_generation_submits += int(
+                        result.get("provider_generation_submits") or 0
+                    )
+                    if result.get("reconciled") or result.get("continuation"):
+                        advanced += 1
+                else:
+                    continuation = await _dispatch_next_authorized_scene(
+                        run_id,
+                        generate_fn=effective_generate,
+                    )
+                    provider_generation_submits += int(
+                        (continuation or {}).get("provider_generation_submits") or 0
+                    )
+                    if continuation:
+                        advanced += 1
+            except Exception as exc:  # noqa: BLE001 — one run cannot stop the worker
+                errors.append({"montage_run_id": run_id, "error": str(exc)[:400]})
+                logger.exception("Montage scheduler failed for %s", run_id)
+        return {
+            "ok": not errors,
+            "runs_scanned": scanned,
+            "runs_advanced": advanced,
+            "provider_calls": provider_calls,
+            "provider_generation_submits": provider_generation_submits,
+            "errors": errors,
+        }
+
+
+async def montage_scheduler_loop(
+    poll_seconds: float = MONTAGE_SCHEDULER_POLL_SECONDS,
+) -> None:
+    """Server-owned Montage worker; durable rows are the restart cursor."""
+    while True:
+        try:
+            await montage_scheduler_tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — keep the backend alive for the next tick
+            logger.exception("Montage scheduler tick failed")
+        await asyncio.sleep(max(0.5, float(poll_seconds or MONTAGE_SCHEDULER_POLL_SECONDS)))
 
 
 def scene_jobs_to_readiness(

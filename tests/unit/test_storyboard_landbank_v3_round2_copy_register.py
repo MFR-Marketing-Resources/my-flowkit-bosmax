@@ -10,6 +10,7 @@ import pytest
 from agent.authority.copy_blueprint_v2_authority import required_formula_stage_keys
 from agent.db.schema import get_db
 from agent.models.copy_blueprint_v2 import digest_evidence_text
+from agent.models.storyboard_landbank_v3 import digest_text, master_content_digest
 from agent.models.storyboard_landbank_v3_round2 import (
     V3AICopyProposal,
     V3AICopySegment,
@@ -18,7 +19,8 @@ from agent.models.storyboard_landbank_v3_round2 import (
     V3StorylineFamilyProposal,
 )
 from agent.services import ai_copy_provider_adapter
-from agent.services.storyboard_landbank_v3_factory import V3CopyFactoryService
+from agent.services import canonical_prompt_compiler
+from agent.services.storyboard_landbank_v3_factory import V3CopyFactoryService, compile_duration_projection
 
 _R2_SOURCE = "STORYBOARD_LANDBANK_V3_ROUND2_COPY_REGISTER_AI"
 
@@ -452,6 +454,23 @@ async def test_round2_prompt_contract_is_exact_and_mode_aware():
         assert legacy_field in prompt
 
     contract = service._provider_output_contract(plan, recipe)
+    duration_envelope = contract["duration_feasibility"]
+    assert [item["duration_seconds"] for item in duration_envelope] == [8, 16, 24]
+    assert all(item["required_formula_stage_order"] == list(required_formula_stage_keys("PAS")) for item in duration_envelope)
+    for item in duration_envelope:
+        blocks = canonical_prompt_compiler.resolve_block_plan("GOOGLE_FLOW", item["duration_seconds"])
+        budgets = [
+            canonical_prompt_compiler.strict_dialogue_word_budget(
+                seconds, plan.language_profile, wps_mode=plan.wps_mode,
+            )
+            for seconds in blocks
+        ]
+        assert item["block_plan_seconds"] == blocks
+        assert item["per_block_word_budgets"] == budgets
+        assert item["total_word_budget"] == sum(budgets)
+        assert item["first_block_budget"] == budgets[0]
+        assert item["final_block_budget"] == budgets[-1]
+    assert contract["wps_duration_rules"]["shortest_duration"]
     expected_models = {
         "V3AIProviderEnvelope": V3AIProviderEnvelope,
         "V3AngleProposal": V3AngleProposal,
@@ -1074,6 +1093,58 @@ async def test_round2_provider_output_budget_stops_before_v3_mutation(monkeypatc
     assert tuple(row) == ("FAILED", "AI_COPY_ASSIST_TOKEN_BUDGET_EXCEEDED", 1)
 
 
+@pytest.mark.asyncio
+async def test_round2_projection_failure_rolls_back_all_semantic_rows_and_review_events(monkeypatch):
+    monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
+    product_id = "round2-atomic-projection-failure"
+    factory, recipe = await _seed_zero_supply_recipe(product_id)
+    service = V3CopyRegisterRound2Service(factory=factory)
+    plan = await service.plan_assistant(
+        product_id,
+        recipe.recipe_id,
+        mode="CREATE",
+        actor_id="round2-atomic-test",
+        request_id=f"{product_id}:plan",
+    )
+
+    async def fail_projection(*_args, **_kwargs):
+        return None, ("WPS_DURATION_FIT_SHORTFALL",), ("forced projection failure",)
+
+    monkeypatch.setattr(factory, "project_duration", fail_projection)
+    with pytest.raises(Exception) as error:
+        await service.execute_assistant(
+            plan.plan_id,
+            actor_id="round2-atomic-test",
+            request_id=f"{product_id}:execute",
+            provider_mode="FAKE_TEST",
+        )
+    assert error.value.code == "PROJECTION_BLOCKED"
+
+    db = await get_db()
+    for table in (
+        "angle_v3",
+        "storyline_family_v3",
+        "storyboard_component_v3",
+        "master_storyboard_v3",
+        "duration_projection_v3",
+    ):
+        count = await (await db.execute(f"SELECT COUNT(*) FROM {table} WHERE product_id=?", (product_id,))).fetchone()
+        assert count[0] == 0, table
+    events = await (await db.execute(
+        "SELECT COUNT(*) FROM review_event_v3 WHERE product_id=? "
+        "AND entity_type IN ('ANGLE','STORYLINE_FAMILY','STORYBOARD_COMPONENT','MASTER_STORYBOARD','DURATION_PROJECTION')",
+        (product_id,),
+    )).fetchone()
+    assert events[0] == 0
+
+    run = await (await db.execute(
+        "SELECT status, error_code, provider_calls, credit_spend, token_usage_json "
+        "FROM v3_ai_authoring_run WHERE run_id=?",
+        (plan.run_id,),
+    )).fetchone()
+    assert tuple(run) == ("FAILED", "PROJECTION_BLOCKED", 0, 0, "{}")
+
+
 class _CostReportingProvider:
     def __init__(self, credit_spend: int):
         self.payload: dict = {}
@@ -1355,16 +1426,118 @@ async def test_round2_ai_assisted_projection_malay(formula_id, duration):
 
 @pytest.mark.asyncio
 async def test_round2_ai_assisted_projection_fails_closed_when_formula_cannot_fit():
-    # PASTOR's four body stages genuinely overflow short-duration budgets; the
-    # derivation must FAIL CLOSED rather than mutilate the copy to force a fit.
+    # PASTOR's four body stages exceed the short-duration identity budget, but
+    # every required stage still has a deterministic ordered-token allocation.
+    # The governed natural rewrite remains review-only and does not invent copy.
     factory, master = await _seed_malay_master("round2-ai-pastor", "PASTOR")
     service = V3CopyRegisterRound2Service(factory=factory, provider=_MalayCompressorProvider())
-    with pytest.raises(Exception) as error:
-        await service.derive_ai_assisted_projection(
-            master.master_id, master_revision=master.revision, duration_seconds=8,
-            provider_mode="LIVE_TEXT_ASSIST", actor_id="malay-op", request_id="round2-ai-pastor:8",
+    result = await service.derive_ai_assisted_projection(
+        master.master_id, master_revision=master.revision, duration_seconds=8,
+        provider_mode="LIVE_TEXT_ASSIST", actor_id="malay-op", request_id="round2-ai-pastor:8",
+    )
+    assert result["derivation_source"] == "AI_ASSISTED"
+    assert result["projection"]["status"] == "REVIEW_REQUIRED"
+    allocations = result["projection"]["stage_allocations"]
+    assert len(allocations) == len(master.stages)
+    assert all(item["projected_text"] for item in allocations)
+    assert tuple(item["master_formula_stage_key"] for item in allocations) == tuple(
+        stage.formula_stage_key for stage in master.stages
+    )
+
+
+@pytest.mark.asyncio
+async def test_round2_pas_8s_body_allocation_reserves_later_stage_capacity():
+    factory, master = await _seed_malay_master("round2-pas-body-reserve", "PAS")
+    bundle = await factory.truth_adapter.current(master.product_id)
+    projection, issues, details = compile_duration_projection(
+        master,
+        duration_seconds=8,
+        evidence_registry=bundle.registry,
+        language_profile="Malay",
+        wps_mode="SAFE",
+    )
+    assert projection is not None, (issues, details)
+    assert projection.status == "REVIEW_REQUIRED"
+    assert all(item.projected_text for item in projection.stage_allocations)
+    assert any(item.transform_mode == "COMPRESSED" for item in projection.stage_allocations)
+    assert all(
+        count <= budget
+        for count, budget in zip(
+            projection.per_block_word_counts,
+            projection.per_block_word_budgets,
         )
-    assert error.value.code in {"PROJECTION_BLOCKED", "AI_PROJECTION_BLOCKED"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_round2_insufficient_body_capacity_has_stable_diagnostic():
+    # Hook and CTA each fit the 8s block in isolation, but together leave no
+    # representable token for the intervening formula stage(s).
+    factory, master = await _seed_malay_master("round2-capacity-shortfall", "PAS")
+    stages = []
+    for stage in master.stages:
+        if stage.semantic_class == "HOOK":
+            text = " ".join(["Hook"] * 15)
+        elif stage.semantic_class == "CTA":
+            text = " ".join(["CTA"] * 15)
+        else:
+            text = stage.authored_text
+        stages.append(stage.model_copy(update={"authored_text": text, "text_digest": digest_text(text)}))
+    candidate = master.model_copy(update={
+        "stages": tuple(stages),
+        "word_count": sum(len(stage.authored_text.split()) for stage in stages),
+        "exact_content_digest": "0" * 64,
+    })
+    candidate = candidate.model_copy(update={"exact_content_digest": master_content_digest(candidate)})
+    bundle = await factory.truth_adapter.current(master.product_id)
+    projection, issues, details = compile_duration_projection(
+        candidate,
+        duration_seconds=8,
+        evidence_registry=bundle.registry,
+        language_profile="Malay",
+        wps_mode="SAFE",
+    )
+    assert projection is None
+    assert issues == ("WPS_DURATION_FIT_SHORTFALL",)
+    assert details == (
+        f"stage={candidate.stages[1].formula_stage_key}; "
+        f"required_min_words={len(candidate.stages) - 2}; "
+        "residual_capacity=0; block_start=0",
+    )
+
+
+@pytest.mark.parametrize(
+    ("semantic_class", "expected_detail"),
+    (
+        ("HOOK", "HOOK exceeds the first block budget"),
+        ("CTA", "CTA exceeds the final block budget"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_round2_hook_and_cta_hard_fit_fail_before_body_projection(semantic_class, expected_detail):
+    product_id = f"round2-hard-fit-{semantic_class.lower()}"
+    factory, master = await _seed_malay_master(product_id, "PAS")
+    stages = []
+    for stage in master.stages:
+        text = " ".join([semantic_class] * 20) if stage.semantic_class == semantic_class else stage.authored_text
+        stages.append(stage.model_copy(update={"authored_text": text, "text_digest": digest_text(text)}))
+    candidate = master.model_copy(update={
+        "stages": tuple(stages),
+        "word_count": sum(len(stage.authored_text.split()) for stage in stages),
+        "exact_content_digest": "0" * 64,
+    })
+    candidate = candidate.model_copy(update={"exact_content_digest": master_content_digest(candidate)})
+    bundle = await factory.truth_adapter.current(product_id)
+    projection, issues, details = compile_duration_projection(
+        candidate,
+        duration_seconds=8,
+        evidence_registry=bundle.registry,
+        language_profile="Malay",
+        wps_mode="SAFE",
+    )
+    assert projection is None
+    assert issues == ("WPS_DURATION_FIT_SHORTFALL",)
+    assert details == (expected_detail,)
 
 
 def _stage(role, text, claim_bearing=True, has_evidence=True):

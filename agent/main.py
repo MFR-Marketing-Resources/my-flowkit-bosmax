@@ -201,7 +201,7 @@ async def lifespan(app: FastAPI):
         from agent.services import make_video as _make_video_svc
 
         _single_recovery = await _make_video_svc.recover_durable_single_jobs()
-        if _single_recovery.get("marked_recovery_required"):
+        if _single_recovery.get("candidates"):
             logger.info("SINGLE generation recovery: %s", _single_recovery)
     except Exception as _single_e:  # pragma: no cover — boot must remain available
         logger.warning("SINGLE generation recovery skipped: %s", _single_e)
@@ -321,6 +321,8 @@ async def lifespan(app: FastAPI):
         if _p6_svc is not None
         else None
     )
+    from agent.services.montage_run_service import montage_scheduler_loop
+    montage_scheduler_task = asyncio.create_task(montage_scheduler_loop())
 
     async def _resume_durable_video_jobs():
         # Restart recovery: RESUME (poll only) any in-flight authorized full-video
@@ -353,6 +355,7 @@ async def lifespan(app: FastAPI):
     scheduler_task.cancel()
     if p6_scheduler_task is not None:
         p6_scheduler_task.cancel()
+    montage_scheduler_task.cancel()
     await close_db()
     logger.info("Flow Kit stopped")
 

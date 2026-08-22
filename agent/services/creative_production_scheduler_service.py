@@ -1473,6 +1473,7 @@ async def _fire_montage_recipe(
         async_worker=True,
         staff_id=staff_id,
         staff_display_name_snapshot=staff_display_name,
+        manifest_id=manifest_id,
     )
     if not authorized.get("ok"):
         raise CreativeProductionError(
