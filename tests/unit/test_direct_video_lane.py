@@ -478,6 +478,62 @@ def test_routing_flag_on_declined_records_reason(monkeypatch):
     _reset_lane()
 
 
+def test_exact_product_t2v_scaffold_passes_custody_guard_before_provider(monkeypatch):
+    """Exact Product T2V uses the server-owned scaffold contract, not R2V."""
+    _reset_lane()
+    custody = {
+        "exact_product_required": True,
+        "provider_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+        "generation_type": "scene_video_scaffold_then_deterministic_composite",
+    }
+    ran = {}
+
+    async def fake_approval(**_kwargs):
+        return None
+
+    async def fake_prepare(*_args, **_kwargs):
+        return None, True
+
+    async def fake_run(*args, **_kwargs):
+        ran["called"] = True
+
+    async def fake_lease(_job_id):
+        return None
+
+    monkeypatch.setattr(
+        "agent.services.execution_approval_service.verify_and_bind_dispatch",
+        fake_approval,
+    )
+    monkeypatch.setattr(mv, "_prepare_durable_single_job", fake_prepare)
+    monkeypatch.setattr(mv, "_run_generate", fake_run)
+    monkeypatch.setattr(
+        "agent.db.crud.acquire_video_generation_lane_lease",
+        fake_lease,
+    )
+
+    async def go():
+        result = await mv.start_generate(
+            "T2V",
+            "scene-only scaffold",
+            project_id="project-exact",
+            image_media_ids=[],
+            source_mode="T2V",
+            model="Veo 3.1 Lite",
+            duration_s=8,
+            product_visual_custody=custody,
+        )
+        await mv._JOBS[result["job_id"]]["_task"]
+        return result
+
+    result = _run(go())
+    assert result["status"] == "SUBMITTED"
+    assert result["lane"] == "AGENT"
+    assert result["routing_receipt"]["scene_scaffold_route"] == "AGENT_T2V"
+    assert result["routing_receipt"]["provider_product_reference_forbidden"] is True
+    assert ran["called"] is True
+    _reset_lane()
+
+
 # ── the DOM-free pipeline end to end ────────────────────────────────────────
 
 def test_direct_lane_end_to_end_done_and_persisted(monkeypatch, tmp_path):

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from agent.api import flow
+from agent.services.make_video import _pre_dispatch_generation_type
 
 
 def _run(coro):
@@ -60,6 +61,16 @@ def test_exact_faceless_package_dispatches_t2v_with_zero_provider_refs(monkeypat
         "agent.services.execution_approval_service.verify_and_bind_dispatch",
         AsyncMock(return_value=None),
     )
+    monkeypatch.setattr(
+        "agent.services.staff_identity_service.resolve_staff_identity",
+        AsyncMock(
+            return_value={
+                "staff_id": "staff_test",
+                "display_name": "Test Operator",
+                "active": True,
+            }
+        ),
+    )
 
     class Client:
         connected = True
@@ -81,6 +92,7 @@ def test_exact_faceless_package_dispatches_t2v_with_zero_provider_refs(monkeypat
                 mode="T2V",
                 prompt="SCENE-ONLY PLATE",
                 product_id="p1",
+                staff_id="staff_test",
                 source_mode="T2V",
                 model="Veo 3.1 - Lite",
                 duration_s=8,
@@ -97,4 +109,28 @@ def test_exact_faceless_package_dispatches_t2v_with_zero_provider_refs(monkeypat
     assert calls["image_media_ids"] == []
     assert calls["product_visual_custody"]["provider_route"] == (
         "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+    )
+
+
+def test_exact_product_route_uses_scaffold_generation_type_from_custody():
+    custody = {
+        "provider_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+        "generation_type": "scene_video_scaffold_then_deterministic_composite",
+    }
+    declined_t2v_plan = {
+        "eligible": False,
+        "reason": "EXACT_PRODUCT_SCENE_SCAFFOLD_AGENT_T2V",
+    }
+
+    assert _pre_dispatch_generation_type(custody, declined_t2v_plan) == (
+        "scene_video_scaffold_then_deterministic_composite"
+    )
+
+
+def test_reference_route_keeps_direct_plan_generation_type():
+    custody = {"provider_route": "API_FIRST_GENERATIVE_REFERENCE"}
+    direct_plan = {"gen_type": "reference_frame_2_video"}
+
+    assert _pre_dispatch_generation_type(custody, direct_plan) == (
+        "reference_frame_2_video"
     )
