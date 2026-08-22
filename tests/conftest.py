@@ -1,6 +1,7 @@
 """Shared pytest fixtures for Flow Kit tests."""
 
 import os
+import sys
 
 # The pre-cutover suites exercise historical CopySet APIs and flag-OFF golden
 # behavior.  ADR-011 permits that only in explicit test/maintenance mode.  New
@@ -9,28 +10,37 @@ os.environ.setdefault("COPY_LEGACY_MAINTENANCE_MODE", "1")
 os.environ.setdefault("COPY_BLUEPRINT_V2_ENABLED", "0")
 
 import pytest
-from agent.config import DB_PATH
-from agent.db.schema import init_db, close_db, get_db
-
-def _unlink_db_safe() -> None:
-    """Remove the test DB file, tolerating WinError 32 (file still held by OS)."""
-    if DB_PATH == ":memory:":
-        return
-    if not (getattr(DB_PATH, "exists", None) and DB_PATH.exists()):
-        return
-    try:
-        DB_PATH.unlink()
-    except PermissionError:
-        pass
+from agent import config
+from agent.db import schema
 
 
 @pytest.fixture(autouse=True)
-async def db_setup():
-    _unlink_db_safe()
-    await init_db()
+async def db_setup(tmp_path, monkeypatch):
+    """Give every test an independent database and close it before rebinding."""
+    await schema.close_db()
+
+    test_db = tmp_path / "flowkit-pytest-isolated.db"
+    process_db = config.DB_PATH
+
+    # Schema is the canonical database authority. A few direct synchronous
+    # readers (and their already-imported aliases) also consume config.DB_PATH;
+    # rebind those aliases so they cannot read the old process-wide database.
+    monkeypatch.setattr(config, "DB_PATH", test_db)
+    for module in tuple(sys.modules.values()):
+        if module is None:
+            continue
+        try:
+            module_db_path = getattr(module, "DB_PATH")
+        except AttributeError:
+            continue
+        if module_db_path == process_db:
+            monkeypatch.setattr(module, "DB_PATH", test_db, raising=False)
+    monkeypatch.setattr(schema, "DB_PATH", test_db)
+
+    await schema.init_db()
     # Active production API tests use a real registered profile rather than a
     # generic actor fallback. This is test authority, not application seed data.
-    db = await get_db()
+    db = await schema.get_db()
     await db.execute(
         "INSERT OR IGNORE INTO staff_profile "
         "(staff_id, display_name, active, created_at, updated_at) "
@@ -44,9 +54,15 @@ async def db_setup():
         ),
     )
     await db.commit()
-    yield
-    await close_db()
-    _unlink_db_safe()
+    cursor = await db.execute("SELECT COUNT(*) FROM copy_blueprint_v2")
+    assert (await cursor.fetchone())[0] == 0, (
+        "pytest isolation violation: a fresh test DB contains copy_blueprint_v2 rows"
+    )
+    await cursor.close()
+    try:
+        yield
+    finally:
+        await schema.close_db()
 
 
 async def make_product_copy_eligible(product_id: str) -> str:
