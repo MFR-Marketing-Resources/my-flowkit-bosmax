@@ -167,6 +167,8 @@ export interface WorkflowCounts {
 	productionReady: number;
 	/** Approved projections still needing preparation into production. */
 	needsPreparation: number;
+	/** Prepared V2 copy that still needs exact standard-lane authority activation. */
+	activationRequired?: number;
 	/** Executable copy that went stale and needs revalidation. */
 	needsRevalidation: number;
 }
@@ -178,7 +180,7 @@ export function missingCopies(counts: Pick<WorkflowCounts, "target" | "approved"
 
 export interface NextAction {
 	step: WizardStep;
-	kind: "SELECT_PRODUCT" | "SETUP" | "GENERATE" | "REVIEW" | "PREPARE" | "OPEN_STUDIO" | "RESOLVE_BLOCKER" | "DONE";
+	kind: "SELECT_PRODUCT" | "SETUP" | "GENERATE" | "REVIEW" | "PREPARE" | "ACTIVATE" | "OPEN_STUDIO" | "RESOLVE_BLOCKER" | "DONE";
 	label: string;
 	detail: string;
 	count?: number;
@@ -241,6 +243,16 @@ export function resolveNextAction(state: {
 			label: `Prepare ${counts.needsPreparation} for Production`,
 			detail: "Approved copy still needs preparation before production.",
 			count: counts.needsPreparation,
+		};
+	}
+	if ((counts.activationRequired ?? 0) > 0) {
+		const activationRequired = counts.activationRequired ?? 0;
+		return {
+			step: "PRODUCTION",
+			kind: "ACTIVATE",
+			label: `Activate ${activationRequired} prepared ${plural(activationRequired, "copy", "copies")}`,
+			detail: "Bind the exact prepared copy to the required standard lanes, or review the exact handoff below.",
+			count: activationRequired,
 		};
 	}
 	if (counts.approved > 0) {

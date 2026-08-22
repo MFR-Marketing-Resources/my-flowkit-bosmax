@@ -358,6 +358,16 @@ export async function listCopyRegisterBlueprints(productId: string): Promise<{
 	);
 }
 
+export async function fetchCopyRegisterBlueprint(
+	blueprintId: string,
+	revision?: number,
+): Promise<CopyBlueprintV2Record> {
+	const query = revision ? `?revision=${encodeURIComponent(String(revision))}` : "";
+	return getAPI<CopyBlueprintV2Record>(
+		`/api/copy-register/v2/blueprints/${encodeURIComponent(blueprintId)}${query}`,
+	);
+}
+
 export async function generateFormulaCopyBlueprint(input: {
 	product_id: string;
 	formula_id: string;

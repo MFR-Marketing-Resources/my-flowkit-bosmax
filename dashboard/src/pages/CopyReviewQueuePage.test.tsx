@@ -7,15 +7,21 @@ import CopyReviewQueuePage from "./CopyReviewQueuePage";
 vi.mock("../api/copyRegisterV2", () => ({
 	fetchCopyReviewQueue: vi.fn(),
 	batchApproveCopyDrafts: vi.fn(),
+	fetchCopyActivationCandidates: vi.fn(),
+	batchActivateCopyBlueprints: vi.fn(),
 }));
 
 import {
 	batchApproveCopyDrafts,
+	batchActivateCopyBlueprints,
+	fetchCopyActivationCandidates,
 	fetchCopyReviewQueue,
 } from "../api/copyRegisterV2";
 
 const mockedQueue = vi.mocked(fetchCopyReviewQueue);
 const mockedApprove = vi.mocked(batchApproveCopyDrafts);
+const mockedActivationCandidates = vi.mocked(fetchCopyActivationCandidates);
+const mockedBatchActivate = vi.mocked(batchActivateCopyBlueprints);
 
 const safeRow = {
 	blueprint_id: "bp-safe",
@@ -50,6 +56,30 @@ const riskyRow = {
 	individual_review_path: "/creative/copy-authority?product_id=product-risk&blueprint_id=bp-risk",
 };
 
+const readyActivation = {
+	blueprint_id: "bp-ready",
+	revision: 2,
+	product_id: "product-ready",
+	product_name: "Ready Product",
+	status: "PRODUCTION_VALID",
+	formula_id: "PAS",
+	angle: { angle_id: "angle-ready", definition: "Ready angle" },
+	activatable: true,
+	activation_allowed: true,
+	current_authority_state: "NONE",
+	blocked_reason: null,
+	current_authority_reason: null,
+	current_authority_mismatches: [],
+	active_blueprint_id: null,
+	active_revision: null,
+	active_lane_count: 0,
+	required_lane_count: 8,
+	draft_preview: null,
+};
+
+const currentActivation = { ...readyActivation, blueprint_id: "bp-current", current_authority_state: "CURRENT", active_blueprint_id: "bp-current", active_revision: 1, active_lane_count: 8 };
+const staleActivation = { ...readyActivation, blueprint_id: "bp-stale", current_authority_state: "STALE", activatable: false, activation_allowed: false, blocked_reason: "COPY_V2_EVIDENCE_STALE" };
+
 function renderPage() {
 	return render(
 		<MemoryRouter initialEntries={["/creative/copy-review-queue"]}>
@@ -82,6 +112,29 @@ describe("CopyReviewQueuePage", () => {
 			provider_calls: 0,
 			credit_spend: 0,
 		});
+		mockedActivationCandidates.mockResolvedValue({ items: [readyActivation, currentActivation, staleActivation] as never, total: 3, max_batch_size: 50, view: "activation", provider_calls: 0, credit_spend: 0, activation_mutations: 0 });
+		mockedBatchActivate.mockResolvedValue({ results: [{ blueprint_id: "bp-ready", activated: true, idempotent: false, status: "ACTIVATED", lane_count: 8, error_code: null }], activated_count: 1, idempotent_count: 0, failed_count: 0, activation_mutations: 1, bound_lane_count: 8, provider_calls: 0, credit_spend: 0 });
+	});
+
+	it("names the surface Copy Governance Queue and keeps draft review separate from activation", async () => {
+		renderPage();
+		expect(await screen.findByRole("heading", { name: "Copy Governance Queue" })).toBeInTheDocument();
+		expect(screen.getByTestId("draft-review-section")).toBeInTheDocument();
+		expect(screen.getByTestId("activation-queue-section")).toBeInTheDocument();
+		await waitFor(() => expect(mockedActivationCandidates).toHaveBeenCalledWith("activation"));
+		expect(screen.getByTestId("governance-activation-row-bp-ready")).toBeInTheDocument();
+		expect(screen.queryByTestId("governance-activation-row-bp-current")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("governance-activation-row-bp-stale")).not.toBeInTheDocument();
+		expect(screen.getByTestId("governance-activation-submit")).toBeDisabled();
+
+		fireEvent.click(screen.getByTestId("governance-activation-select-bp-ready"));
+		fireEvent.change(screen.getByTestId("governance-activation-phrase"), { target: { value: "ACTIVATE_COPY_AUTHORITY_BATCH" } });
+		fireEvent.click(screen.getByTestId("governance-activation-owner"));
+		expect(screen.getByTestId("governance-activation-submit")).toBeEnabled();
+		fireEvent.click(screen.getByTestId("governance-activation-submit"));
+		expect(screen.getByTestId("governance-activation-confirm")).toBeInTheDocument();
+		fireEvent.click(screen.getByTestId("governance-activation-confirm-submit"));
+		await waitFor(() => expect(mockedBatchActivate).toHaveBeenCalledWith({ blueprint_ids: ["bp-ready"], confirmation_phrase: "ACTIVATE_COPY_AUTHORITY_BATCH", owner_authorization: true }));
 	});
 
 	it("renders cross-product rows and makes claim-risk drafts non-selectable", async () => {

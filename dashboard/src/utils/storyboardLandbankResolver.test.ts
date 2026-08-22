@@ -94,7 +94,7 @@ function landbankItem(overrides: { status?: string; hardPass?: boolean; masterId
 	};
 }
 
-const baseCounts: WorkflowCounts = { target: 54, approved: 0, reviewable: 0, productionReady: 0, needsPreparation: 0, needsRevalidation: 0 };
+const baseCounts: WorkflowCounts = { target: 54, approved: 0, reviewable: 0, productionReady: 0, needsPreparation: 0, needsRevalidation: 0, activationRequired: 0 };
 
 describe("inferAssistantMode", () => {
 	it("returns CREATE when there is no approved supply", () => {
@@ -149,6 +149,11 @@ describe("resolveNextAction", () => {
 	it("recommends opening production studio when everything is ready", () => {
 		const action = resolveNextAction({ hasProduct: true, recipeReady: true, counts: { ...baseCounts, target: 18, approved: 18, productionReady: 18 } });
 		expect(action.kind).toBe("OPEN_STUDIO");
+	});
+	it("recommends activating an exact prepared copy before opening production studio", () => {
+		const action = resolveNextAction({ hasProduct: true, recipeReady: true, counts: { ...baseCounts, target: 1, approved: 1, productionReady: 1, activationRequired: 1 } });
+		expect(action.kind).toBe("ACTIVATE");
+		expect(action.step).toBe("PRODUCTION");
 	});
 	it("recommends resolving a blocker instead of generating when generation is blocked", () => {
 		const action = resolveNextAction({

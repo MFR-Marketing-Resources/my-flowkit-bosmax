@@ -50,7 +50,7 @@ import CreativeLibraryWorkspacePage from "./pages/CreativeLibraryWorkspacePage";
 import CockpitSettingsPage from "./pages/CockpitSettingsPage";
 import CopyIntelligencePage from "./pages/CopyIntelligencePage";
 import CopyReviewQueuePage from "./pages/CopyReviewQueuePage";
-import CopySetRegistryPage from "./pages/CopySetRegistryPage";
+import CopyAuthorityDetailPage from "./pages/CopyAuthorityDetailPage";
 import DeployFreshnessBanner from "./components/DeployFreshnessBanner";
 import StoryboardLandbankV3Page from "./pages/StoryboardLandbankV3Page";
 import CopywritingLandbankDatabasePage from "./pages/CopywritingLandbankDatabasePage";
@@ -78,6 +78,10 @@ import WorkspaceJobsPage from "./pages/WorkspaceJobsPage";
 import LibraryPage from "./pages/LibraryPage";
 import PromptSopLibraryPage from "./pages/PromptSopLibraryPage";
 import type { TelemetrySummary } from "./types";
+import {
+	isExactCopyAuthorityRoute,
+	resolveCopyAuthorityRoute,
+} from "./utils/copyAuthorityRouting";
 
 const ALL_NAV_GROUPS = [
 	{
@@ -189,8 +193,7 @@ const ALL_NAV_GROUPS = [
 				icon: Tags,
 				label: "Product Type Registry",
 			},
-			{ to: "/creative/copy-authority", icon: PenLine, label: "Copy Authority" },
-			{ to: "/creative/copy-review-queue", icon: PenLine, label: "Copy Draft Review Queue" },
+			{ to: "/creative/copy-review-queue", icon: PenLine, label: "Copy Governance Queue" },
 			{
 				to: "/creative/cockpit-settings",
 				icon: Gauge,
@@ -229,12 +232,16 @@ function PageTitle() {
 	return <span>{label}</span>;
 }
 
-export function CopyRegistryRedirect() {
-	// Copy Register was repositioned as the advanced "Copy Authority" console.
-	// Preserve the old deep link (and its product_id / blueprint_id query) so every
-	// existing link keeps working, redirecting to the canonical Copy Authority route.
+export function CopyAuthorityEntryRedirect() {
 	const location = useLocation();
-	return <Navigate to={`/creative/copy-authority${location.search}`} replace />;
+	if (isExactCopyAuthorityRoute(location.search)) {
+		return <CopyAuthorityDetailPage />;
+	}
+	return <Navigate to={resolveCopyAuthorityRoute(location.search)} replace />;
+}
+
+export function CopyRegistryRedirect() {
+	return <CopyAuthorityEntryRedirect />;
 }
 
 function EmbeddedRouteReporter() {
@@ -683,7 +690,7 @@ function Layout() {
 						/>
 						<Route
 							path="/creative/copy-authority"
-							element={<CopySetRegistryPage />}
+							element={<CopyAuthorityEntryRedirect />}
 						/>
 						<Route
 							path="/creative/copy-review-queue"
