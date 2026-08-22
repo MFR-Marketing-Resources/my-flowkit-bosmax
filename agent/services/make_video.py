@@ -1063,6 +1063,28 @@ DIRECT_10S_CONTRACT_NOT_CERTIFIED = "DIRECT_10S_CONTRACT_NOT_CERTIFIED"
 DIRECT_VIDEO_READINESS_CONTRACT_VERSION = "direct-video-readiness-v1"
 
 
+def _pre_dispatch_generation_type(
+    product_visual_custody: dict | None,
+    direct_plan: dict | None,
+) -> str:
+    """Resolve the generation type used by the product-custody route guard.
+
+    Exact-product T2V deliberately declines the direct reference plan and uses
+    the agent scene-scaffold lane. That declined plan has no ``gen_type``;
+    custody remains the authority for the required scaffold/composite contract.
+    """
+    if (
+        isinstance(product_visual_custody, dict)
+        and product_visual_custody.get("provider_route")
+        == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+    ):
+        return str(
+            product_visual_custody.get("generation_type")
+            or "scene_video_scaffold_then_deterministic_composite"
+        )
+    return str((direct_plan or {}).get("gen_type") or "reference_frame_2_video")
+
+
 def _build_reference_routing_receipt(
     mode: str,
     source_mode: str | None,
@@ -1622,9 +1644,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 validate_pre_dispatch_route(
                     product_visual_custody,
                     provider_route=selected_route,
-                    generation_type=str(
-                        (_direct_plan or {}).get("gen_type")
-                        or "reference_frame_2_video"
+                    generation_type=_pre_dispatch_generation_type(
+                        product_visual_custody, _direct_plan
                     ),
                 )
             except ProductVisualCustodyError as exc:
