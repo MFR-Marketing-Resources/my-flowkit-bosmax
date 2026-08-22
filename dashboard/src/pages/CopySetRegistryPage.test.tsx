@@ -144,32 +144,6 @@ function blueprint(status: string = "DRAFT") {
 	};
 }
 
-function activationCandidate(
-	state: "NONE" | "CURRENT" | "STALE" = "NONE",
-	activatable = state !== "STALE",
-) {
-	return {
-		blueprint_id: "bpv2_test",
-		revision: 1,
-		product_id: "p1",
-		product_name: "Synthetic Product",
-		status: "PRODUCTION_VALID",
-		formula_id: "PAS",
-		angle: { angle_id: "angle:test:0", definition: "formula ringan" },
-		activatable,
-		activation_allowed: activatable,
-		current_authority_state: state,
-		blocked_reason: state === "STALE" ? "COPY_V2_TAXONOMY_AUTHORITY_STALE" : null,
-		current_authority_reason: state === "STALE" ? "COPY_V2_TAXONOMY_AUTHORITY_STALE" : null,
-		current_authority_mismatches: [],
-		active_blueprint_id: state === "CURRENT" ? "bpv2_test" : null,
-		active_revision: state === "CURRENT" ? 1 : null,
-		active_lane_count: state === "CURRENT" ? 8 : 0,
-		required_lane_count: 8,
-		draft_preview: null,
-	};
-}
-
 // A DRAFT whose current authority is NOT valid (product truth stale/incomplete):
 // it cannot be approved as-is and must render "Approval Blocked" with the reason.
 function blockedDraftBlueprint() {
