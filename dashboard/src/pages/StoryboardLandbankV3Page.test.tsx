@@ -46,6 +46,11 @@ vi.mock("../api/storyboardLandbankV3Round2", () => ({
 	materializeV3ProjectionsBulk: vi.fn(),
 }));
 
+vi.mock("../api/copyRegisterV2", () => ({
+	listCopyRegisterBlueprints: vi.fn(),
+	batchActivateCopyBlueprints: vi.fn(),
+}));
+
 import {
 	approveV3Master,
 	executeV3Assistant,
@@ -62,6 +67,7 @@ import {
 	type V3ProductionCapacity,
 } from "../api/storyboardLandbankV3Round2";
 import { fetchProductDetail } from "../api/products";
+import { batchActivateCopyBlueprints, listCopyRegisterBlueprints } from "../api/copyRegisterV2";
 import type { Product } from "../types";
 
 const mockedProductDetail = vi.mocked(fetchProductDetail);
@@ -76,6 +82,8 @@ const mockedSetup = vi.mocked(setupV3Campaign);
 const mockedRegenerate = vi.mocked(regenerateV3Component);
 const mockedMaterialize = vi.mocked(materializeV3Projection);
 const mockedMaterializeBulk = vi.mocked(materializeV3ProjectionsBulk);
+const mockedV2List = vi.mocked(listCopyRegisterBlueprints);
+const mockedBatchActivate = vi.mocked(batchActivateCopyBlueprints);
 
 function makeItem(overrides: { status?: string; hardPass?: boolean; masterId?: string } = {}): V3LandbankItem {
 	return {
@@ -198,6 +206,8 @@ describe("Copywriting Landbank operator wizard", () => {
 		mockedRegenerate.mockResolvedValue({ new_revision: 2, source_revision: 1, component: { entity_id: "component-v3", revision: 2 }, automatic_approval: false, run_id: "run-regen" });
 		mockedMaterialize.mockResolvedValue({ projection_id: "proj-fresh", status: "MATERIALIZED", blueprint_status: "PRODUCTION_VALID", blueprint_id: "bp-fresh", revision: 1, link_id: "link-fresh", v2_approval_snapshot_id: "snap-fresh", materialization_digest: "m".repeat(64), idempotent_reuse: false });
 		mockedMaterializeBulk.mockResolvedValue({ requested: 1, materialized_count: 1, blocked_count: 0, materialized: [], blocked: [] });
+		mockedV2List.mockResolvedValue({ product_id: "p1", items: [], activation: { active_blueprint_id: null, active_revision: null, active_lane_count: 0, required_lane_count: 8, activated_at: null } });
+		mockedBatchActivate.mockResolvedValue({ results: [{ blueprint_id: "bp-mat", activated: true, idempotent: false, status: "ACTIVATED", lane_count: 8, error_code: null }], activated_count: 1, idempotent_count: 0, failed_count: 0, activation_mutations: 1, bound_lane_count: 8, provider_calls: 0, credit_spend: 0 });
 	});
 
 	afterEach(() => cleanup());
@@ -222,15 +232,13 @@ describe("Copywriting Landbank operator wizard", () => {
 		expect(within(advanced).getByTestId("v3-wps-mode")).toBeInTheDocument();
 	});
 
-	// Task B §5 / Test G (reverse) — the only Copy Authority door from Landbank lives
-	// under Advanced and carries the selected product id to the advanced V2 console.
-	it("bridges to Copy Authority from Advanced, carrying the product id", async () => {
+	// Normal copy operations stay in Landbank; V2 authority is reached only from
+	// exact deep links or the governed remediation surfaces.
+	it("does not require the generic Copy Authority surface", async () => {
 		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=SETUP");
 		await screen.findByTestId("storyboard-landbank-v3-page");
 		const advanced = screen.getByTestId("v3-setup-technical");
-		const bridge = within(advanced).getByTestId("v3-open-v2-register");
-		expect(bridge).toHaveTextContent(/Open Copy Authority/i);
-		expect(bridge).toHaveAttribute("href", "/creative/copy-authority?product_id=p1");
+		expect(within(advanced).queryByTestId("v3-open-v2-register")).not.toBeInTheDocument();
 	});
 
 	// B + C: system auto-creates/reuses the recipe and calculates the gap.
@@ -370,6 +378,25 @@ describe("Copywriting Landbank operator wizard", () => {
 		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=PRODUCTION");
 		fireEvent.click(await screen.findByTestId("v3-prepare-proj-fresh"));
 		await waitFor(() => expect(mockedMaterialize).toHaveBeenCalledWith(expect.objectContaining({ projectionId: "proj-fresh", receiptId: "receipt-approved" })));
+	});
+
+	it("offers exact prepared-copy activation with the existing owner-gated contract", async () => {
+		mockedLandbank.mockResolvedValue(landbankResponse([approvedItem]));
+		mockedCapacity.mockResolvedValue(capacityFixture({ semantic_capacity: 1, production_capacity: 1 }));
+		mockedV2List.mockResolvedValue({
+			product_id: "p1",
+			items: [{ blueprint_id: "bp-mat", revision: 1, status: "PRODUCTION_VALID", current_authority_activation_allowed: true } as never],
+			activation: { active_blueprint_id: null, active_revision: null, active_lane_count: 0, required_lane_count: 8, activated_at: null },
+		});
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=PRODUCTION");
+		expect(await screen.findByTestId("v3-activation-handoff")).toBeInTheDocument();
+		fireEvent.click(screen.getByTestId("v3-activate-prepared-bp-mat"));
+		expect(screen.getByTestId("v3-activation-confirm")).toBeInTheDocument();
+		expect(mockedBatchActivate).not.toHaveBeenCalled();
+		fireEvent.change(screen.getByTestId("v3-activation-phrase"), { target: { value: "ACTIVATE_COPY_AUTHORITY_BATCH" } });
+		fireEvent.click(screen.getByTestId("v3-activation-owner"));
+		fireEvent.click(screen.getByTestId("v3-activation-confirm-submit"));
+		await waitFor(() => expect(mockedBatchActivate).toHaveBeenCalledWith({ blueprint_ids: ["bp-mat"], confirmation_phrase: "ACTIVATE_COPY_AUTHORITY_BATCH", owner_authorization: true }));
 	});
 
 	it("hands off to Production Studio carrying the product id", async () => {

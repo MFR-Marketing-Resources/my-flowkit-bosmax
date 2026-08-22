@@ -68,7 +68,7 @@ describe("CopyAuthorityAttentionPanel", () => {
 
 	afterEach(cleanup);
 
-	it("keeps stale copy-authority diagnostics in Reporting with an exact remediation link", async () => {
+	it("keeps stale copy-authority diagnostics read-only with a replacement Landbank link", async () => {
 		render(<CopyAuthorityAttentionPanel />);
 
 		expect(await screen.findByText("Stale Product")).toBeInTheDocument();
@@ -84,9 +84,9 @@ describe("CopyAuthorityAttentionPanel", () => {
 		expect(screen.getByTestId("copy-authority-attention-safety")).toHaveTextContent(
 			"provider calls: 0 · credit spend: 0 · activation mutations: 0",
 		);
-		expect(screen.getByRole("link", { name: /Open in Copy Authority/i })).toHaveAttribute(
+		expect(screen.getByRole("link", { name: /Create Replacement in Copywriting Landbank/i })).toHaveAttribute(
 			"href",
-			"/creative/copy-authority?product_id=product-stale&blueprint_id=bp-stale",
+			"/creative/storyboard-landbank-v3?product_id=product-stale",
 		);
 	});
 

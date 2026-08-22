@@ -4,7 +4,10 @@ import { Link } from "react-router-dom";
 import { Badge, HelperText, Section } from "../components/ui";
 import {
 	batchApproveCopyDrafts,
+	batchActivateCopyBlueprints,
+	fetchCopyActivationCandidates,
 	fetchCopyReviewQueue,
+	type CopyActivationCandidateV2,
 	type CopyBatchApprovalResultV2,
 	type CopyReviewQueueRowV2,
 } from "../api/copyRegisterV2";
@@ -12,6 +15,7 @@ import {
 const INPUT_CLASS =
 	"mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-200";
 const BATCH_APPROVAL_PHRASE = "APPROVE_COPY_DRAFTS_BATCH";
+const BATCH_ACTIVATION_PHRASE = "ACTIVATE_COPY_AUTHORITY_BATCH";
 
 const CHECKLIST = [
 	[
@@ -78,6 +82,10 @@ function rowPreview(row: CopyReviewQueueRowV2): string {
 	return stages.map((stage) => stage.text).join(" ");
 }
 
+function isActivatableCandidate(item: CopyActivationCandidateV2): boolean {
+	return item.status === "PRODUCTION_VALID" && item.activatable === true && item.current_authority_state === "NONE";
+}
+
 export default function CopyReviewQueuePage() {
 	const [items, setItems] = useState<CopyReviewQueueRowV2[]>([]);
 	const [onlyClaimSafe, setOnlyClaimSafe] = useState(false);
@@ -92,6 +100,12 @@ export default function CopyReviewQueuePage() {
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 	const [successMessage, setSuccessMessage] = useState("");
+	const [activationItems, setActivationItems] = useState<CopyActivationCandidateV2[]>([]);
+	const [activationLoading, setActivationLoading] = useState(true);
+	const [activationSelectedIds, setActivationSelectedIds] = useState<Set<string>>(new Set());
+	const [activationPhrase, setActivationPhrase] = useState("");
+	const [activationOwner, setActivationOwner] = useState(false);
+	const [activationConfirmOpen, setActivationConfirmOpen] = useState(false);
 
 	const loadQueue = useCallback(async () => {
 		setLoading(true);
@@ -117,6 +131,24 @@ export default function CopyReviewQueuePage() {
 	useEffect(() => {
 		void loadQueue();
 	}, [loadQueue]);
+
+	const loadActivationQueue = useCallback(async () => {
+		setActivationLoading(true);
+		try {
+			const response = await fetchCopyActivationCandidates("activation");
+			const candidates = (response.items ?? []).filter(isActivatableCandidate);
+			setActivationItems(candidates);
+			setActivationSelectedIds((current) => new Set([...current].filter((id) => candidates.some((item) => item.blueprint_id === id))));
+		} catch (reason) {
+			setError(errorMessage(reason));
+		} finally {
+			setActivationLoading(false);
+		}
+	}, []);
+
+	useEffect(() => {
+		void loadActivationQueue();
+	}, [loadActivationQueue]);
 
 	const selectedCount = selectedIds.size;
 	const allReadinessChecked = Object.values(readiness).every(Boolean);
@@ -176,6 +208,35 @@ export default function CopyReviewQueuePage() {
 		}
 	};
 
+	const activationCanSubmit = activationSelectedIds.size > 0 &&
+		activationPhrase === BATCH_ACTIVATION_PHRASE &&
+		activationOwner &&
+		!busy;
+
+	const submitActivationBatch = async () => {
+		if (!activationCanSubmit) return;
+		setBusy(true);
+		setError("");
+		try {
+			const response = await batchActivateCopyBlueprints({
+				blueprint_ids: [...activationSelectedIds],
+				confirmation_phrase: activationPhrase,
+				owner_authorization: activationOwner,
+			});
+			setActivationConfirmOpen(false);
+			setActivationSelectedIds(new Set());
+			setActivationPhrase("");
+			setActivationOwner(false);
+			setSuccessMessage(`${response.activated_count} prepared copy${response.activated_count === 1 ? "" : "ies"} activated.`);
+			await loadActivationQueue();
+		} catch (reason) {
+			setError(errorMessage(reason));
+			setActivationConfirmOpen(false);
+		} finally {
+			setBusy(false);
+		}
+	};
+
 	return (
 		<div className="mx-auto max-w-7xl space-y-6 p-4 md:p-8" data-testid="copy-review-queue-page">
 			<header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800 pb-5">
@@ -184,24 +245,25 @@ export default function CopyReviewQueuePage() {
 						<ShieldCheck size={20} />
 						<span className="text-[10px] font-bold uppercase tracking-[0.2em]">Advanced</span>
 					</div>
-					<h1 className="mt-1 text-2xl font-bold text-slate-100">Copy Draft Review Queue</h1>
+					<h1 className="mt-1 text-2xl font-bold text-slate-100">Copy Governance Queue</h1>
 					<p className="mt-1 max-w-3xl text-xs text-slate-400">
-						Review current, claim-safe V2 drafts across products and record one human attestation per selected blueprint.
+						Review DRAFT copy and activate only approved, unbound production copy across products.
 					</p>
 				</div>
 				<Link
-					to="/creative/copy-authority"
+					to="/creative/storyboard-landbank-v3"
 					className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
-					data-testid="back-to-copy-authority"
+					data-testid="back-to-copywriting-landbank"
 				>
-					<ArrowLeft size={14} /> Back to Copy Authority
+					<ArrowLeft size={14} /> Back to Copywriting Landbank
 				</Link>
 			</header>
 
 			{error ? <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100" data-testid="review-queue-error">{error}</p> : null}
 			{successMessage ? <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100" data-testid="review-queue-success">{successMessage}</p> : null}
 
-			<Section title="Drafts awaiting review" helper="Claim-risk or stale-truth drafts remain visible for individual review and cannot be selected here.">
+			<div data-testid="draft-review-section">
+			<Section title="Drafts awaiting human review" helper="Only DRAFT approval work belongs here. Claim-risk or stale-truth drafts remain visible for individual review and cannot be selected here.">
 				<div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
 					<label className="flex items-center gap-2 text-xs text-slate-300">
 						<input
@@ -273,6 +335,7 @@ export default function CopyReviewQueuePage() {
 					</div>
 				) : null}
 			</Section>
+			</div>
 
 			<Section title="Batch human approval" helper="The same five readiness gates are recorded on every selected blueprint. This action never activates a blueprint or spends provider/Flow credits.">
 				<div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
@@ -304,6 +367,24 @@ export default function CopyReviewQueuePage() {
 				</div>
 			</Section>
 
+			<div data-testid="activation-queue-section">
+			<Section title="Approved copy awaiting activation" helper="Only PRODUCTION_VALID copy with no current authority binding is shown. Activation remains owner-authorized, phrase-gated, and provider-free.">
+				{activationLoading ? <p className="py-6 text-sm text-slate-400">Loading approved activation candidates…</p> : null}
+				{!activationLoading && !activationItems.length ? <p className="py-6 text-sm text-slate-500" data-testid="governance-activation-empty">No approved copy is awaiting activation.</p> : null}
+				{!activationLoading && activationItems.length ? <div className="space-y-2" data-testid="governance-activation-table">
+					{activationItems.map((item) => <div key={`${item.blueprint_id}:${item.revision}`} data-testid={`governance-activation-row-${item.blueprint_id}`} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+						<label className="flex items-start gap-3 text-xs text-slate-200"><input type="checkbox" data-testid={`governance-activation-select-${item.blueprint_id}`} checked={activationSelectedIds.has(item.blueprint_id)} disabled={busy} onChange={() => setActivationSelectedIds((current) => { const next = new Set(current); if (next.has(item.blueprint_id)) next.delete(item.blueprint_id); else next.add(item.blueprint_id); return next; })} /><span><span className="font-semibold">{item.product_name || item.product_id}</span><span className="mt-1 block font-mono text-[10px] text-slate-500">{item.blueprint_id} · rev {item.revision} · {item.formula_id}</span></span></label>
+						<Badge tone="success">PRODUCTION_VALID · READY</Badge>
+					</div>)}
+				</div> : null}
+				<div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+					<label className="block text-xs font-semibold text-slate-300">Activation confirmation phrase<input className={INPUT_CLASS} value={activationPhrase} onChange={(event) => setActivationPhrase(event.target.value)} placeholder={BATCH_ACTIVATION_PHRASE} data-testid="governance-activation-phrase" /></label>
+					<label className="flex items-center gap-2 self-end text-xs text-slate-300"><input type="checkbox" checked={activationOwner} onChange={(event) => setActivationOwner(event.target.checked)} data-testid="governance-activation-owner" /> I authorize activation for the selected prepared copy.</label>
+				</div>
+				<div className="mt-4 flex flex-wrap items-center gap-3"><button type="button" data-testid="governance-activation-submit" disabled={!activationCanSubmit} onClick={() => setActivationConfirmOpen(true)} className="rounded-xl border border-emerald-500/40 bg-emerald-600/20 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40">Activate {activationSelectedIds.size} prepared {activationSelectedIds.size === 1 ? "copy" : "copies"}</button><button type="button" onClick={() => void loadActivationQueue()} disabled={activationLoading || busy} className="rounded border border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-200 disabled:opacity-40">Refresh activation queue</button></div>
+			</Section>
+			</div>
+
 			{results.length ? (
 				<Section title="Batch results" helper="Each blueprint has its own approval result and audit receipt.">
 					<div className="space-y-2" data-testid="batch-results">
@@ -327,6 +408,17 @@ export default function CopyReviewQueuePage() {
 							<button type="button" data-testid="batch-confirm-cancel" disabled={busy} onClick={() => setConfirmOpen(false)} className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 disabled:opacity-40">Cancel</button>
 							<button type="button" data-testid="batch-confirm" disabled={busy || !canSubmit} onClick={() => void submitBatch()} className="rounded-lg border border-emerald-500/40 bg-emerald-600/30 px-4 py-2 text-xs font-bold uppercase text-emerald-100 hover:bg-emerald-600/50 disabled:opacity-40">{busy ? "Approving…" : "Confirm batch approval"}</button>
 						</div>
+					</div>
+				</div>
+			) : null}
+
+			{activationConfirmOpen ? (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4" data-testid="governance-activation-confirm">
+					<div className="w-full max-w-lg rounded-2xl border border-emerald-500/40 bg-slate-900 p-6 shadow-2xl">
+						<div className="flex items-center gap-2 text-emerald-200"><ShieldCheck size={18} /><span className="text-[11px] font-bold uppercase tracking-[0.18em]">Confirm governed activation</span></div>
+						<h2 className="mt-2 text-lg font-bold text-slate-100">Activate {activationSelectedIds.size} selected prepared copy?</h2>
+						<p className="mt-3 text-xs leading-5 text-slate-300">This binds the selected PRODUCTION_VALID blueprints to their required lanes. It does not generate or approve copy and makes no provider call.</p>
+						<div className="mt-5 flex items-center justify-end gap-3"><button type="button" disabled={busy} onClick={() => setActivationConfirmOpen(false)} className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300">Cancel</button><button type="button" data-testid="governance-activation-confirm-submit" disabled={busy || !activationCanSubmit} onClick={() => void submitActivationBatch()} className="rounded-lg border border-emerald-500/40 bg-emerald-600/30 px-4 py-2 text-xs font-bold uppercase text-emerald-100 disabled:opacity-40">{busy ? "Activating…" : "Confirm activation"}</button></div>
 					</div>
 				</div>
 			) : null}

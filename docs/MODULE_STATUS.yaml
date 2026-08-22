@@ -232,6 +232,10 @@ domains:
       - dashboard/src/api/copyRegisterV2.ts
       - dashboard/src/pages/CopyReviewQueuePage.tsx
       - dashboard/src/pages/CopyReviewQueuePage.test.tsx
+      - dashboard/src/pages/CopyAuthorityDetailPage.tsx
+      - dashboard/src/pages/CopyAuthorityDetailPage.test.tsx
+      - dashboard/src/utils/copyAuthorityRouting.ts
+      - dashboard/src/utils/copyAuthorityRouting.test.ts
       - dashboard/src/api/posterV2.ts
       - scripts/migrate_copy_register_v2_only.py
       - tests/api/test_copy_register_v2_api.py
