@@ -28,7 +28,7 @@ import json
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from agent.services import avatar_registry
 from agent.services import product_lock_builder
@@ -228,6 +228,66 @@ def resolve_block_plan(
                 return list(p["blocks"])
         raise ValueError(f"UNKNOWN_PREFERRED_LANE:{preferred_lane}")
     return list(matches[0]["blocks"])
+
+
+def v3_duration_feasibility_envelope(
+    durations: Sequence[int],
+    target_language: str | None,
+    *,
+    wps_mode: str = "SAFE",
+    engine: str = "GOOGLE_FLOW",
+    preferred_lane: str | None = None,
+    required_formula_stage_keys: Sequence[str] = (),
+) -> list[dict[str, Any]]:
+    """Build the V3 provider-facing duration/WPS feasibility data.
+
+    This is deliberately derived from the same block-plan and language WPS
+    authority used by the deterministic projection compiler.  It is a data
+    envelope for the authoring contract, not a second duration or WPS table.
+    """
+
+    language = strict_language_name(target_language)
+    stage_keys = tuple(str(key) for key in required_formula_stage_keys)
+    duration_values = tuple(int(duration) for duration in durations)
+    if not duration_values:
+        raise ValueError("V3_DURATION_TARGETS_REQUIRED")
+    shortest_duration = min(duration_values)
+    envelope: list[dict[str, Any]] = []
+    for duration in duration_values:
+        if duration <= 0:
+            raise ValueError(f"V3_DURATION_INVALID:{duration}")
+        blocks = tuple(
+            resolve_block_plan(
+                engine,
+                duration,
+                preferred_lane=preferred_lane,
+            )
+        )
+        budgets = tuple(
+            strict_dialogue_word_budget(
+                seconds,
+                language,
+                wps_mode=wps_mode,
+            )
+            for seconds in blocks
+        )
+        envelope.append(
+            {
+                "duration": duration,
+                "duration_seconds": duration,
+                "block_plan_seconds": list(blocks),
+                "per_block_word_budgets": list(budgets),
+                "total_word_budget": sum(budgets),
+                "first_block_budget": budgets[0],
+                "final_block_budget": budgets[-1],
+                "hook_reserved_block_index": 0,
+                "cta_reserved_block_index": len(blocks) - 1,
+                "required_formula_stage_count": len(stage_keys),
+                "required_formula_stage_order": list(stage_keys),
+                "shortest_target_duration": duration == shortest_duration,
+            }
+        )
+    return envelope
 
 
 # ── copy intelligence ─────────────────────────────────────────────────────────

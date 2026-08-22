@@ -516,7 +516,9 @@ def _compress_ordered(text: str, budget: int) -> str | None:
     if len(tokens) <= budget:
         return normalized_text(text)
     # Deterministic, contract-safe compression: preserve the authored token
-    # order and remove only the tail. No generated paraphrase is introduced.
+    # order and emit an ordered token subsequence. No generated paraphrase or
+    # claim is introduced. The projection remains reviewable when this path is
+    # used because a mechanical subsequence is not treated as final copy.
     return " ".join(tokens[:budget])
 
 
@@ -584,54 +586,94 @@ def compile_duration_projection(
 
     body_indices = list(range(1, len(master.stages) - 1))
     last_body_block = max(0, len(blocks) - 2)  # reserve the final block for CTA
+    next_body_block = 0
     for body_position, index in enumerate(body_indices):
         stage = master.stages[index]
         full = normalized_text(stage.authored_text)
         full_words = word_count(full)
-        chosen: int | None = None
+        remaining_after = len(body_indices) - body_position - 1
         desired_block = min(
             last_body_block,
             round((body_position + 1) * (len(blocks) - 1) / (len(body_indices) + 1)),
         )
-        search_blocks = list(range(desired_block, last_body_block + 1)) + list(range(0, desired_block))
-        # Prefer a block where the exact stage fits; this keeps identity as the
-        # common path for 16s/24s and avoids needless compression.
-        for block_index in search_blocks:
-            available = budgets[block_index] - used[block_index]
-            if block_index == len(blocks) - 1:
-                available = budgets[block_index] - used[block_index]
-            if full_words <= available:
-                chosen = block_index
-                break
+        ordered_candidates = (
+            list(range(desired_block, last_body_block + 1))
+            + list(range(next_body_block, desired_block))
+        )
+        search_blocks = list(dict.fromkeys(
+            block_index
+            for block_index in ordered_candidates
+            if next_body_block <= block_index <= last_body_block
+        ))
         override = None
         if stage_text_overrides:
             override = stage_text_overrides.get(stage.stage_key) or stage_text_overrides.get(stage.formula_stage_key)
-        if chosen is None:
-            for block_index in search_blocks:
-                available = budgets[block_index] - used[block_index]
-                if available > 0:
-                    chosen = block_index
-                    if override is not None:
-                        # Governed AI-assisted natural compression replaces
-                        # mechanical truncation for this exact Master stage.
-                        candidate = normalized_text(override)
-                        if not candidate or word_count(candidate) > available:
-                            return None, ("WPS_DURATION_FIT_SHORTFALL",), (f"AI stage override overflow: {stage.formula_stage_key}",)
-                        compressed = candidate
-                    else:
-                        compressed = _compress_ordered(full, available)
-                        if compressed is None:
-                            break
-                    projected_text[index] = compressed
-                    transform_modes[index] = "COMPRESSED" if compressed != full else "IDENTITY"
-                    used[block_index] += word_count(compressed)
-                    break
-        if chosen is None:
-            return None, ("WPS_DURATION_FIT_SHORTFALL",), (f"stage={stage.formula_stage_key}",)
+        chosen: int | None = None
+        chosen_text: str | None = None
+        override_failure: str | None = None
+
+        # Look ahead using the minimum representable unit (one authored token)
+        # for each later required stage.  This prevents the current stage from
+        # consuming the entire residual capacity when later stages share its
+        # block, while still allowing later stages to use subsequent blocks.
+        for block_index in search_blocks:
+            available = budgets[block_index] - used[block_index]
+            if available < 1:
+                continue
+            future_capacity = sum(
+                max(0, budgets[item] - used[item])
+                for item in range(block_index + 1, last_body_block + 1)
+            )
+            if available + future_capacity < remaining_after + 1:
+                continue
+
+            if full_words <= available and available - full_words + future_capacity >= remaining_after:
+                candidate = full
+                transform = "IDENTITY"
+            else:
+                maximum_words = min(
+                    full_words,
+                    available,
+                    available + future_capacity - remaining_after,
+                )
+                if maximum_words < 1:
+                    continue
+                if override is not None:
+                    candidate = normalized_text(override)
+                    if not candidate or word_count(candidate) > maximum_words:
+                        override_failure = f"AI stage override overflow: {stage.formula_stage_key}"
+                        continue
+                else:
+                    candidate = _compress_ordered(full, maximum_words)
+                    if candidate is None:
+                        continue
+                transform = "COMPRESSED"
+
+            chosen = block_index
+            chosen_text = candidate
+            transform_modes[index] = transform
+            break
+
+        if chosen is None or chosen_text is None:
+            if override_failure:
+                return None, ("WPS_DURATION_FIT_SHORTFALL",), (override_failure,)
+            residual_capacity = sum(
+                max(0, budgets[item] - used[item])
+                for item in range(next_body_block, last_body_block + 1)
+            )
+            return None, ("WPS_DURATION_FIT_SHORTFALL",), (
+                "stage=" + stage.formula_stage_key
+                + "; required_min_words=" + str(remaining_after + 1)
+                + "; residual_capacity=" + str(residual_capacity)
+                + "; block_start=" + str(next_body_block),
+            )
+
         target_blocks[index] = chosen
-        if projected_text[index] is None:
-            projected_text[index] = full
-            used[chosen] += full_words
+        projected_text[index] = chosen_text
+        used[chosen] += word_count(chosen_text)
+        # Formula order is preserved by allowing later stages to share the
+        # current block or move only forward.
+        next_body_block = chosen
 
     allocations: list[V3ProjectedStageSlice] = []
     for index, stage in enumerate(master.stages):
@@ -736,7 +778,11 @@ def compile_duration_projection(
         master_exact_content_digest=master_content_digest(master),
         exact_projection_digest="0" * 64,
         derivation_source=derivation_source,  # type: ignore[arg-type]
-        status="VALIDATED",
+        status=(
+            "REVIEW_REQUIRED"
+            if any(mode == "COMPRESSED" for mode in transform_modes)
+            else "VALIDATED"
+        ),
         source=source,
         created_at=created_at or _now(),
         created_by=created_by,
