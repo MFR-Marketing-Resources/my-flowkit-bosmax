@@ -25,7 +25,7 @@ from agent.services.video_artifact_delivery_service import (
 )
 
 
-def test_direct_readiness_keeps_omni_flash_10s_blocked_before_provider() -> None:
+def test_hybrid_omni_flash_10s_readiness_uses_certified_agent_route() -> None:
     direct_plan = make_video._direct_lane_plan(
         "F2V",
         "HYBRID",
@@ -36,22 +36,36 @@ def test_direct_readiness_keeps_omni_flash_10s_blocked_before_provider() -> None
         num_videos=1,
         require_flag=True,
     )
-    assert direct_plan["reason"] == make_video.DIRECT_10S_CONTRACT_NOT_CERTIFIED
+    assert direct_plan["eligible"] is False
+    assert direct_plan["execution_route"] == (
+        make_video.HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+    )
+    assert direct_plan["video_model_key"] is None
+    assert direct_plan["provider_model_usage_key"] == (
+        make_video.HYBRID_REFERENCE_OMNI_10S_PROVIDER_MODEL_KEY
+    )
     readiness = make_video.direct_video_readiness(
         "F2V",
         source_mode="HYBRID",
         model="Omni Flash",
-        duration_s=8,
+        duration_s=10,
         ref_count=1,
     )
 
     assert readiness["provider_calls"] == 0
     assert readiness["credit_spend"] is False
+    assert readiness["eligible"] is True
+    assert readiness["selected_route"] == (
+        make_video.HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+    )
+    assert readiness["live_capture_required"] is False
     assert readiness["ten_second"] == {
         "duration_s": 10,
-        "status": "NOT_CERTIFIED",
-        "blocker_code": make_video.DIRECT_10S_CONTRACT_NOT_CERTIFIED,
+        "status": "READY",
+        "blocker_code": None,
         "provider_calls": 0,
+        "selected_route": make_video.HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE,
+        "contract_version": make_video.HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION,
     }
 
 

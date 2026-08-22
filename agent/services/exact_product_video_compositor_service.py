@@ -15,10 +15,9 @@ import os
 import shutil
 import subprocess
 import tempfile
-import uuid
 from fractions import Fraction
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from PIL import Image
 
@@ -457,18 +456,238 @@ def _validate_occlusion_bounds(
     }
 
 
-def _qc_dimensions() -> dict[str, str]:
-    return {
-        "identity": "PASS",
-        "silhouette_geometry": "PASS",
-        "cap_components": "PASS",
-        "scale": "PASS",
-        "label_field_layout": "PASS",
-        "printed_text": "PASS",
-        "color_material": "PASS",
-        "duplication": "PASS",
-        "frame_morph": "PASS",
+def _dynamic_choreography(choreography: Mapping[str, Any]) -> bool:
+    return _norm_id(choreography.get("choreography_id")) in {
+        PRODUCT_HAND_HOLD,
+        PRODUCT_PICK_UP,
+        PRODUCT_PLACE_DOWN,
+        PRODUCT_PRESENT_TO_CAMERA,
+        SMALL_CONTROLLED_ROTATION,
     }
+
+
+def _normalise_transform_track(
+    raw_track: Any,
+    *,
+    base_transform: Mapping[str, Any],
+    frame_count: int,
+    frame_size: tuple[int, int],
+) -> list[dict[str, Any]]:
+    if isinstance(raw_track, Mapping):
+        verified = raw_track.get("verified") is True
+        entries = raw_track.get("frames") or raw_track.get("track") or []
+    else:
+        verified = False
+        entries = raw_track or []
+    if not isinstance(entries, list) or len(entries) != frame_count:
+        raise ExactProductVideoCompositeError(
+            "EXACT_COMPOSITE_TRANSFORM_TRACK_COUNT_MISMATCH",
+            "Dynamic exact-product choreography requires one transform for every scene frame.",
+            details={"frame_count": frame_count, "track_count": len(entries) if isinstance(entries, list) else 0},
+        )
+    if not verified and not all(isinstance(item, Mapping) and item.get("verified") is True for item in entries):
+        raise ExactProductVideoCompositeError(
+            "EXACT_COMPOSITE_TRANSFORM_TRACK_UNVERIFIED",
+            "Dynamic exact-product transforms require explicit evidence-backed verification.",
+        )
+    width, height = frame_size
+    expected_ratio = float(base_transform["w"]) / max(1.0, float(base_transform["h"]))
+    output: list[dict[str, Any]] = []
+    for index, entry in enumerate(entries):
+        raw = entry.get("transform") if isinstance(entry, Mapping) and isinstance(entry.get("transform"), Mapping) else entry
+        if not isinstance(raw, Mapping):
+            raise ExactProductVideoCompositeError("EXACT_COMPOSITE_TRANSFORM_TRACK_INVALID", f"Frame {index} has no transform.")
+        try:
+            transform = {
+                **dict(base_transform),
+                **{key: raw[key] for key in ("x", "y", "w", "h") if key in raw},
+                "rotation_degrees": float(raw.get("rotation_degrees", base_transform.get("rotation_degrees", 0.0))),
+                "perspective_skew_x": float(raw.get("perspective_skew_x", base_transform.get("perspective_skew_x", 0.0))),
+            }
+            x, y, w, h = (int(transform[key]) for key in ("x", "y", "w", "h"))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ExactProductVideoCompositeError("EXACT_COMPOSITE_TRANSFORM_TRACK_INVALID", f"Frame {index} has invalid geometry.") from exc
+        if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > width or y + h > height:
+            raise ExactProductVideoCompositeError("EXACT_COMPOSITE_TRANSFORM_TRACK_OUT_OF_BOUNDS", f"Frame {index} leaves the scene canvas.")
+        if abs((w / max(1.0, h)) - expected_ratio) > max(0.08, expected_ratio * 0.08):
+            raise ExactProductVideoCompositeError("EXACT_COMPOSITE_TRANSFORM_ASPECT_DRIFT", f"Frame {index} changes the product aspect ratio.")
+        output.append(transform)
+    return output
+
+
+def _plate_product_scan(
+    frame_path: Path,
+    *,
+    reserved_box: Mapping[str, Any],
+    canonical_cutout_path: Path,
+    static_scene: bool,
+) -> dict[str, Any]:
+    """Perform a conservative provider-plate impostor/duplicate scan.
+
+    The scan is intentionally deterministic and conservative: a large,
+    vertical, high-contrast object in the reserved static product box is an
+    impostor; outside the box only a reference-like component is rejected.
+    It is not a general object detector and never substitutes for visual QC.
+    """
+
+    with Image.open(frame_path) as source:
+        image = source.convert("RGB")
+    scan_width = 160
+    scan_height = max(1, round(image.height * scan_width / image.width))
+    small = image.resize((scan_width, scan_height))
+    px = small.load()
+    corners = [px[0, 0], px[scan_width - 1, 0], px[0, scan_height - 1], px[scan_width - 1, scan_height - 1]]
+    bg = tuple(round(sum(color[channel] for color in corners) / len(corners)) for channel in range(3))
+    mask = [[False] * scan_width for _ in range(scan_height)]
+    for y in range(scan_height):
+        for x in range(scan_width):
+            color = px[x, y]
+            distance = sum((int(color[channel]) - int(bg[channel])) ** 2 for channel in range(3)) ** 0.5
+            mask[y][x] = distance >= 42.0
+    visited = [[False] * scan_width for _ in range(scan_height)]
+    components: list[dict[str, Any]] = []
+    for y0 in range(scan_height):
+        for x0 in range(scan_width):
+            if visited[y0][x0] or not mask[y0][x0]:
+                continue
+            stack = [(x0, y0)]
+            visited[y0][x0] = True
+            points: list[tuple[int, int]] = []
+            while stack:
+                x, y = stack.pop()
+                points.append((x, y))
+                for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                    if 0 <= nx < scan_width and 0 <= ny < scan_height and not visited[ny][nx] and mask[ny][nx]:
+                        visited[ny][nx] = True
+                        stack.append((nx, ny))
+            if len(points) < 10:
+                continue
+            xs = [point[0] for point in points]
+            ys = [point[1] for point in points]
+            components.append({
+                "area": len(points),
+                "x": min(xs),
+                "y": min(ys),
+                "w": max(xs) - min(xs) + 1,
+                "h": max(ys) - min(ys) + 1,
+            })
+    scale_x = scan_width / max(1, image.width)
+    scale_y = scan_height / max(1, image.height)
+    rx = float(reserved_box.get("x") or 0) * scale_x
+    ry = float(reserved_box.get("y") or 0) * scale_y
+    rw = float(reserved_box.get("w") or 0) * scale_x
+    rh = float(reserved_box.get("h") or 0) * scale_y
+    reserved_hits = [
+        component
+        for component in components
+        if component["h"] >= component["w"] * 1.15
+        and component["area"] >= 18
+        and component["x"] < rx + rw
+        and component["x"] + component["w"] > rx
+        and component["y"] < ry + rh
+        and component["y"] + component["h"] > ry
+    ]
+    # A reference-like duplicate outside the reserved box is compared to the
+    # canonical cutout; generic background objects are not rejected solely by
+    # being vertical.
+    reference_like = 0
+    try:
+        with Image.open(canonical_cutout_path) as cutout:
+            cutout_rgba = cutout.convert("RGBA")
+            alpha = cutout_rgba.getchannel("A")
+            alpha_box = alpha.getbbox()
+            template_alpha = alpha.crop(alpha_box) if alpha_box else None
+        if template_alpha is not None:
+            template_mask = template_alpha.resize((32, 64)).point(lambda value: 255 if value >= 128 else 0)
+            for component in components:
+                if component in reserved_hits or component["h"] < component["w"] * 1.15 or component["area"] < 18:
+                    continue
+                x = round(component["x"] / scale_x)
+                y = round(component["y"] / scale_y)
+                w = max(1, round(component["w"] / scale_x))
+                h = max(1, round(component["h"] / scale_y))
+                candidate = image.crop((x, y, min(image.width, x + w), min(image.height, y + h))).resize((32, 64))
+                candidate_px = candidate.load()
+                candidate_mask = [
+                    sum(
+                        (int(candidate_px[cx, cy][channel]) - int(bg[channel])) ** 2
+                        for channel in range(3)
+                    ) ** 0.5
+                    >= 42.0
+                    for cy in range(64)
+                    for cx in range(32)
+                ]
+                template_mask_values = [
+                    template_mask.getpixel((cx, cy)) >= 128
+                    for cy in range(64)
+                    for cx in range(32)
+                ]
+                intersection = sum(left and right for left, right in zip(candidate_mask, template_mask_values))
+                union = sum(left or right for left, right in zip(candidate_mask, template_mask_values))
+                mask_iou = intersection / max(1, union)
+                if mask_iou >= 0.72:
+                    reference_like += 1
+    except (OSError, ValueError):
+        reference_like = 0
+    suspicious = len(reserved_hits) if static_scene else 0
+    suspicious += reference_like
+    return {
+        "components_scanned": len(components),
+        "reserved_region_hits": len(reserved_hits),
+        "reference_like_duplicates": reference_like,
+        "suspicious_product_components": suspicious,
+        "status": "PASS" if suspicious == 0 else "FAIL",
+        "method": "DETERMINISTIC_CONTRAST_COMPONENT_AND_CANONICAL_REFERENCE_SCAN",
+    }
+
+
+def _qc_dimensions(
+    frame_lineage: Sequence[Mapping[str, Any]],
+    *,
+    dynamic_track: bool,
+    dynamic_track_verified: bool,
+    plate_scans: Sequence[Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    region_verified = bool(frame_lineage) and all(
+        row.get("qa", {}).get("composition_ok") is True
+        and row.get("qa", {}).get("product_region_match") is True
+        for row in frame_lineage
+    )
+    plate_clean = bool(plate_scans) and all(scan.get("status") == "PASS" for scan in plate_scans)
+    transforms = [row.get("transform") or {} for row in frame_lineage]
+    static_transform = bool(transforms) and all(transform == transforms[0] for transform in transforms[1:])
+    geometry = {
+        "status": "PASS" if region_verified else "NOT_VERIFIED",
+        "method": "CANONICAL_CUTOUT_REGION_MATCH_EVERY_FRAME",
+        "frames_measured": len(frame_lineage),
+    }
+    measured = {
+        "identity": {"status": "PASS" if region_verified else "NOT_VERIFIED", "method": "CANONICAL_CUTOUT_REGION_MATCH_EVERY_FRAME"},
+        "silhouette_geometry": geometry,
+        "cap_components": {"status": "PASS" if region_verified else "NOT_VERIFIED", "method": "CANONICAL_CUTOUT_COMPONENTS_AND_ALPHA"},
+        "scale": {"status": "PASS" if region_verified else "NOT_VERIFIED", "method": "BOUNDED_FRAME_TRANSFORM_MEASUREMENT"},
+        "label_field_layout": {"status": "PASS" if region_verified else "NOT_VERIFIED", "method": "CANONICAL_CUTOUT_PIXELS_AND_REGION_MATCH"},
+        "printed_text": {"status": "PASS" if region_verified else "NOT_VERIFIED", "method": "CANONICAL_CUTOUT_BYTES_ONLY_NO_PROVIDER_TEXT"},
+        "color_material": {"status": "PASS" if region_verified else "NOT_VERIFIED", "method": "CANONICAL_CUTOUT_REGION_MATCH_EVERY_FRAME"},
+        "duplication": {"status": "PASS" if plate_clean else "NOT_VERIFIED", "method": "DETERMINISTIC_PLATE_SCAN", "scans": list(plate_scans)},
+        "frame_morph": {
+            "status": (
+                "PASS"
+                if region_verified
+                and (
+                    (dynamic_track and dynamic_track_verified)
+                    or (not dynamic_track and static_transform)
+                )
+                else "NOT_VERIFIED"
+            ),
+            "method": (
+                "VERIFIED_FRAME_INDEXED_TRANSFORM_TRACK_AND_PER_FRAME_REGION_ATTESTATION"
+                if dynamic_track
+                else "STATIC_TRANSFORM_AND_PER_FRAME_REGION_ATTESTATION"
+            ),
+        },
+    }
+    return measured
 
 
 def compose_exact_product_video_artifact(
@@ -479,6 +698,7 @@ def compose_exact_product_video_artifact(
     product_visual_custody: dict[str, Any] | None = None,
     job_id: str | None = None,
     foreground_masks: list[dict[str, Any]] | None = None,
+    transform_track: Mapping[str, Any] | Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Composite a retrieved scene scaffold and return a final-only artifact.
 
@@ -519,6 +739,15 @@ def compose_exact_product_video_artifact(
         )
     choreography = plan.get("choreography") or {}
     needs_masks = choreography.get("classification") == REQUIRES_OCCLUSION_MASK
+    dynamic_track_required = _dynamic_choreography(choreography)
+    if dynamic_track_required and transform_track is None:
+        raise ExactProductVideoCompositeError(
+            "EXACT_COMPOSITE_TRANSFORM_TRACK_REQUIRED",
+            "Held, pickup, place-down, rotation and presentation choreography requires an evidence-backed frame-indexed transform track.",
+        )
+    if dynamic_track_required:
+        needs_masks = True
+    dynamic_track_verified = False
     masks = list(foreground_masks or [])
     if needs_masks and not masks:
         raise ExactProductVideoCompositeError(
@@ -531,7 +760,20 @@ def compose_exact_product_video_artifact(
     work_root.mkdir(parents=True, exist_ok=True)
     output_root = OUTPUT_DIR / "exact-product-finals" / "videos"
     output_root.mkdir(parents=True, exist_ok=True)
-    final_media_id = str(uuid.uuid4())
+    identity_material = {
+        "scene_sha256": scene_sha,
+        "product_id": product.get("id") or product.get("product_id"),
+        "canonical_cutout_sha256": plan.get("product_truth", {}).get("canonical_cutout_sha256"),
+        "choreography": choreography,
+        "placement_region": plan.get("placement_region"),
+        "transform_track": transform_track,
+        "foreground_masks": [
+            {"sha256": mask.get("sha256"), "frame_index": index}
+            for index, mask in enumerate(masks)
+            if isinstance(mask, Mapping)
+        ],
+    }
+    final_media_id = "exact-" + hashlib.sha256(_stable_json(identity_material).encode("utf-8")).hexdigest()[:32]
     output_path = output_root / f"{final_media_id}.mp4"
     frame_lineage: list[dict[str, Any]] = []
 
@@ -567,16 +809,44 @@ def compose_exact_product_video_artifact(
                 details={"frame_count": len(frames), "mask_count": len(masks)},
             )
 
+        layer_product = dict(product)
+        layer_product["_exact_product_required"] = True
+        base_layer = prepare_layer(
+            layer_product,
+            plan.get("placement_region") or LANE_SAFE_REGIONS["studio"],
+            {"w": width, "h": height},
+        )
+        base_transform = dict(base_layer["transform"])
+        frame_transforms = (
+            _normalise_transform_track(
+                transform_track,
+                base_transform=base_transform,
+                frame_count=len(frames),
+                frame_size=(width, height),
+            )
+            if dynamic_track_required
+            else [dict(base_transform) for _ in frames]
+        )
+        dynamic_track_verified = bool(dynamic_track_required and frame_transforms)
+        plate_scans: list[dict[str, Any]] = []
+
         for index, frame_path in enumerate(frames):
             out_frame = output_frames / frame_path.name
             shutil.copy2(frame_path, out_frame)
-            layer_product = dict(product)
-            layer_product["_exact_product_required"] = True
-            layer = prepare_layer(
-                layer_product,
-                plan.get("placement_region") or LANE_SAFE_REGIONS["studio"],
-                {"w": width, "h": height},
+            layer = {**base_layer, "transform": frame_transforms[index]}
+            plate_scan = _plate_product_scan(
+                frame_path,
+                reserved_box=layer["transform"],
+                canonical_cutout_path=Path(layer["asset_ref"]),
+                static_scene=not dynamic_track_required,
             )
+            plate_scans.append(plate_scan)
+            if plate_scan.get("suspicious_product_components", 0) > 0:
+                raise ExactProductVideoCompositeError(
+                    "EXACT_COMPOSITE_PLATE_CONTAINS_PRODUCT_IMPOSTOR",
+                    f"Scene-only plate contains a product-like object before canonical compositing on frame {index}.",
+                    details={"frame_index": index, "plate_scan": plate_scan},
+                )
             integrity = composite(out_frame, layer)
             if not integrity.get("composition_ok"):
                 raise ExactProductVideoCompositeError(
@@ -611,6 +881,18 @@ def compose_exact_product_video_artifact(
                     "occlusion_bounds": occlusion_bounds,
                 }
             )
+
+        qc_dimensions = _qc_dimensions(
+            frame_lineage,
+            dynamic_track=dynamic_track_required,
+            dynamic_track_verified=dynamic_track_verified,
+            plate_scans=plate_scans,
+        )
+        qc_verified = bool(qc_dimensions) and all(
+            dimension.get("status") == "PASS"
+            for dimension in qc_dimensions.values()
+        )
+        qc_status = "PRODUCT_FIDELITY_QC_PASS" if qc_verified else "PRODUCT_FIDELITY_REVIEW_REQUIRED"
 
         fps = metadata["fps"]
         _run(
@@ -671,6 +953,8 @@ def compose_exact_product_video_artifact(
         "frame_count": len(frame_lineage),
         "dimensions": {"width": width, "height": height, "fps": metadata["fps"]},
         "frame_transform_lineage": frame_lineage,
+        "plate_scan_lineage": plate_scans,
+        "product_fidelity_qc_dimensions": qc_dimensions,
     }
     manifest_sha = hashlib.sha256(_stable_json(manifest).encode("utf-8")).hexdigest()
     lineage = {
@@ -681,10 +965,11 @@ def compose_exact_product_video_artifact(
         "composite_manifest": {"sha256": manifest_sha, "manifest": manifest},
         "transform_track_lineage": frame_lineage,
         "product_fidelity_qc": {
-            "status": "PRODUCT_FIDELITY_QC_PASS",
-            "verified": True,
-            "dimensions": _qc_dimensions(),
+            "status": qc_status,
+            "verified": qc_verified,
+            "dimensions": qc_dimensions,
             "source": "DETERMINISTIC_CANONICAL_CUTOUT_FRAME_ATTESTATION",
+            "plate_scans": plate_scans,
         },
         "face_qc": {"status": "NOT_RUN", "verified": False},
         "final_media_id": final_media_id,
@@ -710,10 +995,11 @@ def compose_exact_product_video_artifact(
     lineage_path = output_path.with_suffix(".lineage.json")
     lineage_path.write_text(json.dumps(lineage, indent=2), encoding="utf-8")
     evidence = {
-        "status": "PRODUCT_FIDELITY_QC_PASS",
-        "verified": True,
-        "dimensions": _qc_dimensions(),
+        "status": qc_status,
+        "verified": qc_verified,
+        "dimensions": qc_dimensions,
         "source": "DETERMINISTIC_CANONICAL_CUTOUT_FRAME_ATTESTATION",
+        "plate_scans": plate_scans,
         "exact_video_composite": lineage,
     }
     return {

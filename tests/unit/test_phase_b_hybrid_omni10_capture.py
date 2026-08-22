@@ -61,6 +61,128 @@ def test_capture_gate_requires_exact_contract(monkeypatch):
     assert result["pre_provider"]["provider_calls"] == 0
 
 
+def test_certified_hybrid_omni10_route_is_normal_agent_lane(monkeypatch):
+    """The reviewed capture contract becomes a normal route, never DIRECT_API."""
+    make_video._JOBS.clear()
+    make_video._VIDEO_LANE_JOB = None
+    monkeypatch.delenv("DIRECT_VIDEO_LANE_ENABLED", raising=False)
+    monkeypatch.delenv("HYBRID_REFERENCE_OMNI_10S_CAPTURE_ENABLED", raising=False)
+    called = {}
+
+    async def fake_approval(**_kwargs):
+        called["approval"] = True
+
+    async def fake_prepare(_job, *, idempotency_key=None, strict=False):
+        return None, True
+
+    async def fake_lease(_job_id):
+        return None
+
+    async def fake_run(job_id, *args, **kwargs):
+        called["job_id"] = job_id
+        called["args"] = args
+
+    monkeypatch.setattr(
+        "agent.services.execution_approval_service.verify_and_bind_dispatch",
+        fake_approval,
+    )
+    monkeypatch.setattr(make_video, "_prepare_durable_single_job", fake_prepare)
+    monkeypatch.setattr(
+        "agent.db.crud.acquire_video_generation_lane_lease", fake_lease
+    )
+    monkeypatch.setattr(make_video, "_run_generate", fake_run)
+
+    async def go():
+        result = await make_video.start_generate(
+            "F2V",
+            "AQUABLANCE Hybrid contract prompt",
+            project_id="project-1",
+            image_media_ids=["ref-1"],
+            source_mode="HYBRID",
+            surface_lane="HYBRID",
+            model="omni_flash",
+            duration_s=10,
+            num_videos=1,
+        )
+        await make_video._JOBS[result["job_id"]]["_task"]
+        return result
+
+    result = __import__("asyncio").run(go())
+    job = make_video._JOBS[result["job_id"]]
+    assert result["status"] == "SUBMITTED"
+    assert result["lane"] == make_video.HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+    assert called["job_id"] == result["job_id"]
+    assert called["approval"] is True
+    assert job["routing_receipt"]["selected_execution_route"] == (
+        make_video.HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+    )
+    assert job["routing_receipt"]["TEXT_ONLY_TOOL_ALLOWED"] is False
+    assert job["direct_plan"]["video_model_key"] is None
+    assert job["direct_plan"]["provider_model_usage_key"] == (
+        make_video.HYBRID_REFERENCE_OMNI_10S_PROVIDER_MODEL_KEY
+    )
+    assert not make_video.hybrid_reference_omni10_capture_enabled()
+    make_video._JOBS.clear()
+    make_video._VIDEO_LANE_JOB = None
+
+
+def test_certified_route_rejects_other_reference_tuples_before_provider():
+    for mode, source_mode, model, duration_s, ref_count in (
+        ("F2V", "FRAMES", "omni_flash", 10, 1),
+        ("F2V", "HYBRID", "veo_3_1_lite", 10, 1),
+        ("F2V", "HYBRID", "omni_flash", 10, 2),
+    ):
+        plan = make_video._direct_lane_plan(
+            mode,
+            source_mode,
+            model,
+            duration_s,
+            "9:16",
+            ref_count=ref_count,
+            num_videos=1,
+            require_flag=False,
+        )
+        assert plan.get("execution_route") != (
+            make_video.HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+        )
+        receipt = make_video._build_reference_routing_receipt(
+            mode, source_mode, [f"ref-{ref_count}"], plan
+        )
+        assert receipt["selected_execution_route"] == "BLOCKED_REFERENCE_ROUTE"
+        assert receipt["reference_mode_authorized"] is False
+        assert receipt["pre_provider"]["provider_calls"] == 0
+
+
+def test_certified_route_is_not_a_direct_video_model_key():
+    route = make_video.hybrid_reference_omni10_provider_route(
+        "F2V", "HYBRID", "Omni Flash", 10, "9:16", 1, 1
+    )
+    assert route == make_video.HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+    assert make_video.HYBRID_REFERENCE_OMNI_10S_PROVIDER_MODEL_KEY not in json.dumps(
+        make_video.DIRECT_VIDEO_MODEL_KEYS
+    )
+
+
+def test_certified_route_requires_the_hybrid_active_surface():
+    plan = make_video._direct_lane_plan(
+        "F2V",
+        "HYBRID",
+        "omni_flash",
+        10,
+        "9:16",
+        ref_count=1,
+        num_videos=1,
+        require_flag=False,
+        surface_lane="FACELESS",
+    )
+    assert plan["reason"] == make_video.DIRECT_10S_CONTRACT_NOT_CERTIFIED
+    receipt = make_video._build_reference_routing_receipt(
+        "F2V", "HYBRID", ["ref-1"], plan
+    )
+    assert receipt["selected_execution_route"] == "BLOCKED_REFERENCE_ROUTE"
+    assert receipt["pre_provider"]["provider_calls"] == 0
+
+
 def test_capture_evidence_proves_reference_order_and_redacts_secrets():
     ref = "fresh-flow-media-1"
     raw = "data: " + json.dumps(

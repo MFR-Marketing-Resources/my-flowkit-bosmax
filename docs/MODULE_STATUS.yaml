@@ -87,6 +87,10 @@ domains:
       - tests/unit/test_hybrid_approval_gate_drift.py
       - agent/db/schema.py
       - agent/services/make_video.py
+      # Shared provider-free video continuity, SweetWPS timing, mascot identity,
+      # and deterministic exact-product compositor authority.
+      - agent/services/video_continuity_contract.py
+      - tests/unit/test_video_continuity_contract.py
       - agent/services/flow_client.py
       - agent/main.py
       - scripts/verify-gate.ps1

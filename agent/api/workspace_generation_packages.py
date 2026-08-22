@@ -159,11 +159,13 @@ async def create_f2v_package(request: F2VGenerationPackageRequest):
             generation_mode=request.generation_mode,
             duration_seconds=request.duration_seconds,
             target_language=request.target_language,
+            wps_mode="SWEET",
             camera_style=request.camera_style,
             character_presence=request.character_presence,
             creator_persona=request.creator_persona,
             overlay_enabled=request.overlay_enabled,
             dialogue_enabled=request.dialogue_enabled,
+            enforce_temporal_contract=True,
             source_mode=request.source_mode,
             blocks=request.blocks,
             engine_duration_target=request.engine_duration_target,
@@ -192,11 +194,13 @@ async def create_i2v_package(request: I2VGenerationPackageRequest):
             recipe_id=request.recipe_id,
             generation_mode=request.generation_mode,
             target_language=request.target_language,
+            wps_mode="SWEET",
             camera_style=request.camera_style,
             character_presence=request.character_presence,
             creator_persona=request.creator_persona,
             overlay_enabled=overlay_enabled if (overlay_enabled := request.overlay_enabled) is not None else False,  # NO_OVERLAY law
             dialogue_enabled=request.dialogue_enabled,
+            enforce_temporal_contract=True,
             engine_duration_target=request.engine_duration_target,
             requested_total_duration_seconds=request.requested_total_duration_seconds,
             product_reference_asset_id=request.product_reference_asset_id,
@@ -268,6 +272,13 @@ async def create_from_execution_package(
             )
             else {}
         )
+        _seed_contract_kwargs = {
+            "wps_mode": "SWEET",
+            "enforce_temporal_contract": True,
+            "product_presence_type": compiler.get("product_presence_type"),
+            "product_temporal_custody": compiler.get("product_temporal_custody"),
+            "shot_handling": compiler.get("shot_handling"),
+        }
 
         # Preserve the WEP's RESOLVED asset slots. The execution package already
         # resolved each slot to a reviewed asset (e.g. an APPROVED 9:16 composite
@@ -308,6 +319,7 @@ async def create_from_execution_package(
                 start_frame_asset_id=_slot_asset.get("start_frame"),
                 end_frame_asset_id=_slot_asset.get("end_frame"),
                 **_seed_plan_kwargs,
+                **_seed_contract_kwargs,
             )
         elif wep_mode == "I2V":
             # I2V WEP slot keys are subject/scene/style; the seeding service's
@@ -339,6 +351,7 @@ async def create_from_execution_package(
                     "style",
                 ),
                 **_seed_plan_kwargs,
+                **_seed_contract_kwargs,
             )
         elif wep_mode == "T2V":
             package = await create_t2v_generation_package(
@@ -351,6 +364,7 @@ async def create_from_execution_package(
                     else None
                 ),
                 **_seed_plan_kwargs,
+                **_seed_contract_kwargs,
             )
         elif wep_mode == "IMG":
             package = await create_img_generation_package(
@@ -382,11 +396,13 @@ async def create_t2v_package(request: T2VGenerationPackageRequest):
             generation_mode=request.generation_mode,
             duration_seconds=request.duration_seconds,
             target_language=request.target_language,
+            wps_mode="SWEET",
             camera_style=request.camera_style,
             character_presence=request.character_presence,
             creator_persona=request.creator_persona,
             overlay_enabled=request.overlay_enabled,
             dialogue_enabled=request.dialogue_enabled,
+            enforce_temporal_contract=True,
             blocks=request.blocks,
             engine_duration_target=request.engine_duration_target,
             requested_total_duration_seconds=request.requested_total_duration_seconds,
