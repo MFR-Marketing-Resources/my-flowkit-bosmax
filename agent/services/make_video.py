@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import time
 from uuid import uuid4
 from urllib.parse import unquote
@@ -58,6 +59,129 @@ _DURABLE_RECOVERY_STATUSES = frozenset({
 })
 
 _DURABLE_RECOVERY_LOCKS: dict[str, asyncio.Lock] = {}
+
+# Owner-authorized, one-shot transport discovery.  This is deliberately a
+# separate capture boundary: normal Hybrid 10s production continues to fail
+# closed on DIRECT_10S_CONTRACT_NOT_CERTIFIED until a captured contract is
+# reviewed and released.
+HYBRID_REFERENCE_OMNI_10S_CAPTURE_CLASS = (
+    "HYBRID_REFERENCE_OMNI_10S_CONTRACT_CAPTURE"
+)
+HYBRID_REFERENCE_OMNI_10S_CAPTURE_PRODUCT_ID = (
+    "243bf466-8a42-40b3-a75b-e3068cc430f6"
+)
+
+
+def hybrid_reference_omni10_capture_enabled() -> bool:
+    return os.environ.get("HYBRID_REFERENCE_OMNI_10S_CAPTURE_ENABLED", "0").strip().lower() in (
+        "1", "true", "yes", "on"
+    )
+
+
+def _capture_contract_reject(reason: str) -> dict:
+    return {
+        "status": "REJECTED",
+        "error": reason,
+        "capture_class": HYBRID_REFERENCE_OMNI_10S_CAPTURE_CLASS,
+        "pre_provider": {
+            "classification": "BLOCKED",
+            "provider_calls": 0,
+            "credit_spend": False,
+            "blocker_code": reason.split(":", 1)[0],
+        },
+    }
+
+
+def _capture_reference_routing_receipt(reference_media_ids: list[str]) -> dict:
+    refs = [str(media_id) for media_id in (reference_media_ids or []) if media_id]
+    return {
+        "logical_mode": "F2V",
+        "surface_lane": "HYBRID",
+        "source_mode": "HYBRID",
+        "reference_requested": True,
+        "has_reference": bool(refs),
+        "reference_uploaded": bool(refs),
+        "reference_count": len(refs),
+        "reference_media_ids": refs,
+        "reference_contract": "valid",
+        "reference_contract_code": None,
+        "reference_contract_detail": "owner-authorized capture-only boundary",
+        "reference_mode_authorized": True,
+        "selected_execution_route": "CAPTURE_AGENT_DISCOVERY",
+        "text_only_allowed": False,
+        "TEXT_ONLY_TOOL_ALLOWED": False,
+        "approval_allowed": True,
+        "capture_only": True,
+        "pre_provider": {
+            "classification": "READY",
+            "provider_calls": 0,
+            "credit_spend": False,
+            "selected_route": "CAPTURE_AGENT_DISCOVERY",
+            "blocker_code": None,
+        },
+    }
+
+
+def _capture_credit_balance(response: dict | None):
+    """Extract only a numeric balance from the credits response."""
+    if not isinstance(response, dict):
+        return None
+    candidates = []
+    stack = [response]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            for key, value in item.items():
+                token = str(key).lower().replace("_", "")
+                if token in {"credits", "creditbalance", "remainingcredits", "balance"}:
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        candidates.append(value)
+                    elif isinstance(value, dict):
+                        stack.append(value)
+                elif isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(item, list):
+            stack.extend(item)
+    return candidates[0] if candidates else None
+
+
+def _measure_video_duration(local_path: str | None):
+    if not local_path:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(local_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        value = float((result.stdout or "").strip())
+        return round(value, 3) if value >= 0 else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def _classify_reference_contract_capture(job: dict) -> str:
+    evidence = job.get("capture_contract_evidence") or {}
+    if job.get("approved") is not True:
+        return "CAPTURE_FAILED_PRE_PROVIDER"
+    if evidence.get("text_only_tool_observed"):
+        return "WRONG_TRANSPORT"
+    if not evidence.get("reference_aware_tool_observed") or not evidence.get(
+        "reference_forwarded_to_generation"
+    ):
+        return "REFERENCE_DROPPED"
+    if job.get("model_ok") is False or job.get("duration_ok") is False:
+        return "PROVIDER_REJECTED"
+    if job.get("model_ok") is not True or job.get("duration_ok") is not True:
+        return "PROVIDER_OUTCOME_UNCERTAIN"
+    if job.get("status") not in {"DONE", "PRODUCT_FIDELITY_REVIEW_REQUIRED"}:
+        return "PROVIDER_OUTCOME_UNCERTAIN"
+    return "REFERENCE_OMNI_10S_CONTRACT_CAPTURED"
 
 
 def _job_active(job_id) -> bool:
@@ -905,6 +1029,63 @@ async def _run_generate_task(job_id: str, runner, *args) -> None:
             pass
 
 
+async def _run_reference_contract_capture(
+    job_id, mode, prompt, project_id, image_media_ids,
+    image_prompt, aspect, tier, model=None, duration_s=None,
+    num_videos=1, image_model=None, max_image_attempts=8,
+    collect_image_variants=False, product_id=None, copy_execution_binding=None,
+):
+    """Run the existing API-first agent lane behind the temporary capture gate."""
+    await _run_generate(
+        job_id, mode, prompt, project_id, image_media_ids, image_prompt,
+        aspect, tier, model, duration_s, num_videos, image_model,
+        max_image_attempts, collect_image_variants, product_id,
+        copy_execution_binding,
+    )
+    job = _JOBS.get(job_id)
+    if not job:
+        return
+    client = get_flow_client()
+    after = None
+    try:
+        after = _capture_credit_balance(await client.get_credits())
+    except Exception as exc:  # noqa: BLE001 - accounting stays explicit/unknown
+        job["credit_balance_after_error"] = str(exc)[:240]
+    job["credit_balance_after"] = after
+    before = (job.get("capture_subject") or {}).get("credit_balance_before")
+    delta = None
+    if isinstance(before, (int, float)) and isinstance(after, (int, float)):
+        delta = before - after
+    job["credit_accounting"] = {
+        "balance_before": before,
+        "balance_after": after,
+        "delta": delta,
+        "generation_submit_count": int(job.get("provider_generation_submit_count") or 0),
+        "actual_cost_observed": delta is not None,
+    }
+    media_evidence = {}
+    for artifact in job.get("artifacts") or []:
+        media_id = str(artifact.get("media_id") or "")
+        path = artifact.get("local_path")
+        if not media_id or not path:
+            continue
+        try:
+            from agent.services.video_artifact_delivery_service import file_delivery_evidence
+
+            evidence = file_delivery_evidence(str(path))
+        except Exception as exc:  # noqa: BLE001 - keep capture evidence honest
+            media_evidence[media_id] = {"error": str(exc)[:240]}
+            continue
+        measured = _measure_video_duration(str(path))
+        evidence["measured_duration_s"] = measured
+        evidence["provider_duration_s"] = job.get("duration_used")
+        media_evidence[media_id] = evidence
+        artifact["measured_duration_s"] = measured
+    job["capture_media_evidence"] = media_evidence
+    job["capture_contract_verdict"] = _classify_reference_contract_capture(job)
+    await _sync_durable_single_job(job)
+
+
 async def retry_artifact_delivery(job_id: str) -> dict:
     """Retry only local artifact registration; never re-submit a provider job."""
     job = _JOBS.get(job_id)
@@ -1477,6 +1658,35 @@ def _image_provider_operation_reference(response: dict) -> dict[str, str | None]
     }
 
 
+async def _verify_generation_approval(
+    *, mode, prompt, source_mode, model, aspect, duration_s, num_videos,
+    image_model, asset_fingerprints, image_media_ids, product_id,
+    manifest_id, execution_identity,
+):
+    """Run the normal WYSIWYG approval gate for non-capture dispatches."""
+    from agent.services import execution_approval_service as _eas
+
+    _assets = [] if manifest_id else list(image_media_ids or [])
+    _pinned_snapshot_id = None
+    if manifest_id:
+        _resolved = await _eas.resolve_manifest_approved_snapshot(
+            manifest_id=manifest_id, mode=mode, final_prompt_text=prompt,
+            source_mode=source_mode, model=model, aspect=aspect,
+            duration_s=duration_s, count=num_videos, image_model=image_model,
+            asset_fingerprints=asset_fingerprints, asset_media_ids=_assets,
+            product_id=product_id, execution_identity=execution_identity,
+        )
+        _pinned_snapshot_id = (_resolved or {}).get("snapshot_id")
+    await _eas.verify_and_bind_dispatch(
+        mode=mode, final_prompt_text=prompt, source_mode=source_mode,
+        model=model, aspect=aspect, duration_s=duration_s,
+        count=num_videos, image_model=image_model,
+        asset_fingerprints=asset_fingerprints, asset_media_ids=_assets,
+        product_id=product_id, snapshot_id=_pinned_snapshot_id,
+        execution_identity=execution_identity,
+    )
+
+
 async def start_generate(mode: str, prompt: str, project_id: str = None,
                          image_media_ids: list = None, image_prompt: str = None,
                          aspect: str = "9:16", tier: str = "PAYGATE_TIER_ONE",
@@ -1495,7 +1705,10 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          request_id: str | None = None,
                          idempotency_key: str | None = None,
                          production_recipe: str | None = None,
-                         surface_lane: str | None = None) -> dict:
+                         surface_lane: str | None = None,
+                         capture_class: str | None = None,
+                         capture_subject: dict | None = None,
+                         capture_confirmed: bool = False) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all.
@@ -1508,6 +1721,36 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     global _VIDEO_LANE_JOB
     _gc_jobs()
     mode = (mode or "").upper()
+    capture_requested = bool(capture_class)
+    if capture_requested:
+        if capture_class != HYBRID_REFERENCE_OMNI_10S_CAPTURE_CLASS:
+            return _capture_contract_reject("CAPTURE_CLASS_UNSUPPORTED")
+        if not hybrid_reference_omni10_capture_enabled():
+            return _capture_contract_reject("CAPTURE_FEATURE_DISABLED")
+        if capture_confirmed is not True:
+            return _capture_contract_reject("CAPTURE_LIVE_CREDIT_CONFIRMATION_REQUIRED")
+        if mode != "F2V":
+            return _capture_contract_reject("CAPTURE_MODE_MUST_BE_F2V")
+        if str(surface_lane or "").strip().upper() != "HYBRID":
+            return _capture_contract_reject("CAPTURE_SURFACE_LANE_MUST_BE_HYBRID")
+        if str(source_mode or "").strip().upper() != "HYBRID":
+            return _capture_contract_reject("CAPTURE_SOURCE_MODE_MUST_BE_HYBRID")
+        try:
+            resolved_model = video_models.resolve(model)
+        except (TypeError, ValueError):
+            return _capture_contract_reject("CAPTURE_MODEL_MUST_BE_OMNI_FLASH")
+        if resolved_model.get("key") != "omni_flash":
+            return _capture_contract_reject("CAPTURE_MODEL_MUST_BE_OMNI_FLASH")
+        if duration_s != 10:
+            return _capture_contract_reject("CAPTURE_DURATION_MUST_BE_10")
+        if str(aspect or "").strip() != "9:16":
+            return _capture_contract_reject("CAPTURE_ASPECT_MUST_BE_9_16")
+        if int(num_videos or 0) != 1:
+            return _capture_contract_reject("CAPTURE_COUNT_MUST_BE_1")
+        if len([media_id for media_id in (image_media_ids or []) if media_id]) != 1:
+            return _capture_contract_reject("CAPTURE_REFERENCE_COUNT_MUST_BE_1")
+        if str(product_id or "") != HYBRID_REFERENCE_OMNI_10S_CAPTURE_PRODUCT_ID:
+            return _capture_contract_reject("CAPTURE_PRODUCT_NOT_AUTHORIZED")
     production_recipe = str(production_recipe or "").strip().upper() or None
     if production_recipe:
         if production_recipe not in {"HYBRID", "FACELESS", "MONTAGE", "POSTER_BUILDER"}:
@@ -1593,13 +1836,27 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     _direct_plan = None
     _routing_receipt = None
     if mode in _VIDEO_MODES:
-        _direct_plan = _direct_lane_plan(
-            mode, source_mode, model, duration_s, aspect,
-            ref_count=_ref_count, num_videos=num_videos,
-        )
-        _routing_receipt = _build_reference_routing_receipt(
-            mode, source_mode, image_media_ids, _direct_plan,
-        )
+        if capture_requested:
+            _direct_plan = {
+                "eligible": False,
+                "reason": "CAPTURE_ONLY_AGENT_DISCOVERY",
+                "rpc": "agent_stream_chat",
+                "gen_type": None,
+                "aspect_enum": "VIDEO_ASPECT_RATIO_PORTRAIT",
+                "video_model_key": None,
+                "model_key_source": "provider_capture_only",
+            }
+            _routing_receipt = _capture_reference_routing_receipt(
+                image_media_ids or []
+            )
+        else:
+            _direct_plan = _direct_lane_plan(
+                mode, source_mode, model, duration_s, aspect,
+                ref_count=_ref_count, num_videos=num_videos,
+            )
+            _routing_receipt = _build_reference_routing_receipt(
+                mode, source_mode, image_media_ids, _direct_plan,
+            )
         _exact_video_route = bool(
             isinstance(product_visual_custody, dict)
             and product_visual_custody.get("exact_product_required")
@@ -1616,7 +1873,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 "eligible": False,
                 "reason": "EXACT_PRODUCT_SCENE_SCAFFOLD_AGENT_T2V",
             }
-        if product_visual_custody:
+        if product_visual_custody and not capture_requested:
             from agent.services.product_visual_custody_service import (
                 ProductVisualCustodyError,
                 validate_pre_dispatch_route,
@@ -1657,6 +1914,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                     "product_visual_custody": product_visual_custody,
                 }
         if (
+            not capture_requested
+            and
             _routing_receipt["reference_requested"]
             and not _routing_receipt["reference_mode_authorized"]
         ):
@@ -1683,46 +1942,24 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
         routing_receipt=_routing_receipt,
         direct_plan=_direct_plan,
     )
-    # Final Prompt Approval Gate (WYSIWYG dispatch verification). Recompute this
-    # dispatch's execution envelope and require a matching human-APPROVED snapshot.
-    # For a non-UI multi-op run (queue / bulk / scheduler / Montage / Extend) the
-    # caller passes the run's ALREADY human-approved manifest_id; the gate RESOLVES
-    # the approved manifest item whose hash exactly matches — it NEVER manufactures
-    # approval from the dispatch envelope. A UI single dispatch carries its own
-    # explicit approved snapshot (matched by envelope). Fail-closed when
-    # EXECUTION_APPROVAL_GATE_ENFORCED; provider-free — runs before any
-    # job/lane/provider work, so a blocked dispatch spends nothing.
-    from agent.services import execution_approval_service as _eas
-    try:
-        # Canonical Envelope v2 identity (PR #815 server-authoritative fingerprints):
-        # product-backed HYBRID/F2V/IMG bind on the product-visual SHA, manual FRAMES
-        # on explicit assets — so materialise==dispatch parity is exact. A manifest
-        # (multi-op) dispatch passes NO volatile transport media id into the hash
-        # (its run's canonical/empty asset set is what was reviewed, and the resolver
-        # derives the product SHA from product_id when product-backed); a UI single
-        # dispatch freezes its own resolved reference assets.
-        _assets = [] if manifest_id else list(image_media_ids or [])
-        _pinned_snapshot_id = None
-        if manifest_id:
-            _resolved = await _eas.resolve_manifest_approved_snapshot(
-                manifest_id=manifest_id, mode=mode, final_prompt_text=prompt,
-                source_mode=source_mode, model=model, aspect=aspect,
-                duration_s=duration_s, count=num_videos, image_model=image_model,
-                asset_fingerprints=asset_fingerprints, asset_media_ids=_assets,
-                product_id=product_id, execution_identity=execution_identity,
+    # Final Prompt Approval Gate (WYSIWYG dispatch verification) is intentionally
+    # skipped only for the owner-authorized capture boundary above.  That boundary
+    # has its own exact class/flag/confirmation checks and is not reachable through
+    # the normal /generate request model.
+    if not capture_requested:
+        from agent.services import execution_approval_service as _eas
+        try:
+            await _verify_generation_approval(
+                mode=mode, prompt=prompt, source_mode=source_mode,
+                model=model, aspect=aspect, duration_s=duration_s,
+                num_videos=num_videos, image_model=image_model,
+                asset_fingerprints=asset_fingerprints,
+                image_media_ids=image_media_ids, product_id=product_id,
+                manifest_id=manifest_id, execution_identity=execution_identity,
             )
-            _pinned_snapshot_id = (_resolved or {}).get("snapshot_id")
-        await _eas.verify_and_bind_dispatch(
-            mode=mode, final_prompt_text=prompt, source_mode=source_mode,
-            model=model, aspect=aspect, duration_s=duration_s,
-            count=num_videos, image_model=image_model,
-            asset_fingerprints=asset_fingerprints, asset_media_ids=_assets,
-            product_id=product_id, snapshot_id=_pinned_snapshot_id,
-            execution_identity=execution_identity,
-        )
-    except _eas.ExecutionApprovalError as _gate_err:
-        return {"status": "REJECTED", "error": _gate_err.code,
-                "detail": _gate_err.message, "approval": _gate_err.details}
+        except _eas.ExecutionApprovalError as _gate_err:
+            return {"status": "REJECTED", "error": _gate_err.code,
+                    "detail": _gate_err.message, "approval": _gate_err.details}
     job_id = "g_" + uuid4().hex[:12]
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "mode": mode,
                      "stage": "queued", "project_id": project_id, "local_path": None,
@@ -1737,16 +1974,28 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                      "staff_id": staff_id,
                      "staff_display_name_snapshot": staff_display_name_snapshot,
                      "prompt": prompt, "aspect": aspect, "duration_s": duration_s,
+                     "image_media_ids": [media_id for media_id in (image_media_ids or []) if media_id],
+                     "reference_media_ids": [media_id for media_id in (image_media_ids or []) if media_id],
                       **_surface_provenance,
                       "transport_mode": _surface_provenance["transport_mode"] or mode,
                       "direct_plan": _direct_plan,
                      "execution_identity": execution_identity,
                      "product_visual_custody": product_visual_custody,
+                     "capture_only": capture_requested,
+                     "capture_class": capture_class,
+                     "capture_subject": capture_subject,
+                     "provider_generation_submit_count": 0,
+                     "provider_resubmission": False,
+                     "resubmission_allowed": False,
                      "error": None, "created": time.time(),
                      "request_id": request_id, "idempotency_key": idempotency_key,
                      "durable": False}
     if _routing_receipt is not None:
         _JOBS[job_id]["routing_receipt"] = _routing_receipt
+    if capture_requested:
+        _JOBS[job_id]["surface_lane"] = "HYBRID"
+        _JOBS[job_id]["transport_mode"] = "F2V"
+        _JOBS[job_id]["provider_generation_type"] = None
     if copy_execution_binding is not None:
         _JOBS[job_id]["copy_execution_binding"] = copy_execution_binding
     try:
@@ -1817,6 +2066,25 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     lane = None
     if mode in _VIDEO_MODES:
         plan = _direct_plan
+        if capture_requested:
+            lane = "CAPTURE_AGENT_DISCOVERY"
+            _JOBS[job_id]["lane"] = lane
+            _JOBS[job_id]["capture_only"] = True
+            _JOBS[job_id]["_task"] = asyncio.create_task(
+                _run_generate_task(
+                    job_id, _run_reference_contract_capture, mode, prompt,
+                    project_id, image_media_ids, image_prompt, aspect, tier,
+                    model, duration_s, num_videos, image_model,
+                    max_image_attempts, collect_image_variants, product_id,
+                    copy_execution_binding,
+                )
+            )
+            return {
+                "job_id": job_id, "status": "SUBMITTED", "mode": mode,
+                "lane": lane, "capture_class": capture_class,
+                "routing_receipt": _routing_receipt,
+                "request_id": request_id, "durable": bool(_durable_row),
+            }
         if plan["eligible"]:
             lane = "DIRECT_API"
             _JOBS[job_id]["lane"] = lane
@@ -3693,11 +3961,28 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             target_model=model, target_duration_s=duration_s,
             desired_num=num_videos)
         job["approved"] = nres.get("approved")
+        if job.get("capture_only"):
+            job["capture_contract_evidence"] = agent_video.build_reference_contract_capture_evidence(
+                nres, refs, project_id=project_id
+            )
+            observed_types = [
+                item.get("value")
+                for item in (job["capture_contract_evidence"].get("generation_type_fields") or [])
+                if isinstance(item, dict) and item.get("value") not in (None, "")
+            ]
+            if observed_types:
+                job["provider_generation_type"] = str(observed_types[0])
         # Approval may already have triggered provider work.  Every subsequent failure
         # is therefore credit-uncertain, including a safety rejection inside the approve
         # stream; never stamp it as NOT_SPENT merely because retrieval did not begin.
         if job["approved"] is True:
             generating = True
+            # This is the single logical provider submit.  Persist the count before
+            # any long render/retrieval wait; recovery must never infer a second
+            # submit from a lost process-local task.
+            job["provider_generation_submit_count"] = 1
+            job["provider_resubmission"] = False
+            job["resubmission_allowed"] = False
         # Expose the FULL post-approve verification status on the job (the API returns the job
         # dict verbatim), so an unverified generation is NEVER presented as fully verified.
         job["model_used"] = nres.get("model_used")
@@ -3722,7 +4007,12 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         job["tools_seen"] = list(nres.get("tools_seen") or [])
         job["gen_tool_matched"] = bool(nres.get("gen_tool_matched"))
         if not job["identity_captured"]:
-            job["identity_gap_sse"] = _last_approve_sse(nres)
+            if job.get("capture_only"):
+                # The capture evidence is sanitized; never persist raw SSE as a
+                # fallback because it can contain provider/session material.
+                job["identity_gap_sse"] = None
+            else:
+                job["identity_gap_sse"] = _last_approve_sse(nres)
         # Persist the approved provider/correlation envelope before any long
         # render wait. A restart can therefore reconcile this same attempt.
         await _sync_durable_single_job(job)
@@ -3798,7 +4088,10 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             # and the paid run reveals nothing. Keep the raw approve stream so the
             # real identity source can be found from THIS run instead of buying
             # another. Diagnostic only: never parsed, never an anchor.
-            job["identity_gap_sse"] = _last_approve_sse(nres)
+            if job.get("capture_only"):
+                job["identity_gap_sse"] = None
+            else:
+                job["identity_gap_sse"] = _last_approve_sse(nres)
         corr_stats = {"unverifiable": 0, "prompt_mismatched": 0,
                       "model_mismatched": 0, "seed_mismatched": 0,
                       "unverifiable_ids": [], "normalization_failures": {},
