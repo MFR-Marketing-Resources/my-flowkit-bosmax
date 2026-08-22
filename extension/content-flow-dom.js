@@ -566,10 +566,13 @@ function isSettingsScopedModelSource(source) {
     const flowUrl = window.location.href;
     const projectMatch = flowUrl.match(/\/project\/([^/?#]+)/i);
     const flowProjectId = projectMatch ? projectMatch[1] : null;
+    // Flow's live project editor route is /project/<id>; it does not expose
+    // the legacy /edit/ segment. Keep this proof aligned with the background
+    // router and the package-upload editor guard, which both treat the
+    // canonical project route as the editor authority.
     const isProjectEditor =
       /^https:\/\/labs\.google\/fx\//i.test(flowUrl)
-      && Boolean(flowProjectId)
-      && flowUrl.indexOf('/edit/') >= 0;
+      && Boolean(flowProjectId);
     return {
       ok: Boolean(challengeNonce && isProjectEditor),
       challenge_nonce: challengeNonce || null,
