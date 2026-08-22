@@ -4218,13 +4218,40 @@ async def insert_generated_artifact(media_id: str, job_id: str = None, mode: str
     db = await get_db()
     async with _db_lock:
         await db.execute(
-            """INSERT OR REPLACE INTO generated_artifact
+            """INSERT INTO generated_artifact
                (media_id, job_id, staff_id, staff_display_name_snapshot, mode,
                 surface_lane, transport_mode, source_mode,
                 provider_generation_type, artifact_kind, local_path, size_mb,
                 file_size_bytes, file_sha256, delivery_status, readback_verified,
                 project_id, model_used, duration_used, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(media_id) DO UPDATE SET
+                 job_id=excluded.job_id,
+                 staff_id=COALESCE(excluded.staff_id, generated_artifact.staff_id),
+                 staff_display_name_snapshot=COALESCE(
+                     excluded.staff_display_name_snapshot,
+                     generated_artifact.staff_display_name_snapshot
+                 ),
+                 mode=excluded.mode,
+                 surface_lane=COALESCE(excluded.surface_lane, generated_artifact.surface_lane),
+                 transport_mode=COALESCE(
+                     excluded.transport_mode, generated_artifact.transport_mode
+                 ),
+                 source_mode=COALESCE(excluded.source_mode, generated_artifact.source_mode),
+                 provider_generation_type=COALESCE(
+                     excluded.provider_generation_type,
+                     generated_artifact.provider_generation_type
+                 ),
+                 artifact_kind=excluded.artifact_kind,
+                 local_path=excluded.local_path,
+                 size_mb=excluded.size_mb,
+                 file_size_bytes=excluded.file_size_bytes,
+                 file_sha256=excluded.file_sha256,
+                 delivery_status=excluded.delivery_status,
+                 readback_verified=excluded.readback_verified,
+                 project_id=excluded.project_id,
+                 model_used=excluded.model_used,
+                 duration_used=excluded.duration_used""",
             (media_id, job_id, staff_id, staff_display_name_snapshot, mode,
              surface_lane, transport_mode, source_mode, provider_generation_type,
              artifact_kind, local_path, size_mb, file_size_bytes, file_sha256,
@@ -4871,12 +4898,21 @@ async def insert_generation_result(
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(media_id) DO UPDATE SET
                  job_id=excluded.job_id, request_id=excluded.request_id,
-                 staff_id=excluded.staff_id,
-                 staff_display_name_snapshot=excluded.staff_display_name_snapshot,
-                 mode=excluded.mode, surface_lane=excluded.surface_lane,
-                 transport_mode=excluded.transport_mode,
-                 source_mode=excluded.source_mode,
-                 provider_generation_type=excluded.provider_generation_type,
+                 staff_id=COALESCE(excluded.staff_id, generation_result.staff_id),
+                 staff_display_name_snapshot=COALESCE(
+                     excluded.staff_display_name_snapshot,
+                     generation_result.staff_display_name_snapshot
+                 ),
+                 mode=excluded.mode,
+                 surface_lane=COALESCE(excluded.surface_lane, generation_result.surface_lane),
+                 transport_mode=COALESCE(
+                     excluded.transport_mode, generation_result.transport_mode
+                 ),
+                 source_mode=COALESCE(excluded.source_mode, generation_result.source_mode),
+                 provider_generation_type=COALESCE(
+                     excluded.provider_generation_type,
+                     generation_result.provider_generation_type
+                 ),
                  artifact_kind=excluded.artifact_kind,
                  product_id=excluded.product_id, product_name=excluded.product_name,
                  final_prompt_text=excluded.final_prompt_text,

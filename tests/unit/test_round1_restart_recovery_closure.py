@@ -205,6 +205,8 @@ async def test_single_restart_without_provider_identity_is_explicitly_unrecovera
 async def _seed_montage_run(run_id: str, items: list[tuple[str, str, dict]], *, status="GENERATING"):
     config = {
         "product_id": "montage-product",
+        "staff_id": "staff_provider_free",
+        "staff_display_name": "Provider-Free Fixture",
         "model": "Veo 3.1 - Lite",
         "duration_seconds": 8,
         "async_worker_authorized": True,

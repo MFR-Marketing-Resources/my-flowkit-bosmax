@@ -1153,6 +1153,8 @@ async def _default_montage_generate_fn(run_id: str, **kwargs: Any) -> dict[str, 
         prompt=str(kwargs.get("prompt") or f"Montage scene {kwargs.get('scene_id')}"),
         request_id=f"montage:{run_id}:{str(kwargs.get('scene_id') or '')}",
         product_id=kwargs.get("product_id") or None,
+        production_recipe="MONTAGE",
+        staff_id=cfg.get("staff_id") or None,
         aspect="9:16",
         source_mode=kwargs.get("source_mode") or None,
         surface_lane="MONTAGE",
@@ -1235,6 +1237,10 @@ async def _dispatch_next_authorized_scene(
         generate_fn=generate_fn,
         poll_fn=None,
         async_worker=True,
+        staff_id=str(cfg.get("staff_id") or "").strip() or None,
+        staff_display_name_snapshot=(
+            str(cfg.get("staff_display_name") or "").strip() or None
+        ),
         poll_interval_s=float(cfg.get("worker_poll_interval_s") or 5.0),
         manifest_id=cfg.get("approved_manifest_id"),
     )
