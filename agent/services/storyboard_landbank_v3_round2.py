@@ -17,7 +17,7 @@ from typing import Any, Mapping, Protocol, Sequence
 
 from pydantic import ValidationError
 
-from agent.db.schema import _db_lock, get_db
+from agent.db.schema import _db_lock, atomic, get_db
 from agent.models.storyboard_landbank_v3 import (
     V3DurationProjection,
     V3MasterStoryboard,
@@ -54,6 +54,7 @@ from agent.models.storyboard_landbank_v3_round2 import (
     batch_target_item_digest,
 )
 from agent.services import ai_copy_provider_adapter
+from agent.services import canonical_prompt_compiler
 from agent.services.storyboard_landbank_v3_factory import (
     EvidenceRelevanceService,
     MAX_PAGE_SIZE,
@@ -68,7 +69,7 @@ from agent.authority.copy_blueprint_v2_authority import required_formula_stage_k
 
 
 ROUND2_SOURCE = "STORYBOARD_LANDBANK_V3_ROUND2_COPY_REGISTER_AI"
-PROMPT_VERSION = "storyboard-landbank-v3-copy-assistant-1"
+PROMPT_VERSION = "storyboard-landbank-v3-copy-assistant-2"
 MAX_RUN_PROPOSALS = 24
 MAX_PAGE = 100
 # Bounded window for COMPUTED (search/quality/blocker) landbank filters, which
@@ -500,6 +501,20 @@ class V3CopyRegisterRound2Service:
                 "Round 2 requires at least three canonical formula stages.",
                 status_code=409,
             )
+        try:
+            duration_feasibility = canonical_prompt_compiler.v3_duration_feasibility_envelope(
+                plan.target_durations_seconds,
+                plan.language_profile,
+                wps_mode=plan.wps_mode,
+                required_formula_stage_keys=required,
+            )
+        except ValueError as exc:
+            raise V3FactoryError(
+                "WPS_FEASIBILITY_CONTRACT_INVALID",
+                "The V3 duration feasibility contract could not be derived from canonical authority.",
+                status_code=409,
+                details=str(exc),
+            ) from exc
         evidence_fact_id = next(iter(plan.evidence_fact_ids), "")
 
         def segment_example(stage_key: str, semantic_class: str, position: int, total: int) -> dict[str, Any]:
@@ -616,6 +631,15 @@ class V3CopyRegisterRound2Service:
             },
             "requested_gaps": [gap.model_dump(mode="json") for gap in plan.gaps],
             "required_formula_stage_keys": list(required),
+            "duration_feasibility": duration_feasibility,
+            "wps_duration_rules": {
+                "hook": "Hook must fit the reserved first block.",
+                "cta": "CTA must fit the reserved final block and remain the final formula stage.",
+                "single_block": "For a single-block duration, Hook and CTA must leave usable capacity for every intervening required formula stage.",
+                "shortest_duration": "The shortest target duration is the hard feasibility constraint.",
+                "body": "Body/Core may undergo deterministic ordered-token subsequence compression only when required; compressed projections remain REVIEW_REQUIRED.",
+                "authoring": "Keep Hook and CTA concise; do not invent claims, rewrite formula order, omit required stages, or move CTA earlier.",
+            },
             "forbidden_legacy_fields": [
                 "angle_id",
                 "component_id",
@@ -1444,6 +1468,24 @@ class V3CopyRegisterRound2Service:
             await persist_failure(failure_error)
             raise failure_error from exc
         created_components: list[V3StoryboardComponent] = []
+        # The provider/schema phase above is intentionally outside this
+        # boundary.  From the first semantic insert through the successful run
+        # receipt, Round 2 is one transaction; failure evidence is persisted
+        # only after this boundary rolls back.
+        transaction = atomic()
+        await transaction.__aenter__()
+        transaction_open = True
+
+        async def close_transaction(
+            exception_type: type[BaseException] | None = None,
+            exception: BaseException | None = None,
+            traceback: Any = None,
+        ) -> None:
+            nonlocal transaction_open
+            if transaction_open:
+                transaction_open = False
+                await transaction.__aexit__(exception_type, exception, traceback)
+
         try:
             angle, family = await self._resolve_route(recipe, allow_missing=plan.mode == "CREATE")
             # Zero-supply CREATE authors the Angle DRAFT then the Storyline Family
@@ -1590,14 +1632,18 @@ class V3CopyRegisterRound2Service:
                 "projection_derivation": "DETERMINISTIC_WPS_FROM_AI_AUTHORED_MASTER",
             }
             await self._persist_run_result(plan.run_id, status="EXECUTED", provider_mode=provider_mode, provider_receipt=provider_receipt.model_dump(mode="json"), result=result, cost_status=cost_status)
+            await close_transaction()
             return result
         except V3FactoryError as exc:
-            # If a component was already written, retain it as a reviewable V3
-            # draft but make the assistant run terminal and explicit. No V2/P6
-            # path is touched and no provider retry happens in the background.
+            await close_transaction(type(exc), exc, exc.__traceback__)
+            # The semantic transaction has rolled back.  Persist only the
+            # truthful provider/run failure receipt in its own transaction; no
+            # V2/P6 path is touched and no provider retry happens in the
+            # background.
             await persist_failure(exc)
             raise
         except Exception as exc:
+            await close_transaction(type(exc), exc, exc.__traceback__)
             failure_error = V3FactoryError(
                 "AI_COPY_ASSIST_EXECUTION_FAILED",
                 "The V3 assistant execution failed closed.",
@@ -1606,6 +1652,9 @@ class V3CopyRegisterRound2Service:
             )
             await persist_failure(failure_error)
             raise failure_error from exc
+        except BaseException as exc:
+            await close_transaction(type(exc), exc, exc.__traceback__)
+            raise
 
     def _ai_projection_prompt(self, master: V3MasterStoryboard, compressed: Sequence[Any], language: str) -> tuple[str, str]:
         stages_payload = [
