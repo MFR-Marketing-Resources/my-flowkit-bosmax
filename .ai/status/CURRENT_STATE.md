@@ -97,9 +97,17 @@ ADR-007 win.
      metadata → bytes → `generated_artifact`. Zero DOM after submit; the
      operation handle IS the output binding. Anything the lane cannot PROVABLY
      honor (explicit model without a captured key in models.json
-     `direct_video_model_keys`, count>1, non-8s duration, T2V/Omni Flash)
+     `direct_video_model_keys`, count>1, non-8s duration, T2V, or unproven
+     Omni Flash combinations)
      declines to the locked agent lane with the reason on the job
      (`direct_decline_reason`) — never a silent downgrade.
+- **Certified Hybrid Omni 10s reference route (2026-08-22):** the reviewed
+  provider capture proved `flowCreationAgent` →
+  `generate_video_with_references` → `abra_r2v_10s` at 10s with the reference
+  forwarded. The exact `F2V/HYBRID + Omni Flash + 10s + one reference + one
+  video` tuple is now a separate `FLOW_AGENT_REFERENCE_OMNI_10S` route. The
+  `abra_r2v_10s` identity is agent `model_usage_key` evidence, not a direct
+  `videoModelKey`, and remains absent from `direct_video_model_keys`.
 - **Before flipping the flag, run the LIVE-CAPTURE GATE** (owner-authorized,
   ≈1 video credit): set `DIRECT_VIDEO_CAPTURE_ENABLED=1`, fire the manual lane
   with body key `_direct_capture: true` (HYBRID/I2V with resolved refs) and

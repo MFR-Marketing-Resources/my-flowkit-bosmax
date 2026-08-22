@@ -60,21 +60,114 @@ _DURABLE_RECOVERY_STATUSES = frozenset({
 
 _DURABLE_RECOVERY_LOCKS: dict[str, asyncio.Lock] = {}
 
-# Owner-authorized, one-shot transport discovery.  This is deliberately a
-# separate capture boundary: normal Hybrid 10s production continues to fail
-# closed on DIRECT_10S_CONTRACT_NOT_CERTIFIED until a captured contract is
-# reviewed and released.
+# Owner-authorized, one-shot transport discovery.  This remains a separate
+# paid boundary; the normal route below is enabled only from the captured,
+# reviewed Flow-agent contract.
 HYBRID_REFERENCE_OMNI_10S_CAPTURE_CLASS = (
     "HYBRID_REFERENCE_OMNI_10S_CONTRACT_CAPTURE"
 )
 HYBRID_REFERENCE_OMNI_10S_CAPTURE_PRODUCT_ID = (
     "243bf466-8a42-40b3-a75b-e3068cc430f6"
 )
+HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE = "FLOW_AGENT_REFERENCE_OMNI_10S"
+HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION = "flow-agent-reference-omni10-v1"
+HYBRID_REFERENCE_OMNI_10S_PROVIDER_TOOL = "generate_video_with_references"
+HYBRID_REFERENCE_OMNI_10S_PROVIDER_MODEL_KEY = "abra_r2v_10s"
+HYBRID_REFERENCE_OMNI_10S_PROVIDER_GENERATION_TYPE = "reference_frame_2_video"
 
 
 def hybrid_reference_omni10_capture_enabled() -> bool:
     return os.environ.get("HYBRID_REFERENCE_OMNI_10S_CAPTURE_ENABLED", "0").strip().lower() in (
         "1", "true", "yes", "on"
+    )
+
+
+def hybrid_reference_omni10_route_matches(
+    mode: str | None,
+    source_mode: str | None,
+    model: str | None,
+    duration_s: int | None,
+    aspect: str | None,
+    ref_count: int,
+    num_videos: int,
+    surface_lane: str | None = None,
+) -> bool:
+    """Return whether the request is the captured, certified Hybrid 10s tuple.
+
+    ``abra_r2v_10s`` is deliberately not resolved here as a direct
+    ``videoModelKey``.  The captured identity belongs to the
+    ``flowCreationAgent`` reference-aware tool, so this predicate only gates
+    the exact logical settings that the certified conversational route can
+    honor.
+    """
+    try:
+        resolved_model = video_models.resolve(model)
+        return (
+            str(mode or "").strip().upper() == "F2V"
+            and str(source_mode or "").strip().upper() == "HYBRID"
+            and (
+                not str(surface_lane or "").strip()
+                or str(surface_lane).strip().upper() == "HYBRID"
+            )
+            and resolved_model.get("key") == "omni_flash"
+            and int(duration_s) == 10
+            and str(aspect or "").strip() == "9:16"
+            and int(ref_count) == 1
+            and int(num_videos) == 1
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def hybrid_reference_omni10_provider_route(
+    mode: str | None,
+    source_mode: str | None,
+    model: str | None,
+    duration_s: int | None,
+    aspect: str | None,
+    ref_count: int,
+    num_videos: int,
+    surface_lane: str | None = None,
+) -> str:
+    """Return the custody vocabulary for a requested video transport tuple."""
+    if hybrid_reference_omni10_route_matches(
+        mode,
+        source_mode,
+        model,
+        duration_s,
+        aspect,
+        ref_count,
+        num_videos,
+        surface_lane,
+    ):
+        return HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+    return "API_FIRST_GENERATIVE_REFERENCE"
+
+
+def _certified_hybrid_reference_omni10_plan() -> dict:
+    """Return the immutable transport contract for the certified agent lane."""
+    return {
+        "eligible": False,
+        "reason": HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE,
+        "execution_route": HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE,
+        "rpc": "agent_stream_chat",
+        "gen_type": HYBRID_REFERENCE_OMNI_10S_PROVIDER_GENERATION_TYPE,
+        "provider_generation_type": HYBRID_REFERENCE_OMNI_10S_PROVIDER_GENERATION_TYPE,
+        "provider_tool": HYBRID_REFERENCE_OMNI_10S_PROVIDER_TOOL,
+        "provider_model_usage_key": HYBRID_REFERENCE_OMNI_10S_PROVIDER_MODEL_KEY,
+        "aspect_enum": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "video_model_key": None,
+        "model_key_source": (
+            "captured_flow_agent_contract[abra_r2v_10s]"
+        ),
+        "contract_version": HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION,
+    }
+
+
+def _is_certified_hybrid_reference_omni10_plan(plan: dict | None) -> bool:
+    return bool(
+        isinstance(plan, dict)
+        and plan.get("execution_route") == HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
     )
 
 
@@ -1268,7 +1361,7 @@ ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL = (
     "ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL"
 )
 DIRECT_10S_CONTRACT_NOT_CERTIFIED = "DIRECT_10S_CONTRACT_NOT_CERTIFIED"
-DIRECT_VIDEO_READINESS_CONTRACT_VERSION = "direct-video-readiness-v1"
+DIRECT_VIDEO_READINESS_CONTRACT_VERSION = "direct-video-readiness-v2"
 
 
 def _pre_dispatch_generation_type(
@@ -1301,12 +1394,10 @@ def _build_reference_routing_receipt(
 ) -> dict:
     """Build the provider-free routing proof for the one-door video service.
 
-    A reference-bearing request is safe only when the selected route is the
-    captured direct reference-aware lane.  The conversational agent does not
-    expose enough pre-approval protocol evidence to prove which generation tool
-    it will fire, so it is deliberately not an eligible fallback for references.
-    Pure T2V remains on the captured agent lane and explicitly permits its
-    text-only tool.
+    A reference-bearing request is safe only when the selected route is either
+    the captured direct reference-aware lane or the separately certified
+    Flow-agent Omni 10s contract.  Unsupported reference tuples remain blocked
+    before approval; pure T2V remains on its text-only agent lane.
     """
     mode = (mode or "").upper()
     normalized_source_mode = str(source_mode or "").strip().upper() or None
@@ -1321,12 +1412,19 @@ def _build_reference_routing_receipt(
     )
     reference_contract = "valid" if contract_ok else "invalid"
     direct_eligible = bool(plan and plan.get("eligible"))
+    certified_agent_route = _is_certified_hybrid_reference_omni10_plan(plan)
     text_only_allowed = not reference_requested
     reference_mode_authorized = (
-        not reference_requested or (contract_ok and direct_eligible)
+        not reference_requested
+        or (contract_ok and (direct_eligible or certified_agent_route))
     )
     if reference_requested:
-        selected_route = "DIRECT_API" if direct_eligible and contract_ok else "BLOCKED_REFERENCE_ROUTE"
+        if certified_agent_route and contract_ok:
+            selected_route = HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+        elif direct_eligible and contract_ok:
+            selected_route = "DIRECT_API"
+        else:
+            selected_route = "BLOCKED_REFERENCE_ROUTE"
     elif mode == "T2V":
         selected_route = "AGENT_T2V"
     else:
@@ -1360,6 +1458,11 @@ def _build_reference_routing_receipt(
         "TEXT_ONLY_TOOL_ALLOWED": text_only_allowed,
         "approval_allowed": reference_mode_authorized,
         "route_reason": (plan or {}).get("reason"),
+        "provider_generation_type": (plan or {}).get("provider_generation_type")
+        or (plan or {}).get("gen_type"),
+        "provider_tool": (plan or {}).get("provider_tool"),
+        "provider_model_usage_key": (plan or {}).get("provider_model_usage_key"),
+        "transport_contract_version": (plan or {}).get("contract_version"),
         "pre_provider": {
             "classification": "READY" if reference_mode_authorized else "BLOCKED",
             "provider_calls": 0,
@@ -1741,10 +1844,12 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     negotiation demands exactly that many and retrieval collects them all.
     source_mode (HYBRID | FRAMES | INGREDIENTS, optional) is the logical lane —
     it selects the direct-lane RPC (HYBRID composes references; FRAMES anchors
-    start/end frames) and is recorded on the job. Under DIRECT_VIDEO_LANE_ENABLED
-    eligible reference-bearing video jobs run the DOM-free direct batchAsync
-    lane. A reference-bearing job that cannot prove that route is rejected before
-    provider approval; only pure T2V remains on the conversational agent lane."""
+    start/end frames) and is recorded on the job. Under
+    DIRECT_VIDEO_LANE_ENABLED, eligible reference-bearing video jobs run the
+    DOM-free direct batchAsync lane. The certified Hybrid Omni Flash 10s tuple
+    uses the separately proven Flow-agent reference-aware lane. Every other
+    reference-bearing tuple is rejected before provider approval; pure T2V
+    remains on the conversational agent lane."""
     global _VIDEO_LANE_JOB
     _gc_jobs()
     mode = (mode or "").upper()
@@ -1880,6 +1985,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
             _direct_plan = _direct_lane_plan(
                 mode, source_mode, model, duration_s, aspect,
                 ref_count=_ref_count, num_videos=num_videos,
+                surface_lane=surface_lane,
             )
             _routing_receipt = _build_reference_routing_receipt(
                 mode, source_mode, image_media_ids, _direct_plan,
@@ -1910,7 +2016,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
             selected_route = (
                 "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
                 if exact_route
-                else (
+                else (_routing_receipt or {}).get("selected_execution_route")
+                or (
                     "DIRECT_API"
                     if _direct_plan.get("eligible")
                     else "API_FIRST_GENERATIVE_REFERENCE"
@@ -2126,6 +2233,33 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                     "lane": lane, "routing_receipt": _routing_receipt,
                     "product_visual_custody": product_visual_custody,
                     "request_id": request_id, "durable": bool(_durable_row)}
+        if _is_certified_hybrid_reference_omni10_plan(plan):
+            lane = HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+            _JOBS[job_id]["lane"] = lane
+            _JOBS[job_id]["provider_route"] = lane
+            _JOBS[job_id]["transport_contract_version"] = (
+                HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION
+            )
+            _JOBS[job_id]["_task"] = asyncio.create_task(
+                _run_generate_task(
+                    job_id, _run_generate, mode, prompt, project_id,
+                    image_media_ids, image_prompt, aspect, tier, model,
+                    duration_s, num_videos, image_model, max_image_attempts,
+                    collect_image_variants, product_id, copy_execution_binding,
+                )
+            )
+            return {
+                "job_id": job_id, "status": "SUBMITTED", "mode": mode,
+                "lane": lane, "routing_receipt": _routing_receipt,
+                "product_visual_custody": product_visual_custody,
+                "request_id": request_id, "durable": bool(_durable_row),
+                "surface_lane": _JOBS[job_id].get("surface_lane"),
+                "transport_mode": _JOBS[job_id].get("transport_mode"),
+                "source_mode": _JOBS[job_id].get("source_mode"),
+                "provider_generation_type": _JOBS[job_id].get(
+                    "provider_generation_type"
+                ),
+            }
         lane = "AGENT"
         _JOBS[job_id]["lane"] = lane
         if direct_video_lane_enabled():
@@ -2683,12 +2817,15 @@ _DIRECT_FIFE_URL_RE = re.compile(
 
 
 def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
-                      ref_count, num_videos, require_flag=True) -> dict:
+                      ref_count, num_videos, require_flag=True,
+                      surface_lane: str | None = None) -> dict:
     """Decide whether a job may run on the direct batchAsync lane.
 
     Fail-closed: any setting the direct lane cannot PROVABLY honor returns an
-    explicit reason. ``start_generate`` rejects reference-bearing declines
-    before provider approval; only pure T2V may use the agent lane. Returns
+    explicit reason. The one captured Hybrid Omni 10s tuple is represented as
+    a certified *agent* route here, never as a direct-plan eligibility result.
+    ``start_generate`` rejects every other reference-bearing decline before
+    provider approval. Returns
     {"eligible": bool, "reason": str|None, "rpc": "r2v"|"start_frame",
      "gen_type": str, "aspect_enum": str, "video_model_key": str|None,
      "model_key_source": str}.
@@ -2698,6 +2835,17 @@ def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
 
     if mode not in _VIDEO_MODES:
         return _decline("NOT_A_VIDEO_MODE")
+    if hybrid_reference_omni10_route_matches(
+        mode,
+        source_mode,
+        model,
+        duration_s,
+        aspect,
+        ref_count,
+        num_videos,
+        surface_lane,
+    ):
+        return _certified_hybrid_reference_omni10_plan()
     if mode in ("F2V", "I2V") and ref_count >= 1:
         try:
             if int(duration_s) == 10:
@@ -2783,13 +2931,14 @@ def direct_video_readiness(
     ref_count: int = 1,
     num_videos: int = 1,
 ) -> dict:
-    """Return the provider-free direct-lane contract decision.
+    """Return provider-free video-route readiness and certification state.
 
     This is deliberately a pure readiness surface: it does not bind Flow,
     inspect the extension, resolve a project, or call a provider.  A readiness
-    response may therefore be safely shown before approval.  Unknown model keys,
-    unproven durations, and a disabled lane remain explicit blockers; no value is
-    guessed from the registry or from the provider's default duration.
+    response may therefore be safely shown before approval.  The certified
+    conversational Hybrid Omni 10s tuple is ready independently of the direct
+    batchAsync feature flag; all other unproven combinations remain explicit
+    blockers.
     """
     normalized_mode = (mode or "F2V").strip().upper()
     normalized_duration = duration_s
@@ -2803,15 +2952,16 @@ def direct_video_readiness(
         num_videos=max(1, int(num_videos or 1)),
         require_flag=False,
     )
+    certified_agent_route = _is_certified_hybrid_reference_omni10_plan(plan)
     blockers: list[dict[str, str]] = []
     reason = str(plan.get("reason") or "")
-    if reason:
+    if reason and not certified_agent_route:
         blockers.append({
             "code": reason.split(":", 1)[0],
             "detail": reason,
             "stage": "PRE_PROVIDER",
         })
-    if not direct_video_lane_enabled():
+    if not direct_video_lane_enabled() and not certified_agent_route:
         blockers.append({
             "code": "DIRECT_LANE_DISABLED",
             "detail": "DIRECT_VIDEO_LANE_ENABLED is not enabled",
@@ -2829,16 +2979,26 @@ def direct_video_readiness(
         num_videos=max(1, int(num_videos or 1)),
         require_flag=False,
     )
-    # This is an explicit certification boundary, independent of incidental
-    # input validation (missing source mode, disabled flag, etc.). The captured
-    # direct submit contract contains no 10s request, so 10s stays blocked until
-    # a future owner-authorized capture records it.
-    ten_second_blocker = DIRECT_10S_CONTRACT_NOT_CERTIFIED
+    ten_second_certified = _is_certified_hybrid_reference_omni10_plan(ten_second_plan)
+    ten_second_blocker = (
+        None if ten_second_certified else DIRECT_10S_CONTRACT_NOT_CERTIFIED
+    )
+    route_ready = bool(
+        certified_agent_route
+        or (plan.get("eligible") and direct_video_lane_enabled())
+    )
+    selected_route = (
+        HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+        if certified_agent_route
+        else "DIRECT_API"
+        if plan.get("eligible") and direct_video_lane_enabled()
+        else "BLOCKED"
+    )
     return {
         "contract_version": DIRECT_VIDEO_READINESS_CONTRACT_VERSION,
         "provider_calls": 0,
         "credit_spend": False,
-        "live_capture_required": True,
+        "live_capture_required": not certified_agent_route,
         "mode": normalized_mode,
         "source_mode": str(source_mode or "").strip().upper() or None,
         "model": model,
@@ -2846,15 +3006,55 @@ def direct_video_readiness(
         "aspect": aspect,
         "reference_count": max(0, int(ref_count or 0)),
         "num_videos": max(1, int(num_videos or 1)),
-        "eligible": bool(plan.get("eligible")) and direct_video_lane_enabled(),
-        "selected_route": "DIRECT_API" if plan.get("eligible") and direct_video_lane_enabled() else "BLOCKED",
+        "eligible": route_ready,
+        "selected_route": selected_route,
         "plan": plan,
         "blockers": blockers,
+        "certified_agent_route": {
+            "status": "READY" if certified_agent_route else "NOT_APPLICABLE",
+            "selected_route": (
+                HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+                if certified_agent_route
+                else None
+            ),
+            "contract_version": (
+                HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION
+                if certified_agent_route
+                else None
+            ),
+            "provider_tool": (
+                HYBRID_REFERENCE_OMNI_10S_PROVIDER_TOOL
+                if certified_agent_route
+                else None
+            ),
+            "provider_model_usage_key": (
+                HYBRID_REFERENCE_OMNI_10S_PROVIDER_MODEL_KEY
+                if certified_agent_route
+                else None
+            ),
+            "provider_generation_type": (
+                HYBRID_REFERENCE_OMNI_10S_PROVIDER_GENERATION_TYPE
+                if certified_agent_route
+                else None
+            ),
+            "provider_calls": 0,
+            "credit_spend": False,
+        },
         "ten_second": {
             "duration_s": 10,
-            "status": "NOT_CERTIFIED",
+            "status": "READY" if ten_second_certified else "NOT_CERTIFIED",
             "blocker_code": ten_second_blocker,
             "provider_calls": 0,
+            "selected_route": (
+                HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+                if ten_second_certified
+                else "BLOCKED"
+            ),
+            "contract_version": (
+                HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION
+                if ten_second_certified
+                else None
+            ),
         },
     }
 
@@ -4034,6 +4234,37 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         job["identity_captured"] = _identity_captured(job["generation_identity"])
         job["tools_seen"] = list(nres.get("tools_seen") or [])
         job["gen_tool_matched"] = bool(nres.get("gen_tool_matched"))
+        certified_route = (
+            (job.get("routing_receipt") or {}).get("selected_execution_route")
+            == HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+        )
+        if certified_route and job.get("approved") is True:
+            # This helper stores only sanitized tool/model/duration/reference
+            # fields.  It gives the normal certified route the same typed
+            # reference-forwarding proof that authorized discovery captured,
+            # without persisting raw SSE or provider session material.
+            transport_evidence = agent_video.build_reference_contract_capture_evidence(
+                nres, refs, project_id=project_id
+            )
+            job["reference_transport_evidence"] = transport_evidence
+            job["certified_transport_verdict"] = (
+                "REFERENCE_OMNI_10S_TRANSPORT_VERIFIED"
+                if (
+                    HYBRID_REFERENCE_OMNI_10S_PROVIDER_TOOL
+                    in (transport_evidence.get("provider_generation_tools") or [])
+                    and transport_evidence.get("reference_forwarded_to_generation")
+                    and transport_evidence.get("reference_aware_tool_observed")
+                )
+                else "REFERENCE_OMNI_10S_TRANSPORT_UNPROVEN"
+            )
+            if job["certified_transport_verdict"] != (
+                "REFERENCE_OMNI_10S_TRANSPORT_VERIFIED"
+            ):
+                raise RuntimeError(
+                    "FLOW_AGENT_REFERENCE_OMNI_10S_TRANSPORT_UNPROVEN: the approved "
+                    "stream did not prove generate_video_with_references with the "
+                    "persisted reference media id"
+                )
         if not job["identity_captured"]:
             if job.get("capture_only"):
                 # The capture evidence is sanitized; never persist raw SSE as a

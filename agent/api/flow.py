@@ -937,12 +937,13 @@ async def direct_video_readiness(
     ref_count: int = 1,
     count: int = 1,
 ):
-    """Provider-free direct-lane readiness and certification state.
+    """Provider-free video-route readiness and certification state.
 
     This route is intentionally independent from extension connectivity and
-    credit authorization.  It gives the UI a stable machine-readable blocker
-    for unproven settings, including the explicit 10-second pre-certification
-    state, without inventing a model key or treating an 8-second capture as 10s.
+    credit authorization. It gives the UI a stable machine-readable route for
+    the certified Hybrid Omni Flash 10s contract and explicit blockers for other
+    unproven settings, without inventing a direct model key or treating a
+    provider alias as a direct API ``videoModelKey``.
     """
     from agent.services import make_video as _mv
 
@@ -2067,13 +2068,22 @@ async def generate(body: GenerateRequest):
                 mode=mode,
                 source_mode=effective_source_mode,
                 prompt=body.prompt,
-                provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                provider_route=_mv.hybrid_reference_omni10_provider_route(
+                    mode,
+                    effective_source_mode,
+                    body.model,
+                    body.duration_s,
+                    body.aspect,
+                    ref_count=1,
+                    num_videos=body.count,
+                    surface_lane=effective_surface_lane,
+                ),
                 generation_type="reference_frame_2_video",
                 execution_identity=body.execution_identity,
             )
             validate_pre_dispatch_route(
                 product_visual_custody,
-                provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                provider_route=product_visual_custody["provider_route"],
                 generation_type=product_visual_custody["generation_type"],
             )
             if (
@@ -2214,7 +2224,16 @@ async def generate(body: GenerateRequest):
             product_visual_custody,
             provider_reference_media_ids=resolved_ids,
             official_provider_media_id=official_provider_media_id,
-            provider_route="API_FIRST_GENERATIVE_REFERENCE",
+            provider_route=_mv.hybrid_reference_omni10_provider_route(
+                mode,
+                effective_source_mode,
+                body.model,
+                body.duration_s,
+                body.aspect,
+                ref_count=len(resolved_ids),
+                num_videos=body.count,
+                surface_lane=effective_surface_lane,
+            ),
             generation_type="reference_frame_2_video",
         )
 
@@ -4285,13 +4304,22 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                     mode=mode,
                     source_mode=effective_source_mode,
                     prompt=prompt,
-                    provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                    provider_route=_mv.hybrid_reference_omni10_provider_route(
+                        mode,
+                        effective_source_mode,
+                        body.get("model"),
+                        body.get("duration_s") or body.get("duration_seconds"),
+                        body.get("aspect") or body.get("aspectRatio") or "9:16",
+                        ref_count=1,
+                        num_videos=body.get("count") or 1,
+                        surface_lane=body.get("surface_lane"),
+                    ),
                     generation_type="reference_frame_2_video",
                     execution_identity=body.get("execution_identity"),
                 )
                 validate_pre_dispatch_route(
                     receipt,
-                    provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                    provider_route=receipt["provider_route"],
                     generation_type=receipt["generation_type"],
                 )
                 if (
@@ -4485,7 +4513,16 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                 body["product_visual_custody"],
                 provider_reference_media_ids=refs,
                 official_provider_media_id=official_provider_media_id,
-                provider_route="API_FIRST_GENERATIVE_REFERENCE",
+                provider_route=_mv.hybrid_reference_omni10_provider_route(
+                    mode,
+                    _authority_source_mode,
+                    body.get("model"),
+                    body.get("duration_s") or body.get("duration_seconds"),
+                    body.get("aspect") or body.get("aspectRatio") or "9:16",
+                    ref_count=len(refs),
+                    num_videos=body.get("count") or 1,
+                    surface_lane=body.get("surface_lane"),
+                ),
                 generation_type="reference_frame_2_video",
             )
         except (KeyError, TypeError, ProductVisualCustodyError) as exc:
