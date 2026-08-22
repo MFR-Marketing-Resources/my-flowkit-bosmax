@@ -40,6 +40,26 @@ def _prompt_sha(prompt: str) -> str:
     return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
 
 
+def _ordered_prompt_sha256s(package: dict[str, Any]) -> list[str]:
+    """Hash each ordered engine-facing block carried by a recipe authority."""
+    raw_blocks = package.get("prompt_blocks")
+    if raw_blocks is None:
+        raw_blocks = _loads(package.get("prompt_blocks_json"), [])
+    if not isinstance(raw_blocks, list):
+        return []
+    hashes: list[str] = []
+    for block in raw_blocks:
+        if not isinstance(block, dict):
+            continue
+        prompt = str(
+            block.get("engine_prompt_text")
+            or block.get("compiled_prompt_text")
+            or ""
+        )
+        hashes.append(_prompt_sha(prompt))
+    return hashes
+
+
 def _plan_copy_v2_context(plan: dict[str, Any]) -> dict[str, Any] | None:
     pool = _loads(plan.get("pool_snapshot_json"), {})
     context = pool.get("copy_v2_context") if isinstance(pool, dict) else None
@@ -180,6 +200,13 @@ async def _create_p6_execution_bridge(
         "workspace_execution_package_id": execution_package_id,
         "final_prompt_text": prompt,
         "prompt_fingerprint": fingerprint,
+        "ordered_prompt_sha256s": _ordered_prompt_sha256s(package),
+        "wps_mode": package.get("wps_mode"),
+        "product_presence_type": package.get("product_presence_type"),
+        "actor_contract": package.get("actor_contract"),
+        "product_temporal_custody": package.get("product_temporal_custody"),
+        "temporal_occupancy": package.get("temporal_occupancy"),
+        "shot_handling": package.get("shot_handling"),
         "generation_mode": str(package.get("generation_mode") or "SINGLE").upper(),
         "recipe_execution": recipe_metadata,
         "copy_architecture_v2": package.get("copy_architecture_v2"),
@@ -497,6 +524,8 @@ async def _compile_video(
             staff_display_name_snapshot=item.get("staff_display_name_snapshot"),
             generation_mode="EXTEND",
             requested_total_duration_seconds=total_duration,
+            wps_mode="SWEET",
+            enforce_temporal_contract=True,
             source_mode=str(
                 (treatment or {}).get("compatibility_profile", {}).get("source_mode") or ""
             ) or None,
@@ -546,6 +575,8 @@ async def _compile_video(
         "workspace_execution_package_id": workspace_execution_package_id,
         "generation_mode": generation_mode,
         "duration_seconds": engine_block_duration,
+        "wps_mode": "SWEET",
+        "enforce_temporal_contract": True,
         "requested_total_duration_seconds": (
             total_duration if generation_mode == "EXTEND" else None
         ),
@@ -632,6 +663,13 @@ async def _compile_video(
                 "workspace_generation_package_id"
             ],
             "prompt_fingerprint": package.get("prompt_fingerprint"),
+            "ordered_prompt_sha256s": _ordered_prompt_sha256s(package),
+            "wps_mode": package.get("wps_mode"),
+            "product_presence_type": package.get("product_presence_type"),
+            "actor_contract": package.get("actor_contract"),
+            "product_temporal_custody": package.get("product_temporal_custody"),
+            "temporal_occupancy": package.get("temporal_occupancy"),
+            "shot_handling": package.get("shot_handling"),
             "final_prompt_text": prompt,
             "production_recipe": production_recipe or None,
             "logical_mode": logical_mode,

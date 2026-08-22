@@ -20,7 +20,7 @@ resolved by calling the existing canonical services.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from agent.services import canonical_prompt_compiler as _canonical
 from agent.services import video_capability_matrix as _cap
@@ -38,6 +38,7 @@ V11_FINAL_DURATIONS: tuple[int, ...] = (8, 10, 16, 20, 24, 30)
 
 SINGLE_FINALIZE = "SINGLE_FINALIZE"
 DISCRETE_MONTAGE = "DISCRETE_MONTAGE"
+FINAL_EDIT_SEGMENT_SECONDS = 2.0
 
 # Four progressive micro-beats — normalized proportions (choreography guidance,
 # NOT a duration authority). Scaled to the atomic block seconds at compile time.
@@ -133,6 +134,9 @@ class MascotDurationPlan:
     default_model: str            # ui_label
     per_block_word_budget: int    # SWEET WPS for the atomic block + language
     assembly: str                 # SINGLE_FINALIZE | DISCRETE_MONTAGE
+    final_edit_segment_count: int
+    final_edit_segments: tuple[dict[str, Any], ...]
+    internal_final_edit_only: bool = True
 
     def label(self) -> str:
         scene_word = "scene" if self.block_count == 1 else "scenes"
@@ -154,8 +158,60 @@ class MascotDurationPlan:
             "default_model": self.default_model,
             "per_block_word_budget": self.per_block_word_budget,
             "assembly": self.assembly,
+            "final_edit_segment_count": self.final_edit_segment_count,
+            "final_edit_segments": [dict(segment) for segment in self.final_edit_segments],
+            "internal_final_edit_only": self.internal_final_edit_only,
             "label": self.label(),
         }
+
+
+def build_final_edit_cadence(
+    final_seconds: int,
+    block_plan: Sequence[int],
+    *,
+    segment_seconds: float = FINAL_EDIT_SEGMENT_SECONDS,
+) -> tuple[dict[str, Any], ...]:
+    """Build the internal final-edit cadence without authorizing provider calls."""
+
+    final = int(final_seconds)
+    if segment_seconds != FINAL_EDIT_SEGMENT_SECONDS or final <= 0 or final % 2:
+        raise ValueError(f"{ERR_UNSUPPORTED_FINAL_DURATION}:{final}:INVALID_FINAL_EDIT_CADENCE")
+    if sum(int(value) for value in block_plan) != final:
+        raise ValueError(f"{ERR_UNSUPPORTED_FINAL_DURATION}:{final}:BLOCK_PLAN_SUM_MISMATCH")
+    segments: list[dict[str, Any]] = []
+    block_cursor = 0.0
+    for block_index, block_seconds in enumerate(block_plan, start=1):
+        block_start = block_cursor
+        block_end = block_cursor + float(block_seconds)
+        block_cursor = block_end
+        segment_start = block_start
+        while segment_start < block_end - 1e-9:
+            segment_end = min(block_end, segment_start + FINAL_EDIT_SEGMENT_SECONDS)
+            segment_index = len(segments)
+            segments.append(
+                {
+                    "segment_index": segment_index,
+                    "start_s": round(segment_start, 3),
+                    "end_s": round(segment_end, 3),
+                    "duration_seconds": round(segment_end - segment_start, 3),
+                    "source_block_index": block_index,
+                    "internal_final_edit_only": True,
+                    "boundary_change_requirements": (
+                        []
+                        if segment_index == 0
+                        else ["environment", "action"]
+                    ),
+                    "preserve_product_mascot_identity": True,
+                    "transition_state_inherited": True,
+                }
+            )
+            segment_start = segment_end
+    if len(segments) != final // 2 or any(
+        abs(float(item["duration_seconds"]) - FINAL_EDIT_SEGMENT_SECONDS) > 1e-9
+        for item in segments
+    ):
+        raise ValueError(f"{ERR_UNSUPPORTED_FINAL_DURATION}:{final}:NON_CONTIGUOUS_FINAL_EDIT_CADENCE")
+    return tuple(segments)
 
 
 def resolve_final_duration_plan(
@@ -202,6 +258,7 @@ def resolve_final_duration_plan(
 
     # Per-atomic-block dialogue word budget from the canonical WPS authority (SWEET).
     budget = int(_canonical.dialogue_word_budget(atomic, language, wps_mode=wps_mode))
+    final_edit_segments = build_final_edit_cadence(final, blocks)
 
     return MascotDurationPlan(
         final_seconds=final,
@@ -214,6 +271,8 @@ def resolve_final_duration_plan(
         default_model=default_model,
         per_block_word_budget=budget,
         assembly=SINGLE_FINALIZE if count == 1 else DISCRETE_MONTAGE,
+        final_edit_segment_count=len(final_edit_segments),
+        final_edit_segments=final_edit_segments,
     )
 
 
@@ -299,6 +358,15 @@ def compose_scene_context(
         "The Product Mascot is the ACTIVE on-screen actor and hero — never a static "
         "prop delivering voiceover. Keep the pacing energetic and commercial, with "
         "supporting environment or human action around the mascot."
+    )
+
+    final_seconds = int(atomic_seconds) * int(block_count)
+    cadence = build_final_edit_cadence(
+        final_seconds,
+        tuple(int(atomic_seconds) for _ in range(block_count)),
+    )
+    lines.append(
+        f"Final editorial cadence: assemble contiguous internal {FINAL_EDIT_SEGMENT_SECONDS:.1f}-second edit segments across the authorized source clips ({len(cadence)} segments for {final_seconds}s). At every internal boundary change at least two of environment, action or camera composition while preserving the same product and mascot identity, scale and transition state. This is an internal edit contract only; do not request unsupported {FINAL_EDIT_SEGMENT_SECONDS:.1f}-second provider submissions."
     )
 
     # Four progressive micro-beats, scaled to this clip.
