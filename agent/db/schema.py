@@ -5,6 +5,11 @@ import aiosqlite
 import logging
 from agent.config import DB_PATH
 from agent.db import legacy_copy_ledger
+from agent.access_control_constants import (
+    PERMISSION_SEEDS,
+    ROLE_PERMISSION_CODES,
+    ROLE_SEEDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -542,6 +547,105 @@ CREATE TABLE IF NOT EXISTS staff_profile (
 );
 CREATE INDEX IF NOT EXISTS idx_staff_profile_active_name
     ON staff_profile(active, display_name COLLATE NOCASE);
+
+-- Human authentication/account authority. StaffProfile remains the canonical
+-- production identity and is deliberately not replaced by UserAccount.
+CREATE TABLE IF NOT EXISTS user_account (
+    user_id             TEXT PRIMARY KEY,
+    staff_id            TEXT NOT NULL UNIQUE REFERENCES staff_profile(staff_id),
+    email               TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    password_hash       TEXT,
+    account_status      TEXT NOT NULL DEFAULT 'INVITED'
+                        CHECK(account_status IN ('INVITED','ACTIVE','SUSPENDED','DISABLED','TERMINATED')),
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    last_login_at       TEXT,
+    invited_at          TEXT,
+    disabled_at         TEXT,
+    terminated_at       TEXT,
+    termination_reason  TEXT,
+    credential_version  INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_user_account_status ON user_account(account_status);
+CREATE INDEX IF NOT EXISTS idx_user_account_staff ON user_account(staff_id);
+
+CREATE TABLE IF NOT EXISTS role (
+    role_id         TEXT PRIMARY KEY,
+    role_code       TEXT NOT NULL UNIQUE COLLATE NOCASE
+                    CHECK(role_code <> 'SYSTEM'),
+    display_name    TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    built_in        INTEGER NOT NULL DEFAULT 1 CHECK(built_in IN (0,1)),
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS permission (
+    permission_id   TEXT PRIMARY KEY,
+    permission_code TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    display_name    TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS role_permission (
+    role_id         TEXT NOT NULL REFERENCES role(role_id),
+    permission_id   TEXT NOT NULL REFERENCES permission(permission_id),
+    granted_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    PRIMARY KEY(role_id, permission_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_role (
+    user_id             TEXT NOT NULL REFERENCES user_account(user_id),
+    role_id             TEXT NOT NULL REFERENCES role(role_id),
+    assigned_by_user_id TEXT REFERENCES user_account(user_id),
+    assigned_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    revoked_at          TEXT,
+    PRIMARY KEY(user_id, role_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_role_active ON user_role(user_id, revoked_at);
+
+CREATE TABLE IF NOT EXISTS auth_session (
+    session_id          TEXT PRIMARY KEY,
+    user_id             TEXT NOT NULL REFERENCES user_account(user_id),
+    token_hash          TEXT NOT NULL UNIQUE,
+    csrf_token_hash     TEXT NOT NULL,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    expires_at          TEXT NOT NULL,
+    last_seen_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    revoked_at          TEXT,
+    revoke_reason       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_auth_session_user_active
+    ON auth_session(user_id, revoked_at, expires_at);
+
+CREATE TABLE IF NOT EXISTS auth_setup_token (
+    token_id            TEXT PRIMARY KEY,
+    user_id             TEXT NOT NULL REFERENCES user_account(user_id),
+    token_type          TEXT NOT NULL CHECK(token_type IN ('ACCOUNT_SETUP','PASSWORD_RESET')),
+    token_hash          TEXT NOT NULL UNIQUE,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    expires_at          TEXT NOT NULL,
+    used_at             TEXT,
+    created_by_user_id  TEXT REFERENCES user_account(user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_auth_setup_token_lookup
+    ON auth_setup_token(token_hash, token_type, used_at, expires_at);
+
+CREATE TABLE IF NOT EXISTS access_audit_event (
+    event_id        TEXT PRIMARY KEY,
+    event_type      TEXT NOT NULL,
+    actor_user_id   TEXT REFERENCES user_account(user_id),
+    actor_staff_id  TEXT REFERENCES staff_profile(staff_id),
+    target_user_id  TEXT REFERENCES user_account(user_id),
+    target_staff_id TEXT REFERENCES staff_profile(staff_id),
+    success         INTEGER NOT NULL DEFAULT 1 CHECK(success IN (0,1)),
+    metadata_json   TEXT NOT NULL DEFAULT '{}',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_access_audit_created ON access_audit_event(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_access_audit_actor ON access_audit_event(actor_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_access_audit_target ON access_audit_event(target_user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS request_telemetry (
     request_id    TEXT PRIMARY KEY REFERENCES request(id) ON DELETE CASCADE,
@@ -2335,12 +2439,49 @@ async def _legacy_shells_are_finally_retired(db: aiosqlite.Connection) -> bool:
     return retired > 0
 
 
+async def _seed_access_control(db: aiosqlite.Connection) -> None:
+    """Seed the built-in human roles and explicit permission vocabulary.
+
+    The seed is additive and idempotent. Existing user assignments are never
+    rewritten here; role/permission administration owns later changes.
+    """
+
+    for role_code, display_name, description in ROLE_SEEDS:
+        await db.execute(
+            "INSERT OR IGNORE INTO role "
+            "(role_id, role_code, display_name, description, built_in) "
+            "VALUES (?,?,?,?,1)",
+            (f"role_{role_code.lower()}", role_code, display_name, description),
+        )
+    for permission_code, display_name, description in PERMISSION_SEEDS:
+        await db.execute(
+            "INSERT OR IGNORE INTO permission "
+            "(permission_id, permission_code, display_name, description) "
+            "VALUES (?,?,?,?)",
+            (
+                "perm_" + permission_code.replace(".", "_").replace("-", "_"),
+                permission_code,
+                display_name,
+                description,
+            ),
+        )
+    for role_code, permission_codes in ROLE_PERMISSION_CODES.items():
+        for permission_code in permission_codes:
+            await db.execute(
+                "INSERT OR IGNORE INTO role_permission (role_id, permission_id) "
+                "SELECT ?, permission_id FROM permission WHERE permission_code=?",
+                (f"role_{role_code.lower()}", permission_code),
+            )
+    await db.commit()
+
+
 async def init_db():
     """Initialize database with schema and run migrations."""
     async with aiosqlite.connect(str(DB_PATH)) as db:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA foreign_keys=ON")
         await db.executescript(SCHEMA)
+        await _seed_access_control(db)
         # Migration: Approved Generation Manifest columns on the pre-existing
         # execution_approval_snapshot table (added by a later corrective; deployed
         # DBs created the table before these columns existed).

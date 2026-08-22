@@ -1788,20 +1788,19 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
         if str(product_id or "") != HYBRID_REFERENCE_OMNI_10S_CAPTURE_PRODUCT_ID:
             return _capture_contract_reject("CAPTURE_PRODUCT_NOT_AUTHORIZED")
     production_recipe = str(production_recipe or "").strip().upper() or None
-    if production_recipe:
+    from agent.security.access_control import get_current_auth_context, resolve_request_staff
+    if production_recipe or get_current_auth_context() is not None:
         if production_recipe not in {"HYBRID", "FACELESS", "MONTAGE", "POSTER_BUILDER"}:
-            return {
-                "status": "REJECTED",
-                "error": "PRODUCTION_RECIPE_UNSUPPORTED",
-                "pre_provider": {"provider_calls": 0, "credit_spend": False},
-            }
-        from agent.services.staff_identity_service import (
-            StaffIdentityError,
-            resolve_staff_identity,
-        )
+            if production_recipe:
+                return {
+                    "status": "REJECTED",
+                    "error": "PRODUCTION_RECIPE_UNSUPPORTED",
+                    "pre_provider": {"provider_calls": 0, "credit_spend": False},
+                }
+        from agent.services.staff_identity_service import StaffIdentityError
 
         try:
-            profile = await resolve_staff_identity(staff_id)
+            profile = await resolve_request_staff(staff_id)
         except StaffIdentityError as exc:
             return {
                 "status": "REJECTED",
@@ -3496,16 +3495,15 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
     forwarded and fail closed when their direct contract is unproven."""
     global _VIDEO_LANE_JOB
     production_recipe = str(production_recipe or "").strip().upper() or None
-    if production_recipe:
+    from agent.security.access_control import get_current_auth_context, resolve_request_staff
+    if production_recipe or get_current_auth_context() is not None:
         if production_recipe not in {"HYBRID", "FACELESS", "MONTAGE", "POSTER_BUILDER"}:
-            return {"ok": False, "error": "PRODUCTION_RECIPE_UNSUPPORTED", "provider_submit": False}
-        from agent.services.staff_identity_service import (
-            StaffIdentityError,
-            resolve_staff_identity,
-        )
+            if production_recipe:
+                return {"ok": False, "error": "PRODUCTION_RECIPE_UNSUPPORTED", "provider_submit": False}
+        from agent.services.staff_identity_service import StaffIdentityError
 
         try:
-            profile = await resolve_staff_identity(staff_id)
+            profile = await resolve_request_staff(staff_id)
         except StaffIdentityError as exc:
             return {"ok": False, "error": exc.code, "detail": exc.message, "provider_submit": False}
         staff_id = profile["staff_id"]
