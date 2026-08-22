@@ -175,8 +175,10 @@ def _classify_reference_contract_capture(job: dict) -> str:
         "reference_forwarded_to_generation"
     ):
         return "REFERENCE_DROPPED"
-    if job.get("model_ok") is False or job.get("duration_ok") is False:
-        return "PROVIDER_REJECTED"
+    if job.get("model_ok") is False:
+        return "CAPTURE_WRONG_MODEL_AFTER_APPROVAL"
+    if job.get("duration_ok") is False:
+        return "CAPTURE_WRONG_DURATION_AFTER_APPROVAL"
     if job.get("model_ok") is not True or job.get("duration_ok") is not True:
         return "PROVIDER_OUTCOME_UNCERTAIN"
     if job.get("status") not in {"DONE", "PRODUCT_FIDELITY_REVIEW_REQUIRED"}:
@@ -553,6 +555,25 @@ def _durable_public_state(row: dict, state: dict, *, status: str | None = None) 
         "provider_resubmission": False,
         "resubmission_allowed": False,
     })
+    # Historical Phase-B rows used PROVIDER_REJECTED for a generation that was
+    # approved and then proved to use the wrong settings. Do not rewrite the
+    # stored artifact: expose a deterministic derived primary classification with
+    # the legacy value and source fields retained for provenance.
+    if merged.get("capture_contract_verdict") == "PROVIDER_REJECTED":
+        derived = _classify_reference_contract_capture(merged)
+        if derived != "PROVIDER_REJECTED":
+            merged["capture_contract_verdict_legacy"] = "PROVIDER_REJECTED"
+            merged["capture_contract_verdict"] = derived
+            merged["capture_contract_verdict_provenance"] = {
+                "kind": "DERIVED_VIEW_NO_HISTORICAL_REWRITE",
+                "reason": "approved generation has explicit post-approval model/duration mismatch",
+                "source_fields": {
+                    "approved": merged.get("approved"),
+                    "model_ok": merged.get("model_ok"),
+                    "duration_ok": merged.get("duration_ok"),
+                    "error": merged.get("error"),
+                },
+            }
     return merged
 
 
@@ -1142,18 +1163,24 @@ async def start(prompt: str, image_prompt: str) -> dict:
 
 async def start_negotiate(prompt: str, image_prompt: str = None, dry: bool = True,
                           model: str = None, duration_s: int = None,
-                          project_id: str = None) -> dict:
+                          project_id: str = None,
+                          reference_media_ids: list[str] | None = None) -> dict:
     """Async negotiation job — captures the FULL transcript (so a client timeout never
     loses it). dry=True stops before approving (0 video credits). model/duration steer the
     agent (patch I4a); project_id reuses an existing project (minimise junk); image_prompt=None
-    skips the start frame (pure T2V dry capture)."""
+    skips the start frame (pure T2V dry capture). Existing reference_media_ids are passed
+    through unchanged so a dry negotiation can audit the real reference contract without
+    creating or uploading a new media target."""
     job_id = "n_" + uuid4().hex[:12]
+    refs = [str(media_id) for media_id in (reference_media_ids or []) if media_id]
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "stage": "queued",
-                     "project_id": project_id, "dry": dry, "model": model,
-                     "result": None, "transcript": None, "error": None,
-                     "created": time.time()}
+                      "project_id": project_id, "dry": dry, "model": model,
+                      "duration_s": duration_s, "reference_media_ids": refs,
+                      "result": None, "transcript": None, "error": None,
+                      "created": time.time()}
     _JOBS[job_id]["_task"] = asyncio.create_task(
-        _run_negotiate(job_id, prompt, image_prompt, dry, model, duration_s, project_id))
+        _run_negotiate(job_id, prompt, image_prompt, dry, model, duration_s,
+                       project_id, refs))
     return {"job_id": job_id, "status": "SUBMITTED"}
 
 
@@ -3970,6 +3997,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             target_model=model, target_duration_s=duration_s,
             desired_num=num_videos)
         job["approved"] = nres.get("approved")
+        job["negotiation_state"] = nres.get("negotiation_state") or {}
         if job.get("capture_only"):
             job["capture_contract_evidence"] = agent_video.build_reference_contract_capture_evidence(
                 nres, refs, project_id=project_id
@@ -4296,7 +4324,8 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
 
 
 async def _run_negotiate(job_id, prompt, image_prompt=None, dry=True,
-                         model=None, duration_s=None, project_id=None):
+                         model=None, duration_s=None, project_id=None,
+                         reference_media_ids=None):
     from agent.api.flow import _generate_image_with_recovery  # lazy
     job = _JOBS[job_id]
     client = get_flow_client()
@@ -4308,7 +4337,15 @@ async def _run_negotiate(job_id, prompt, image_prompt=None, dry=True,
             if not project_id:
                 raise RuntimeError("no project")
         job["project_id"] = project_id
-        media = None
+        media_ids = [str(media_id) for media_id in (reference_media_ids or []) if media_id]
+        # Preserve the established pure-T2V adapter contract (`None` means no
+        # media field) while carrying an existing reference list unchanged.
+        media = media_ids or None
+        if image_prompt and media:
+            raise RuntimeError(
+                "NEGOTIATION_REFERENCE_INPUT_AMBIGUOUS: use reference_media_ids "
+                "or image_prompt, not both"
+            )
         if image_prompt:  # optional start frame (skip for a pure T2V dry capture)
             job["stage"] = "start frame"
             img = await _generate_image_with_recovery(
@@ -4316,6 +4353,7 @@ async def _run_negotiate(job_id, prompt, image_prompt=None, dry=True,
             mid = _deep(img.get("data", img) if isinstance(img, dict) else {}, "name", "mediaId")
             if mid:
                 media = [mid]
+        job["reference_media_ids"] = list(media or [])
         job["stage"] = "session"
         sess = await client.create_agent_session(project_id)
         sid = _deep(sess.get("data", sess) if isinstance(sess, dict) else {}, "agentSessionId")

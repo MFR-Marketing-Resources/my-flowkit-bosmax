@@ -144,6 +144,53 @@ def test_negotiate_job_unknown_model_returns_422():
                      "unknown video model")
 
 
+def test_negotiate_job_reuses_reference_media_without_start_frame(monkeypatch):
+    calls = {}
+
+    class _C:
+        connected = True
+
+    async def fake_start_negotiate(*args, **kwargs):
+        calls["args"] = args
+        calls["kwargs"] = kwargs
+        return {"job_id": "n_reference_dry", "status": "SUBMITTED"}
+
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _C())
+    from agent.services import make_video as mv
+    monkeypatch.setattr(mv, "start_negotiate", fake_start_negotiate)
+
+    result = _run(flow.negotiate_job(flow.NegotiateJobRequest(
+        prompt="AQUABLANCE creative prompt",
+        project_id="flow-project",
+        reference_media_ids=["flow-ref-1"],
+        model="omni_flash",
+        duration_s=10,
+        dry=True,
+    )))
+    assert result["job_id"] == "n_reference_dry"
+    assert calls["kwargs"] == {
+        "model": "omni_flash",
+        "duration_s": 10,
+        "project_id": "flow-project",
+        "reference_media_ids": ["flow-ref-1"],
+    }
+
+
+def test_negotiate_job_rejects_ambiguous_reference_inputs(monkeypatch):
+    class _C:
+        connected = True
+
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _C())
+    try:
+        _run(flow.negotiate_job(flow.NegotiateJobRequest(
+            prompt="x", image_prompt="new image", reference_media_ids=["ref-1"]
+        )))
+        assert False, "expected HTTPException 422"
+    except HTTPException as exc:
+        assert exc.status_code == 422
+        assert "ambiguous" in str(exc.detail).lower()
+
+
 def test_generate_busy_response_preserves_error_and_exposes_active_job(monkeypatch):
     class _C:
         connected = True
