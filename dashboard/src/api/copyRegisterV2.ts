@@ -227,6 +227,7 @@ export interface CopyActivationCandidatesResponseV2 {
 	items: CopyActivationCandidateV2[];
 	total: number;
 	max_batch_size: number;
+	view?: "all" | "activation" | "diagnostics";
 	provider_calls: 0;
 	credit_spend: 0;
 	activation_mutations: 0;
@@ -296,9 +297,12 @@ export async function batchApproveCopyDrafts(input: {
 	);
 }
 
-export async function fetchCopyActivationCandidates(): Promise<CopyActivationCandidatesResponseV2> {
+export async function fetchCopyActivationCandidates(
+	view: "all" | "activation" | "diagnostics" = "all",
+): Promise<CopyActivationCandidatesResponseV2> {
+	const query = view === "all" ? "" : `?view=${view}`;
 	return getAPI<CopyActivationCandidatesResponseV2>(
-		"/api/copy-register/v2/bulk/activation-candidates",
+		`/api/copy-register/v2/bulk/activation-candidates${query}`,
 	);
 }
 

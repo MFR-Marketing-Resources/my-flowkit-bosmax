@@ -383,7 +383,8 @@ describe("CopySetRegistryPage V2 cutover", () => {
 		await screen.findByTestId("copy-library-view");
 
 		expect(await screen.findByTestId("library-card-bpv2_test")).toHaveTextContent("ACTIVE");
-		expect(screen.getByTestId("activation-select-bpv2_test")).toBeDisabled();
+		expect(screen.queryByTestId("activation-select-bpv2_test")).not.toBeInTheDocument();
+		expect(screen.getByTestId("activation-candidate-count")).toHaveTextContent("0 activation-ready PRODUCTION_VALID blueprints");
 		expect(mockedBatchActivate).not.toHaveBeenCalled();
 	});
 });
@@ -604,13 +605,15 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		await waitFor(() => expect(mockedBatchActivate).toHaveBeenCalledWith(expect.objectContaining({ blueprint_ids: ["bpv2_test"], confirmation_phrase: "ACTIVATE_COPY_AUTHORITY_BATCH", owner_authorization: true })));
 	});
 
-	it("activation queue disables stale candidates and gates review on phrase plus owner", async () => {
+	it("activation queue shows only activation-ready candidates and gates review on phrase plus owner", async () => {
 		mockedActivationCandidates.mockResolvedValue({
 			items: [
 				{ ...activationCandidate("STALE", false), blueprint_id: "bp-stale", product_name: "Stale Product" },
+				{ ...activationCandidate("CURRENT"), blueprint_id: "bp-current", product_name: "Current Product" },
+				{ ...activationCandidate("NONE", true), blueprint_id: "bp-draft", product_name: "Draft Product", status: "DRAFT" },
 				{ ...activationCandidate("NONE", true), blueprint_id: "bp-ready", product_name: "Ready Product" },
 			],
-			total: 2,
+			total: 4,
 			max_batch_size: 50,
 			provider_calls: 0,
 			credit_spend: 0,
@@ -618,10 +621,12 @@ describe("Copy Authority Library — current-authority activation gate", () => {
 		});
 		renderPage();
 
-		const staleCheckbox = await screen.findByTestId("activation-select-bp-stale");
-		const readyCheckbox = screen.getByTestId("activation-select-bp-ready");
-		expect(staleCheckbox).toBeDisabled();
-		expect(screen.getByTestId("activation-candidate-bp-stale")).toHaveTextContent("COPY_V2_TAXONOMY_AUTHORITY_STALE");
+		const readyCheckbox = await screen.findByTestId("activation-select-bp-ready");
+		expect(screen.queryByTestId("activation-candidate-bp-stale")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("activation-candidate-bp-current")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("activation-candidate-bp-draft")).not.toBeInTheDocument();
+		expect(screen.getByTestId("activation-candidate-count")).toHaveTextContent("1 activation-ready PRODUCTION_VALID blueprint");
+		expect(screen.getByTestId("activation-candidate-list")).not.toHaveTextContent("COPY_V2_TAXONOMY_AUTHORITY_STALE");
 		expect(readyCheckbox).toBeEnabled();
 		const review = screen.getByTestId("activation-review-selection");
 		expect(review).toBeDisabled();
