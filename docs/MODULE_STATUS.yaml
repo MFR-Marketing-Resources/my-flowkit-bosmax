@@ -91,6 +91,8 @@ domains:
       # identity/geometry/label/scale authority shared by IMG and Poster lanes.
       - agent/models/product_truth_lock.py
       - agent/services/product_truth_lock_service.py
+      - scripts/repair-truth-lock-bytes-from-worktree.py
+      - docs/incident-truth-lock-byte-store-desync.md
       - agent/services/product_visual_canvas_service.py
       - agent/api/product_truth.py
       - agent/api/product_visual_onboarding.py

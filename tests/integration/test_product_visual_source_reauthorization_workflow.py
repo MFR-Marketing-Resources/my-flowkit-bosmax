@@ -158,7 +158,7 @@ async def test_upload_and_explicit_reauthorization_promotes_new_source_without_l
 
 
 @pytest.mark.asyncio
-async def test_truth_lock_history_guard_still_blocks_when_bound_media_does_not_match_lock(tmp_path, monkeypatch):
+async def test_manual_replacement_tombstones_when_bound_media_does_not_match_lock(tmp_path, monkeypatch):
 	runtime_root = tmp_path / "runtime"
 	current_source = runtime_root / "data" / "products" / "current.jpg"
 	current_source.parent.mkdir(parents=True, exist_ok=True)
@@ -196,17 +196,72 @@ async def test_truth_lock_history_guard_still_blocks_when_bound_media_does_not_m
 		height=1000,
 		status="STORED",
 	)
-	with pytest.raises(service.ProductVisualOnboardingError) as raised:
-		await service.upload_manual_product_cutout(
-			product_id,
-			filename="manual-replacement.png",
-			content_type="image/png",
-			raw_bytes=_manual_cutout_bytes(color=(30, 80, 140), inset=200),
-			uploaded_by="registration-operator",
-		)
+	# The prior bytes cannot be recovered (bound media SHA != locked SHA). The
+	# replace must NOT be blocked; a metadata-only tombstone is archived so the
+	# audit record survives without trapping the operator.
+	result = await service.upload_manual_product_cutout(
+		product_id,
+		filename="manual-replacement.png",
+		content_type="image/png",
+		raw_bytes=_manual_cutout_bytes(color=(180, 40, 90), inset=240),
+		uploaded_by="registration-operator",
+	)
+	assert result["manual_cutout_status"] == "PENDING_REVIEW"
 
-	assert raised.value.code == "TRUTH_LOCK_HISTORY_REQUIRED"
-	assert raised.value.status_code == 409
+	history = await crud.list_product_truth_lock_history(product_id)
+	assert len(history) == 1
+	tombstone = history[0]
+	assert tombstone["canonical_source_path"] is None
+	assert tombstone["canonical_cutout_path"] is None
+	# The true, unrecoverable SHAs are preserved in the tombstone (audit intact).
+	assert tombstone["canonical_sha256"] == OLD_SHA
+	assert tombstone["canonical_cutout_sha256"] == "2" * 64
+	provenance = json.loads(tombstone["provenance_json"])
+	assert provenance["history_byte_status"] == "UNAVAILABLE"
+	assert tombstone["superseded_by_media_id"]
+	assert tombstone["superseded_reason"]
+
+	new_lock = await crud.get_product_truth_lock(product_id)
+	assert new_lock is not None
+	assert new_lock["canonical_cutout_media_id"] != "old-cutout-media"
+
+
+@pytest.mark.asyncio
+async def test_manual_replacement_tombstones_when_bytes_unrecoverable(tmp_path, monkeypatch):
+	runtime_root = tmp_path / "runtime"
+	current_source = runtime_root / "data" / "products" / "current.jpg"
+	current_source.parent.mkdir(parents=True, exist_ok=True)
+	current_source.write_bytes(_image_bytes(color=(30, 80, 140)))
+	monkeypatch.setattr(service, "BASE_DIR", runtime_root)
+	monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", runtime_root)
+
+	# Seed a lock whose canonical byte paths point nowhere and whose bound media
+	# rows do not exist — the production "byte store wiped" case: nothing to recover.
+	product, old_lock = await _seed_product_and_lock(tmp_path, current_source=current_source)
+	product_id = str(product["id"])
+
+	result = await service.upload_manual_product_cutout(
+		product_id,
+		filename="fresh-manual.png",
+		content_type="image/png",
+		raw_bytes=_manual_cutout_bytes(color=(180, 40, 90), inset=240),
+		uploaded_by="registration-operator",
+	)
+	assert result["manual_cutout_status"] == "PENDING_REVIEW"
+
+	history = await crud.list_product_truth_lock_history(product_id)
+	assert len(history) == 1
+	tombstone = history[0]
+	assert tombstone["canonical_source_path"] is None
+	assert tombstone["canonical_cutout_path"] is None
+	assert tombstone["canonical_sha256"] == OLD_SHA
+	provenance = json.loads(tombstone["provenance_json"])
+	assert provenance["history_byte_status"] == "UNAVAILABLE"
+	assert provenance["expected_source_sha256"] == OLD_SHA
+
+	new_lock = await crud.get_product_truth_lock(product_id)
+	assert new_lock is not None
+	assert new_lock["canonical_cutout_media_id"] != old_lock["canonical_cutout_media_id"]
 
 
 @pytest.mark.asyncio

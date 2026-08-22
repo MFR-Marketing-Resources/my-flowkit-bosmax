@@ -16,6 +16,7 @@ Note: this reports the checkout it is RUN FROM. To prove what the *running*
 
 import asyncio
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +36,52 @@ def _git(*args: str) -> str:
         ).strip()
     except Exception:
         return "unknown"
+
+
+def _resolve_under_base(value) -> Path:
+    """Resolve a stored server path the way the truth-lock service does."""
+    p = Path(str(value or "").strip())
+    if not str(value or "").strip():
+        return Path(config.BASE_DIR) / "__missing__"
+    if not p.is_absolute():
+        p = Path(config.BASE_DIR) / p
+    return p
+
+
+def _truth_lock_byte_integrity() -> dict:
+    """Existence check of canonical truth-lock bytes vs the DB SSOT (read-only).
+
+    Detects the byte-store desync where DB rows reference canonical source/cutout
+    files that are ABSENT from the runtime store — the condition that makes cutouts
+    show 'Not available' and (pre-tombstone) blocked REPLACE with a 409. Existence
+    based (no hashing) for speed; the DB remains the audit record either way.
+    """
+    db_path = Path(str(config.DB_PATH))
+    result = {"table": True, "rows": 0, "bytes_present": 0, "bytes_missing": 0}
+    if not db_path.is_file():
+        result["table"] = False
+        return result
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT canonical_source_path, canonical_cutout_path "
+                "FROM product_visual_truth_lock"
+            ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            result["table"] = False
+            return result
+        raise
+    result["rows"] = len(rows)
+    for r in rows:
+        src = _resolve_under_base(r["canonical_source_path"])
+        cut = _resolve_under_base(r["canonical_cutout_path"])
+        if src.is_file() and cut.is_file():
+            result["bytes_present"] += 1
+        else:
+            result["bytes_missing"] += 1
+    return result
 
 
 async def main() -> int:
@@ -64,6 +111,25 @@ async def main() -> int:
             warnings.append("ACTIVE_STORAGE_HAS_ZERO_MANUAL_PRODUCTS")
     except Exception as exc:
         warnings.append(f"STORAGE_READ_FAILED:{exc}")
+
+    try:
+        tl = _truth_lock_byte_integrity()
+        if not tl["table"]:
+            print("truth_lock:     (no product_visual_truth_lock table)")
+        else:
+            print(f"truth_lock_rows:          {tl['rows']}")
+            print(f"truth_lock_bytes_present: {tl['bytes_present']}")
+            print(f"truth_lock_bytes_missing: {tl['bytes_missing']}")
+            if tl["bytes_missing"] > 0:
+                warnings.append(
+                    f"TRUTH_LOCK_BYTES_MISSING — {tl['bytes_missing']}/{tl['rows']} locks "
+                    "have no canonical bytes in the runtime store (cutouts show 'Not "
+                    "available'; REPLACE now tombstones instead of blocking). Recover with "
+                    "scripts/repair-truth-lock-bytes-from-worktree.py or see "
+                    "docs/incident-truth-lock-byte-store-desync.md."
+                )
+    except Exception as exc:
+        warnings.append(f"TRUTH_LOCK_INTEGRITY_READ_FAILED:{exc}")
 
     await close_db()  # release the aiosqlite connection thread so we exit cleanly
     if warnings:
