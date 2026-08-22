@@ -77,6 +77,29 @@ class GenerateVideoRefsRequest(BaseModel):
     user_paygate_tier: str = "PAYGATE_TIER_ONE"
 
 
+class HybridReferenceOmni10ContractCaptureRequest(BaseModel):
+    """Exact, temporary owner-authorized transport-discovery envelope."""
+
+    request_id: str
+    product_id: str
+    project_id: Optional[str] = None
+    prompt: str = (
+        "A premium vertical product video of the AQUABLANCE car air freshener in a clean car interior. "
+        "Preserve the product visual reference, shape, colors, and proportions. "
+        "Slow cinematic push-in with gentle natural movement, soft daylight, realistic materials, "
+        "no added text or logos."
+    )
+    capture_class: str = "HYBRID_REFERENCE_OMNI_10S_CONTRACT_CAPTURE"
+    surface_lane: str = "HYBRID"
+    source_mode: str = "HYBRID"
+    model: str = "omni_flash"
+    duration_s: int = 10
+    aspect: str = "9:16"
+    count: int = 1
+    reference_count: int = 1
+    confirm_live_credit_burn: bool = False
+
+
 class UpscaleVideoRequest(BaseModel):
     media_id: str
     scene_id: str
@@ -935,6 +958,185 @@ async def direct_video_readiness(
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(422, f"DIRECT_READINESS_INPUT_INVALID:{exc}") from exc
+
+
+@router.post("/hybrid-reference-omni10-contract-capture")
+async def hybrid_reference_omni10_contract_capture(
+    body: HybridReferenceOmni10ContractCaptureRequest,
+):
+    """Owner-authorized, one-submit transport discovery for Hybrid Omni 10s.
+
+    This route is intentionally separate from ``/generate``.  It always resolves
+    and re-uploads the current official AQUABLANCE bytes, records the reference
+    fingerprint, then enters the existing API-first agent lane exactly once.  It
+    never enables the direct production lane and never guesses a provider key.
+    """
+    from agent.services import make_video as _mv
+    from agent.services.product_visual_grounding_resolver import (
+        ProductVisualReferenceRequiredError,
+        build_official_product_visual_asset,
+    )
+
+    def reject(code: str):
+        raise HTTPException(
+            409,
+            detail={
+                "error": code,
+                "capture_class": _mv.HYBRID_REFERENCE_OMNI_10S_CAPTURE_CLASS,
+                "pre_provider": {
+                    "provider_calls": 0,
+                    "credit_spend": False,
+                    "blocker_code": code,
+                },
+            },
+        )
+
+    if not _mv.hybrid_reference_omni10_capture_enabled():
+        reject("CAPTURE_FEATURE_DISABLED")
+    if body.capture_class != _mv.HYBRID_REFERENCE_OMNI_10S_CAPTURE_CLASS:
+        reject("CAPTURE_CLASS_UNSUPPORTED")
+    if str(body.product_id or "") != _mv.HYBRID_REFERENCE_OMNI_10S_CAPTURE_PRODUCT_ID:
+        reject("CAPTURE_PRODUCT_NOT_AUTHORIZED")
+    if str(body.surface_lane or "").strip().upper() != "HYBRID":
+        reject("CAPTURE_SURFACE_LANE_MUST_BE_HYBRID")
+    if str(body.source_mode or "").strip().upper() != "HYBRID":
+        reject("CAPTURE_SOURCE_MODE_MUST_BE_HYBRID")
+    if str(body.model or "").strip().lower() != "omni_flash":
+        reject("CAPTURE_MODEL_MUST_BE_OMNI_FLASH")
+    if body.duration_s != 10:
+        reject("CAPTURE_DURATION_MUST_BE_10")
+    if body.aspect != "9:16":
+        reject("CAPTURE_ASPECT_MUST_BE_9_16")
+    if body.count != 1 or body.reference_count != 1:
+        reject("CAPTURE_COUNT_AND_REFERENCE_COUNT_MUST_BE_1")
+    if body.confirm_live_credit_burn is not True:
+        reject("CAPTURE_LIVE_CREDIT_CONFIRMATION_REQUIRED")
+    request_id = str(body.request_id or "").strip()
+    if not request_id:
+        reject("CAPTURE_REQUEST_ID_REQUIRED")
+    if not str(body.prompt or "").strip():
+        reject("CAPTURE_PROMPT_REQUIRED")
+
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+
+    product = await crud.get_product(body.product_id)
+    if not product:
+        raise HTTPException(404, f"PRODUCT_NOT_FOUND: {body.product_id}")
+    try:
+        official = build_official_product_visual_asset(
+            product, slot_key="start_frame", label="AQUABLANCE official Hybrid capture reference"
+        )
+    except ProductVisualReferenceRequiredError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    local_path = str(official.get("local_file_path") or "")
+    if not local_path:
+        raise HTTPException(422, "CAPTURE_REFERENCE_LOCAL_SOURCE_REQUIRED")
+    try:
+        source_bytes = Path(local_path).read_bytes()
+    except OSError as exc:
+        raise HTTPException(422, f"CAPTURE_REFERENCE_READ_FAILED:{exc}") from exc
+    source_sha = hashlib.sha256(source_bytes).hexdigest()
+    expected_sha = str(official.get("official_visual_sha256") or "").lower()
+    if expected_sha and source_sha.lower() != expected_sha:
+        raise HTTPException(409, "CAPTURE_REFERENCE_SHA_MISMATCH")
+
+    # Bind to the exact open project before the non-credit image upload.  This is
+    # still provider-free with respect to generation and prevents cross-project
+    # reference ambiguity.
+    try:
+        binding = await _mv._bind_with_recovery(client, body.project_id)
+    except Exception as exc:  # noqa: BLE001 - no submit may occur on bad binding
+        raise HTTPException(409, f"CAPTURE_FLOW_PROJECT_BIND_FAILED:{exc}") from exc
+    project_id = binding["project_id"]
+
+    import base64
+    upload = await client.upload_image(
+        base64.b64encode(source_bytes).decode("ascii"),
+        mime_type=official.get("mime_type") or "image/jpeg",
+        project_id=project_id,
+        file_name=official.get("file_name") or f"{body.product_id}_official.jpeg",
+    )
+    if not isinstance(upload, dict) or upload.get("error"):
+        raise HTTPException(502, "CAPTURE_REFERENCE_UPLOAD_FAILED")
+    current_media_id = (
+        upload.get("_mediaId")
+        or upload.get("media_id")
+        or ((upload.get("data") or {}).get("media") or {}).get("name")
+    )
+    if not current_media_id:
+        raise HTTPException(502, "CAPTURE_REFERENCE_MEDIA_ID_MISSING")
+    current_media_id = str(current_media_id)
+    reference_order = [current_media_id]
+    reference_fingerprint = hashlib.sha256(
+        json.dumps(
+            [{"asset_id": official.get("asset_id"), "media_id": current_media_id,
+              "sha256": source_sha}],
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    try:
+        balance_before = _mv._capture_credit_balance(await client.get_credits())
+    except Exception as exc:  # noqa: BLE001 - exact accounting remains unknown
+        balance_before = None
+        balance_error = str(exc)[:240]
+    else:
+        balance_error = None
+
+    capture_subject = {
+        "product_id": body.product_id,
+        "surface_lane": "HYBRID",
+        "source_mode": "HYBRID",
+        "official_asset_id": official.get("asset_id"),
+        "official_asset_source_type": official.get("official_visual_source_type"),
+        "canonical_source_media_id": official.get("media_id"),
+        "source_local_path": local_path,
+        "source_sha256": source_sha,
+        "current_flow_media_id": current_media_id,
+        "reference_order": reference_order,
+        "reference_fingerprint": reference_fingerprint,
+        "project_id": project_id,
+        "credit_balance_before": balance_before,
+        "credit_balance_before_error": balance_error,
+    }
+    result = await _mv.start_generate(
+        "F2V",
+        body.prompt,
+        project_id=project_id,
+        image_media_ids=reference_order,
+        aspect="9:16",
+        tier="PAYGATE_TIER_ONE",
+        model="omni_flash",
+        duration_s=10,
+        num_videos=1,
+        product_id=body.product_id,
+        source_mode="HYBRID",
+        surface_lane="HYBRID",
+        request_id=request_id,
+        idempotency_key=request_id,
+        capture_class=_mv.HYBRID_REFERENCE_OMNI_10S_CAPTURE_CLASS,
+        capture_subject=capture_subject,
+        capture_confirmed=True,
+    )
+    if isinstance(result, dict):
+        result["capture_subject"] = capture_subject
+        result["capture_class"] = _mv.HYBRID_REFERENCE_OMNI_10S_CAPTURE_CLASS
+    return result
+
+
+@router.get("/hybrid-reference-omni10-contract-capture/{job_id}")
+async def hybrid_reference_omni10_contract_capture_status(job_id: str):
+    from agent.services import make_video as _mv
+
+    result = _mv.get_job(job_id)
+    if not result:
+        result = await _mv.get_durable_job(job_id, reconcile=False)
+    if not result:
+        raise HTTPException(404, "capture job not found")
+    return result
 
 
 # Canonical reference-slot ORDER for the execution lane. The engine receives

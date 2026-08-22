@@ -10,6 +10,7 @@ No claims without evidence: success is only declared when the agent's text says 
 generating (e.g. "generating", "in the queue"). Every turn's raw agent reply is returned.
 """
 import json
+import hashlib
 
 from agent.services import video_models
 
@@ -238,6 +239,188 @@ def parse_agent_sse(text) -> dict:
             "duration_used": duration_used,
             "gen_prompt": gen_prompt, "gen_seed": gen_seed,
             "tool_call_id": tool_call_id, "response_id": response_id}
+
+
+_CAPTURE_SENSITIVE_KEY_PARTS = (
+    "token", "cookie", "authorization", "credential", "secret", "password",
+    "recaptcha", "session",
+)
+_CAPTURE_PROMPT_KEY_PARTS = ("prompt", "text", "message", "instruction")
+_CAPTURE_REFERENCE_KEY_PARTS = (
+    "media", "reference", "asset", "image", "frame",
+)
+_CAPTURE_MODEL_KEYS = {
+    "model", "modelkey", "model_key", "modelusagekey", "model_usage_key",
+    "modeldisplayname", "model_display_name", "videomodelkey", "video_model_key",
+}
+_CAPTURE_DURATION_KEYS = {
+    "duration", "duration_s", "durationseconds", "duration_seconds", "length",
+}
+_CAPTURE_GENERATION_TYPE_KEYS = {
+    "generationtype", "generation_type", "generationmode", "generation_mode",
+    "gentype", "gen_type", "toolname", "tool_name",
+}
+
+
+def _capture_safe_key(key) -> str:
+    return str(key or "").strip()
+
+
+def _capture_key_token(key) -> str:
+    return "".join(ch for ch in _capture_safe_key(key).lower() if ch.isalnum() or ch == "_")
+
+
+def _capture_safe_value(key, value):
+    """Keep contract shape while excluding prompt text and credentials."""
+    token = _capture_key_token(key)
+    if any(part in token for part in _CAPTURE_SENSITIVE_KEY_PARTS):
+        return "<redacted>"
+    if any(part in token for part in _CAPTURE_PROMPT_KEY_PARTS):
+        text = str(value or "")
+        return {"sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "length": len(text)}
+    if isinstance(value, dict):
+        return {
+            _capture_safe_key(k): _capture_safe_value(k, v)
+            for k, v in value.items()
+            if isinstance(k, str)
+            and (
+                _capture_key_token(k) in _CAPTURE_MODEL_KEYS
+                or _capture_key_token(k) in _CAPTURE_DURATION_KEYS
+                or _capture_key_token(k) in _CAPTURE_GENERATION_TYPE_KEYS
+                or any(part in _capture_key_token(k) for part in _CAPTURE_REFERENCE_KEY_PARTS)
+            )
+        }
+    if isinstance(value, list):
+        return [_capture_safe_value(key, item) for item in value[:20]]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        if any(part in token for part in _CAPTURE_REFERENCE_KEY_PARTS):
+            return str(value)[:240]
+        if token in (_CAPTURE_MODEL_KEYS | _CAPTURE_DURATION_KEYS | _CAPTURE_GENERATION_TYPE_KEYS):
+            return value
+        return None
+    return None
+
+
+def _capture_tool_invocations(obj, out):
+    if isinstance(obj, dict):
+        invocation = obj.get("toolInvocation")
+        if isinstance(invocation, dict):
+            out.append(invocation)
+        for value in obj.values():
+            _capture_tool_invocations(value, out)
+    elif isinstance(obj, list):
+        for value in obj:
+            _capture_tool_invocations(value, out)
+
+
+def build_reference_contract_capture_evidence(
+    negotiation: dict,
+    reference_media_ids: list[str],
+    *,
+    project_id: str,
+) -> dict:
+    """Build sanitized, provider-contract evidence from one agent negotiation.
+
+    The raw SSE is intentionally not returned or persisted here.  Only tool names,
+    non-secret model/duration/type fields, and exact reference IDs are retained so
+    the capture can prove transport without storing cookies, auth, captcha, or
+    session secrets.
+    """
+    refs = [str(item) for item in (reference_media_ids or []) if item]
+    invocations = []
+    transcript = negotiation.get("transcript") if isinstance(negotiation, dict) else []
+    for turn in transcript if isinstance(transcript, list) else []:
+        raw = turn.get("raw_sse") if isinstance(turn, dict) else None
+        if not isinstance(raw, str):
+            continue
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            try:
+                payload = json.loads(line[5:].strip())
+            except Exception:
+                continue
+            _capture_tool_invocations(payload, invocations)
+
+    safe_invocations = []
+    forwarded_refs = []
+    model_fields = []
+    duration_fields = []
+    generation_type_fields = []
+    for invocation in invocations:
+        name = str(invocation.get("toolName") or "").strip()
+        args = invocation.get("toolArguments") or {}
+        if not name:
+            continue
+        safe_args = {}
+        if isinstance(args, dict):
+            for key, value in args.items():
+                token = _capture_key_token(key)
+                safe_value = _capture_safe_value(key, value)
+                if safe_value is not None:
+                    safe_args[_capture_safe_key(key)] = safe_value
+                if token in _CAPTURE_MODEL_KEYS:
+                    model_fields.append({"field": _capture_safe_key(key), "value": safe_value})
+                if token in _CAPTURE_DURATION_KEYS:
+                    duration_fields.append({"field": _capture_safe_key(key), "value": safe_value})
+                if token in _CAPTURE_GENERATION_TYPE_KEYS:
+                    generation_type_fields.append({"field": _capture_safe_key(key), "value": safe_value})
+                if any(part in token for part in _CAPTURE_REFERENCE_KEY_PARTS):
+                    encoded = json.dumps(value, ensure_ascii=False)
+                    for ref in refs:
+                        if ref in encoded and ref not in forwarded_refs:
+                            forwarded_refs.append(ref)
+        safe_invocations.append({
+            "tool_name": name,
+            "tool_call_id": invocation.get("toolCallId"),
+            "arguments": safe_args,
+        })
+
+    generation_tools = [
+        item for item in safe_invocations
+        if item["tool_name"] != "ask_for_permission"
+    ]
+    names = [item["tool_name"] for item in generation_tools]
+    text_only = any("text" in name.lower() and "video" in name.lower() for name in names)
+    reference_tool = any(
+        any(marker in name.lower() for marker in ("reference", "r2v", "image"))
+        for name in names
+    )
+    return {
+        "provider_endpoint": "/v1/flowCreationAgent:streamChat?alt=sse",
+        "provider_method": "POST",
+        "provider_generation_tools": names,
+        "tool_invocations": safe_invocations,
+        "model_selector_fields": model_fields,
+        "duration_fields": duration_fields,
+        "generation_type_fields": generation_type_fields,
+        "reference_request_schema": "agent userMessage.mediaReferences[{mediaId}]",
+        "reference_order_requested": refs,
+        "reference_media_ids_seen_in_generation_tool": forwarded_refs,
+        "reference_forwarded_to_generation": forwarded_refs == refs and bool(refs),
+        "reference_aware_tool_observed": reference_tool and not text_only,
+        "text_only_tool_observed": text_only,
+        "transport_request_shape": {
+            "agent_session_id": "present",
+            "project_id": str(project_id),
+            "turn_number": "observed_in_request",
+            "recaptcha_context_token": "<redacted>",
+            "user_message_media_references": [
+                {"mediaId": media_id} for media_id in refs
+            ],
+        },
+        "model_used_from_negotiation": negotiation.get("model_used"),
+        "duration_used_from_negotiation": negotiation.get("duration_used"),
+        "model_verified": negotiation.get("model_ok"),
+        "duration_verified": negotiation.get("duration_ok"),
+        "identity": {
+            "tool_call_id": negotiation.get("tool_call_id"),
+            "response_id": negotiation.get("response_id"),
+            "seed": negotiation.get("gen_seed"),
+        },
+    }
 
 
 def decide(permission, target_model=None, target_duration_s=None, desired_num=1,
