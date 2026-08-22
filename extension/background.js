@@ -6139,7 +6139,10 @@ function sendToAgent(msg) {
 	if (msg.id) {
 		fetch("http://127.0.0.1:8100/api/ext/callback", {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: {
+				"Content-Type": "application/json",
+				"X-Callback-Secret": _callbackSecret || "",
+			},
 			body: JSON.stringify(msg),
 		}).catch(() => {
 			// HTTP failed — fallback to WS

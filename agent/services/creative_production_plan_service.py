@@ -448,8 +448,25 @@ async def load_p58_cohort_authority(
         str(product.get("id") or ""): resolve_image_readiness(product)
         for product in catalog_product_rows
     }
+    visible_product_ids: set[str] | None = None
+    from agent.security.access_control import get_current_auth_context
+
+    if get_current_auth_context() is not None:
+        from agent.services.product_release_service import annotate_product_release_state
+
+        await annotate_product_release_state(catalog_product_rows)
+        visible_product_ids = {
+            str(product.get("id") or "")
+            for product in catalog_product_rows
+            if product.get("operationally_visible")
+        }
     ready_rows = sorted(
-        (row for row in report.products if row.product_id in set(product_ids)),
+        (
+            row
+            for row in report.products
+            if row.product_id in set(product_ids)
+            and (visible_product_ids is None or row.product_id in visible_product_ids)
+        ),
         key=lambda row: (row.product_name.casefold(), row.product_id),
     )
     normalized_query = str(query or "").strip().casefold()

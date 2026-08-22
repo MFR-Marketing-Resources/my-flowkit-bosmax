@@ -31,6 +31,7 @@ PERMISSION_SEEDS: tuple[tuple[str, str, str], ...] = (
     ("products.create", "Create products", "Create or import product records."),
     ("products.update", "Update products", "Edit product records and product truth."),
     ("products.archive", "Archive products", "Archive or retire product records through approved flows."),
+    ("products.release", "Release products", "Release or hide products from operational staff production."),
     ("copy.read", "Read copy", "Read copywriting and prompt authority."),
     ("copy.create", "Create copy", "Create copy drafts and plans."),
     ("copy.update", "Update copy", "Edit copy drafts and plans."),
@@ -81,6 +82,7 @@ ROLE_PERMISSION_CODES: dict[str, tuple[str, ...]] = {
             "audit.read",
             "provider.manage",
             "system.settings.manage",
+            "products.release",
         }
     ),
     "OPERATOR": tuple(
