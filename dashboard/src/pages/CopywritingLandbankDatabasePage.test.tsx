@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CopywritingLandbankDatabasePage from "./CopywritingLandbankDatabasePage";
@@ -82,6 +82,7 @@ function listResponse(items: MaintenanceRecord[] = [record()]): MaintenanceListR
 		summary: { total_products: 2, products_with_copy: 1, products_without_copy: 1, total_copy_masters: items.length, total_master_revisions: items.length, draft: 0, review_required: 0, validated: items.length, approved: 0, production_ready: 0, stale: 0 },
 		count_basis: {},
 		product_coverage: [{ product_id: "product-1", product_name: "Product One", copy_sets: 1, angles: 1, hooks: 1, body_core: 1, cta: 1, approved: 0, production_ready: 0, stale: 0 }, { product_id: "product-2", product_name: "Product Two", copy_sets: 0, angles: 0, hooks: 0, body_core: 0, cta: 0, approved: 0, production_ready: 0, stale: 0 }],
+		product_options: [{ product_id: "product-1", product_name: "Product One" }, { product_id: "product-2", product_name: "Product Two" }],
 		filter_options: { formulas: ["PAS"], angles: ["angle-1"] },
 		provider_calls: 0,
 		mutations: 0,
@@ -243,8 +244,9 @@ describe("Copywriting Landbank Reporting maintenance console", () => {
 			for (const key of ["product_id", "status", "formula_id", "angle_id", "production_ready", "stale", "search", "master_id", "revision"]) expect(query.has(key)).toBe(false);
 			expect(query.get("offset")).toBe("0");
 			expect(query.get("sort_by")).toBe("created_at");
-			expect(query.get("sort_dir")).toBe("desc");
+			 expect(query.get("sort_dir")).toBe("desc");
 		});
+		expect(await screen.findByText("Product Two")).toBeInTheDocument();
 	});
 
 	it("pagination preserves all active filters and sorting", async () => {
@@ -270,7 +272,58 @@ describe("Copywriting Landbank Reporting maintenance console", () => {
 		for (const link of productLinks) expect(link).toHaveAttribute("href", "/creative/storyboard-landbank-v3?product_id=product-1");
 	});
 
+	it("uses a bounded searchable product picker instead of a giant native select", async () => {
+		const options = Array.from({ length: 853 }, (_value, index) => ({ product_id: `catalog-${index}`, product_name: `Catalog Product ${index}` }));
+		mockedList.mockResolvedValue({
+			...listResponse([]),
+			product_coverage: options.slice(0, 1).map((product) => ({ ...product, copy_sets: 0, angles: 0, hooks: 0, body_core: 0, cta: 0, approved: 0, production_ready: 0, stale: 0 })),
+			product_options: options,
+			summary: { ...listResponse().summary, total_products: 853, products_without_copy: 853 },
+		});
+		renderAt();
+		const picker = await screen.findByTestId("maintenance-product-filter");
+		expect(picker.tagName).toBe("INPUT");
+		expect(document.querySelector("select[data-testid='maintenance-product-filter']")).toBeNull();
+		fireEvent.focus(picker);
+		const visibleOptions = within(screen.getByTestId("maintenance-product-options")).getAllByRole("option");
+		expect(visibleOptions.length).toBeLessThanOrEqual(26);
+		fireEvent.change(picker, { target: { value: "Catalog Product 852" } });
+		expect(screen.getByTestId("maintenance-product-options")).toHaveTextContent("Catalog Product 852");
+		expect(screen.getByTestId("maintenance-product-options")).not.toHaveTextContent("Catalog Product 0");
+		fireEvent.keyDown(picker, { key: "Enter" });
+		await waitFor(() => expect(currentQuery().get("product_id")).toBe("catalog-852"));
+	});
+
+	it("searches Product Coverage by product name and product ID even with zero V3 Masters", async () => {
+		const zeroCoverage = { product_id: "kaxier-zero", product_name: "KAXIER Zero Copy", copy_sets: 0, angles: 0, hooks: 0, body_core: 0, cta: 0, approved: 0, production_ready: 0, stale: 0 };
+		mockedList.mockImplementation(async (input = {}) => input.search === "KAXIER" || input.search === "kaxier-zero"
+			? { ...listResponse([]), product_coverage: [zeroCoverage], product_options: [{ product_id: zeroCoverage.product_id, product_name: zeroCoverage.product_name }], summary: { ...listResponse().summary, total_products: 1, products_without_copy: 1, total_master_revisions: 0 } }
+			: listResponse());
+		renderAt();
+		fireEvent.change(await screen.findByTestId("maintenance-search"), { target: { value: "KAXIER" } });
+		expect(await screen.findByText("KAXIER Zero Copy")).toBeInTheDocument();
+		expect(screen.getByTestId("maintenance-product-coverage")).not.toHaveTextContent("Product One");
+		expect(screen.getByTestId("maintenance-record-table")).toHaveTextContent("No canonical Master revisions match these filters.");
+
+		fireEvent.change(screen.getByTestId("maintenance-search"), { target: { value: "kaxier-zero" } });
+		await waitFor(() => expect(mockedList).toHaveBeenLastCalledWith(expect.objectContaining({ search: "kaxier-zero" })));
+		expect(await screen.findByText("KAXIER Zero Copy")).toBeInTheDocument();
+		expect(screen.getByTestId("maintenance-product-coverage")).toHaveTextContent("kaxier-zero");
+	});
+
+	it("shows a clear no-product-match state when search matches neither catalog nor Masters", async () => {
+		mockedList.mockImplementation(async (input = {}) => input.search === "unknown-product"
+			? { ...listResponse([]), product_coverage: [], product_options: listResponse().product_options, summary: { ...listResponse().summary, total_master_revisions: 0 } }
+			: listResponse());
+		renderAt();
+		fireEvent.change(await screen.findByTestId("maintenance-search"), { target: { value: "unknown-product" } });
+		expect(await screen.findByTestId("maintenance-no-product-match")).toHaveTextContent("No products match");
+	});
+
 	it("View Records keeps Reporting navigation and applies only the product filter", async () => {
+		mockedList.mockImplementation(async (input = {}) => input.product_id === "product-2"
+			? { ...listResponse([]), product_coverage: [listResponse().product_coverage[1]], product_options: listResponse().product_options, summary: { ...listResponse().summary, total_master_revisions: 0 } }
+			: listResponse());
 		renderAt();
 		fireEvent.click(await screen.findByTestId("maintenance-view-records-product-2"));
 		await waitFor(() => {
@@ -278,6 +331,9 @@ describe("Copywriting Landbank Reporting maintenance console", () => {
 			expect(screen.getByTestId("maintenance-location-path")).toHaveTextContent("/reporting/copywriting-landbank");
 			expect(mockedList).toHaveBeenLastCalledWith(expect.objectContaining({ product_id: "product-2", offset: 0 }));
 		});
+		expect(screen.getByTestId("maintenance-records-section")).toHaveFocus();
+		expect(screen.getByTestId("maintenance-selected-product-empty")).toHaveTextContent("No V3 Master Storyboard records exist yet for Product Two.");
+		expect(screen.getByTestId("maintenance-selected-product-empty").querySelector("a")).toHaveAttribute("href", "/creative/storyboard-landbank-v3?product_id=product-2");
 	});
 
 	it("reconstructs filters and sorting through browser back and forward state", async () => {

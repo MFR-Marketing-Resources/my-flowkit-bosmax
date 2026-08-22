@@ -10,7 +10,7 @@ import {
 	Trash2,
 	X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
 	deleteCopywritingLandbankDraft,
@@ -20,6 +20,7 @@ import {
 	type MaintenanceDetail,
 	type MaintenanceListResponse,
 	type MaintenanceRecord,
+	type MaintenanceProductOption,
 	type MaintenanceStage,
 	type MaintenanceSortBy,
 	type MaintenanceSortDir,
@@ -40,6 +41,7 @@ const SORT_BY_OPTIONS: Array<{ value: MaintenanceSortBy; label: string }> = [
 ];
 const INPUT_CLASS = "w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500";
 const BUTTON_CLASS = "inline-flex items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40";
+const PRODUCT_PICKER_VISIBLE_LIMIT = 25;
 
 type ModalAction = "reject" | "delete" | null;
 
@@ -129,6 +131,8 @@ export default function CopywritingLandbankDatabasePage() {
 	const [detail, setDetail] = useState<MaintenanceDetail | null>(null);
 	const [draftStages, setDraftStages] = useState<MaintenanceStage[]>([]);
 	const [searchDraft, setSearchDraft] = useState(search);
+	const [productPickerOpen, setProductPickerOpen] = useState(false);
+	const [productPickerSearch, setProductPickerSearch] = useState("");
 	const [editing, setEditing] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [detailLoading, setDetailLoading] = useState(false);
@@ -137,6 +141,16 @@ export default function CopywritingLandbankDatabasePage() {
 	const [modal, setModal] = useState<ModalAction>(null);
 	const [mutationBusy, setMutationBusy] = useState(false);
 	const [reloadToken, setReloadToken] = useState(0);
+	const recordsSectionRef = useRef<HTMLDivElement | null>(null);
+
+	const productOptions: MaintenanceProductOption[] = data?.product_options || data?.product_coverage || [];
+	const selectedProduct = productOptions.find((product) => product.product_id === productId);
+	const productPickerMatches = productOptions.filter((product) => {
+		const needle = productPickerSearch.trim().toLocaleLowerCase();
+		if (!needle) return true;
+		return product.product_name.toLocaleLowerCase().includes(needle) || product.product_id.toLocaleLowerCase().includes(needle);
+	});
+	const visibleProductPickerMatches = productPickerMatches.slice(0, PRODUCT_PICKER_VISIBLE_LIMIT);
 
 	useEffect(() => {
 		setSearchDraft(search);
@@ -214,8 +228,23 @@ export default function CopywritingLandbankDatabasePage() {
 		setSuccess("");
 	}
 
+	function focusRecords() {
+		const recordsSection = recordsSectionRef.current;
+		if (!recordsSection) return;
+		recordsSection.focus();
+		recordsSection.scrollIntoView?.({ behavior: "smooth", block: "start" });
+	}
+
+	function selectProduct(nextProductId: string) {
+		setProductPickerSearch("");
+		setProductPickerOpen(false);
+		updateFilter("product_id", nextProductId);
+	}
+
 	function clearFilters() {
 		setSearchDraft("");
+		setProductPickerSearch("");
+		setProductPickerOpen(false);
 		setDetail(null);
 		setEditing(false);
 		updateQuery({
@@ -236,7 +265,8 @@ export default function CopywritingLandbankDatabasePage() {
 	}
 
 	function viewProductRecords(nextProductId: string) {
-		updateFilter("product_id", nextProductId);
+		selectProduct(nextProductId);
+		focusRecords();
 	}
 
 	function openDetail(item: MaintenanceRecord) {
@@ -331,7 +361,7 @@ export default function CopywritingLandbankDatabasePage() {
 			<Section title="Filter and sort records" helper="Every control is URL-backed and applied by the authoritative Reporting API before pagination.">
 				<div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
 					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 md:col-span-3"><span>Search</span><span className="relative block"><Search size={14} className="absolute left-3 top-2.5 text-slate-600" /><input className={`${INPUT_CLASS} pl-9`} value={searchDraft} onChange={(event) => { setSearchDraft(event.target.value); updateFilter("search", event.target.value); }} placeholder="Search product, Master ID, formula, angle, storyline, or authored text" data-testid="maintenance-search" /></span></label>
-					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Product</span><select className={INPUT_CLASS} value={productId} onChange={(event) => updateFilter("product_id", event.target.value)} data-testid="maintenance-product-filter"><option value="">All products</option>{data?.product_coverage.map((product) => <option key={product.product_id} value={product.product_id}>{product.product_name}</option>)}</select></label>
+					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Product</span><div className="relative" data-testid="maintenance-product-picker"><input className={`${INPUT_CLASS} pr-8`} role="combobox" aria-label="Product" aria-expanded={productPickerOpen} aria-controls="maintenance-product-options" aria-autocomplete="list" value={productPickerOpen ? productPickerSearch : selectedProduct?.product_name || productPickerSearch} onFocus={() => { setProductPickerOpen(true); setProductPickerSearch(""); }} onChange={(event) => { const value = event.target.value; const exact = productOptions.find((product) => product.product_id === value); if (exact) selectProduct(exact.product_id); else { setProductPickerSearch(value); setProductPickerOpen(true); } }} onKeyDown={(event) => { if (event.key === "Escape") { setProductPickerOpen(false); setProductPickerSearch(""); } else if (event.key === "ArrowDown") { event.preventDefault(); setProductPickerOpen(true); } else if (event.key === "Enter" && productPickerOpen) { event.preventDefault(); selectProduct(visibleProductPickerMatches[0]?.product_id || ""); } }} placeholder="All products · type to search" data-testid="maintenance-product-filter" />{productId ? <button type="button" className="absolute right-2 top-2 text-slate-500 hover:text-slate-200" aria-label="Clear product selection" data-testid="maintenance-clear-product" onClick={() => selectProduct("")}><X size={14} /></button> : null}{productPickerOpen ? <div id="maintenance-product-options" role="listbox" className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-slate-700 bg-slate-950 p-1 shadow-2xl" data-testid="maintenance-product-options"><button type="button" role="option" aria-selected={!productId} className="block w-full rounded px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-800" onClick={() => selectProduct("")}>All products</button>{visibleProductPickerMatches.map((product) => <button type="button" role="option" aria-selected={product.product_id === productId} key={product.product_id} className="block w-full rounded px-3 py-2 text-left text-xs text-slate-300 hover:bg-slate-800" onClick={() => selectProduct(product.product_id)}>{product.product_name}<span className="mt-0.5 block font-mono text-[10px] text-slate-600">{product.product_id}</span></button>)}{visibleProductPickerMatches.length === 0 ? <div className="px-3 py-3 text-xs text-slate-500" data-testid="maintenance-product-picker-empty">No products match this picker search.</div> : null}{productPickerMatches.length > PRODUCT_PICKER_VISIBLE_LIMIT ? <div className="px-3 py-2 text-[10px] text-slate-600">Showing first {PRODUCT_PICKER_VISIBLE_LIMIT} of {productPickerMatches.length} matches.</div> : null}</div> : null}</div></label>
 					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Status</span><select className={INPUT_CLASS} value={status} onChange={(event) => updateFilter("status", event.target.value)} data-testid="maintenance-status-filter"><option value="">All statuses</option><option value="DRAFT">DRAFT</option><option value="REVIEW_REQUIRED">REVIEW_REQUIRED</option><option value="VALIDATED">VALIDATED</option><option value="APPROVED">APPROVED</option><option value="REJECTED">REJECTED</option><option value="BLOCKED">BLOCKED</option></select></label>
 					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Formula</span><select className={INPUT_CLASS} value={formulaId} onChange={(event) => updateFilter("formula_id", event.target.value)} data-testid="maintenance-formula-filter"><option value="">All formulas</option>{data?.filter_options.formulas.map((formula) => <option key={formula} value={formula}>{formula}</option>)}</select></label>
 					<label className="space-y-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500"><span>Angle</span><select className={INPUT_CLASS} value={angleId} onChange={(event) => updateFilter("angle_id", event.target.value)} data-testid="maintenance-angle-filter"><option value="">All angles</option>{data?.filter_options.angles.map((angle) => <option key={angle} value={angle}>{angle}</option>)}</select></label>
@@ -367,24 +397,26 @@ export default function CopywritingLandbankDatabasePage() {
 				<div className="overflow-x-auto">
 					<table className="w-full min-w-[900px] text-left text-xs" data-testid="maintenance-product-coverage">
 						<thead className="border-b border-slate-800 text-[10px] uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-3 py-2">Product</th><th className="px-3 py-2">Copy sets</th><th className="px-3 py-2">Angles</th><th className="px-3 py-2">Hooks</th><th className="px-3 py-2">Body/Core</th><th className="px-3 py-2">CTA</th><th className="px-3 py-2">Approved</th><th className="px-3 py-2">Ready</th><th className="px-3 py-2">Stale</th><th className="px-3 py-2">Action</th></tr></thead>
-						<tbody>{data?.product_coverage.map((product) => <tr key={product.product_id} className="border-b border-slate-900 hover:bg-slate-800/40"><td className="px-3 py-3"><a href={productWorkflowPath(product.product_id)} className="text-left font-semibold text-cyan-200 hover:text-cyan-100" onClick={(event) => event.stopPropagation()}>{product.product_name}<span className="mt-0.5 block font-mono text-[10px] text-slate-600">{product.product_id}</span></a></td><td className="px-3 py-3 text-slate-300">{product.copy_sets}</td><td className="px-3 py-3 text-slate-300">{product.angles}</td><td className="px-3 py-3 text-slate-300">{product.hooks}</td><td className="px-3 py-3 text-slate-300">{product.body_core}</td><td className="px-3 py-3 text-slate-300">{product.cta}</td><td className="px-3 py-3"><Badge tone={product.approved ? "success" : "neutral"}>{product.approved}</Badge></td><td className="px-3 py-3"><Badge tone={product.production_ready ? "success" : "neutral"}>{product.production_ready}</Badge></td><td className="px-3 py-3"><Badge tone={product.stale ? "warn" : "neutral"}>{product.stale}</Badge></td><td className="px-3 py-3"><button type="button" className="text-xs font-semibold text-cyan-200 hover:text-cyan-100" onClick={() => viewProductRecords(product.product_id)} data-testid={`maintenance-view-records-${product.product_id}`}>View Records</button></td></tr>)}</tbody>
+						<tbody>{data?.product_coverage.length === 0 ? <tr><td colSpan={10} className="px-3 py-10 text-center text-slate-500"><span data-testid="maintenance-no-product-match">{search.trim() ? <>No products match <span className="font-mono text-slate-300">“{search}”</span>.{data.items.length > 0 ? " Master records below may still match this search." : ""}</> : productId ? <>No product coverage matches <span className="font-mono text-slate-300">{productId}</span>.</> : "No product coverage is available."}</span></td></tr> : data?.product_coverage.map((product) => <tr key={product.product_id} className="border-b border-slate-900 hover:bg-slate-800/40"><td className="px-3 py-3"><a href={productWorkflowPath(product.product_id)} className="text-left font-semibold text-cyan-200 hover:text-cyan-100" onClick={(event) => event.stopPropagation()}>{product.product_name}<span className="mt-0.5 block font-mono text-[10px] text-slate-600">{product.product_id}</span></a></td><td className="px-3 py-3 text-slate-300">{product.copy_sets}</td><td className="px-3 py-3 text-slate-300">{product.angles}</td><td className="px-3 py-3 text-slate-300">{product.hooks}</td><td className="px-3 py-3 text-slate-300">{product.body_core}</td><td className="px-3 py-3 text-slate-300">{product.cta}</td><td className="px-3 py-3"><Badge tone={product.approved ? "success" : "neutral"}>{product.approved}</Badge></td><td className="px-3 py-3"><Badge tone={product.production_ready ? "success" : "neutral"}>{product.production_ready}</Badge></td><td className="px-3 py-3"><Badge tone={product.stale ? "warn" : "neutral"}>{product.stale}</Badge></td><td className="px-3 py-3"><button type="button" className="text-xs font-semibold text-cyan-200 hover:text-cyan-100" onClick={() => viewProductRecords(product.product_id)} data-testid={`maintenance-view-records-${product.product_id}`}>View Records</button></td></tr>)}</tbody>
 					</table>
 				</div>
 			</Section>
 
+			<div ref={recordsSectionRef} tabIndex={-1} className="scroll-mt-6 outline-none" data-testid="maintenance-records-section">
 			<Section title="Master Storyboard records" helper="Search, filters, and pagination are server-side. Each row is one exact canonical Master ID + revision.">
 				<div className="mt-4 overflow-x-auto">
 					<table className="w-full min-w-[1500px] text-left text-xs" data-testid="maintenance-record-table">
 						<thead className="border-b border-slate-800 text-[10px] uppercase tracking-[0.12em] text-slate-500"><tr><th className="px-3 py-2">Product</th><th className="px-3 py-2">Master / rev</th><th className="px-3 py-2">Formula</th><th className="px-3 py-2">Angle</th><th className="px-3 py-2">Hook</th><th className="px-3 py-2">Body/Core</th><th className="px-3 py-2">CTA</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Quality</th><th className="px-3 py-2">Production</th><th className="px-3 py-2">Action</th></tr></thead>
 						<tbody>
 							{loading ? <tr><td colSpan={11} className="px-3 py-10 text-center text-slate-500">Loading authoritative records…</td></tr> : null}
-							{!loading && data?.items.length === 0 ? <tr><td colSpan={11} className="px-3 py-10 text-center text-slate-500">No canonical Master revisions match these filters.</td></tr> : null}
+							{!loading && data?.items.length === 0 ? <tr><td colSpan={11} className="px-3 py-10 text-center text-slate-500">{productId ? <div data-testid="maintenance-selected-product-empty"><p>No V3 Master Storyboard records exist yet for <span className="font-semibold text-slate-300">{selectedProduct?.product_name || productId}</span>.</p><a className="mt-2 inline-block font-semibold text-cyan-200 hover:text-cyan-100" href={productWorkflowPath(productId)}>Create or manage copy for this product</a></div> : "No canonical Master revisions match these filters."}</td></tr> : null}
 							{!loading && data?.items.map((item) => <tr key={`${item.master_id}:${item.revision}`} className="cursor-pointer border-b border-slate-900 align-top hover:bg-slate-800/40" onClick={() => openDetail(item)} data-testid={`maintenance-row-${item.master_id}-${item.revision}`}><td className="px-3 py-3"><a href={productWorkflowPath(item.product.id)} className="font-semibold text-cyan-200 hover:text-cyan-100" onClick={(event) => event.stopPropagation()}>{item.product.name}<span className="mt-0.5 block font-mono text-[10px] text-slate-600">{item.product.id}</span></a></td><td className="px-3 py-3"><span className="font-mono text-cyan-200">{item.master_id}</span><span className="mt-1 block"><Badge tone="neutral">REV {item.revision}</Badge></span></td><td className="px-3 py-3 text-slate-300">{item.formula.formula_id}</td><td className="px-3 py-3 font-mono text-slate-400">{item.angle.entity_id}</td><td className="px-3 py-3"><Preview text={item.previews.HOOK} /></td><td className="px-3 py-3"><Preview text={item.previews.BODY_CORE} /></td><td className="px-3 py-3"><Preview text={item.previews.CTA} /></td><td className="px-3 py-3"><Badge tone={statusTone(item.status)}>{item.status}</Badge>{item.stale ? <span className="mt-1 block"><Badge tone="warn">STALE</Badge></span> : null}</td><td className="px-3 py-3"><span className="font-semibold text-slate-200">{Math.round((item.quality.quality_score || 0) * 100)}%</span><span className="mt-1 block text-[10px] text-slate-500">{item.quality.hard_pass ? "hard pass" : "review gates"}</span></td><td className="px-3 py-3"><Badge tone={productionTone(item.production_ready ? "MATERIALIZED" : item.projection_status)}>{item.production_ready ? "MATERIALIZED" : item.projection_status}</Badge></td><td className="px-3 py-3"><button type="button" className="text-xs font-semibold text-cyan-200 hover:text-cyan-100" onClick={(event) => { event.stopPropagation(); openDetail(item); }}>Open exact</button></td></tr>)}
 						</tbody>
 					</table>
 				</div>
 				<div className="mt-4 flex items-center justify-between gap-3 border-t border-slate-800 pt-3 text-xs text-slate-500"><span>{firstRow}–{lastRow} of {data?.total ?? 0} exact revisions</span><div className="flex gap-2"><button type="button" className={BUTTON_CLASS} disabled={offset === 0 || loading} onClick={() => updateQuery({ offset: Math.max(0, offset - PAGE_SIZE), master_id: null, revision: null })}><ChevronLeft size={14} />Previous</button><button type="button" className={BUTTON_CLASS} disabled={!data?.has_more || loading} onClick={() => updateQuery({ offset: offset + PAGE_SIZE, master_id: null, revision: null })}>Next<ChevronRight size={14} /></button></div></div>
 			</Section>
+			</div>
 
 			{detailLoading ? <Section title="Exact revision drilldown"><div className="text-sm text-slate-500">Loading the requested Master revision…</div></Section> : null}
 			{detail ? (
