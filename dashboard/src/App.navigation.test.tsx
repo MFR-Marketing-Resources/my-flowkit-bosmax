@@ -18,9 +18,9 @@ function allItems() {
 	return NAV_GROUPS.flatMap((group) => group.items.map((item) => ({ group: group.label, ...item })));
 }
 
-// Task B §1 / Test A — the normal operator navigation must present Copywriting
-// Landbank as the single primary copywriting door, and Copy Authority (the V2
-// console) must live only under ADVANCED — never as a second normal copy door.
+// The normal operator navigation must present Copywriting Landbank as the single
+// primary copywriting door. Copy Authority is a deep-link-only V2 detail route;
+// cross-product governance is owned by the queue.
 describe("Task B — navigation surface (Test A)", () => {
 	it("exposes only active production video surfaces in the live nav", () => {
 		const video = groupByLabel("VIDEO PRODUCTION");
@@ -65,10 +65,12 @@ describe("Task B — navigation surface (Test A)", () => {
 		expect(targets).not.toContain("/creative/copy-registry");
 	});
 
-	it("exposes Copy Authority only under the ADVANCED group", () => {
+	it("keeps Copy Authority out of navigation and exposes the Governance Queue", () => {
 		const authorityDoors = allItems().filter((item) => item.to === "/creative/copy-authority");
-		expect(authorityDoors.map((door) => door.group)).toEqual(["ADVANCED"]);
-		expect(authorityDoors.map((door) => door.label)).toEqual(["Copy Authority"]);
+		expect(authorityDoors).toEqual([]);
+		const queueDoors = allItems().filter((item) => item.to === "/creative/copy-review-queue");
+		expect(queueDoors.map((door) => door.group)).toEqual(["ADVANCED"]);
+		expect(queueDoors.map((door) => door.label)).toEqual(["Copy Governance Queue"]);
 	});
 
 	it("presents exactly one normal copy-generation door (Landbank), avoiding two doors", () => {
@@ -99,9 +101,8 @@ describe("Task B — navigation surface (Test A)", () => {
 	});
 });
 
-// Task B §6 / Test H — the old /creative/copy-registry deep link must keep
-// working by redirecting to the canonical Copy Authority route, preserving the
-// product_id (and any other) query so existing links are never broken.
+// Legacy routes preserve exact authority links only when both product_id and
+// blueprint_id are present; otherwise they return to the normal Landbank.
 describe("Task B — legacy route compatibility (Test H)", () => {
 	function LandingProbe() {
 		const location = useLocation();
@@ -113,21 +114,21 @@ describe("Task B — legacy route compatibility (Test H)", () => {
 			<MemoryRouter initialEntries={[entry]}>
 				<Routes>
 					<Route path="/creative/copy-registry" element={<CopyRegistryRedirect />} />
-					<Route path="/creative/copy-authority" element={<LandingProbe />} />
+					<Route path="/creative/storyboard-landbank-v3" element={<LandingProbe />} />
 				</Routes>
 			</MemoryRouter>,
 		);
 	}
 
-	it("redirects /creative/copy-registry to Copy Authority", async () => {
+	it("redirects /creative/copy-registry to Copywriting Landbank", async () => {
 		renderRedirect("/creative/copy-registry");
 		expect(await screen.findByTestId("copy-authority-landing")).toHaveTextContent("search:");
 	});
 
-	it("preserves the product_id query on redirect", async () => {
-		renderRedirect("/creative/copy-registry?product_id=p1&blueprint_id=bpv2_test");
+	it("preserves product-only context on the Landbank redirect", async () => {
+		renderRedirect("/creative/copy-registry?product_id=p1");
 		expect(await screen.findByTestId("copy-authority-landing")).toHaveTextContent(
-			"search:?product_id=p1&blueprint_id=bpv2_test",
+			"search:?product_id=p1",
 		);
 	});
 });

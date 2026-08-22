@@ -89,7 +89,7 @@ export function CopyAuthorityAttentionPanel() {
 	return (
 		<Section
 			title="COPY AUTHORITY ATTENTION"
-			helper="Read-only operational attention for stale or blocked approved copy. Open the exact item in Copy Authority to remediate it."
+			helper="Read-only operational attention for stale or blocked approved copy. Open the exact detail or create a replacement in Copywriting Landbank."
 		>
 			<div data-testid="copy-authority-attention-panel" className="space-y-3">
 				<div
@@ -125,10 +125,12 @@ export function CopyAuthorityAttentionPanel() {
 								<p className="mt-2 text-xs text-amber-100">{humanReason(item)}</p>
 								<p className="mt-1 font-mono text-[10px] text-amber-200/70">{reasonCodes(item).join(" · ")}</p>
 								<a
-									href={`/creative/copy-authority?product_id=${encodeURIComponent(item.product_id)}&blueprint_id=${encodeURIComponent(item.blueprint_id)}`}
+									href={item.current_authority_state === "STALE"
+									? `/creative/storyboard-landbank-v3?product_id=${encodeURIComponent(item.product_id)}`
+									: `/creative/copy-authority?product_id=${encodeURIComponent(item.product_id)}&blueprint_id=${encodeURIComponent(item.blueprint_id)}`}
 									className="mt-3 inline-flex rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-1.5 text-[10px] font-bold uppercase text-amber-100 hover:bg-amber-500/20"
 								>
-									Open in Copy Authority
+									{item.current_authority_state === "STALE" ? "Create Replacement in Copywriting Landbank" : "Open Authority Detail"}
 								</a>
 							</div>
 						))}

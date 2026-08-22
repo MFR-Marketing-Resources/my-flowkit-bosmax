@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, CheckCircle2, ChevronRight, Database, Film, PencilLine, Sparkles, Wand2 } from "lucide-react";
+import { ArrowRight, CheckCircle2, ChevronRight, Database, Film, PencilLine, ShieldCheck, Sparkles, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -26,6 +26,12 @@ import {
 	type V3TruthFact,
 } from "../api/storyboardLandbankV3Round2";
 import { fetchProductDetail } from "../api/products";
+import {
+	batchActivateCopyBlueprints,
+	listCopyRegisterBlueprints,
+	type CopyBlueprintV2Record,
+	type CopyRegisterActivationStatusV2,
+} from "../api/copyRegisterV2";
 import { Badge, FormField, HelperText, Section, TechnicalDetails, type BadgeTone } from "../components/ui";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import { useProductCatalog } from "../hooks/useProductCatalog";
@@ -120,6 +126,49 @@ function countNeedsPreparation(items: readonly V3LandbankItem[]): number {
 		}
 	}
 	return count;
+}
+
+type PreparedActivationTarget = {
+	blueprintId: string;
+	revision: number;
+	projectionId: string;
+	duration: number;
+};
+
+function collectPreparedActivationTargets(
+	items: readonly V3LandbankItem[],
+	blueprints: readonly CopyBlueprintV2Record[],
+	activation: CopyRegisterActivationStatusV2 | null,
+): PreparedActivationTarget[] {
+	const byId = new Map(blueprints.map((blueprint) => [blueprint.blueprint_id, blueprint]));
+	const targets: PreparedActivationTarget[] = [];
+	const seen = new Set<string>();
+	for (const item of items) {
+		// P6 allocations retain explicit per-item authority. Only unallocated
+		// supply may use this standard-lane handoff; no global pointer is created
+		// for an already allocated P6 item.
+		if (item.p6_status && !["NOT_ALLOCATED", "NOT_IN_ROUND2"].includes(item.p6_status)) continue;
+		for (const projection of item.projections) {
+			const materialization = projection.materialization;
+			const blueprintId = materialization?.v2_blueprint_id;
+			if (materialization?.status !== "MATERIALIZED" || !blueprintId || seen.has(blueprintId)) continue;
+			const blueprint = byId.get(blueprintId);
+			if (!blueprint || blueprint.status !== "PRODUCTION_VALID" || blueprint.current_authority_activation_allowed !== true) continue;
+			const alreadyCurrent =
+				activation?.active_blueprint_id === blueprint.blueprint_id &&
+				activation.active_revision === blueprint.revision &&
+				activation.active_lane_count >= activation.required_lane_count;
+			if (alreadyCurrent) continue;
+			seen.add(blueprintId);
+			targets.push({
+				blueprintId,
+				revision: materialization.v2_blueprint_revision ?? blueprint.revision,
+				projectionId: projection.projection_id,
+				duration: projection.target_duration_seconds,
+			});
+		}
+	}
+	return targets;
 }
 
 // Plain-language quality warnings from the governed quality booleans, so a
@@ -342,6 +391,16 @@ export default function StoryboardLandbankV3Page() {
 	const [items, setItems] = useState<V3LandbankItem[]>([]);
 	const [landbankOffset, setLandbankOffset] = useState(0);
 	const [landbankHasMore, setLandbankHasMore] = useState(false);
+	// Read-only standard-lane authority projection. Materialization remains the
+	// existing V3→V2 operation; activation is a separate explicit handoff.
+	const [authorityBlueprints, setAuthorityBlueprints] = useState<CopyBlueprintV2Record[]>([]);
+	const [authorityActivation, setAuthorityActivation] = useState<CopyRegisterActivationStatusV2 | null>(null);
+	const [authorityLoading, setAuthorityLoading] = useState(false);
+	const [activationTarget, setActivationTarget] = useState<PreparedActivationTarget | null>(null);
+	const [activationPhrase, setActivationPhrase] = useState("");
+	const [activationOwner, setActivationOwner] = useState(false);
+	const [activationConfirmOpen, setActivationConfirmOpen] = useState(false);
+	const [activationBusy, setActivationBusy] = useState(false);
 
 	// Generate / preflight.
 	const [plan, setPlan] = useState<V3AssistantPlan | null>(null);
@@ -411,6 +470,8 @@ export default function StoryboardLandbankV3Page() {
 			setTruthFacts([]);
 			setTruthApproved(false);
 			setCapacity(null);
+			setAuthorityBlueprints([]);
+			setAuthorityActivation(null);
 			return;
 		}
 		void fetchV3ProductTruth(selectedProduct.id)
@@ -439,6 +500,21 @@ export default function StoryboardLandbankV3Page() {
 		setLandbankHasMore(Boolean(response.has_more));
 	};
 
+	const loadAuthorityState = async (productId: string) => {
+		setAuthorityLoading(true);
+		try {
+			const response = await listCopyRegisterBlueprints(productId);
+			setAuthorityBlueprints(response.items ?? []);
+			setAuthorityActivation(response.activation ?? null);
+		} catch (reason) {
+			setAuthorityBlueprints([]);
+			setAuthorityActivation(null);
+			setError(toOperatorError(errorMessage(reason)));
+		} finally {
+			setAuthorityLoading(false);
+		}
+	};
+
 	useEffect(() => {
 		if (!selectedProduct) {
 			setItems([]);
@@ -459,6 +535,10 @@ export default function StoryboardLandbankV3Page() {
 	const missing = missingCopies({ target, approved: approvedCount });
 	const cleanPrepareTargets = useMemo(() => collectCleanPrepareTargets(buckets.approved), [buckets.approved]);
 	const needsPreparation = useMemo(() => countNeedsPreparation(buckets.approved), [buckets.approved]);
+	const preparedActivationTargets = useMemo(
+		() => collectPreparedActivationTargets(buckets.approved, authorityBlueprints, authorityActivation),
+		[buckets.approved, authorityActivation, authorityBlueprints],
+	);
 
 	const counts: WorkflowCounts = {
 		target,
@@ -466,6 +546,7 @@ export default function StoryboardLandbankV3Page() {
 		reviewable: buckets.reviewable,
 		productionReady: productionReadyCount,
 		needsPreparation,
+		activationRequired: preparedActivationTargets.length,
 		needsRevalidation: capacity?.stale_copy_count ?? 0,
 	};
 
@@ -481,7 +562,7 @@ export default function StoryboardLandbankV3Page() {
 		() => resolveNextAction({ hasProduct: Boolean(selectedProduct), recipeReady: Boolean(recipeId), counts, blocker: primaryTruthBlocker }),
 		// counts is derived; depend on its scalar members to avoid a churn loop.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[selectedProduct, recipeId, target, approvedCount, buckets.reviewable, productionReadyCount, needsPreparation, capacity?.stale_copy_count, primaryTruthBlocker],
+		[selectedProduct, recipeId, target, approvedCount, buckets.reviewable, productionReadyCount, needsPreparation, preparedActivationTargets.length, capacity?.stale_copy_count, primaryTruthBlocker],
 	);
 
 	const urlStep = searchParams.get("step");
@@ -496,6 +577,19 @@ export default function StoryboardLandbankV3Page() {
 			}),
 		[urlStep, selectedProduct, recipeId, buckets.reviewable, buckets.approved.length],
 	);
+
+	useEffect(() => {
+		if (!selectedProduct || step !== "PRODUCTION") {
+			setAuthorityBlueprints([]);
+			setAuthorityActivation(null);
+			setAuthorityLoading(false);
+			return;
+		}
+		void loadAuthorityState(selectedProduct.id);
+		// Authority is a read-only product-scoped projection and is refreshed only
+		// when the selected product or Production step changes.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [selectedProduct?.id, step]);
 
 	const preflight = useMemo(
 		() => buildPreflightSummary({ plan, capacity, target, truthApproved, truthFactCount: truthFacts.length, planError }),
@@ -521,6 +615,10 @@ export default function StoryboardLandbankV3Page() {
 		setBulkApproval(false);
 		setTruthFacts([]);
 		setTruthApproved(false);
+		setAuthorityBlueprints([]);
+		setAuthorityActivation(null);
+		setActivationTarget(null);
+		setActivationConfirmOpen(false);
 		setSuccess("");
 		setError("");
 	};
@@ -602,6 +700,7 @@ export default function StoryboardLandbankV3Page() {
 		await Promise.all([
 			fetchV3ProductionCapacity(productId).then(setCapacity).catch(() => undefined),
 			loadLandbank(productId).catch(() => undefined),
+			loadAuthorityState(productId).catch(() => undefined),
 		]);
 	};
 
@@ -764,6 +863,44 @@ export default function StoryboardLandbankV3Page() {
 		navigate(selectedProduct ? `/production-studio?product_id=${encodeURIComponent(selectedProduct.id)}` : "/production-studio");
 	};
 
+	const openPreparedActivation = (target: PreparedActivationTarget) => {
+		setActivationTarget(target);
+		setActivationPhrase("");
+		setActivationOwner(false);
+		setActivationConfirmOpen(true);
+	};
+
+	const handleActivatePrepared = async () => {
+		if (!activationTarget || activationPhrase !== "ACTIVATE_COPY_AUTHORITY_BATCH" || !activationOwner || activationBusy) return;
+		setActivationBusy(true);
+		setBusy(true);
+		setError("");
+		setSuccess("");
+		try {
+			const response = await batchActivateCopyBlueprints({
+				blueprint_ids: [activationTarget.blueprintId],
+				confirmation_phrase: activationPhrase,
+				owner_authorization: activationOwner,
+			});
+			const result = response.results?.[0];
+			if (!result?.activated && result?.status !== "ALREADY_ACTIVE") {
+				throw new Error(result?.error_detail || result?.error_code || "The exact prepared copy could not be activated.");
+			}
+			setActivationConfirmOpen(false);
+			setActivationTarget(null);
+			setActivationPhrase("");
+			setActivationOwner(false);
+			setSuccess("This exact prepared copy is CURRENT for the governed standard lanes. No provider call was made.");
+			if (selectedProduct) await refreshProductData(selectedProduct.id);
+		} catch (reason) {
+			setError(toOperatorError(errorMessage(reason)));
+			setActivationConfirmOpen(false);
+		} finally {
+			setActivationBusy(false);
+			setBusy(false);
+		}
+	};
+
 	const handleNextAction = () => {
 		if (nextAction.kind === "OPEN_STUDIO") {
 			openProductionStudio();
@@ -773,6 +910,10 @@ export default function StoryboardLandbankV3Page() {
 		// in Products); carry the product context so the operator lands in place.
 		if (nextAction.kind === "RESOLVE_BLOCKER" && nextAction.actionRoute) {
 			navigate(selectedProduct ? `${nextAction.actionRoute}?product_id=${encodeURIComponent(selectedProduct.id)}` : nextAction.actionRoute);
+			return;
+		}
+		if (nextAction.kind === "ACTIVATE") {
+			goToStep("PRODUCTION");
 			return;
 		}
 		goToStep(nextAction.step);
@@ -860,7 +1001,6 @@ export default function StoryboardLandbankV3Page() {
 							<div className="text-[11px] text-slate-500">Assistant mode is inferred from current supply: {inferAssistantMode({ existingApproved: approvedCount, target })}.</div>
 						</div>
 						<HelperText className="mt-2">Recipe ID, language, WPS mode, evidence fact IDs, and V2/V3 authority live here. Normal operators never need them.</HelperText>
-						<a href={`/creative/copy-authority${selectedProduct ? `?product_id=${encodeURIComponent(selectedProduct.id)}` : ""}`} className="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200" data-testid="v3-open-v2-register"><BookOpen size={12} /> Open Copy Authority (advanced)</a>
 					</TechnicalDetails>
 				</Section>
 			) : null}
@@ -978,6 +1118,16 @@ export default function StoryboardLandbankV3Page() {
 						<button type="button" disabled={busy || !cleanPrepareTargets.length} onClick={() => void handlePrepareAllClean()} className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-100 disabled:opacity-40" data-testid="v3-prepare-all">Prepare {cleanPrepareTargets.length} for Production</button>
 					</div>
 
+					{authorityLoading && buckets.approved.length ? <div className="mb-4 rounded-xl border border-dashed border-slate-700 p-4 text-xs text-slate-400" data-testid="v3-authority-loading">Checking standard-lane authority for the exact prepared copy…</div> : null}
+					{preparedActivationTargets.length ? (
+						<div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4" data-testid="v3-activation-handoff">
+							<div className="flex items-start gap-3"><ShieldCheck size={17} className="mt-0.5 text-amber-200" /><div><div className="text-xs font-bold uppercase text-amber-100">Prepared copy needs standard-lane activation</div><HelperText className="mt-1">Materialization prepared the exact V2 authority. Activation is a separate owner-authorized handoff and never starts a provider call.</HelperText></div></div>
+							<div className="mt-3 space-y-2">
+								{preparedActivationTargets.map((targetItem) => <div key={`${targetItem.blueprintId}:${targetItem.revision}`} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3"><div><div className="font-mono text-xs text-slate-200">{targetItem.blueprintId} · revision {targetItem.revision}</div><div className="mt-1 text-[10px] text-slate-500">Prepared projection {targetItem.projectionId} · {targetItem.duration}s</div></div><button type="button" onClick={() => openPreparedActivation(targetItem)} disabled={busy} className="rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-100 disabled:opacity-40" data-testid={`v3-activate-prepared-${targetItem.blueprintId}`}>Activate this exact prepared copy</button></div>)}
+							</div>
+						</div>
+					) : null}
+
 					{productionReadyCount > 0 ? (
 						<div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-500/30 bg-violet-500/5 p-4" data-testid="v3-supply-ready">
 							<div>
@@ -1026,6 +1176,19 @@ export default function StoryboardLandbankV3Page() {
 					<button type="button" onClick={handleNextAction} className="inline-flex items-center gap-1 rounded-lg bg-violet-600 px-4 py-2 text-xs font-bold text-white" data-testid="v3-next-action-go">
 						{nextAction.kind === "OPEN_STUDIO" ? <Film size={14} /> : <ArrowRight size={14} />} {nextAction.kind === "OPEN_STUDIO" ? "Open Production Studio" : "Go"}
 					</button>
+				</div>
+			) : null}
+
+			{activationConfirmOpen && activationTarget ? (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" data-testid="v3-activation-confirm">
+					<div className="w-full max-w-lg rounded-2xl border border-amber-500/30 bg-slate-950 p-6">
+						<div className="flex items-center gap-2 text-amber-200"><ShieldCheck size={18} /><span className="text-[11px] font-bold uppercase tracking-[0.18em]">Confirm exact standard-lane activation</span></div>
+						<h2 className="mt-2 text-lg font-bold text-slate-100">Activate {activationTarget.blueprintId}?</h2>
+						<HelperText className="mt-1">This binds the prepared V2 blueprint, revision {activationTarget.revision}, to the required standard lanes. It does not approve, edit, or generate copy.</HelperText>
+						<label className="mt-4 block text-xs font-semibold text-slate-300">Confirmation phrase<input className={INPUT_CLASS} value={activationPhrase} onChange={(event) => setActivationPhrase(event.target.value)} placeholder="ACTIVATE_COPY_AUTHORITY_BATCH" data-testid="v3-activation-phrase" /></label>
+						<label className="mt-3 flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={activationOwner} onChange={(event) => setActivationOwner(event.target.checked)} data-testid="v3-activation-owner" /> I authorize this exact activation.</label>
+						<div className="mt-5 flex justify-end gap-2"><button type="button" disabled={activationBusy} onClick={() => setActivationConfirmOpen(false)} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300">Cancel</button><button type="button" disabled={activationBusy || activationPhrase !== "ACTIVATE_COPY_AUTHORITY_BATCH" || !activationOwner} onClick={() => void handleActivatePrepared()} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-40" data-testid="v3-activation-confirm-submit">{activationBusy ? "Activating…" : "Confirm activation"}</button></div>
+					</div>
 				</div>
 			) : null}
 
