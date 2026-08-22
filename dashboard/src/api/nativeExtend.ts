@@ -256,6 +256,7 @@ export interface VideoJobAuthorization {
 }
 
 export type VideoJobPlanIntent = {
+  surface_lane?: 'HYBRID' | 'FACELESS' | 'MONTAGE' | 'PRODUCTION_STUDIO_P6' | null;
   product_id?: string | null;
   product_name?: string | null;
   execution_package_id?: string | null;

@@ -123,6 +123,7 @@ describe("facelessLane product-first", () => {
 		});
 
 		expect(body.mode).toBe("F2V");
+		expect(body.surface_lane).toBe("FACELESS");
 		expect(body.model).toBe("Omni Flash");
 		expect(body.duration_s).toBe(6);
 		expect(body.generation_mode).toBe("SINGLE");
@@ -210,6 +211,7 @@ describe("facelessLane product-first", () => {
 		});
 
 		expect(body.mode).toBe("T2V");
+		expect(body.surface_lane).toBe("FACELESS");
 		expect(body.source_mode).toBe("T2V");
 		expect(body.image_media_ids).toEqual([]);
 		expect(body.startAsset).toBeUndefined();

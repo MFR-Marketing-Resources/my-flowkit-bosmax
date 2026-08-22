@@ -492,4 +492,5 @@ async def test_faceless_scheduler_dispatch_uses_package_aware_flow_generate(
     assert request.manifest_id == "manifest-1"
     assert request.manifest_item_key == "item-faceless-runtime"
     assert request.source_mode == "HYBRID"
+    assert request.surface_lane == "PRODUCTION_STUDIO_P6"
     assert result["provider_job_id"] == "flow-job-1"

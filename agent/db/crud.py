@@ -4203,6 +4203,9 @@ async def get_bulk_queue_stats() -> dict:
 # ─── Generated Artifact Library (ADR-007 production) ─────────
 
 async def insert_generated_artifact(media_id: str, job_id: str = None, mode: str = None,
+                                    surface_lane: str = None, transport_mode: str = None,
+                                    source_mode: str = None,
+                                    provider_generation_type: str = None,
                                     artifact_kind: str = "video", local_path: str = None,
                                     size_mb: float = None, project_id: str = None,
                                     model_used: str = None, duration_used: int = None,
@@ -4215,15 +4218,45 @@ async def insert_generated_artifact(media_id: str, job_id: str = None, mode: str
     db = await get_db()
     async with _db_lock:
         await db.execute(
-            """INSERT OR REPLACE INTO generated_artifact
+            """INSERT INTO generated_artifact
                (media_id, job_id, staff_id, staff_display_name_snapshot, mode,
-                artifact_kind, local_path, size_mb,
+                surface_lane, transport_mode, source_mode,
+                provider_generation_type, artifact_kind, local_path, size_mb,
                 file_size_bytes, file_sha256, delivery_status, readback_verified,
                 project_id, model_used, duration_used, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (media_id, job_id, staff_id, staff_display_name_snapshot, mode, artifact_kind, local_path, size_mb,
-             file_size_bytes, file_sha256, delivery_status, int(bool(readback_verified)),
-             project_id, model_used, duration_used, _now()),
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(media_id) DO UPDATE SET
+                 job_id=excluded.job_id,
+                 staff_id=COALESCE(excluded.staff_id, generated_artifact.staff_id),
+                 staff_display_name_snapshot=COALESCE(
+                     excluded.staff_display_name_snapshot,
+                     generated_artifact.staff_display_name_snapshot
+                 ),
+                 mode=excluded.mode,
+                 surface_lane=COALESCE(excluded.surface_lane, generated_artifact.surface_lane),
+                 transport_mode=COALESCE(
+                     excluded.transport_mode, generated_artifact.transport_mode
+                 ),
+                 source_mode=COALESCE(excluded.source_mode, generated_artifact.source_mode),
+                 provider_generation_type=COALESCE(
+                     excluded.provider_generation_type,
+                     generated_artifact.provider_generation_type
+                 ),
+                 artifact_kind=excluded.artifact_kind,
+                 local_path=excluded.local_path,
+                 size_mb=excluded.size_mb,
+                 file_size_bytes=excluded.file_size_bytes,
+                 file_sha256=excluded.file_sha256,
+                 delivery_status=excluded.delivery_status,
+                 readback_verified=excluded.readback_verified,
+                 project_id=excluded.project_id,
+                 model_used=excluded.model_used,
+                 duration_used=excluded.duration_used""",
+            (media_id, job_id, staff_id, staff_display_name_snapshot, mode,
+             surface_lane, transport_mode, source_mode, provider_generation_type,
+             artifact_kind, local_path, size_mb, file_size_bytes, file_sha256,
+             delivery_status, int(bool(readback_verified)), project_id, model_used,
+             duration_used, _now()),
         )
         await db.commit()
         cur = await db.execute(
@@ -4260,6 +4293,10 @@ async def list_artifact_scene_ids(project_id: str) -> list[str]:
 
 async def create_video_production_job(job_id: str, *, project_id: str = None,
                                       scene_id: str = None,
+                                      surface_lane: str = None,
+                                      transport_mode: str = None,
+                                      source_mode: str = None,
+                                      provider_generation_type: str = None,
                                       requested_duration_seconds: int = None,
                                       status: str = "PREPARING",
                                       initial_media_id: str = None,
@@ -4270,11 +4307,13 @@ async def create_video_production_job(job_id: str, *, project_id: str = None,
     async with _db_lock:
         await db.execute(
             """INSERT INTO video_production_job
-               (job_id, project_id, scene_id, requested_duration_seconds, status,
-                initial_media_id, segment_media_ids_json, product_id, product_name)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
-            (job_id, project_id, scene_id, requested_duration_seconds, status,
-             initial_media_id, segment_media_ids_json, product_id, product_name),
+               (job_id, project_id, scene_id, surface_lane, transport_mode, source_mode,
+                provider_generation_type, requested_duration_seconds, status,
+                 initial_media_id, segment_media_ids_json, product_id, product_name)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             (job_id, project_id, scene_id, surface_lane, transport_mode, source_mode,
+              provider_generation_type, requested_duration_seconds, status,
+              initial_media_id, segment_media_ids_json, product_id, product_name),
         )
         await db.commit()
 
@@ -4307,6 +4346,7 @@ async def create_video_production_job_full(job_id: str, *, logical_job_key: str,
         "initial_mode", "initial_prompt_text", "initial_prompt_fingerprint",
         "initial_asset_media_id", "initial_reference_media_ids_json",
         "initial_source_mode",
+        "surface_lane", "transport_mode", "source_mode", "provider_generation_type",
         "initial_lane_job_id", "initial_lane_project_id",
         "staff_id", "staff_display_name_snapshot",
         "stage_state_json", "initial_correlation_json",
@@ -4336,6 +4376,7 @@ async def update_video_production_job_full(job_id: str, **fields) -> None:
         "initial_mode", "initial_prompt_text", "initial_prompt_fingerprint",
         "initial_asset_media_id", "initial_reference_media_ids_json",
         "initial_source_mode", "initial_correlation_json",
+        "surface_lane", "transport_mode", "source_mode", "provider_generation_type",
         "continuation_prompts_json",
         "authorization_id", "authorization_issued_at", "authorization_consumed_at",
         "authorization_consumed_by_job_id", "authorization_consumed_plan_fingerprint",
@@ -4739,11 +4780,14 @@ async def delete_generated_artifact(media_id: str) -> dict:
 
 
 async def list_generated_artifacts(limit: int = 50, mode: str = None,
-                                    kind: str = None) -> list:
+                                     kind: str = None,
+                                     surface_lane: str = None) -> list:
     """Newest-first library listing for the dashboard gallery."""
     db = await get_db()
-    query = """SELECT media_id, job_id, mode, artifact_kind, local_path, size_mb,
-                      project_id, model_used, duration_used, created_at
+    query = """SELECT media_id, job_id, mode, surface_lane, transport_mode,
+                      source_mode, provider_generation_type, artifact_kind,
+                      local_path, size_mb, project_id, model_used, duration_used,
+                      created_at
                FROM generated_artifact"""
     clauses = []
     params: tuple = ()
@@ -4753,14 +4797,18 @@ async def list_generated_artifacts(limit: int = 50, mode: str = None,
     if kind:
         clauses.append("artifact_kind = ?")
         params += (str(kind).lower(),)
+    if surface_lane:
+        clauses.append("surface_lane = ?")
+        params += (str(surface_lane).upper(),)
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
     query += " ORDER BY created_at DESC LIMIT ?"
     params += (int(limit),)
     cursor = await db.execute(query, params)
     rows = await cursor.fetchall()
-    keys = ("media_id", "job_id", "mode", "artifact_kind", "local_path", "size_mb",
-            "project_id", "model_used", "duration_used", "created_at")
+    keys = ("media_id", "job_id", "mode", "surface_lane", "transport_mode",
+            "source_mode", "provider_generation_type", "artifact_kind", "local_path",
+            "size_mb", "project_id", "model_used", "duration_used", "created_at")
     return [dict(zip(keys, row)) for row in rows]
 
 
@@ -4815,6 +4863,10 @@ async def insert_generation_result(
     staff_id: str | None = None,
     staff_display_name_snapshot: str | None = None,
     mode: str = None,
+    surface_lane: str = None,
+    transport_mode: str = None,
+    source_mode: str = None,
+    provider_generation_type: str = None,
     artifact_kind: str = "video",
     product_id: str = None,
     product_name: str = None,
@@ -4837,17 +4889,31 @@ async def insert_generation_result(
         await db.execute(
             """INSERT INTO generation_result
                (media_id, job_id, request_id, staff_id, staff_display_name_snapshot,
-                mode, artifact_kind, product_id,
+                mode, surface_lane, transport_mode, source_mode,
+                provider_generation_type, artifact_kind, product_id,
                 product_name, final_prompt_text, aspect_ratio, model_label,
                 duration_s, count_setting, reference_media_ids_json,
                 workspace_generation_package_id, project_id,
                 product_visual_custody_json, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(media_id) DO UPDATE SET
                  job_id=excluded.job_id, request_id=excluded.request_id,
-                 staff_id=excluded.staff_id,
-                 staff_display_name_snapshot=excluded.staff_display_name_snapshot,
-                 mode=excluded.mode, artifact_kind=excluded.artifact_kind,
+                 staff_id=COALESCE(excluded.staff_id, generation_result.staff_id),
+                 staff_display_name_snapshot=COALESCE(
+                     excluded.staff_display_name_snapshot,
+                     generation_result.staff_display_name_snapshot
+                 ),
+                 mode=excluded.mode,
+                 surface_lane=COALESCE(excluded.surface_lane, generation_result.surface_lane),
+                 transport_mode=COALESCE(
+                     excluded.transport_mode, generation_result.transport_mode
+                 ),
+                 source_mode=COALESCE(excluded.source_mode, generation_result.source_mode),
+                 provider_generation_type=COALESCE(
+                     excluded.provider_generation_type,
+                     generation_result.provider_generation_type
+                 ),
+                 artifact_kind=excluded.artifact_kind,
                  product_id=excluded.product_id, product_name=excluded.product_name,
                  final_prompt_text=excluded.final_prompt_text,
                  aspect_ratio=excluded.aspect_ratio, model_label=excluded.model_label,
@@ -4857,7 +4923,8 @@ async def insert_generation_result(
                  project_id=excluded.project_id,
                  product_visual_custody_json=excluded.product_visual_custody_json""",
             (media_id, job_id, request_id, staff_id, staff_display_name_snapshot,
-             mode, artifact_kind, product_id,
+             mode, surface_lane, transport_mode, source_mode,
+             provider_generation_type, artifact_kind, product_id,
              product_name, final_prompt_text or "", aspect_ratio, model_label,
              duration_s, count_setting, _json.dumps(reference_media_ids or []),
              workspace_generation_package_id, project_id,
@@ -4877,7 +4944,8 @@ async def get_generation_result(media_id: str) -> dict | None:
 
 async def list_generation_results(limit: int = 60, mode: str = None,
                                   kind: str = None, request_id: str = None,
-                                  job_id: str = None) -> list:
+                                  job_id: str = None,
+                                  surface_lane: str = None) -> list:
     """Newest-first durable deliverable records for the Results Hub."""
     db = await get_db()
     query = "SELECT * FROM generation_result"
@@ -4885,6 +4953,9 @@ async def list_generation_results(limit: int = 60, mode: str = None,
     if mode:
         clauses.append("mode=?")
         params.append(mode)
+    if surface_lane:
+        clauses.append("surface_lane=?")
+        params.append(str(surface_lane).upper())
     if kind:
         clauses.append("artifact_kind=?")
         params.append(kind)

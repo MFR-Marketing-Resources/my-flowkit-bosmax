@@ -14,11 +14,17 @@ export interface CaptionSummary {
 export interface ResultListItem {
 	media_id: string;
 	mode: string | null;
+	surface_lane: string | null;
+	surface_label: string;
+	transport_mode: string | null;
+	source_mode: string | null;
+	provider_generation_type: string | null;
 	artifact_kind: "video" | "image";
 	product_name: string | null;
 	model_label: string | null;
 	aspect_ratio: string | null;
 	created_at: string;
+	duration_s: number | null;
 	has_record: boolean;
 	file_available: boolean;
 	size_mb: number | null;
@@ -38,6 +44,11 @@ export interface ResultListResponse {
 export interface ResultSnapshot {
 	final_prompt_text: string;
 	mode: string | null;
+	surface_lane: string | null;
+	surface_label: string;
+	transport_mode: string | null;
+	source_mode: string | null;
+	provider_generation_type: string | null;
 	model_label: string | null;
 	aspect_ratio: string | null;
 	duration_s: number | null;
@@ -54,6 +65,11 @@ export interface ResultSnapshot {
 export interface ResultDetail {
 	media_id: string;
 	mode: string | null;
+	surface_lane: string | null;
+	surface_label: string;
+	transport_mode: string | null;
+	source_mode: string | null;
+	provider_generation_type: string | null;
 	artifact_kind: "video" | "image";
 	has_record: boolean;
 	product_name: string | null;
@@ -70,11 +86,13 @@ export interface ResultDetail {
 export async function listResults(params?: {
 	kind?: "video" | "image";
 	mode?: string;
+	surface_lane?: string;
 	limit?: number;
 }): Promise<ResultListResponse> {
 	const qs = new URLSearchParams();
 	if (params?.kind) qs.set("kind", params.kind);
 	if (params?.mode) qs.set("mode", params.mode);
+	if (params?.surface_lane) qs.set("surface_lane", params.surface_lane);
 	if (params?.limit != null) qs.set("limit", String(params.limit));
 	const q = qs.toString() ? `?${qs.toString()}` : "";
 	return getAPI<ResultListResponse>(`/api/results${q}`);

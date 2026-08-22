@@ -706,6 +706,7 @@ async def montage_run_assemble(run_id: str, body: MontageRunAssembleRequest) -> 
                     result,
                     job_id=effective_job_id,
                     mode="MONTAGE",
+                    surface_lane="MONTAGE",
                     project_id=cfg.get("project_id"),
                     request_id=f"montage:{run_id}",
                     product_id=cfg.get("product_id"),
@@ -862,6 +863,7 @@ async def montage_authorize_generation(
                 # FRAMES exemption) rather than replacing it with the Official
                 # Product Visual. The gate itself is unchanged.
                 source_mode=kwargs.get("source_mode") or None,
+                surface_lane="MONTAGE",
                 workspace_execution_package_id=kwargs.get("workspace_execution_package_id") or None,
                 model=kwargs.get("model") or None,
                 duration_s=kwargs.get("duration_s"),

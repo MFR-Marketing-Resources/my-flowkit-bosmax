@@ -834,6 +834,9 @@ class GenerateRequest(BaseModel):
     # the server still resolves the submitted staff_id against StaffProfile.
     production_recipe: Optional[str] = None  # active recipe identity
     staff_id: Optional[str] = None
+    # Operator-facing production surface.  T2V/F2V/I2V remain transport metadata;
+    # an explicit internal transport mode is rejected at this boundary.
+    surface_lane: Optional[str] = None      # HYBRID | FACELESS | MONTAGE | PRODUCTION_STUDIO_P6
     workspace_execution_package_id: Optional[str] = None
     image_media_ids: Optional[list] = None     # existing/uploaded refs (I2V/F2V)
     image_prompt: Optional[str] = None         # auto start-frame if no refs (I2V/F2V)
@@ -1806,6 +1809,27 @@ async def generate(body: GenerateRequest):
     else:
         effective_source_mode = body.source_mode
 
+    from agent.services.video_surface_provenance import (
+        VideoSurfaceProvenanceError,
+        resolve_surface_lane,
+    )
+    try:
+        effective_surface_lane = resolve_surface_lane(
+            explicit=body.surface_lane,
+            mode=mode,
+            source_mode=effective_source_mode,
+            copy_lane=(body.copy_v2_context or {}).get("lane")
+            or (v2_resolution.to_metadata().get("lane") if v2_resolution else None),
+            execution_identity=body.execution_identity,
+            package=_package,
+            execution_mode=body.generation_mode,
+        )
+    except VideoSurfaceProvenanceError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": exc.code, "detail": str(exc)},
+        ) from exc
+
     product_visual_custody = (
         copy.deepcopy(_package_exact_custody)
         if _package_exact_route and isinstance(_package_exact_custody, dict)
@@ -2011,6 +2035,7 @@ async def generate(body: GenerateRequest):
         staff_display_name_snapshot=(
             _staff_profile.get("display_name") if _staff_profile else None
         ),
+        surface_lane=effective_surface_lane,
         request_id=request_id,
         idempotency_key=request_id,
         product_visual_custody=product_visual_custody,
@@ -2163,15 +2188,26 @@ ARTIFACT_RETENTION_HOURS = 48  # retention law: results auto-delete after 48h
 
 
 @router.get("/artifacts")
-async def list_artifacts(limit: int = 50, mode: str = None, kind: str = None):
+async def list_artifacts(
+    limit: int = 50,
+    mode: str = None,
+    kind: str = None,
+    surface_lane: str = None,
+):
     """System library of finished generations — newest first, for the Library
     pages. kind = video | image. Video retention is 48h and is enforced lazily
     on every listing; image artifacts remain until manual deletion.
     Each entry is playable/downloadable via /api/flow/retrieved/{media_id}."""
     from datetime import datetime, timedelta, timezone
     purged = await crud.purge_expired_artifacts(ARTIFACT_RETENTION_HOURS)
-    items = await crud.list_generated_artifacts(limit=limit, mode=mode, kind=kind)
+    items = await crud.list_generated_artifacts(
+        limit=limit, mode=mode, kind=kind, surface_lane=surface_lane
+    )
+    from agent.services.video_surface_provenance import surface_display_label
     for item in items:
+        item["surface_label"] = surface_display_label(
+            item.get("surface_lane"), mode=item.get("mode")
+        )
         if str(item.get("artifact_kind") or "").lower() != "video":
             item["expires_at"] = None
             item["expires_in_hours"] = None
@@ -2774,6 +2810,7 @@ class VideoJobPlanRequest(BaseModel):
     engine: Optional[str] = None
     model: Optional[str] = None
     aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT"
+    surface_lane: Optional[str] = None
     initial_prompt_fingerprint: Optional[str] = None
     execution_mode: str = "HYBRID_EXTEND"
     client_request_nonce: Optional[str] = None
@@ -2799,6 +2836,7 @@ def _job_intent(body: "VideoJobPlanRequest") -> dict:
         "approved_asset_sha256": body.approved_asset_sha256,
         "requested_duration_seconds": body.requested_total_duration_seconds,
         "engine": body.engine, "model": body.model, "aspect_ratio": body.aspect_ratio,
+        "surface_lane": body.surface_lane,
         "initial_prompt_fingerprint": body.initial_prompt_fingerprint,
         "execution_mode": body.execution_mode,
         "client_request_nonce": body.client_request_nonce,
@@ -3646,6 +3684,13 @@ async def _persist_generation_results(snapshot, job, all_ids):
                 job_id=snapshot.get("job_id"),
                 request_id=snapshot.get("request_id"),
                 mode=snapshot.get("mode"),
+                surface_lane=snapshot.get("surface_lane") or job.get("surface_lane"),
+                transport_mode=snapshot.get("transport_mode") or job.get("transport_mode") or snapshot.get("mode"),
+                source_mode=snapshot.get("source_mode") or job.get("source_mode"),
+                provider_generation_type=(
+                    snapshot.get("provider_generation_type")
+                    or job.get("provider_generation_type")
+                ),
                 artifact_kind=snapshot.get("artifact_kind") or "video",
                 product_id=pid,
                 product_name=product_name,
@@ -4416,6 +4461,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         source_mode=_authority_source_mode,
         staff_id=body.get("staff_id"),
         staff_display_name_snapshot=body.get("staff_display_name_snapshot"),
+        surface_lane=body.get("surface_lane"),
         request_id=request_id,
         idempotency_key=request_id,
         product_visual_custody=body.get("product_visual_custody"),
@@ -4454,6 +4500,10 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         "request_id": request_id,
         "job_id": job_id,
         "mode": mode,
+        "surface_lane": body.get("surface_lane") or res.get("surface_lane"),
+        "transport_mode": res.get("transport_mode") or mode,
+        "source_mode": res.get("source_mode") or _authority_source_mode,
+        "provider_generation_type": res.get("provider_generation_type"),
         "artifact_kind": "image" if mode == "IMG" else "video",
         "product_id": body.get("product_id"),
         "final_prompt_text": prompt,

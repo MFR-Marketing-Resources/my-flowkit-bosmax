@@ -1118,6 +1118,7 @@ export default function FacelessVideoPage() {
 					>
 						{sceneMode === "EXTEND" ? (
 							<NativeExtendPanel
+								surfaceLane="FACELESS"
 								productId={selectedProduct?.id}
 								productName={
 									selectedProduct?.raw_product_title || selectedProduct?.id

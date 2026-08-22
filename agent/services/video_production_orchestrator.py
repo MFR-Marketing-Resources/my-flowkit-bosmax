@@ -153,7 +153,7 @@ def compute_plan_fingerprint(intent: dict[str, Any]) -> str:
         "product_id", "approved_asset_sha256", "requested_duration_seconds",
         "engine", "model", "aspect_ratio", "execution_package_id",
         "initial_prompt_fingerprint", "continuation_prompt_fingerprints",
-        "segment_plan", "operation_counts", "execution_mode",
+        "segment_plan", "operation_counts", "execution_mode", "surface_lane",
     )
     material = {k: intent.get(k) for k in keys}
     return hashlib.sha256(_canonical(material).encode()).hexdigest()
@@ -166,7 +166,7 @@ def compute_logical_job_key(intent: dict[str, Any]) -> str:
     keys = (
         "execution_package_id", "product_id", "approved_asset_sha256",
         "requested_duration_seconds", "initial_prompt_fingerprint",
-        "execution_mode", "client_request_nonce",
+        "execution_mode", "surface_lane", "client_request_nonce",
     )
     material = {k: intent.get(k) for k in keys}
     return "ljk_" + hashlib.sha256(_canonical(material).encode()).hexdigest()[:24]
@@ -240,6 +240,19 @@ async def plan_job(intent: dict[str, Any], *,
 
     plan = build_whole_plan(int(authority["requested_duration_seconds"]))
     conts = authority.get("continuation_prompts") or []
+    from agent.services.video_surface_provenance import (
+        VideoSurfaceProvenanceError,
+        resolve_surface_lane,
+    )
+    try:
+        surface_lane = resolve_surface_lane(
+            explicit=intent.get("surface_lane"),
+            mode=authority.get("initial_mode"),
+            source_mode=authority.get("initial_source_mode"),
+            execution_mode=intent.get("execution_mode"),
+        )
+    except VideoSurfaceProvenanceError as exc:
+        raise OrchestratorError(exc.code, str(exc)) from exc
     intent_for_fp = {
         **intent,
         "product_id": authority.get("product_id"),
@@ -253,6 +266,7 @@ async def plan_job(intent: dict[str, Any], *,
             "continuation_prompt_fingerprints"),
         "segment_plan": plan["segment_count"],
         "operation_counts": plan["operation_counts"],
+        "surface_lane": surface_lane,
     }
     fingerprint = compute_plan_fingerprint(intent_for_fp)
 
@@ -260,6 +274,7 @@ async def plan_job(intent: dict[str, Any], *,
         return {"job_id": existing["job_id"], "status": existing["status"],
                 "logical_job_key": logical_key, "plan": plan,
                 "plan_fingerprint": existing.get("plan_fingerprint") or fingerprint,
+                "surface_lane": existing.get("surface_lane") or surface_lane,
                 "reused": True}
 
     job_id = "vj_" + secrets.token_hex(6)
@@ -278,8 +293,16 @@ async def plan_job(intent: dict[str, Any], *,
         initial_asset_media_id=authority.get("initial_asset_media_id"),
         initial_reference_media_ids_json=json.dumps(
             authority.get("initial_reference_media_ids") or []),
-        initial_source_mode=authority.get("initial_source_mode"),
-        continuation_prompts_json=json.dumps(conts),
+         initial_source_mode=authority.get("initial_source_mode"),
+         surface_lane=surface_lane,
+         transport_mode=authority.get("initial_mode"),
+         source_mode=authority.get("initial_source_mode"),
+         provider_generation_type=(
+             "native_extend"
+             if str(intent.get("execution_mode") or "").upper() == "HYBRID_EXTEND"
+             else None
+         ),
+         continuation_prompts_json=json.dumps(conts),
         plan_fingerprint=fingerprint,
         whole_plan_json=json.dumps(plan),
         segment_media_ids_json=json.dumps([]))
@@ -289,6 +312,7 @@ async def plan_job(intent: dict[str, Any], *,
     return {"job_id": row["job_id"], "status": row["status"],
             "logical_job_key": logical_key, "plan": plan,
             "plan_fingerprint": row.get("plan_fingerprint") or fingerprint,
+            "surface_lane": row.get("surface_lane") or surface_lane,
             "reused": row["job_id"] != job_id}
 
 

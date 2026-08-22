@@ -45,6 +45,56 @@ async def test_upsert_updates_snapshot_but_preserves_created_at():
     assert second["created_at"] == first["created_at"]   # ordering stays stable
 
 
+async def test_staff_and_surface_provenance_survive_idempotent_rerecord():
+    await crud.insert_generated_artifact(
+        "provenance-artifact",
+        job_id="g-provenance",
+        staff_id="staff_faris",
+        staff_display_name_snapshot="<faris>",
+        mode="F2V",
+        surface_lane="HYBRID",
+        transport_mode="F2V",
+        source_mode="HYBRID",
+        provider_generation_type="reference_frame_2_video",
+        artifact_kind="video",
+    )
+    await crud.insert_generated_artifact(
+        "provenance-artifact",
+        job_id="g-provenance",
+        mode="F2V",
+        artifact_kind="video",
+    )
+    artifact = await crud.get_generated_artifact("provenance-artifact")
+    assert artifact["staff_id"] == "staff_faris"
+    assert artifact["staff_display_name_snapshot"] == "<faris>"
+    assert artifact["surface_lane"] == "HYBRID"
+    assert artifact["transport_mode"] == "F2V"
+
+    await crud.insert_generation_result(
+        "provenance-result",
+        job_id="g-provenance",
+        staff_id="staff_faris",
+        staff_display_name_snapshot="<faris>",
+        mode="F2V",
+        surface_lane="HYBRID",
+        transport_mode="F2V",
+        source_mode="HYBRID",
+        provider_generation_type="reference_frame_2_video",
+    )
+    await crud.insert_generation_result(
+        "provenance-result",
+        job_id="g-provenance",
+        mode="F2V",
+        product_visual_custody={"product_id": "p-provenance"},
+    )
+    result = await crud.get_generation_result("provenance-result")
+    assert result["staff_id"] == "staff_faris"
+    assert result["staff_display_name_snapshot"] == "<faris>"
+    assert result["surface_lane"] == "HYBRID"
+    assert result["transport_mode"] == "F2V"
+    assert result["source_mode"] == "HYBRID"
+
+
 async def test_record_survives_video_artifact_purge():
     """Purging a 48h video file removes only its artifact row; the durable
     record (prompt/settings) stays reachable."""

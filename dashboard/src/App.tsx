@@ -626,6 +626,9 @@ function Layout() {
 						/>
 						<Route path="/operator/faceless" element={<FacelessVideoPage />} />
 						<Route path="/operator/montage" element={<MontagePage />} />
+						<Route path="/operator/t2v" element={<Navigate to="/operator/hybrid" replace />} />
+						<Route path="/operator/f2v" element={<Navigate to="/operator/hybrid" replace />} />
+						<Route path="/operator/i2v" element={<Navigate to="/operator/hybrid" replace />} />
 						<Route path="/workspace/jobs" element={<WorkspaceJobsPage />} />
 						<Route
 							path="/workspace/generation-packages"

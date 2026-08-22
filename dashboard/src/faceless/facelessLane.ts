@@ -256,6 +256,7 @@ export function buildFacelessGenerateBody(input: {
 		if (exactBlocker) throw new Error(`Faceless exact route blocked: ${exactBlocker}`);
 		const exactBody: Record<string, unknown> = {
 			mode: "T2V",
+			surface_lane: "FACELESS",
 			prompt,
 			aspect: input.aspect || pkg?.aspect_ratio || "9:16",
 			product_id: input.productId ?? pkg?.product_id ?? null,
@@ -303,6 +304,7 @@ export function buildFacelessGenerateBody(input: {
 
 	const body: Record<string, unknown> = {
 		mode: FACELESS_TRANSPORT_MODE,
+		surface_lane: "FACELESS",
 		prompt,
 		aspect: input.aspect || pkg?.aspect_ratio || "9:16",
 		product_id: input.productId ?? pkg?.product_id ?? null,

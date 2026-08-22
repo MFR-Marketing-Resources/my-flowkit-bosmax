@@ -22,6 +22,32 @@ function allItems() {
 // Landbank as the single primary copywriting door, and Copy Authority (the V2
 // console) must live only under ADVANCED — never as a second normal copy door.
 describe("Task B — navigation surface (Test A)", () => {
+	it("exposes only active production video surfaces in the live nav", () => {
+		const video = groupByLabel("VIDEO PRODUCTION");
+		expect(video?.items.map((item) => item.label)).toEqual([
+			"Hybrid",
+			"Faceless Video",
+			"Montage",
+			"Production Studio",
+		]);
+		expect(video?.items.map((item) => item.to)).toEqual([
+			"/operator/hybrid",
+			"/operator/faceless",
+			"/operator/montage",
+			"/production-studio",
+		]);
+	});
+
+	it("does not expose dormant transport modes as production nav labels", () => {
+		const labels = allItems().map((item) => item.label);
+		expect(labels).not.toContain("Text to Video");
+		expect(labels).not.toContain("Frames");
+		expect(labels).not.toContain("Ingredients");
+		expect(allItems().some((item) => item.to === "/operator/t2v")).toBe(false);
+		expect(allItems().some((item) => item.to === "/operator/f2v")).toBe(false);
+		expect(allItems().some((item) => item.to === "/operator/i2v")).toBe(false);
+	});
+
 	it("presents Copywriting Landbank as the primary copywriting door", () => {
 		const copywriting = groupByLabel("COPYWRITING");
 		expect(copywriting).toBeDefined();

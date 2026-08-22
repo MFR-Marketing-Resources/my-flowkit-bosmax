@@ -260,6 +260,10 @@ async def _prepare_durable_single_job(
                 separators=(",", ":"),
             ),
             initial_source_mode=job.get("source_mode"),
+            surface_lane=job.get("surface_lane"),
+            transport_mode=job.get("transport_mode") or job.get("mode"),
+            source_mode=job.get("source_mode"),
+            provider_generation_type=job.get("provider_generation_type"),
             initial_lane_job_id=job.get("job_id"),
             initial_lane_project_id=job.get("project_id"),
             stage_state_json=json.dumps(snapshot, ensure_ascii=False),
@@ -365,6 +369,13 @@ async def _sync_durable_single_job(job: dict | None) -> None:
             final_duration_s=job.get("duration_used") or job.get("duration_s"),
             initial_lane_job_id=job.get("job_id"),
             initial_lane_project_id=job.get("project_id") or row.get("project_id"),
+            surface_lane=job.get("surface_lane") or row.get("surface_lane"),
+            transport_mode=job.get("transport_mode") or row.get("transport_mode") or job.get("mode"),
+            source_mode=job.get("source_mode") or row.get("source_mode") or row.get("initial_source_mode"),
+            provider_generation_type=(
+                job.get("provider_generation_type")
+                or row.get("provider_generation_type")
+            ),
             stage_state_json=json.dumps(state, ensure_ascii=False),
             initial_correlation_json=json.dumps(
                 job.get("output_correlation")
@@ -507,6 +518,9 @@ def _durable_recovery_job(row: dict, state: dict) -> dict:
         "durable": True,
         "mode": state.get("mode") or row.get("initial_mode") or "F2V",
         "source_mode": state.get("source_mode") or row.get("initial_source_mode"),
+        "surface_lane": state.get("surface_lane") or row.get("surface_lane"),
+        "transport_mode": state.get("transport_mode") or row.get("transport_mode") or state.get("mode") or row.get("initial_mode"),
+        "provider_generation_type": state.get("provider_generation_type") or row.get("provider_generation_type"),
         "prompt": state.get("prompt") or row.get("initial_prompt_text") or "",
         "model": state.get("model") or row.get("model"),
         "aspect": state.get("aspect") or row.get("aspect_ratio") or "9:16",
@@ -1141,6 +1155,21 @@ async def _record_artifacts(job, mode, artifacts):
     and retryable locally; it must never be reported as a provider-complete DONE."""
     job["artifact_persist_attempted"] = True
     job["artifact_persisted_count"] = 0
+    from agent.services.video_surface_provenance import (
+        build_video_surface_provenance,
+    )
+    provenance = build_video_surface_provenance(
+        surface_lane=job.get("surface_lane"),
+        transport_mode=job.get("transport_mode") or mode,
+        source_mode=job.get("source_mode"),
+        provider_type=job.get("provider_generation_type"),
+        mode=mode,
+        copy_lane=(job.get("copy_execution_binding") or {}).get("lane"),
+        execution_identity=job.get("execution_identity"),
+        routing_receipt=job.get("routing_receipt"),
+        direct_plan=job.get("direct_plan"),
+    )
+    job.update(provenance)
     prior_status = job.get("status")
     delivery_retry = prior_status in {
         "DONE",
@@ -1251,6 +1280,10 @@ async def _record_artifacts(job, mode, artifacts):
                 media_id=art["media_id"],
                 job_id=job.get("job_id"),
                 mode=mode,
+                surface_lane=provenance["surface_lane"],
+                transport_mode=provenance["transport_mode"],
+                source_mode=provenance["source_mode"],
+                provider_generation_type=provenance["provider_generation_type"],
                 artifact_kind=("image" if mode == "IMG" else "video"),
                 local_path=art.get("local_path"),
                 size_mb=art.get("size_mb"),
@@ -1280,6 +1313,10 @@ async def _record_artifacts(job, mode, artifacts):
                 staff_display_name_snapshot=job.get("staff_display_name_snapshot"),
                 mode=mode,
                 artifact_kind=("image" if mode == "IMG" else "video"),
+                 surface_lane=provenance["surface_lane"],
+                 transport_mode=provenance["transport_mode"],
+                 source_mode=provenance["source_mode"],
+                 provider_generation_type=provenance["provider_generation_type"],
                 product_id=job.get("product_id"),
                 final_prompt_text=job.get("prompt") or "",
                 aspect_ratio=job.get("aspect"),
@@ -1367,7 +1404,13 @@ async def _record_artifacts(job, mode, artifacts):
                     artifact["media_id"],
                     job_id=job.get("job_id"),
                     request_id=job.get("request_id"),
+                    staff_id=job.get("staff_id"),
+                    staff_display_name_snapshot=job.get("staff_display_name_snapshot"),
                     mode=mode,
+                    surface_lane=provenance["surface_lane"],
+                    transport_mode=provenance["transport_mode"],
+                    source_mode=provenance["source_mode"],
+                    provider_generation_type=provenance["provider_generation_type"],
                     artifact_kind="video",
                     product_id=job.get("product_id") or custody.get("product_id"),
                     product_name=custody.get("product_name"),
@@ -1429,7 +1472,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          product_visual_custody: dict | None = None,
                          request_id: str | None = None,
                          idempotency_key: str | None = None,
-                         production_recipe: str | None = None) -> dict:
+                         production_recipe: str | None = None,
+                         surface_lane: str | None = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all.
@@ -1607,6 +1651,17 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 "routing_receipt": _routing_receipt,
                 "pre_provider": (_routing_receipt or {}).get("pre_provider"),
             }
+    from agent.services.video_surface_provenance import build_video_surface_provenance
+    _surface_provenance = build_video_surface_provenance(
+        surface_lane=surface_lane,
+        transport_mode=mode,
+        source_mode=source_mode,
+        mode=mode,
+        copy_lane=(copy_execution_binding or {}).get("lane"),
+        execution_identity=execution_identity,
+        routing_receipt=_routing_receipt,
+        direct_plan=_direct_plan,
+    )
     # Final Prompt Approval Gate (WYSIWYG dispatch verification). Recompute this
     # dispatch's execution envelope and require a matching human-APPROVED snapshot.
     # For a non-UI multi-op run (queue / bulk / scheduler / Montage / Extend) the
@@ -1661,6 +1716,9 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                      "staff_id": staff_id,
                      "staff_display_name_snapshot": staff_display_name_snapshot,
                      "prompt": prompt, "aspect": aspect, "duration_s": duration_s,
+                      **_surface_provenance,
+                      "transport_mode": _surface_provenance["transport_mode"] or mode,
+                      "direct_plan": _direct_plan,
                      "execution_identity": execution_identity,
                      "product_visual_custody": product_visual_custody,
                      "error": None, "created": time.time(),

@@ -137,6 +137,9 @@ async def test_single_block_finalize_live_registers_artifact(monkeypatch):
     assert result["concat"]["status"] == "COMPLETE"
     assert calls and calls[0][0] == "clip-9"
     assert calls[0][1]["mode"] == "MONTAGE" and calls[0][1]["artifact_kind"] == "video"
+    assert calls[0][1]["surface_lane"] == "MONTAGE"
+    assert calls[0][1]["transport_mode"] == "MONTAGE"
+    assert calls[0][1]["provider_generation_type"] == "montage_scene_artifact"
 
 
 async def test_assemble_single_block_run_skips_concat(monkeypatch):
