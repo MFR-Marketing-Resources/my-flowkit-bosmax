@@ -34,10 +34,30 @@ _GENERATION_TERMINAL_STATUSES = frozenset({
     "ARTIFACT_PERSISTENCE_FAILED",
     "DURABILITY_SYNC_FAILED",
     "RECOVERY_REQUIRED",
+    "RECOVERY_UNRECOVERABLE",
     "GENERATED_BUT_UNRETRIEVED",
     "RENDER_NOT_MATERIALIZED",
     "STALE_OR_FOREIGN_CANDIDATES_ONLY",
 })
+
+# These states have stopped the process-local task, but the durable row still
+# owns a provider handle or a retrieved file that can be reconciled without a
+# second generation submit.  Keep them separate from the terminal set used by
+# the in-memory lane GC: a backend restart must revisit these rows.
+_DURABLE_RECOVERY_STATUSES = frozenset({
+    "SUBMITTED",
+    "SETUP",
+    "GENERATING",
+    "RECOVERY_REQUIRED",
+    "GENERATED_BUT_UNRETRIEVED",
+    "RENDER_NOT_MATERIALIZED",
+    "STALE_OR_FOREIGN_CANDIDATES_ONLY",
+    "ARTIFACT_PERSISTING",
+    "ARTIFACT_PERSISTENCE_FAILED",
+    "RETRIEVED_NOT_REGISTERED",
+})
+
+_DURABLE_RECOVERY_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 def _job_active(job_id) -> bool:
@@ -312,6 +332,10 @@ async def _sync_durable_single_job(job: dict | None) -> None:
                 or targets[0].get("workflowId")
             )
         state = _durable_single_snapshot(job)
+        if first_operation_id or targets:
+            state.setdefault("provider_generation_submit_count", 1)
+            state["provider_resubmission"] = False
+            state["resubmission_allowed"] = False
         terminal_with_output = {
             "DONE",
             "PRODUCT_FIDELITY_REVIEW_REQUIRED",
@@ -349,72 +373,502 @@ async def _sync_durable_single_job(job: dict | None) -> None:
         job["error"] = str(exc)
 
 
-async def get_durable_job(job_id: str) -> dict | None:
-    """Read a standard job after the process-local make_video map is gone."""
+def _durable_state_from_row(row: dict) -> dict:
+    try:
+        state = json.loads(row.get("stage_state_json") or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        state = {}
+    return state if isinstance(state, dict) else {}
+
+
+def _durable_public_state(row: dict, state: dict, *, status: str | None = None) -> dict:
+    """Merge the DB lifecycle row and its JSON snapshot for API/status readers."""
+    merged = dict(state or {})
+    effective_status = str(status or row.get("status") or "UNKNOWN")
+    merged.update({
+        "job_id": row.get("job_id"),
+        "status": effective_status,
+        "error": row.get("error_code") or merged.get("error"),
+        "media_id": row.get("final_media_id")
+        or row.get("initial_media_id")
+        or merged.get("media_id"),
+        "local_path": row.get("final_local_path") or merged.get("local_path"),
+        "project_id": row.get("project_id") or merged.get("project_id"),
+        "recovery_required": bool(
+            merged.get("recovery_required")
+            or effective_status in _DURABLE_RECOVERY_STATUSES
+        ),
+        "durable": True,
+        "provider_generation_submit_count": int(
+            merged.get("provider_generation_submit_count")
+            or (1 if (
+                merged.get("provider_operation_ids")
+                or merged.get("direct_media_targets")
+                or row.get("initial_operation_id")
+                or row.get("initial_media_id")
+            ) else 0)
+        ),
+        "provider_generation_submits": 0,
+        "provider_resubmission": False,
+        "resubmission_allowed": False,
+    })
+    return merged
+
+
+def _provider_operation_name(value) -> str | None:
+    if isinstance(value, dict):
+        operation = value.get("operation")
+        if isinstance(operation, dict):
+            value = operation.get("name") or operation.get("operation_id")
+        else:
+            value = (
+                value.get("operation_id")
+                or value.get("operation_name")
+                or value.get("provider_operation_id")
+                or value.get("name")
+            )
+    value = str(value or "").strip()
+    return value or None
+
+
+def _durable_provider_handles(row: dict, state: dict) -> tuple[str | None, list, str | None]:
+    """Resolve only identities persisted before/at provider acceptance.
+
+    Direct media targets are preferred because they are the current Flow status
+    contract. Legacy operation handles remain supported for older rows.  No
+    value is manufactured from a prompt, project URL, or process-local map.
+    """
+    project_id = str(
+        row.get("project_id") or state.get("project_id") or ""
+    ).strip()
+    raw_targets = state.get("direct_media_targets")
+    if isinstance(raw_targets, list):
+        targets = []
+        for raw in raw_targets:
+            if not isinstance(raw, dict):
+                continue
+            name = str(raw.get("name") or raw.get("media_id") or "").strip()
+            target_project = str(
+                raw.get("projectId")
+                or raw.get("project_id")
+                or project_id
+                or ""
+            ).strip()
+            if name and target_project:
+                targets.append({"name": name, "projectId": target_project})
+        if targets:
+            return "media", targets, None
+
+    # A synced row carries initial_media_id even when an older snapshot did not
+    # retain the list-shaped direct target.  This is still safe only with the
+    # exact provider project id.
+    media_id = str(
+        state.get("media_id")
+        or row.get("initial_media_id")
+        or ""
+    ).strip()
+    if media_id and project_id:
+        return "media", [{"name": media_id, "projectId": project_id}], None
+
+    raw_operations = state.get("provider_operation_ids")
+    if not isinstance(raw_operations, list):
+        identity = state.get("generation_identity")
+        raw_operations = identity.get("operation_names") if isinstance(identity, dict) else []
+    if not isinstance(raw_operations, list):
+        raw_operations = []
+    if row.get("initial_operation_id"):
+        raw_operations = [row["initial_operation_id"], *raw_operations]
+    operations = []
+    seen = set()
+    for raw in raw_operations:
+        name = _provider_operation_name(raw)
+        if name and name not in seen:
+            seen.add(name)
+            operations.append({"operation": {"name": name}})
+    if operations:
+        return "operation", operations, None
+
+    if (state.get("direct_media_targets") or media_id) and not project_id:
+        return None, [], "DURABLE_PROVIDER_PROJECT_ID_MISSING"
+    return None, [], "DURABLE_PROVIDER_IDENTITY_INSUFFICIENT"
+
+
+def _durable_recovery_job(row: dict, state: dict) -> dict:
+    """Rebuild the poll/retrieve job envelope without inventing a submit."""
+    job = dict(state)
+    job.update({
+        "job_id": row.get("job_id"),
+        "durable": True,
+        "mode": state.get("mode") or row.get("initial_mode") or "F2V",
+        "source_mode": state.get("source_mode") or row.get("initial_source_mode"),
+        "prompt": state.get("prompt") or row.get("initial_prompt_text") or "",
+        "model": state.get("model") or row.get("model"),
+        "aspect": state.get("aspect") or row.get("aspect_ratio") or "9:16",
+        "duration_s": state.get("duration_s") or row.get("requested_duration_seconds") or 8,
+        "project_id": state.get("project_id") or row.get("project_id"),
+        "product_id": state.get("product_id") or row.get("product_id"),
+        "request_id": state.get("request_id"),
+        "num_videos": int(state.get("num_videos") or 1),
+        "strict_artifact_delivery": True,
+        "resubmission_allowed": False,
+        "provider_resubmission": False,
+        "provider_generation_submit_count": int(
+            state.get("provider_generation_submit_count") or 1
+        ),
+    })
+    return job
+
+
+async def _check_direct_media_targets_once(client, targets: list[dict]) -> dict:
+    """Make one provider status call; a scheduler tick must never hold 15 min."""
+    try:
+        result = await client.check_video_status_by_media(targets)
+    except Exception as exc:  # noqa: BLE001 — retain the handle for a later tick
+        return {"state": "POLL_ERROR", "error": str(exc)[:400]}
+    if not isinstance(result, dict) or result.get("error"):
+        return {"state": "POLL_ERROR", "error": str((result or {}).get("error") or "empty status response")[:400]}
+    entries = _direct_media_entries(result)
+    by_name = {str(m.get("name")): m for m in entries if m.get("name")}
+    names = {str(t.get("name")) for t in targets if t.get("name")}
+    failed = [
+        (name, _direct_media_status(by_name[name]))
+        for name in names
+        if name in by_name
+        and _direct_media_status(by_name[name]) == "MEDIA_GENERATION_STATUS_FAILED"
+    ]
+    if failed:
+        return {"state": "FAILED", "error": f"Media generation failed: {failed[0][0]}", "data": result}
+    if names and all(
+        name in by_name
+        and _direct_media_status(by_name[name]) == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+        for name in names
+    ):
+        return {"state": "SUCCESS", "data": result}
+    return {"state": "PENDING", "data": result}
+
+
+async def _check_direct_operations_once(client, operations: list[dict]) -> dict:
+    """Make one legacy operation status call for restart reconciliation."""
+    try:
+        result = await client.check_video_status(operations)
+    except Exception as exc:  # noqa: BLE001 — retain the handle for a later tick
+        return {"state": "POLL_ERROR", "error": str(exc)[:400]}
+    if not isinstance(result, dict) or result.get("error"):
+        return {"state": "POLL_ERROR", "error": str((result or {}).get("error") or "empty status response")[:400]}
+    data = _direct_response_data(result)
+    ops = data.get("operations") if isinstance(data, dict) else []
+    if not ops:
+        return {"state": "PENDING", "data": result}
+    statuses = [str(op.get("status") or "") for op in ops if isinstance(op, dict)]
+    if any(status == "MEDIA_GENERATION_STATUS_FAILED" for status in statuses):
+        return {"state": "FAILED", "error": "Provider operation failed", "data": result}
+    if statuses and all(status == "MEDIA_GENERATION_STATUS_SUCCESSFUL" for status in statuses):
+        return {"state": "SUCCESS", "data": result}
+    return {"state": "PENDING", "data": result}
+
+
+async def _reconcile_artifacts_only(job: dict) -> bool:
+    """Retry a retrieved file/library registration without touching the provider."""
+    artifacts = job.get("artifacts") or []
+    if not artifacts and job.get("media_id") and job.get("local_path"):
+        artifacts = [{
+            "media_id": job.get("media_id"),
+            "local_path": job.get("local_path"),
+            "size_mb": job.get("size_mb"),
+        }]
+        job["artifacts"] = artifacts
+    if not artifacts:
+        return False
+    job["status"] = "ARTIFACT_PERSISTING"
+    await _record_artifacts(job, job.get("mode") or "F2V", artifacts)
+    return True
+
+
+async def reconcile_durable_single_job(
+    job_id: str,
+    *,
+    provider_client=None,
+) -> dict | None:
+    """Resume one persisted SINGLE job using its exact provider identity.
+
+    This function is deliberately submit-free.  It performs at most one status
+    call per invocation, retrieves only a provider-terminal target, and then
+    registers the local artifact.  A pending/error response leaves the exact
+    handle in the ledger for the next scheduler/startup tick.
+    """
     from agent.db import crud
 
     row = await crud.get_video_production_job(job_id)
     if not row or not str(row.get("job_id") or "").startswith("g_"):
         return None
-    try:
-        state = json.loads(row.get("stage_state_json") or "{}")
-    except (TypeError, ValueError):
-        state = {}
-    if not isinstance(state, dict):
-        state = {}
-    status = str(row.get("status") or "UNKNOWN")
-    if status not in _GENERATION_TERMINAL_STATUSES:
-        status = "RECOVERY_REQUIRED"
-        state.setdefault("recovery_required", True)
-        state.setdefault(
-            "recovery_hint",
-            "The process-local lane handle is unavailable; reconcile the provider "
-            "operation before any retry. No provider resubmission was attempted.",
+    lock = _DURABLE_RECOVERY_LOCKS.setdefault(job_id, asyncio.Lock())
+    async with lock:
+        row = await crud.get_video_production_job(job_id)
+        if not row:
+            return None
+        state = _durable_state_from_row(row)
+        status = str(row.get("status") or "UNKNOWN")
+        if status not in _DURABLE_RECOVERY_STATUSES:
+            return _durable_public_state(row, state)
+
+        job = _durable_recovery_job(row, state)
+        job["recovery_required"] = True
+        job["recovery_attempts"] = int(state.get("recovery_attempts") or 0) + 1
+        job["provider_generation_submit_count"] = max(
+            1,
+            int(state.get("provider_generation_submit_count") or 0),
         )
-    state.update({
-        "job_id": job_id,
-        "status": status,
-        "error": row.get("error_code") or state.get("error"),
-        "media_id": row.get("final_media_id") or row.get("initial_media_id") or state.get("media_id"),
-        "local_path": row.get("final_local_path") or state.get("local_path"),
-        "project_id": row.get("project_id") or state.get("project_id"),
-        "recovery_required": bool(state.get("recovery_required")),
-        "durable": True,
-    })
-    return state
+        job["provider_reconciliation"] = {
+            **(
+                state.get("provider_reconciliation")
+                if isinstance(state.get("provider_reconciliation"), dict)
+                else {}
+            ),
+            "provider_generation_submits": 0,
+            "provider_resubmission": False,
+            "last_attempt": time.time(),
+        }
+
+        # A process can die after retrieval and before the two library writes.
+        # The artifact list is enough to repair locally; no provider poll is
+        # needed and no provider identity is required for this branch.
+        if status in {"ARTIFACT_PERSISTING", "ARTIFACT_PERSISTENCE_FAILED", "RETRIEVED_NOT_REGISTERED"} or (
+            state.get("provider_terminal") is True and state.get("artifacts")
+        ):
+            try:
+                if await _reconcile_artifacts_only(job):
+                    await _sync_durable_single_job(job)
+                    fresh = await crud.get_video_production_job(job_id)
+                    return _durable_public_state(
+                        fresh or row,
+                        _durable_state_from_row(fresh or row),
+                    )
+            except Exception as exc:  # noqa: BLE001 — preserve retryable evidence
+                job["status"] = "ARTIFACT_PERSISTENCE_FAILED"
+                job["artifact_record_error"] = str(exc)
+            await _sync_durable_single_job(job)
+            fresh = await crud.get_video_production_job(job_id)
+            return _durable_public_state(
+                fresh or row,
+                _durable_state_from_row(fresh or row),
+            )
+
+        handle_kind, handles, identity_error = _durable_provider_handles(row, state)
+        if not handle_kind:
+            job.update(
+                status="RECOVERY_UNRECOVERABLE",
+                stage="recovery_unrecoverable",
+                recovery_unrecoverable=True,
+                error=identity_error,
+                recovery_hint=(
+                    "The durable row has no complete provider operation/media identity "
+                    "and cannot be resumed safely. No provider resubmission is allowed."
+                ),
+            )
+            job["provider_reconciliation"].update({
+                "state": "UNRECOVERABLE",
+                "error_code": identity_error,
+            })
+            await _sync_durable_single_job(job)
+            fresh = await crud.get_video_production_job(job_id)
+            return _durable_public_state(
+                fresh or row,
+                _durable_state_from_row(fresh or row),
+            )
+
+        if handle_kind == "media":
+            job["direct_media_targets"] = handles
+            job["provider_operation_ids"] = [str(t["name"]) for t in handles]
+        else:
+            job["provider_operation_ids"] = handles
+            job["generation_identity"] = {
+                **(
+                    state.get("generation_identity")
+                    if isinstance(state.get("generation_identity"), dict)
+                    else {}
+                ),
+                "operation_names": [
+                    str((op.get("operation") or {}).get("name"))
+                    for op in handles
+                    if (op.get("operation") or {}).get("name")
+                ],
+                "provider_generation_submit_count": 1,
+            }
+
+        client = provider_client
+        if client is None:
+            client = get_flow_client()
+        if handle_kind == "media":
+            poll = await _check_direct_media_targets_once(client, handles)
+        else:
+            poll = await _check_direct_operations_once(client, handles)
+        job["provider_reconciliation"].update({
+            "state": poll.get("state"),
+            "error": poll.get("error"),
+            "handle_kind": handle_kind,
+            "provider_handle_count": len(handles),
+        })
+        if poll.get("state") == "PENDING":
+            job.update(
+                status="RECOVERY_REQUIRED",
+                stage="provider_poll_pending",
+                error="DURABLE_PROVIDER_POLL_PENDING",
+                recovery_hint=(
+                    "Provider operation is still rendering. The persisted handle will "
+                    "be polled again; no provider resubmission is allowed."
+                ),
+            )
+            await _sync_durable_single_job(job)
+            fresh = await crud.get_video_production_job(job_id)
+            return _durable_public_state(
+                fresh or row,
+                _durable_state_from_row(fresh or row),
+            )
+        if poll.get("state") != "SUCCESS":
+            job.update(
+                status="GENERATED_BUT_UNRETRIEVED",
+                stage="provider_reconciliation_error",
+                error=poll.get("error") or "DURABLE_PROVIDER_POLL_FAILED",
+                recovery_hint=(
+                    "The provider handle remains durable and can be polled again. "
+                    "Do not resubmit the generation."
+                ),
+            )
+            await _sync_durable_single_job(job)
+            fresh = await crud.get_video_production_job(job_id)
+            return _durable_public_state(
+                fresh or row,
+                _durable_state_from_row(fresh or row),
+            )
+
+        job["provider_terminal"] = True
+        job["provider_status"] = "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+        plan = state.get("direct_plan") if isinstance(state.get("direct_plan"), dict) else {
+            "gen_type": (state.get("generation_identity") or {}).get("gen_type")
+            if isinstance(state.get("generation_identity"), dict)
+            else "reference_frame_2_video",
+            "aspect_enum": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        }
+        seed = (state.get("generation_identity") or {}).get("seed", 0)
+        try:
+            if handle_kind == "media":
+                await _direct_media_retrieve_from_poll(
+                    job,
+                    client,
+                    job.get("mode") or "F2V",
+                    handles,
+                    plan,
+                    seed,
+                    int(job.get("num_videos") or 1),
+                    poll.get("data") or {},
+                )
+            else:
+                await _direct_operation_retrieve_from_poll(
+                    job,
+                    client,
+                    job.get("mode") or "F2V",
+                    poll.get("data") or {},
+                    plan,
+                    seed,
+                    int(job.get("num_videos") or 1),
+                )
+        except Exception as exc:  # noqa: BLE001 — retain provider terminal identity
+            job.update(
+                status="GENERATED_BUT_UNRETRIEVED",
+                stage="provider_terminal_retrieval_failed",
+                error=str(exc),
+                recovery_hint=(
+                    "Provider is terminal but retrieval failed. Keep polling/retrieving "
+                    "the persisted identity; never resubmit."
+                ),
+            )
+        await _sync_durable_single_job(job)
+        fresh = await crud.get_video_production_job(job_id)
+        return _durable_public_state(
+            fresh or row,
+            _durable_state_from_row(fresh or row),
+        )
 
 
-async def recover_durable_single_jobs() -> dict:
-    """Provider-free startup sweep for standard jobs whose memory map vanished."""
+async def get_durable_job(
+    job_id: str,
+    *,
+    reconcile: bool = True,
+    provider_client=None,
+) -> dict | None:
+    """Read/resume a standard job after the process-local map is gone."""
     from agent.db import crud
 
-    marked = 0
+    row = await crud.get_video_production_job(job_id)
+    if not row or not str(row.get("job_id") or "").startswith("g_"):
+        return None
+    state = _durable_state_from_row(row)
+    status = str(row.get("status") or "UNKNOWN")
+    if reconcile and status in _DURABLE_RECOVERY_STATUSES:
+        return await reconcile_durable_single_job(
+            job_id,
+            provider_client=provider_client,
+        )
+    return _durable_public_state(row, state)
+
+
+async def recover_durable_single_jobs(*, provider_client=None) -> dict:
+    """Startup sweep: poll/retrieve/register persisted SINGLE identities once."""
+    from agent.db import crud
+
     candidates = 0
+    recovered = 0
+    unrecoverable = 0
+    provider_calls = 0
     for row in await crud.list_video_production_jobs(limit=1000):
-        if not str(row.get("job_id") or "").startswith("g_"):
+        job_id = str(row.get("job_id") or "")
+        if not job_id.startswith("g_"):
             continue
-        if str(row.get("status") or "") in _GENERATION_TERMINAL_STATUSES:
+        status = str(row.get("status") or "")
+        if status not in _DURABLE_RECOVERY_STATUSES:
             continue
         candidates += 1
         try:
-            state = json.loads(row.get("stage_state_json") or "{}")
-        except (TypeError, ValueError):
-            state = {}
-        if not isinstance(state, dict):
-            state = {}
-        state["recovery_required"] = True
-        state["recovery_hint"] = (
-            "Process restart interrupted a standard SINGLE lane. Reconcile the "
-            "recorded provider identity before any retry; the lane is not re-submitted."
-        )
-        await crud.update_video_production_job_full(
-            row["job_id"],
-            status="RECOVERY_REQUIRED",
-            error_code="DURABLE_LANE_HANDLE_UNAVAILABLE",
-            stage_state_json=json.dumps(state, ensure_ascii=False),
-        )
-        marked += 1
-    return {"candidates": candidates, "marked_recovery_required": marked, "provider_calls": 0}
+            result = await reconcile_durable_single_job(
+                job_id,
+                provider_client=provider_client,
+            )
+            if isinstance(result, dict):
+                reconciliation = result.get("provider_reconciliation") or {}
+                if reconciliation.get("state") not in (None, "UNRECOVERABLE"):
+                    provider_calls += 1
+                if result.get("status") == "DONE":
+                    recovered += 1
+                if result.get("status") == "RECOVERY_UNRECOVERABLE":
+                    unrecoverable += 1
+        except Exception as exc:  # noqa: BLE001 — preserve a retryable row
+            state = _durable_state_from_row(row)
+            state.update({
+                "recovery_required": True,
+                "recovery_hint": (
+                    "Provider reconciliation raised a transient error. The persisted "
+                    "identity remains the only allowed retry target; no resubmission."
+                ),
+                "provider_reconciliation": {
+                    "state": "POLL_ERROR",
+                    "error": str(exc)[:400],
+                    "provider_generation_submits": 0,
+                },
+            })
+            await crud.update_video_production_job_full(
+                job_id,
+                status="RECOVERY_REQUIRED",
+                error_code="DURABLE_RECOVERY_ATTEMPT_FAILED",
+                stage_state_json=json.dumps(state, ensure_ascii=False),
+            )
+    return {
+        "candidates": candidates,
+        "recovered": recovered,
+        "unrecoverable": unrecoverable,
+        "provider_calls": provider_calls,
+        "provider_generation_submits": 0,
+        "marked_recovery_required": 0,
+    }
 
 
 async def _run_generate_task(job_id: str, runner, *args) -> None:
@@ -2228,6 +2682,131 @@ async def _download_video_bytes(client, media_id, fife_url,
         f"encodedVideo ({detail}) and signed delivery failed")
 
 
+async def _direct_operation_retrieve_from_poll(
+        job, client, mode, polled, plan, seed, num_videos) -> None:
+    """Retrieve/register a successful legacy-operation poll response."""
+    from agent.worker._parsing import _extract_uuid_from_url
+
+    data = _direct_response_data(polled)
+    final_ops = data.get("operations", []) if isinstance(data, dict) else []
+    outdir = OUTPUT_DIR / "retrieved"
+    outdir.mkdir(parents=True, exist_ok=True)
+    collected = []
+    skipped = []
+    for op in final_ops:
+        if not isinstance(op, dict):
+            continue
+        op_name = (op.get("operation") or {}).get("name")
+        video_meta = ((op.get("operation") or {}).get("metadata") or {}).get("video") or {}
+        mid = str(video_meta.get("mediaId") or "").strip()
+        fife = video_meta.get("fifeUrl")
+        if not mid and fife:
+            mid = _extract_uuid_from_url(str(fife))
+        if not mid:
+            skipped.append({"operation": op_name, "reason": "NO_MEDIA_ID_IN_METADATA"})
+            continue
+        data_bytes, source = await _download_video_bytes(client, mid, fife)
+        path = outdir / f"{mid}.mp4"
+        path.write_bytes(data_bytes)
+        collected.append({
+            "media_id": mid,
+            "local_path": str(path),
+            "size_mb": round(len(data_bytes) / 1024 / 1024, 2),
+            "correlation": {
+                "media_id": mid,
+                "matched_on": "operation_handle",
+                "operation_name": op_name,
+                "retrieval_source": source,
+                "gen_seed": seed,
+            },
+        })
+    job["direct_retrieval_skipped"] = skipped
+    if not collected:
+        raise RuntimeError(
+            "DIRECT_RETRIEVAL_EMPTY: provider terminal operation exposed no retrievable media"
+        )
+    first = collected[0]
+    job["output_correlation"] = first["correlation"]
+    job.update(
+        status="DONE",
+        stage="done",
+        media_id=first["media_id"],
+        local_path=first["local_path"],
+        size_mb=first["size_mb"],
+        artifact="video",
+        artifacts=list(collected),
+    )
+    if len(collected) < int(num_videos or 1):
+        job["partial"] = True
+        job["partial_detail"] = f"retrieved {len(collected)}/{num_videos} requested videos"
+        job["stage"] = "done_partial"
+    _stamp_credit(job, CREDIT_MAY_HAVE_SPENT)
+    await _record_artifacts(job, mode, collected)
+
+
+async def _direct_media_retrieve_from_poll(
+        job, client, mode, targets, plan, seed, num_videos, polled) -> None:
+    """Retrieve/register a successful current media-target poll response."""
+    entries = _direct_media_entries(polled)
+    by_name = {str(m.get("name")): m for m in entries if m.get("name")}
+    outdir = OUTPUT_DIR / "retrieved"
+    outdir.mkdir(parents=True, exist_ok=True)
+    collected = []
+    skipped = []
+    for target in targets:
+        mid = str(target.get("name") or "").strip()
+        media = by_name.get(mid)
+        if not mid or not media:
+            skipped.append({"media_id": mid, "reason": "NO_MEDIA_IN_SUCCESS_POLL"})
+            continue
+        generation_id = _direct_media_generation_id(media)
+        if generation_id and hasattr(client, "_media_generation_ids"):
+            client._media_generation_ids[mid] = generation_id
+        data_bytes, source = await _download_video_bytes(
+            client,
+            mid,
+            _direct_media_url(media),
+            media_generation_id=generation_id,
+        )
+        path = outdir / f"{mid}.mp4"
+        path.write_bytes(data_bytes)
+        collected.append({
+            "media_id": mid,
+            "local_path": str(path),
+            "size_mb": round(len(data_bytes) / 1024 / 1024, 2),
+            "correlation": {
+                "media_id": mid,
+                "matched_on": "media_status",
+                "operation_name": mid,
+                "retrieval_source": source,
+                "gen_seed": seed,
+                "media_generation_id": generation_id,
+            },
+        })
+    job["direct_retrieval_skipped"] = skipped
+    if not collected:
+        raise RuntimeError(
+            "DIRECT_RETRIEVAL_EMPTY: provider terminal media status exposed no retrievable media"
+        )
+    first = collected[0]
+    job["output_correlation"] = first["correlation"]
+    job.update(
+        status="DONE",
+        stage="done",
+        media_id=first["media_id"],
+        local_path=first["local_path"],
+        size_mb=first["size_mb"],
+        artifact="video",
+        artifacts=list(collected),
+    )
+    if len(collected) < int(num_videos or 1):
+        job["partial"] = True
+        job["partial_detail"] = f"retrieved {len(collected)}/{num_videos} requested videos"
+        job["stage"] = "done_partial"
+    _stamp_credit(job, CREDIT_MAY_HAVE_SPENT)
+    await _record_artifacts(job, mode, collected)
+
+
 async def _direct_poll_retrieve_finish(job, client, mode, operations, plan,
                                        seed, num_videos) -> None:
     """Poll the operation handles to terminal, download every finished video,
@@ -2444,7 +3023,10 @@ async def _run_generate_direct(job_id, mode, prompt, project_id, image_media_ids
             "seed": seed,
             "expected_model": fired_model_key,
             "operation_names": op_names,
+            "provider_generation_submit_count": 1,
         }
+        job["provider_generation_submit_count"] = 1
+        job["provider_resubmission"] = False
         job["identity_captured"] = True  # the operation handle IS the binding
         # Provider identity is durable before the long poll/retrieval window.
         await _sync_durable_single_job(job)
@@ -2626,7 +3208,10 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
     job["direct_media_targets"] = media_targets
     job["model_used"] = fired_model_key
     job["generation_identity"] = {"seed": seed, "expected_model": fired_model_key,
-                                  "operation_names": op_names}
+                                  "operation_names": op_names,
+                                  "provider_generation_submit_count": 1}
+    job["provider_generation_submit_count"] = 1
+    job["provider_resubmission"] = False
     job["identity_captured"] = bool(op_names)
     await _sync_durable_single_job(job)
 
