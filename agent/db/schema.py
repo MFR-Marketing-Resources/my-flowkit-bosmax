@@ -1241,6 +1241,10 @@ CREATE TABLE IF NOT EXISTS generated_artifact (
     staff_id       TEXT,
     staff_display_name_snapshot TEXT,
     mode           TEXT,
+    surface_lane   TEXT,
+    transport_mode TEXT,
+    source_mode    TEXT,
+    provider_generation_type TEXT,
     artifact_kind  TEXT NOT NULL DEFAULT 'video' CHECK(artifact_kind IN ('video','image')),
     local_path     TEXT,
     size_mb        REAL,
@@ -3791,6 +3795,10 @@ CREATE TABLE IF NOT EXISTS generation_result (
     staff_id       TEXT,
     staff_display_name_snapshot TEXT,
     mode           TEXT,
+    surface_lane   TEXT,
+    transport_mode TEXT,
+    source_mode    TEXT,
+    provider_generation_type TEXT,
     artifact_kind  TEXT NOT NULL DEFAULT 'video'
                    CHECK(artifact_kind IN ('video','image')),
     product_id     TEXT,
@@ -3823,6 +3831,16 @@ CREATE INDEX IF NOT EXISTS idx_generation_result_product ON generation_result(pr
             await db.execute(
                 "ALTER TABLE generation_result ADD COLUMN product_visual_custody_json TEXT NOT NULL DEFAULT '{}'"
             )
+        for col, decl in (
+            ("surface_lane", "TEXT"),
+            ("transport_mode", "TEXT"),
+            ("source_mode", "TEXT"),
+            ("provider_generation_type", "TEXT"),
+        ):
+            if col not in _generation_result_columns:
+                await db.execute(
+                    f"ALTER TABLE generation_result ADD COLUMN {col} {decl}"
+                )
         await db.commit()
 
         # Native Google Flow Extend LINEAGE — durable parent->child chain record,
@@ -3878,6 +3896,10 @@ CREATE TABLE IF NOT EXISTS video_production_job (
     staff_display_name_snapshot TEXT,
     project_id                  TEXT,
     scene_id                    TEXT,
+    surface_lane                TEXT,
+    transport_mode              TEXT,
+    source_mode                 TEXT,
+    provider_generation_type    TEXT,
     requested_duration_seconds  INTEGER,
     status                      TEXT NOT NULL DEFAULT 'PREPARING',
     error_code                  TEXT,
@@ -3966,6 +3988,8 @@ CREATE INDEX IF NOT EXISTS idx_video_generation_lane_lease_status
             ("initial_reference_media_ids_json", "TEXT"),
             # PR321 closure: SERVER-OWNED canonical surface mode (from the package's
             # compiler lineage) + the exact-output correlation evidence of block 1.
+            ("surface_lane", "TEXT"), ("transport_mode", "TEXT"),
+            ("source_mode", "TEXT"), ("provider_generation_type", "TEXT"),
             ("initial_source_mode", "TEXT"),
             ("initial_correlation_json", "TEXT"),
         ):
@@ -3998,6 +4022,10 @@ CREATE INDEX IF NOT EXISTS idx_video_generation_lane_lease_status
             await db.execute("ALTER TABLE generated_artifact ADD COLUMN scene_id TEXT")
             logger.info("Migrated: added scene_id column to generated_artifact")
         for col, decl in (
+            ("surface_lane", "TEXT"),
+            ("transport_mode", "TEXT"),
+            ("source_mode", "TEXT"),
+            ("provider_generation_type", "TEXT"),
             ("file_size_bytes", "INTEGER"),
             ("file_sha256", "TEXT"),
             ("delivery_status", "TEXT NOT NULL DEFAULT 'REGISTERED'"),

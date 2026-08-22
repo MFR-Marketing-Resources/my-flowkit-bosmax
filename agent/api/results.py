@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException
 
 from agent.db import crud
+from agent.services.video_surface_provenance import surface_display_label
 
 router = APIRouter(prefix="/results", tags=["results"])
 
@@ -70,11 +71,20 @@ def _entry_from_record(record: dict, artifact: dict | None) -> dict:
     return {
         "media_id": record["media_id"],
         "mode": record.get("mode"),
+        "surface_lane": record.get("surface_lane") or (artifact or {}).get("surface_lane"),
+        "surface_label": surface_display_label(
+            record.get("surface_lane") or (artifact or {}).get("surface_lane"),
+            mode=record.get("mode"),
+        ),
+        "transport_mode": record.get("transport_mode") or (artifact or {}).get("transport_mode"),
+        "source_mode": record.get("source_mode") or (artifact or {}).get("source_mode"),
+        "provider_generation_type": record.get("provider_generation_type") or (artifact or {}).get("provider_generation_type"),
         "artifact_kind": record.get("artifact_kind") or "video",
         "product_name": record.get("product_name"),
         "model_label": record.get("model_label"),
         "aspect_ratio": record.get("aspect_ratio"),
         "created_at": record.get("created_at"),
+        "duration_s": record.get("duration_s"),
         "has_record": True,
         "file_available": artifact is not None,
         "size_mb": (artifact or {}).get("size_mb"),
@@ -92,11 +102,19 @@ def _entry_from_artifact(artifact: dict) -> dict:
     return {
         "media_id": artifact["media_id"],
         "mode": artifact.get("mode"),
+        "surface_lane": artifact.get("surface_lane"),
+        "surface_label": surface_display_label(
+            artifact.get("surface_lane"), mode=artifact.get("mode")
+        ),
+        "transport_mode": artifact.get("transport_mode"),
+        "source_mode": artifact.get("source_mode"),
+        "provider_generation_type": artifact.get("provider_generation_type"),
         "artifact_kind": artifact.get("artifact_kind") or "video",
         "product_name": None,
         "model_label": artifact.get("model_used"),
         "aspect_ratio": None,
         "created_at": artifact.get("created_at"),
+        "duration_s": artifact.get("duration_used"),
         "has_record": False,
         "file_available": True,
         "size_mb": artifact.get("size_mb"),
@@ -111,15 +129,18 @@ async def list_results(
     limit: int = 60,
     mode: str | None = None,
     kind: str | None = None,
+    surface_lane: str | None = None,
 ):
     """Newest-first deliverable list. Runs the lazy video 48h purge first (so
     file availability is accurate), then merges durable records with any
     file-only artifacts, and attaches a one-query caption rollup per media id."""
     limit = max(1, min(200, int(limit or 60)))
     purged = await crud.purge_expired_artifacts(ARTIFACT_RETENTION_HOURS)
-    records = await crud.list_generation_results(limit=limit, mode=mode, kind=kind)
+    records = await crud.list_generation_results(
+        limit=limit, mode=mode, kind=kind, surface_lane=surface_lane
+    )
     artifacts = await crud.list_generated_artifacts(
-        limit=max(limit, 200), mode=mode, kind=kind)
+        limit=max(limit, 200), mode=mode, kind=kind, surface_lane=surface_lane)
     artifact_map = {a["media_id"]: a for a in artifacts}
 
     entries: list[dict] = []
@@ -178,6 +199,13 @@ async def recover_results(
             "snapshot": {
                 "final_prompt_text": row.get("final_prompt_text") or "",
                 "mode": row.get("mode"),
+                "surface_lane": row.get("surface_lane"),
+                "surface_label": surface_display_label(
+                    row.get("surface_lane"), mode=row.get("mode")
+                ),
+                "transport_mode": row.get("transport_mode"),
+                "source_mode": row.get("source_mode"),
+                "provider_generation_type": row.get("provider_generation_type"),
                 "model_label": row.get("model_label"),
                 "aspect_ratio": row.get("aspect_ratio"),
                 "duration_s": row.get("duration_s"),
@@ -224,6 +252,13 @@ async def get_result(media_id: str):
         snapshot = {
             "final_prompt_text": record.get("final_prompt_text") or "",
             "mode": record.get("mode"),
+            "surface_lane": record.get("surface_lane"),
+            "surface_label": surface_display_label(
+                record.get("surface_lane"), mode=record.get("mode")
+            ),
+            "transport_mode": record.get("transport_mode"),
+            "source_mode": record.get("source_mode"),
+            "provider_generation_type": record.get("provider_generation_type"),
             "model_label": record.get("model_label"),
             "aspect_ratio": record.get("aspect_ratio"),
             "duration_s": record.get("duration_s"),
@@ -241,6 +276,13 @@ async def get_result(media_id: str):
     return {
         "media_id": media_id,
         "mode": base.get("mode"),
+        "surface_lane": base.get("surface_lane"),
+        "surface_label": surface_display_label(
+            base.get("surface_lane"), mode=base.get("mode")
+        ),
+        "transport_mode": base.get("transport_mode"),
+        "source_mode": base.get("source_mode"),
+        "provider_generation_type": base.get("provider_generation_type"),
         "artifact_kind": base.get("artifact_kind") or "video",
         "has_record": record is not None,
         "product_name": (record or {}).get("product_name"),

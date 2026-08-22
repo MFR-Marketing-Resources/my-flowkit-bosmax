@@ -69,6 +69,10 @@ async def register_final_video_artifact(
     *,
     job_id: str,
     mode: str = "EXTEND",
+    surface_lane: str | None = None,
+    transport_mode: str | None = None,
+    source_mode: str | None = None,
+    provider_generation_type: str | None = None,
     project_id: str | None = None,
     request_id: str | None = None,
     product_id: str | None = None,
@@ -93,6 +97,24 @@ async def register_final_video_artifact(
         raise FinalArtifactDeliveryError("final render returned no local artifact path")
     evidence = file_delivery_evidence(local_path)
 
+    existing_job = await crud.get_video_production_job(job_id)
+    from agent.services.video_surface_provenance import build_video_surface_provenance
+    provenance = build_video_surface_provenance(
+        surface_lane=surface_lane or (existing_job or {}).get("surface_lane"),
+        transport_mode=(
+            transport_mode
+            or (existing_job or {}).get("transport_mode")
+            or mode
+        ),
+        source_mode=source_mode or (existing_job or {}).get("source_mode"),
+        provider_type=(
+            provider_generation_type
+            or (existing_job or {}).get("provider_generation_type")
+        ),
+        mode=mode,
+        existing=existing_job,
+    )
+
     size_mb = result.get("size_mb")
     if size_mb is None:
         size_mb = round(evidence["size_bytes"] / 1024 / 1024, 2)
@@ -102,6 +124,10 @@ async def register_final_video_artifact(
             media_id,
             job_id=job_id,
             mode=mode,
+            surface_lane=provenance["surface_lane"],
+            transport_mode=provenance["transport_mode"],
+            source_mode=provenance["source_mode"],
+            provider_generation_type=provenance["provider_generation_type"],
             artifact_kind="video",
             local_path=local_path,
             size_mb=size_mb,
@@ -119,6 +145,10 @@ async def register_final_video_artifact(
             job_id=job_id,
             request_id=request_id,
             mode=mode,
+            surface_lane=provenance["surface_lane"],
+            transport_mode=provenance["transport_mode"],
+            source_mode=provenance["source_mode"],
+            provider_generation_type=provenance["provider_generation_type"],
             artifact_kind="video",
             product_id=product_id,
             final_prompt_text=prompt or "",
@@ -144,5 +174,6 @@ async def register_final_video_artifact(
         "sha256": evidence["sha256"],
         "duration_s": int(duration_s or 0),
         "provider_calls": 0,
+        **provenance,
         "readback_verified": True,
     }

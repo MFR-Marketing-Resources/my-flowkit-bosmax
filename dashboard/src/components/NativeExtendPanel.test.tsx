@@ -123,6 +123,7 @@ const BLOCKED = {
 function renderPanel(props: Record<string, unknown> = {}) {
   return render(
     <NativeExtendPanel
+      surfaceLane="HYBRID"
       projectId="p"
       sceneId="s"
       sourceOperationId="op1"
@@ -371,6 +372,7 @@ describe('NativeExtendPanel', () => {
     expect(err).toHaveTextContent('initial_prompt_text');
     // exactly the ONE deliberate request — no automatic retry, no confirm dialog
     expect(planMock).toHaveBeenCalledTimes(1);
+    expect(planMock.mock.calls[0][0]).toMatchObject({ surface_lane: 'HYBRID' });
     expect(screen.queryByTestId('full-video-confirm')).toBeNull();
     // still exactly one call after the UI settles
     await new Promise((r) => setTimeout(r, 50));

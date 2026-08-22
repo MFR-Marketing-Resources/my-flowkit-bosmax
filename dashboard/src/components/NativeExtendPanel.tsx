@@ -39,6 +39,7 @@ import {
 import { ManifestApprovalModal } from './execution-approval/ManifestApprovalModal';
 
 export interface NativeExtendPanelProps {
+  surfaceLane?: 'HYBRID' | 'FACELESS' | 'MONTAGE' | 'PRODUCTION_STUDIO_P6';
   projectId?: string | null;
   sceneId?: string | null;
   sourceOperationId?: string | null;
@@ -54,6 +55,7 @@ export interface NativeExtendPanelProps {
 }
 
 export default function NativeExtendPanel({
+  surfaceLane,
   projectId: projectIdProp,
   sceneId: sceneIdProp,
   sourceOperationId: sourceProp,
@@ -114,6 +116,7 @@ export default function NativeExtendPanel({
   const isAuthExpired = durableStatus?.status === 'AUTHORIZATION_EXPIRED';
 
   const planIntent = () => ({
+    surface_lane: surfaceLane ?? null,
     product_id: productId ?? null,
     product_name: productName ?? null,
     execution_package_id: executionPackageId ?? null,

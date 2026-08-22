@@ -320,8 +320,8 @@ export default function WorkspaceJobsPage() {
 						Workspace Jobs
 					</h2>
 					<p className="mt-2 max-w-3xl text-sm text-slate-400">
-						Unified read-only workspace reporting for Text to Video, Frames,
-						Ingredients, and Image authoring. Use this page to inspect request
+						Unified read-only workspace reporting for Hybrid, Faceless Video,
+						Montage, Production Studio, and internal transport diagnostics. Use this page to inspect request
 						status, latest stage, remarks, and recorded telemetry history
 						without cluttering authoring surfaces.
 					</p>
