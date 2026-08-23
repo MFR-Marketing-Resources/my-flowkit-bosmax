@@ -68,6 +68,7 @@ from agent.services.product_truth_lock_service import (
     resolve_approved_product_truth_lock,
     reject_product_truth_lock,
     select_product_truth_fallback,
+    inspect_product_truth_lock_row,
 )
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,14 @@ PREPARATION_FAILED = "PREPARATION_FAILED"
 BLOCKED = "BLOCKED"
 REJECTED = "REJECTED"
 SUPERSEDED = "SUPERSEDED"
+BROKEN_OFFICIAL_VISUAL = "BROKEN_OFFICIAL_VISUAL"
+
+_OFFICIAL_RECOVERY_FAILURE_CODES = {
+    "CANONICAL_PRODUCT_SOURCE_INVALID",
+    "CANONICAL_CUTOUT_INVALID",
+    "CANONICAL_ALPHA_MASK_REQUIRED",
+    "CANONICAL_ALPHA_MASK_INVALID",
+}
 
 PREPARATION_STATES = {
     NOT_PREPARED,
@@ -633,6 +642,28 @@ def _truth_row_approved(lock: dict[str, Any] | None) -> bool:
     }
 
 
+def _official_visual_gate(
+    product_id: str,
+    lock: dict[str, Any] | None,
+) -> tuple[bool | None, str | None]:
+    """Evaluate official authority from the persisted bytes, not the flag.
+
+    ``None`` means the row is not an active approved cutout. For an active
+    approved row, every production readiness caller receives the same strict
+    byte/SHA/geometry validation used by exact-output gates.
+    """
+    if not _truth_row_approved(lock):
+        return None, None
+    try:
+        status = inspect_product_truth_lock_row(product_id, lock)
+    except Exception:  # noqa: BLE001 - readiness must fail closed
+        logger.exception("official product visual inspection failed for %s", product_id)
+        return False, "PRODUCT_TRUTH_LOCK_INVALID"
+    if status.get("lock_valid") is True:
+        return True, None
+    return False, str(status.get("failure_state") or status.get("product_truth_status") or "PRODUCT_TRUTH_LOCK_INVALID")
+
+
 def _purge_reason(product: dict[str, Any]) -> str | None:
     reason = str(product.get("archived_reason") or "").upper()
     if reason.startswith("DUPLICATE_MERGED_TO_CANONICAL"):
@@ -826,10 +857,14 @@ def _candidate_status(
     row: dict[str, Any] | None,
     history: list[dict[str, Any]],
     source_kind: str,
+    *,
+    official_visual_valid: bool | None = None,
 ) -> str:
     if row and _candidate_source_kind(row) == source_kind:
         review = str(row.get("review_status") or "").upper()
         if review == "APPROVED" and _truth_row_approved(row):
+            if official_visual_valid is False:
+                return BROKEN_OFFICIAL_VISUAL
             return APPROVED
         if review == "PENDING_REVIEW":
             return PENDING_REVIEW
@@ -851,8 +886,12 @@ def _candidate_status(
 def _prep_state(
     lock: dict[str, Any] | None,
     prep: dict[str, Any] | None,
+    *,
+    official_visual_valid: bool | None = None,
 ) -> str:
     if _truth_row_approved(lock):
+        if official_visual_valid is False:
+            return BROKEN_OFFICIAL_VISUAL
         return APPROVED
     review_status = str((lock or {}).get("review_status") or "").upper()
     if review_status == "PENDING_REVIEW":
@@ -872,10 +911,11 @@ def _candidate_actions(
     lock: dict[str, Any] | None,
     blocked_reason: str | None,
     canva_workflow: dict[str, Any] | None = None,
+    official_visual_valid: bool | None = None,
 ) -> dict[str, bool]:
     active = not blocked_reason
     pending = str((lock or {}).get("review_status") or "").upper() == PENDING_REVIEW
-    approved = _truth_row_approved(lock)
+    approved = _truth_row_approved(lock) and official_visual_valid is not False
     canva_stage = str((canva_workflow or {}).get("current_stage") or "NOT_STARTED").upper()
     return {
         # A display-only URL is a valid operator-visible input.  The write lane
@@ -886,7 +926,7 @@ def _candidate_actions(
         "can_rebuild_cutout": bool(active and (source_available or display_source_available) and not approved),
         "can_upload_manual_cutout": bool(active and (source_available or display_source_available)),
         "can_reject_cutout": bool(active and lock and str(lock.get("review_status") or "").upper() in {PENDING_REVIEW, APPROVED}),
-        "can_use_original_fallback": bool(active and source_available),
+        "can_use_original_fallback": bool(active and source_available and official_visual_valid is not False),
         "can_start_canva_cutout": bool(active and source_available and canva_stage not in {"PENDING_HUMAN_REVIEW", "APPROVED"}),
         "can_open_source": bool(source_available or display_source_available),
         "can_view": True,
@@ -904,6 +944,7 @@ def _current_system_visual(active_source: str, *, source_available: bool) -> dic
         "APPROVED_AUTO_CANONICAL_CUTOUT": ("AUTO_CUTOUT", "Auto Cutout", "OFFICIAL"),
         "APPROVED_MANUAL_CANONICAL_CUTOUT": ("MANUAL_CUTOUT", "Manual / Canva Cutout", "OFFICIAL"),
         "SAME_PRODUCT_TRUSTED_SOURCE": ("ORIGINAL_SOURCE", "Original Source", "ORIGINAL_FALLBACK"),
+        BROKEN_OFFICIAL_VISUAL: (None, "Official Visual Needs Recovery", BROKEN_OFFICIAL_VISUAL),
     }
     if active_source in mapping:
         card, label, status = mapping[active_source]
@@ -923,18 +964,23 @@ def _readiness_payload(
     reference: Any | None,
     source_available: bool,
     source_error: str | None = None,
+    official_visual_valid: bool | None = None,
+    official_visual_error: str | None = None,
     blocked_reason: str | None = None,
     history: list[dict[str, Any]] | None = None,
     canva_workflow: dict[str, Any] | None = None,
     target: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     history = history or []
-    state = _prep_state(lock, prep)
-    approved = _truth_row_approved(lock)
+    approved_candidate = _truth_row_approved(lock)
+    official_invalid = approved_candidate and official_visual_valid is False
+    approved = approved_candidate and not official_invalid
+    official_status = "INVALID" if official_invalid else "VALID" if approved_candidate else "NOT_APPROVED"
+    state = _prep_state(lock, prep, official_visual_valid=official_visual_valid)
     source_kind = _candidate_source_kind(lock) if lock else ""
-    auto_status = _candidate_status(lock, history, AUTO_GENERATED)
-    manual_status = _candidate_status(lock, history, USER_UPLOAD)
-    if blocked_reason:
+    auto_status = _candidate_status(lock, history, AUTO_GENERATED, official_visual_valid=official_visual_valid)
+    manual_status = _candidate_status(lock, history, USER_UPLOAD, official_visual_valid=official_visual_valid)
+    if blocked_reason or official_invalid:
         grounding_status = "VISUAL_GROUNDING_BLOCKED"
         exact_status = "EXACT_COMMERCE_BLOCKED"
     elif approved:
@@ -950,6 +996,8 @@ def _readiness_payload(
     active_source = "BLOCKED"
     if blocked_reason:
         active_source = "BLOCKED"
+    elif official_invalid:
+        active_source = BROKEN_OFFICIAL_VISUAL
     elif approved and source_kind == USER_UPLOAD:
         active_source = "APPROVED_MANUAL_CANONICAL_CUTOUT"
     elif approved and source_kind == AUTO_GENERATED:
@@ -961,11 +1009,17 @@ def _readiness_payload(
     warnings: list[str] = []
     if blocked_reason:
         blockers.append(blocked_reason)
+    if official_invalid:
+        blockers.append("OFFICIAL_PRODUCT_VISUAL_INVALID")
     if not source_available:
         blockers.append("TRUSTED_SAME_PRODUCT_SOURCE_REQUIRED")
     if source_error:
         warnings.append(source_error)
-    if not approved:
+    if official_visual_error:
+        warnings.append(official_visual_error)
+    if official_invalid:
+        warnings.append("OFFICIAL_VISUAL_RECOVERY_REQUIRED")
+    if not approved and not official_invalid:
         warnings.append("EXACT_COMMERCE_REQUIRES_EXPLICIT_HUMAN_APPROVAL")
     if state == PREPARATION_FAILED:
         warnings.append(str((prep or {}).get("failure_code") or "CUTOUT_PREPARATION_FAILED"))
@@ -982,6 +1036,7 @@ def _readiness_payload(
         lock=lock,
         blocked_reason=blocked_reason,
         canva_workflow=canva_workflow,
+        official_visual_valid=official_visual_valid,
     )
     canva_preflight = _parse_json((canva_workflow or {}).get("preflight_json"), {})
     canva_payload = {
@@ -1016,10 +1071,18 @@ def _readiness_payload(
         "canonical_media_status": "AVAILABLE" if source_available else "MISSING",
         "canonical_source_media_id": (lock or {}).get("canonical_media_id"),
         "canonical_source_sha256": (lock or {}).get("canonical_sha256"),
+        "official_visual_status": official_status,
+        "official_visual_failure_code": official_visual_error,
         "original_source_reauthorization_required": _original_authority_requires_reauthorization(lock),
         "reference_pack_status": str((pack or {}).get("pack_status") or "NOT_PREPARED"),
         "visual_grounding_status": grounding_status,
-        "visual_grounding_source": "BLOCKED" if blocked_reason else (active_source if approved else _source_label(reference, approved=False)),
+        "visual_grounding_source": (
+            "BLOCKED"
+            if blocked_reason
+            else active_source
+            if approved or official_invalid
+            else _source_label(reference, approved=False)
+        ),
         "cutout_status": state,
         "cutout_review_status": _review_label(lock),
         "exact_commerce_status": exact_status,
@@ -1061,19 +1124,22 @@ def _readiness_payload(
         # Preview URLs require resolvable bytes — candidate status alone is insufficient.
         "auto_cutout_preview_url": (
             f"/api/product-visual-onboarding/{product.get('id')}/cutout/preview/auto"
-            if auto_status not in {NOT_PREPARED, "NOT_UPLOADED"}
+            if not official_invalid
+            and auto_status not in {NOT_PREPARED, "NOT_UPLOADED"}
             and _candidate_cutout_path(lock, history, AUTO_GENERATED) is not None
             else None
         ),
         "manual_cutout_preview_url": (
             f"/api/product-visual-onboarding/{product.get('id')}/cutout/preview/manual"
-            if manual_status not in {NOT_PREPARED, "NOT_UPLOADED"}
+            if not official_invalid
+            and manual_status not in {NOT_PREPARED, "NOT_UPLOADED"}
             and _candidate_cutout_path(lock, history, USER_UPLOAD) is not None
             else None
         ),
         "active_cutout_preview_url": (
             f"/api/product-visual-onboarding/{product.get('id')}/cutout/preview/active"
-            if lock and _preview_servable_path(lock.get("canonical_cutout_path")) is not None
+            if not official_invalid
+            and lock and _preview_servable_path(lock.get("canonical_cutout_path")) is not None
             else None
         ),
         "cutout_history_count": len(history),
@@ -1284,9 +1350,10 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
         raise ProductVisualOnboardingError("PRODUCT_NOT_FOUND", f"Product {product_id} was not found.")
 
     lock = await crud.get_product_truth_lock(product_id)
+    official_visual_valid, official_visual_error = _official_visual_gate(product_id, lock)
     pack = await crud.get_product_reference_pack(product_id)
     prep = await crud.get_product_cutout_preparation(product_id)
-    if _truth_row_approved(lock):
+    if _truth_row_approved(lock) and official_visual_valid is not False:
         row = await timed_write(crud.upsert_product_cutout_preparation(
             product_id,
             status=APPROVED,
@@ -1303,6 +1370,8 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             prep=row or prep,
             reference=None,
             source_available=True,
+            official_visual_valid=official_visual_valid,
+            official_visual_error=official_visual_error,
         ), started=started, db_write_seconds=db_write_seconds)
 
     blocked_reason = await _blocked_reason(product)
@@ -1321,6 +1390,8 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             reference=None,
             source_available=False,
             source_error=blocked_reason,
+            official_visual_valid=official_visual_valid,
+            official_visual_error=official_visual_error,
             blocked_reason=blocked_reason,
         ), started=started, db_write_seconds=db_write_seconds)
 
@@ -1332,6 +1403,8 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             prep=prep,
             reference=None,
             source_available=True,
+            official_visual_valid=official_visual_valid,
+            official_visual_error=official_visual_error,
         ), started=started, db_write_seconds=db_write_seconds)
 
     try:
@@ -1467,14 +1540,18 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             failure_message=exc.message,
             last_finished_at=_now(),
         ))
+        failed_lock = await crud.get_product_truth_lock(product_id)
+        failed_official_valid, failed_official_error = _official_visual_gate(product_id, failed_lock)
         return _with_performance(_readiness_payload(
             product,
-            lock=await crud.get_product_truth_lock(product_id),
+            lock=failed_lock,
             pack=pack,
             prep=row,
             reference=None,
             source_available=exc.code not in {"TRUSTED_SAME_PRODUCT_SOURCE_REQUIRED", "CANONICAL_MEDIA_ID_REQUIRED"},
             source_error=exc.code,
+            official_visual_valid=failed_official_valid,
+            official_visual_error=failed_official_error,
         ), started=started, compositor_seconds=compositor_seconds,
         db_write_seconds=db_write_seconds)
     except Exception as exc:  # noqa: BLE001 - failure is receipt, never rollback product
@@ -1486,14 +1563,18 @@ async def prepare_product_cutout(product_id: str, *, force: bool = False) -> dic
             failure_message=str(exc),
             last_finished_at=_now(),
         ))
+        failed_lock = await crud.get_product_truth_lock(product_id)
+        failed_official_valid, failed_official_error = _official_visual_gate(product_id, failed_lock)
         return _with_performance(_readiness_payload(
             product,
-            lock=await crud.get_product_truth_lock(product_id),
+            lock=failed_lock,
             pack=pack,
             prep=row,
             reference=None,
             source_available=True,
             source_error="CUTOUT_PREPARATION_FAILED",
+            official_visual_valid=failed_official_valid,
+            official_visual_error=failed_official_error,
         ), started=started, compositor_seconds=compositor_seconds,
         db_write_seconds=db_write_seconds)
 
@@ -1766,19 +1847,27 @@ async def reauthorize_product_original_source(
     selected_media_id = str(replacement_media_id or "").strip()
     if selected_media_id:
         # An uploaded candidate is selected by an exact product-bound media id;
-        # the active approved cutout authority is still validated before this
-        # source switch can proceed.
+        # a valid active official cutout is still validated before this source
+        # switch can proceed. When the persisted authority is broken at the
+        # byte/SHA layer, the explicit product-bound replacement is the repair
+        # path; a no-media-id resolver path remains fail-closed below.
         if str(lock.get("review_status") or "").upper() == APPROVED and str(
             _provenance(lock).get("active_selection") or ""
         ).upper() != "SAME_PRODUCT_TRUSTED_SOURCE":
             try:
                 resolve_approved_product_truth_lock(product_id)
             except ProductTruthLockError as exc:
-                raise ProductVisualOnboardingError(
-                    "OFFICIAL_PRODUCT_VISUAL_INVALID",
-                    str(exc),
-                    status_code=422,
-                ) from exc
+                if exc.code not in _OFFICIAL_RECOVERY_FAILURE_CODES:
+                    raise ProductVisualOnboardingError(
+                        "OFFICIAL_PRODUCT_VISUAL_INVALID",
+                        str(exc),
+                        status_code=422,
+                    ) from exc
+                logger.warning(
+                    "repairing broken official visual for product-bound source reauthorization: %s %s",
+                    product_id,
+                    exc.code,
+                )
         reference = await _resolve_uploaded_source_candidate(product_id, selected_media_id)
     else:
         try:
@@ -2127,11 +2216,12 @@ async def get_product_cutout_history(product_id: str) -> dict[str, Any]:
     history = await crud.list_product_truth_lock_history(product_id)
     current_candidate: dict[str, Any] | None = None
     if current:
+        official_visual_valid, _official_visual_error = _official_visual_gate(product_id, current)
         current_candidate = {
             "history_id": None,
             "source_kind": _candidate_source_kind(current),
             "review_status": _review_label(current),
-            "active": _truth_row_approved(current),
+            "active": _truth_row_approved(current) and official_visual_valid is True,
             "preview_url": f"/api/product-visual-onboarding/{product_id}/cutout/preview/active",
             "provenance": _provenance(current),
         }
@@ -2220,6 +2310,7 @@ async def get_product_visual_readiness(product_id: str) -> dict[str, Any]:
     if not product:
         raise ProductVisualOnboardingError("PRODUCT_NOT_FOUND", f"Product {product_id} was not found.")
     lock = await crud.get_product_truth_lock(product_id)
+    official_visual_valid, official_visual_error = _official_visual_gate(product_id, lock)
     history = await crud.list_product_truth_lock_history(product_id)
     pack = await crud.get_product_reference_pack(product_id)
     prep = await crud.get_product_cutout_preparation(product_id)
@@ -2241,6 +2332,8 @@ async def get_product_visual_readiness(product_id: str) -> dict[str, Any]:
         reference=reference,
         source_available=source_available,
         source_error=source_error,
+        official_visual_valid=official_visual_valid,
+        official_visual_error=official_visual_error,
         blocked_reason=blocked_reason,
         history=history,
         canva_workflow=canva_workflow,
@@ -2313,8 +2406,9 @@ async def annotate_products_visual_readiness(products: list[dict[str, Any]]) -> 
         lock = locks.get(pid)
         pack = packs.get(pid)
         prep = preps.get(pid)
+        official_visual_valid, official_visual_error = _official_visual_gate(pid, lock)
         source = _reference_file(product)
-        source_available = bool(source) or bool(_reference_pack_file(pack)) or _truth_row_approved(lock)
+        source_available = bool(source) or bool(_reference_pack_file(pack)) or official_visual_valid is True
         blocked = "PURGED_ALIAS" if pid in tombstoned else _purge_reason(product)
         if not blocked and is_archived(product):
             blocked = "ARCHIVED_PRODUCT"
@@ -2328,6 +2422,8 @@ async def annotate_products_visual_readiness(products: list[dict[str, Any]]) -> 
             reference=None,
             source_available=source_available,
             source_error=None,
+            official_visual_valid=official_visual_valid,
+            official_visual_error=official_visual_error,
             blocked_reason=blocked,
             history=histories.get(pid, []),
             canva_workflow=canva_workflows.get(pid),

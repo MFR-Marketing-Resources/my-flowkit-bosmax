@@ -1,13 +1,15 @@
 from pathlib import Path
 from io import BytesIO
+import hashlib
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from agent.db import crud
+from agent.services import product_truth_lock_service
 from agent.services import product_visual_onboarding_service as service
 
 
@@ -743,6 +745,86 @@ def test_active_approved_emits_preview_only_when_bytes_exist(tmp_path):
     )
     assert bad["active_cutout_preview_url"] is None
     assert bad["auto_cutout_preview_url"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("defect", ["missing_source", "missing_cutout", "source_sha_mismatch"])
+async def test_approved_bytes_defects_never_report_official(tmp_path, monkeypatch, defect):
+    """The readiness authority must use the same byte/SHA contract as exact output."""
+    runtime_root = tmp_path / "runtime"
+    source = runtime_root / "data" / "product-visual" / "source.png"
+    cutout = runtime_root / "data" / "product-visual" / "cutout.png"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (20, 40), (20, 80, 120)).save(source)
+    layer = Image.new("RGBA", (20, 40), (0, 0, 0, 0))
+    ImageDraw.Draw(layer).rectangle((4, 2, 15, 36), fill=(10, 120, 60, 255))
+    layer.save(cutout)
+    alpha_sha = hashlib.sha256(layer.getchannel("A").tobytes()).hexdigest()
+    layer.close()
+    source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    cutout_sha = hashlib.sha256(cutout.read_bytes()).hexdigest()
+
+    product = await crud.create_product(
+        raw_product_title=f"Broken official {defect}",
+        source="MANUAL",
+        local_image_path=str(source),
+        image_asset_status="READY",
+        asset_status="DOWNLOADED",
+    )
+    product_id = str(product["id"])
+    if defect == "missing_source":
+        source.unlink()
+    if defect == "missing_cutout":
+        cutout.unlink()
+    persisted_source_sha = "a" * 64 if defect == "source_sha_mismatch" else source_sha
+    await crud.upsert_product_truth_lock(
+        product_id,
+        canonical_media_id="source-media",
+        canonical_sha256=persisted_source_sha,
+        source_width=20,
+        source_height=40,
+        canonical_source_path=str(source.relative_to(runtime_root)).replace("\\", "/"),
+        canonical_cutout_media_id="cutout-media",
+        canonical_cutout_sha256=cutout_sha,
+        canonical_cutout_path=str(cutout.relative_to(runtime_root)).replace("\\", "/"),
+        alpha_mask_json=json.dumps({"source": "cutout_alpha", "sha256": alpha_sha, "width": 20, "height": 40}),
+        anchor_point_json=json.dumps({"x": 0.5, "y": 0.5}),
+        min_scale=0.5,
+        max_scale=1.5,
+        allowed_bbox_json=json.dumps({"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8}),
+        allowed_rotation=0.0,
+        allowed_perspective=0.0,
+        identity_lock=1,
+        geometry_lock=1,
+        label_lock=1,
+        logo_lock=1,
+        colour_lock=1,
+        scale_lock=1,
+        review_status="APPROVED",
+        failure_state="",
+        provenance_json=json.dumps({
+            "source_kind": "AUTO_GENERATED",
+            "created_by": "system:cutout",
+            "active_selection": "AUTO",
+        }),
+        schema_version="1.0",
+    )
+    monkeypatch.setattr(service, "BASE_DIR", runtime_root)
+    monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", runtime_root)
+
+    readiness = await service.get_product_visual_readiness(product_id)
+
+    assert readiness["active_visual_source"] == "BROKEN_OFFICIAL_VISUAL"
+    assert readiness["official_visual_status"] == "INVALID"
+    assert readiness["exact_commerce_status"] == "EXACT_COMMERCE_BLOCKED"
+    assert readiness["current_system_visual"] == {
+        "card": None,
+        "label": "Official Visual Needs Recovery",
+        "status": "BROKEN_OFFICIAL_VISUAL",
+    }
+    assert "OFFICIAL_PRODUCT_VISUAL_INVALID" in readiness["blockers"]
+    assert "OFFICIAL_VISUAL_RECOVERY_REQUIRED" in readiness["warnings"]
+    assert "OFFICIAL CUTOUT" not in readiness["current_system_visual"].values()
 
 
 def test_preview_servable_rejects_outside_base_dir(tmp_path):

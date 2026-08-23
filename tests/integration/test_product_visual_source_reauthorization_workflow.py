@@ -158,7 +158,7 @@ async def test_upload_and_explicit_reauthorization_promotes_new_source_without_l
 
 
 @pytest.mark.asyncio
-async def test_truth_lock_history_guard_still_blocks_when_bound_media_does_not_match_lock(tmp_path, monkeypatch):
+async def test_manual_replacement_tombstones_when_bound_media_does_not_match_lock(tmp_path, monkeypatch):
 	runtime_root = tmp_path / "runtime"
 	current_source = runtime_root / "data" / "products" / "current.jpg"
 	current_source.parent.mkdir(parents=True, exist_ok=True)
@@ -196,17 +196,152 @@ async def test_truth_lock_history_guard_still_blocks_when_bound_media_does_not_m
 		height=1000,
 		status="STORED",
 	)
-	with pytest.raises(service.ProductVisualOnboardingError) as raised:
-		await service.upload_manual_product_cutout(
-			product_id,
-			filename="manual-replacement.png",
-			content_type="image/png",
-			raw_bytes=_manual_cutout_bytes(color=(30, 80, 140), inset=200),
-			uploaded_by="registration-operator",
-		)
+	# The prior bytes cannot be recovered (bound media SHA != locked SHA). The
+	# replace must NOT be blocked; a metadata-only tombstone is archived so the
+	# audit record survives without trapping the operator.
+	result = await service.upload_manual_product_cutout(
+		product_id,
+		filename="manual-replacement.png",
+		content_type="image/png",
+		raw_bytes=_manual_cutout_bytes(color=(180, 40, 90), inset=240),
+		uploaded_by="registration-operator",
+	)
+	assert result["manual_cutout_status"] == "PENDING_REVIEW"
 
-	assert raised.value.code == "TRUTH_LOCK_HISTORY_REQUIRED"
-	assert raised.value.status_code == 409
+	history = await crud.list_product_truth_lock_history(product_id)
+	assert len(history) == 1
+	tombstone = history[0]
+	assert tombstone["canonical_source_path"] is None
+	assert tombstone["canonical_cutout_path"] is None
+	assert tombstone["canonical_sha256"] == OLD_SHA
+	assert tombstone["canonical_cutout_sha256"] == "2" * 64
+	provenance = json.loads(tombstone["provenance_json"])
+	assert provenance["history_byte_status"] == "UNAVAILABLE"
+	assert tombstone["superseded_by_media_id"]
+	assert tombstone["superseded_reason"]
+
+	new_lock = await crud.get_product_truth_lock(product_id)
+	assert new_lock is not None
+	assert new_lock["canonical_cutout_media_id"] != "old-cutout-media"
+
+
+@pytest.mark.asyncio
+async def test_manual_replacement_tombstones_when_bytes_unrecoverable(tmp_path, monkeypatch):
+	runtime_root = tmp_path / "runtime"
+	current_source = runtime_root / "data" / "products" / "current.jpg"
+	current_source.parent.mkdir(parents=True, exist_ok=True)
+	current_source.write_bytes(_image_bytes(color=(30, 80, 140)))
+	monkeypatch.setattr(service, "BASE_DIR", runtime_root)
+	monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", runtime_root)
+
+	product, old_lock = await _seed_product_and_lock(tmp_path, current_source=current_source)
+	product_id = str(product["id"])
+
+	result = await service.upload_manual_product_cutout(
+		product_id,
+		filename="fresh-manual.png",
+		content_type="image/png",
+		raw_bytes=_manual_cutout_bytes(color=(180, 40, 90), inset=240),
+		uploaded_by="registration-operator",
+	)
+	assert result["manual_cutout_status"] == "PENDING_REVIEW"
+
+	history = await crud.list_product_truth_lock_history(product_id)
+	assert len(history) == 1
+	tombstone = history[0]
+	assert tombstone["canonical_source_path"] is None
+	assert tombstone["canonical_cutout_path"] is None
+	assert tombstone["canonical_sha256"] == OLD_SHA
+	provenance = json.loads(tombstone["provenance_json"])
+	assert provenance["history_byte_status"] == "UNAVAILABLE"
+	assert provenance["expected_source_sha256"] == OLD_SHA
+
+	new_lock = await crud.get_product_truth_lock(product_id)
+	assert new_lock is not None
+	assert new_lock["canonical_cutout_media_id"] != old_lock["canonical_cutout_media_id"]
+
+
+@pytest.mark.asyncio
+async def test_original_source_reauthorization_repairs_broken_approved_cutout(tmp_path, monkeypatch):
+	runtime_root = tmp_path / "runtime"
+	current_source = runtime_root / "data" / "products" / "current.jpg"
+	current_source.parent.mkdir(parents=True, exist_ok=True)
+	current_source.write_bytes(_image_bytes(color=(30, 80, 140)))
+	monkeypatch.setattr(service, "BASE_DIR", runtime_root)
+	monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", runtime_root)
+
+	product = await crud.create_product(
+		raw_product_title="Broken Approved Cutout Reauthorization",
+		source="MANUAL",
+		local_image_path=str(current_source),
+		image_asset_status="READY",
+		asset_status="DOWNLOADED",
+	)
+	product_id = str(product["id"])
+	current_sha = hashlib.sha256(current_source.read_bytes()).hexdigest()
+	await crud.upsert_product_truth_lock(
+		product_id,
+		canonical_media_id="old-media",
+		canonical_sha256=current_sha,
+		source_width=96,
+		source_height=128,
+		canonical_source_path=str(current_source.relative_to(runtime_root)).replace("\\", "/"),
+		canonical_cutout_media_id="old-cutout-media",
+		canonical_cutout_sha256="2" * 64,
+		canonical_cutout_path="data/products/missing-old-cutout.png",
+		alpha_mask_json=json.dumps({"source": "cutout_alpha", "sha256": "2" * 64, "width": 1000, "height": 1000}),
+		anchor_point_json=json.dumps({"x": 0.5, "y": 0.5}),
+		min_scale=0.5,
+		max_scale=2.0,
+		allowed_bbox_json=json.dumps({"x": 0.1, "y": 0.1, "w": 0.8, "h": 0.8}),
+		allowed_rotation=0.0,
+		allowed_perspective=0.0,
+		identity_lock=1,
+		geometry_lock=1,
+		label_lock=1,
+		logo_lock=1,
+		colour_lock=1,
+		scale_lock=1,
+		review_status="APPROVED",
+		failure_state="",
+		provenance_json=json.dumps({
+			"source_kind": "AUTO_GENERATED",
+			"created_by": "system:cutout",
+			"active_selection": "AUTO",
+		}),
+		schema_version="1.0",
+	)
+
+	replacement_bytes = _image_bytes(color=(180, 40, 90), size=(120, 160))
+	receipt = await service.upload_original_source_candidate(
+		product_id,
+		filename="replacement-source.jpg",
+		content_type="image/jpeg",
+		raw_bytes=replacement_bytes,
+		uploaded_by="registration-operator",
+	)
+
+	result = await service.save_product_visual_setup(
+		product_id,
+		selected_visual="ORIGINAL_SOURCE_REAUTHORIZE",
+		reviewed_by="registration-operator",
+		review_note="Owner confirmed the replacement matches identity, label, geometry, scale, and isolation.",
+		confirm_identity=True,
+		confirm_label_logo=True,
+		confirm_geometry_scale=True,
+		confirm_product_isolation=True,
+		expected_previous_canonical_sha256=current_sha,
+		expected_replacement_sha256=receipt["sha256"],
+		replacement_media_id=receipt["media_id"],
+	)
+
+	lock = await crud.get_product_truth_lock(product_id)
+	assert lock is not None
+	assert lock["canonical_media_id"] == receipt["media_id"]
+	assert lock["review_status"] == "REJECTED"
+	assert lock["failure_state"] == "FALLBACK_SELECTED"
+	assert result["active_visual_source"] == "SAME_PRODUCT_TRUSTED_SOURCE"
+	assert result["current_system_visual"]["card"] == "ORIGINAL_SOURCE"
 
 
 @pytest.mark.asyncio

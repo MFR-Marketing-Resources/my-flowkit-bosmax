@@ -12,6 +12,7 @@
     PRODUCTION_RUNTIME_DIRTY
     PRODUCTION_RUNTIME_SHA_MISMATCH
     PRODUCTION_DB_PATH_MISMATCH
+    PRODUCTION_RUNTIME_STATE_ROOT_MISSING / _DB_MISSING / _DATA_MISSING
     PRODUCTION_BUNDLE_MISMATCH
   The watchdog re-resolves `current` and re-validates on EACH restart, so it can
   never silently respawn a stale dev branch onto :8100.
@@ -23,13 +24,41 @@ param(
   [switch]$Once,
   [string]$Repo = "C:\Users\USER\Desktop\_ref_flowkit",
   [string]$RuntimeRoot = "C:\Users\USER\Desktop\_bosmax_runtime",
+  [string]$StateRoot = "",
   [string]$Python = "C:\tmp\cutout-activation-venv\Scripts\python.exe",
   [string]$ApiPort = "8100",
   [string]$WsPort = "8101"
 )
 $ErrorActionPreference = "Stop"
 $CurrentPtr = Join-Path $RuntimeRoot "current"
-$CanonicalDb = Join-Path $Repo "flow_agent.db"
+if ([string]::IsNullOrWhiteSpace($StateRoot)) { $StateRoot = Join-Path $RuntimeRoot "state" }
+$CanonicalDb = Join-Path $StateRoot "flow_agent.db"
+
+function Assert-CanonicalState {
+  $repoResolved = [System.IO.Path]::GetFullPath($Repo).TrimEnd('\')
+  $stateResolved = [System.IO.Path]::GetFullPath($StateRoot).TrimEnd('\')
+  if ($stateResolved.Equals($repoResolved, [System.StringComparison]::OrdinalIgnoreCase) -or
+      $stateResolved.StartsWith($repoResolved + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+    Write-Error "PRODUCTION_RUNTIME_STATE_ROOT_NOT_EXTERNAL: $stateResolved"
+    exit 3
+  }
+  if (-not (Test-Path -LiteralPath $StateRoot -PathType Container)) {
+    Write-Error "PRODUCTION_RUNTIME_STATE_ROOT_MISSING: run scripts/migrate-canonical-runtime-state.ps1 -Apply"
+    exit 3
+  }
+  if (-not (Test-Path -LiteralPath $CanonicalDb -PathType Leaf)) {
+    Write-Error "PRODUCTION_RUNTIME_STATE_DB_MISSING: $CanonicalDb"
+    exit 3
+  }
+  if ((Get-Item -LiteralPath $CanonicalDb).Length -le 0) {
+    Write-Error "PRODUCTION_RUNTIME_STATE_DB_EMPTY: $CanonicalDb"
+    exit 3
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $StateRoot "data") -PathType Container)) {
+    Write-Error "PRODUCTION_RUNTIME_STATE_DATA_MISSING: $StateRoot"
+    exit 3
+  }
+}
 
 function Resolve-CurrentRelease {
   if (-not (Test-Path $CurrentPtr)) { Write-Error "PRODUCTION_RUNTIME_NO_CURRENT_RELEASE"; exit 3 }
@@ -53,9 +82,13 @@ function Assert-Provenance([string]$Release) {
 }
 
 do {
+  Assert-CanonicalState
+  $env:BOSMAX_RUNTIME_ROOT = $RuntimeRoot
+  $env:BOSMAX_CANONICAL_STATE_ROOT = $StateRoot
+  $env:BOSMAX_CANONICAL_DB = $CanonicalDb
+  $env:FLOW_AGENT_DIR = $StateRoot # canonical DB + data stay outside releases and source checkouts
   $Release = Resolve-CurrentRelease
   Assert-Provenance $Release        # FAIL CLOSED before serving
-  $env:FLOW_AGENT_DIR = $Repo       # canonical DB + data + .env stay external
   $env:API_PORT = $ApiPort
   $env:WS_PORT = $WsPort
   # Final Prompt Approval Gate — ENFORCED on the canonical runtime. Every

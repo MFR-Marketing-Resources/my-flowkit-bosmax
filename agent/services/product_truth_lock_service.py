@@ -499,10 +499,13 @@ def resolve_approved_product_truth_lock(product_id: str) -> ResolvedProductTruth
     return _validate_lock_bytes(lock)
 
 
-def inspect_product_truth_lock(product_id: str) -> dict[str, Any]:
-    """Return a safe status payload for UI/preflight gates without auto-approving."""
+def inspect_product_truth_lock_row(product_id: str, row: dict[str, Any] | None) -> dict[str, Any]:
+    """Validate one already-loaded row for UI/preflight gates.
 
-    row = _row_for_product(product_id)
+    The caller may have loaded the row in a batch. Keeping validation on this
+    seam prevents readiness from inferring authority from ``review_status``
+    alone without introducing an N+1 database read for catalog pages.
+    """
     if row is None:
         return {
             "product_id": product_id,
@@ -554,6 +557,12 @@ def inspect_product_truth_lock(product_id: str) -> dict[str, Any]:
             "provenance": dict(lock.provenance),
             "schema_version": lock.schema_version,
         }
+
+
+def inspect_product_truth_lock(product_id: str) -> dict[str, Any]:
+    """Return a safe status payload for UI/preflight gates without auto-approving."""
+
+    return inspect_product_truth_lock_row(product_id, _row_for_product(product_id))
 
 
 def standard_product_truth_status(product_id: str | None) -> str:
@@ -1150,7 +1159,13 @@ async def _archive_existing_truth_lock(
     superseded_by_media_id: str,
     reason: str,
 ) -> str:
-    """Copy the former active candidate before replacing the one-row SSOT."""
+    """Archive the former active candidate before replacing the one-row SSOT.
+
+    Exact bytes are copied whenever they are available or deterministically
+    recoverable. If the byte store is genuinely gone, preserve the immutable
+    metadata as a tombstone and continue; blocking replacement cannot restore
+    bytes and permanently traps the product in a broken authority state.
+    """
     history_id = uuid.uuid4().hex
     history_directory = _truth_lock_directory(product_id) / "history" / history_id
     history_directory.mkdir(parents=True, exist_ok=False)
@@ -1178,11 +1193,51 @@ async def _archive_existing_truth_lock(
             expected_source_sha256=expected_source_sha,
             expected_cutout_sha256=expected_cutout_sha,
         ):
-            raise ProductTruthLockError(
-                "TRUTH_LOCK_HISTORY_REQUIRED",
-                "The previous truth-lock bytes are unavailable; replacement is blocked to preserve audit history.",
-                status_code=409,
+            # The prior locked bytes are genuinely unrecoverable. The database
+            # still preserves the true ids, SHAs, dimensions, and provenance,
+            # so archive a metadata-only tombstone instead of trapping a valid
+            # product replacement behind a byte store that no longer exists.
+            shutil.rmtree(history_directory, ignore_errors=True)
+            tombstone_provenance = _json_field(existing, "provenance_json", {})
+            tombstone_provenance.update(
+                {
+                    "history_id": history_id,
+                    "superseded_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                    "superseded_by_media_id": superseded_by_media_id,
+                    "superseded_reason": reason,
+                    "history_byte_status": "UNAVAILABLE",
+                    "history_byte_unavailable_reason": (
+                        "Prior truth-lock bytes were absent from the runtime store at "
+                        "supersession and could not be recovered; archived as a metadata "
+                        "tombstone to preserve the audit record without blocking replacement."
+                    ),
+                    "expected_source_sha256": expected_source_sha or None,
+                    "expected_cutout_sha256": expected_cutout_sha or None,
+                }
             )
+            if history_byte_recovery:
+                tombstone_provenance["history_byte_recovery"] = history_byte_recovery
+            await crud.create_product_truth_lock_history(
+                product_id,
+                history_id=history_id,
+                source_kind=_cutout_source_kind(existing),
+                review_status=str(existing.get("review_status") or "UNKNOWN"),
+                canonical_media_id=existing.get("canonical_media_id"),
+                canonical_sha256=existing.get("canonical_sha256"),
+                source_width=existing.get("source_width"),
+                source_height=existing.get("source_height"),
+                canonical_source_path=None,
+                canonical_cutout_media_id=existing.get("canonical_cutout_media_id"),
+                canonical_cutout_sha256=existing.get("canonical_cutout_sha256"),
+                canonical_cutout_path=None,
+                alpha_mask_json=str(existing.get("alpha_mask_json") or "{}"),
+                anchor_point_json=str(existing.get("anchor_point_json") or "{}"),
+                allowed_bbox_json=str(existing.get("allowed_bbox_json") or "{}"),
+                provenance_json=json.dumps(tombstone_provenance, sort_keys=True),
+                superseded_by_media_id=superseded_by_media_id,
+                superseded_reason=reason,
+            )
+            return history_id
         archived_source = history_directory / f"canonical_source{source.suffix.lower() or '.bin'}"
         archived_cutout = history_directory / "canonical_cutout.png"
         shutil.copyfile(source, archived_source)
