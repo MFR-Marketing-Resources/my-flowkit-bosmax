@@ -2409,6 +2409,18 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				data-mode={mode}
 				className="flex h-full flex-col bg-slate-950 px-4 py-4 md:px-8 md:py-6"
 			>
+				{pendingApproval && (
+					<FinalPromptApprovalModal
+						envelope={pendingApproval.envelope}
+						approvedBy={staffIdentity.selectedStaff?.display_name ?? ""}
+						onApproved={(snap) => {
+							const d = pendingApproval.data;
+							setPendingApproval(null);
+							void handleExecute({ ...d, prompt: snap.final_prompt_text }, true);
+						}}
+						onCancel={() => setPendingApproval(null)}
+					/>
+				)}
 				<div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
 					<div>
 						<div className="flex items-center gap-2">
