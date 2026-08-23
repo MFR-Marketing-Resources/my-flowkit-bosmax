@@ -105,6 +105,7 @@ domains:
       - dashboard/src/components/execution-approval/FinalPromptApprovalModal.tsx
       - dashboard/src/components/execution-approval/FinalPromptApprovalModal.test.tsx
       - dashboard/src/pages/OperatorPage.tsx
+      - dashboard/src/pages/OperatorPage.finalPromptApproval.component.test.tsx
       - dashboard/src/pages/FacelessVideoPage.tsx
       - dashboard/src/pages/PosterBuilderPage.tsx
       - dashboard/src/pages/PosterBuilderPage.test.tsx
