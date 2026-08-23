@@ -56,6 +56,26 @@ def _plan_copy_v2_context(plan: dict[str, Any]) -> dict[str, Any] | None:
     return context if isinstance(context, dict) else None
 
 
+def _copy_validation_lane(
+    plan_context: dict[str, Any] | None,
+    recipe_metadata: dict[str, Any] | None,
+    transport_lane: str,
+) -> str:
+    """Revalidate copy on its public recipe lane, not its transport lane.
+
+    FACELESS and MONTAGE keep their own copy provenance while their internal
+    package/Flow transport remains the shared P6 lane.  The lane-specific
+    binding id is therefore expected to differ; resolving against the public
+    recipe lane preserves the exact immutable binding without collapsing the
+    surface and transport provenance into one field.
+    """
+    context_lane = str((plan_context or {}).get("lane") or "").strip().upper()
+    recipe = str((recipe_metadata or {}).get("production_recipe") or "").strip().upper()
+    if recipe in {"FACELESS", "MONTAGE"} and context_lane == recipe:
+        return context_lane
+    return transport_lane
+
+
 ATTEMPT_TRANSITIONS: dict[str, set[str]] = {
     AttemptState.NOT_SUBMITTED.value: {
         AttemptState.SUBMISSION_STARTED.value,
@@ -727,7 +747,11 @@ async def _build_item_payload(
             if media_type == "POSTER"
             else "IMAGE_GEN"
             if media_type == "IMAGE"
-            else "PRODUCTION_STUDIO_P6"
+            else _copy_validation_lane(
+                plan_v2_context,
+                recipe_metadata,
+                "PRODUCTION_STUDIO_P6",
+            )
         )
         try:
             validation = await resolve_persisted_copy_execution_binding(
