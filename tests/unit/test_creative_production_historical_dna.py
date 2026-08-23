@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import aiosqlite
 import pytest
 
 from agent.db import creative_production_crud as p6db
+from agent.services import creative_production_plan_service as plans
 
 
 @pytest.mark.asyncio
@@ -127,3 +130,89 @@ async def test_dedupe_guard_owner_marks_only_provider_free_failed_item_reprepara
         }
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_controlled_reprepare_resolves_provider_free_guard_collision(
+    monkeypatch,
+):
+    plan_id = "p6plan-controlled-reprepare"
+    dna = "a" * 64
+    plan = {
+        "plan_id": plan_id,
+        "status": "PREFLIGHT_READY",
+        "target_video_count": 1,
+        "target_image_count": 0,
+        "target_poster_count": 0,
+        "staff_id": "staff-p6-test",
+        "staff_display_name_snapshot": "P6 Test",
+        "pool_snapshot_json": json.dumps(
+            {
+                "controlled_reuse_reason": "Provider-free reprepare",
+                "controlled_reuse_max_per_dna": 1,
+                "product_video_allocations": [
+                    {"product_id": "product-p6-test", "video_count": 1}
+                ],
+            }
+        ),
+        "execution_policy_json": "{}",
+    }
+    dimension = {
+        "product_id": "product-p6-test",
+        "media_type": "VIDEO",
+        "production_recipe": "FACELESS",
+        "logical_mode": "F2V",
+        "copy_set_id": "copy-p6-test",
+        "avatar_code": "",
+        "scene_family": "",
+    }
+    inserted: list[dict] = []
+
+    async def list_items(_plan_id: str, **_kwargs):
+        return list(inserted)
+
+    async def insert_items(items: list[dict]):
+        inserted.extend(items)
+
+    monkeypatch.setattr(plans, "_require_plan", AsyncMock(return_value=plan))
+    monkeypatch.setattr(
+        plans,
+        "run_capacity_preflight",
+        AsyncMock(return_value=SimpleNamespace(status="PREFLIGHT_READY")),
+    )
+    monkeypatch.setattr(
+        plans,
+        "_capacity_candidates",
+        AsyncMock(
+            return_value=(
+                {"VIDEO": 1, "IMAGE": 0, "POSTER": 0},
+                {"VIDEO": [(dna, dimension)], "IMAGE": [], "POSTER": []},
+                {},
+                [],
+                0,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        p6db,
+        "list_dedupe_guard_owners",
+        AsyncMock(
+            return_value={
+                f"dna:{dna}": {
+                    "item_id": "provider-free-failed-item",
+                    "status": "FAILED",
+                    "provider_free_failed": True,
+                }
+            }
+        ),
+    )
+    monkeypatch.setattr(p6db, "list_items", list_items)
+    monkeypatch.setattr(p6db, "insert_items", insert_items)
+    monkeypatch.setattr(plans, "_decode_row", lambda row: row)
+
+    matrix = await plans.materialize_content_matrix(plan_id)
+
+    assert matrix["created"] == 1
+    assert inserted[0]["dedupe_guard_key"] == (
+        f"reprepare:{plan_id}:0:{dna}"
+    )

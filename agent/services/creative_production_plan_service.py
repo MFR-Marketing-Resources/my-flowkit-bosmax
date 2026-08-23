@@ -3802,7 +3802,6 @@ async def materialize_content_matrix(
     base_dedupe_guards = [
         f"dna:{dna}"
         for dna, _, _ in selected
-        if not controlled_reuse_reason
     ]
     dedupe_guard_owners = await p6db.list_dedupe_guard_owners(
         base_dedupe_guards
