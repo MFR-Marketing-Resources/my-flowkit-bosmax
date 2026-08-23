@@ -161,7 +161,21 @@ async def list_historical_dna(
         "SELECT DISTINCT creative_dna_sha256 FROM creative_production_item "
         f"WHERE product_id IN ({product_marks}) "
         f"AND creative_dna_sha256 IN ({dna_marks}) "
-        "AND status NOT IN ('CANCELLED','SUPERSEDED')",
+        # A provider-free compile failure must remain re-preparable; once a
+        # provider identity or credit intent exists, retain the fail-closed
+        # historical exclusion and require an explicit replacement path.
+        "AND ("
+        "status NOT IN ('CANCELLED','SUPERSEDED','FAILED') "
+        "OR EXISTS ("
+        "SELECT 1 FROM creative_generation_attempt a "
+        "WHERE a.item_id=creative_production_item.item_id "
+        "AND ("
+        "NULLIF(TRIM(COALESCE(a.provider_job_id,'')),'') IS NOT NULL "
+        "OR NULLIF(TRIM(COALESCE(a.provider_project_id,'')),'') IS NOT NULL "
+        "OR COALESCE(a.credit_spend_intended,0)=1"
+        ")"
+        ")"
+        ")",
         (*product_ids, *dna_hashes),
     )
     return {str(row[0]) for row in await cursor.fetchall()}
