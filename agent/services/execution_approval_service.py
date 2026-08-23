@@ -38,8 +38,9 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any, Mapping
+from typing import Any
 
 from agent.db import execution_approval_crud as _crud
 from agent.services.production_prompt_approval_service import scan_prompt_text
@@ -171,6 +172,91 @@ def _norm(value: Any) -> str:
     return str(value).strip() if value is not None else ""
 
 
+def _provider_profile_binding(
+    provider_profile: Mapping[str, Any] | None,
+    provider_profile_digest: str | None,
+) -> tuple[str | None, str | None]:
+    """Return the shared provider digest/id without folding lane data into it.
+
+    The provider digest is stored as one provider-affecting component of the
+    execution envelope.  It is intentionally distinct from the envelope hash:
+    changing a lane adapter still changes the envelope, while the same provider
+    certification can be reused by another lane with a different envelope.
+    """
+    digest = _norm(provider_profile_digest) or None
+    profile_id = None
+    if isinstance(provider_profile, Mapping):
+        digest = digest or _norm(
+            provider_profile.get("provider_profile_digest")
+            or provider_profile.get("profile_digest")
+        ) or None
+        profile_id = _norm(provider_profile.get("profile_id")) or None
+        if not digest:
+            from agent.services.provider_execution_profile import (
+                resolve_provider_execution_profile,
+            )
+
+            resolved = resolve_provider_execution_profile(provider_profile)
+            digest = resolved["provider_profile_digest"]
+            profile_id = profile_id or resolved["profile_id"]
+    return digest, profile_id
+
+
+def _infer_provider_profile_for_dispatch(
+    *,
+    mode: str | None,
+    source_mode: str | None,
+    model: str | None,
+    aspect: str | None,
+    duration_s: int | None,
+    count: int | None,
+    product_id: str | None,
+    asset_fingerprints: list[str] | None,
+    asset_media_ids: list[str] | None,
+) -> dict[str, Any] | None:
+    """Infer only an already-captured profile from the normal dispatch tuple.
+
+    This keeps API review and backend dispatch parity when a caller does not
+    explicitly echo ``provider_profile``.  It is intentionally narrow: an
+    unproven tuple returns ``None`` rather than being promoted into a profile.
+    """
+    if str(mode or "").strip().upper() != "F2V":
+        return None
+    if str(source_mode or "").strip().upper() != "HYBRID":
+        return None
+    if str(aspect or "").strip() != "9:16":
+        return None
+    if int(count or 1) != 1 or int(duration_s or 0) != 10:
+        return None
+    if not (product_id or asset_fingerprints or asset_media_ids):
+        return None
+    try:
+        from agent.services import video_models
+        from agent.services.provider_execution_profile import (
+            resolve_provider_execution_profile,
+        )
+
+        if video_models.resolve(model).get("key") != "omni_flash":
+            return None
+        return resolve_provider_execution_profile(
+            provider="GOOGLE_FLOW",
+            model="omni_flash",
+            duration_seconds=10,
+            prompt_block_count=1,
+            aspect_ratio="9:16",
+            output_count=1,
+            reference_topology="ONE_REFERENCE",
+            generation_type="reference_frame_2_video",
+            execution_transport="flow_creation_agent",
+            provider_model_key="abra_r2v_10s",
+            capability_contract_version="flow-agent-reference-omni10-v1",
+            provider_tool="generate_video_with_references",
+            provider_rpc="agent_stream_chat",
+        )
+    except (TypeError, ValueError):
+        return None
+
+
 def compute_dispatch_identity(
     *,
     mode: str,
@@ -186,6 +272,8 @@ def compute_dispatch_identity(
     product_id: str | None = None,
     execution_identity: dict[str, Any] | None = None,
     execution_profile_context: Mapping[str, Any] | None = None,
+    provider_profile: Mapping[str, Any] | None = None,
+    provider_profile_digest: str | None = None,
 ) -> dict[str, Any]:
     """THE canonical envelope+hash builder (Envelope v2). Called with identical
     semantics at review time and at the dispatch boundary, so equal provider-affecting
@@ -258,12 +346,22 @@ def compute_dispatch_identity(
                 str(exc),
                 details={"code": exc.code, "details": exc.details},
             ) from exc
+    bound_provider_digest, bound_provider_id = _provider_profile_binding(
+        provider_profile, provider_profile_digest,
+    )
+    if bound_provider_digest:
+        # This is a separate digest from execution_envelope_sha256.  It makes
+        # the shared certification reference explicit without making a surface
+        # lane part of provider certification identity.
+        envelope["provider_profile_digest"] = bound_provider_digest
     return {
         "prompt_sha256": prompt_sha256,
         "execution_envelope": envelope,
         "execution_envelope_sha256": hashlib.sha256(
             _stable_json(envelope).encode("utf-8")
         ).hexdigest(),
+        "provider_profile_digest": bound_provider_digest,
+        "provider_profile_id": bound_provider_id,
     }
 
 
@@ -354,6 +452,7 @@ async def create_review_snapshot(
     asset_media_ids: list[str] | None = None,
     execution_identity: dict[str, Any] | None = None,
     execution_profile_context: Mapping[str, Any] | None = None,
+    provider_profile: Mapping[str, Any] | None = None,
     review_session_id: str | None = None,
     created_by: str | None = None,
     manifest_id: str | None = None,
@@ -371,6 +470,17 @@ async def create_review_snapshot(
         asset_fingerprints=asset_fingerprints,
         asset_media_ids=asset_media_ids,
     )
+    provider_profile = provider_profile or _infer_provider_profile_for_dispatch(
+        mode=logical_mode,
+        source_mode=source_mode,
+        model=model,
+        aspect=aspect,
+        duration_s=duration_s,
+        count=count,
+        product_id=product_id,
+        asset_fingerprints=canonical_fps,
+        asset_media_ids=asset_media_ids,
+    )
     identity = compute_dispatch_identity(
         mode=logical_mode,
         final_prompt_text=final_prompt_text,
@@ -384,6 +494,7 @@ async def create_review_snapshot(
         product_id=product_id,
         execution_identity=execution_identity,
         execution_profile_context=execution_profile_context,
+        provider_profile=provider_profile,
     )
     scan = scan_prompt_text(final_prompt_text, product_id=product_id)
     scan_clean = not any(scan.values())
@@ -532,6 +643,7 @@ async def resolve_manifest_approved_snapshot(
     product_id: str | None = None,
     execution_identity: dict[str, Any] | None = None,
     execution_profile_context: Mapping[str, Any] | None = None,
+    provider_profile: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """RESOLVE / BIND (never manufacture) a human-approved manifest item whose
     frozen execution-envelope SHA (canonical Envelope v2 identity — PR #815 server-
@@ -550,6 +662,17 @@ async def resolve_manifest_approved_snapshot(
         asset_fingerprints=asset_fingerprints,
         asset_media_ids=asset_media_ids,
     )
+    provider_profile = provider_profile or _infer_provider_profile_for_dispatch(
+        mode=mode,
+        source_mode=source_mode,
+        model=model,
+        aspect=aspect,
+        duration_s=duration_s,
+        count=count,
+        product_id=product_id,
+        asset_fingerprints=canonical_fps,
+        asset_media_ids=asset_media_ids,
+    )
     identity = compute_dispatch_identity(
         mode=mode,
         final_prompt_text=final_prompt_text,
@@ -563,6 +686,7 @@ async def resolve_manifest_approved_snapshot(
         product_id=product_id,
         execution_identity=execution_identity,
         execution_profile_context=execution_profile_context,
+        provider_profile=provider_profile,
     )
     return await _crud.find_approved_manifest_item(
         _norm(manifest_id), identity["execution_envelope_sha256"],
@@ -585,6 +709,7 @@ async def ensure_upstream_approved_snapshot(
     asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
     execution_profile_context: Mapping[str, Any] | None = None,
+    provider_profile: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """RESOLVE / BIND-ONLY upstream approval (corrective GAP 2 refactor of the
     former create-and-auto-approve helper). Computes the canonical Envelope v2
@@ -600,6 +725,17 @@ async def ensure_upstream_approved_snapshot(
         asset_fingerprints=asset_fingerprints,
         asset_media_ids=asset_media_ids,
     )
+    provider_profile = provider_profile or _infer_provider_profile_for_dispatch(
+        mode=mode,
+        source_mode=source_mode,
+        model=model,
+        aspect=aspect,
+        duration_s=duration_s,
+        count=count,
+        product_id=product_id,
+        asset_fingerprints=canonical_fps,
+        asset_media_ids=asset_media_ids,
+    )
     identity = compute_dispatch_identity(
         mode=mode,
         final_prompt_text=final_prompt_text,
@@ -612,6 +748,7 @@ async def ensure_upstream_approved_snapshot(
         asset_fingerprints=canonical_fps,
         product_id=product_id,
         execution_profile_context=execution_profile_context,
+        provider_profile=provider_profile,
     )
     return await _crud.find_approved_by_envelope(identity["execution_envelope_sha256"])
 
@@ -666,6 +803,8 @@ async def create_manifest(
             image_model=item.get("image_model"),
             asset_media_ids=item.get("asset_media_ids"),
             execution_identity=item.get("execution_identity"),
+            execution_profile_context=item.get("execution_profile_context"),
+            provider_profile=item.get("provider_profile"),
             review_session_id=review_session_id,
             created_by=created_by,
             manifest_id=manifest_id,
@@ -797,6 +936,8 @@ async def verify_and_bind_dispatch(
     provider_job_id: str | None = None,
     execution_identity: dict[str, Any] | None = None,
     execution_profile_context: Mapping[str, Any] | None = None,
+    provider_profile: Mapping[str, Any] | None = None,
+    provider_profile_digest: str | None = None,
 ) -> dict[str, Any]:
     """THE dispatch-boundary gate.
 
@@ -816,6 +957,17 @@ async def verify_and_bind_dispatch(
         asset_fingerprints=asset_fingerprints,
         asset_media_ids=asset_media_ids,
     )
+    provider_profile = provider_profile or _infer_provider_profile_for_dispatch(
+        mode=mode,
+        source_mode=source_mode,
+        model=model,
+        aspect=aspect,
+        duration_s=duration_s,
+        count=count,
+        product_id=product_id,
+        asset_fingerprints=canonical_fps,
+        asset_media_ids=asset_media_ids,
+    )
     identity = compute_dispatch_identity(
         mode=mode,
         final_prompt_text=final_prompt_text,
@@ -829,6 +981,8 @@ async def verify_and_bind_dispatch(
         product_id=product_id,
         execution_identity=execution_identity,
         execution_profile_context=execution_profile_context,
+        provider_profile=provider_profile,
+        provider_profile_digest=provider_profile_digest,
     )
     dispatched_env_sha = identity["execution_envelope_sha256"]
     dispatched_prompt_sha = identity["prompt_sha256"]
@@ -920,5 +1074,6 @@ def _recompute_from_snapshot(snap: dict[str, Any], *, final_prompt_text: str) ->
         product_id=env.get("product_id") or snap.get("product_id"),
         execution_identity=env.get("execution_identity"),
         execution_profile_context=env.get("execution_profile_context"),
+        provider_profile_digest=env.get("provider_profile_digest"),
     )
 

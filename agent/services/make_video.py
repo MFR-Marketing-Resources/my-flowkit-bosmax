@@ -20,6 +20,7 @@ from agent.config import OUTPUT_DIR, DIRECT_VIDEO_MODEL_KEYS
 from agent.services.flow_client import get_flow_client, resolve_video_model_key
 from agent.services import agent_video
 from agent.services import video_models
+from agent.services import provider_execution_profile as _pep
 
 _JOBS: dict = {}
 
@@ -103,7 +104,7 @@ def hybrid_reference_omni10_route_matches(
     """
     try:
         resolved_model = video_models.resolve(model)
-        return (
+        if not (
             str(mode or "").strip().upper() == "F2V"
             and str(source_mode or "").strip().upper() == "HYBRID"
             and resolved_model.get("key") == "omni_flash"
@@ -111,7 +112,25 @@ def hybrid_reference_omni10_route_matches(
             and str(aspect or "").strip() == "9:16"
             and int(ref_count) == 1
             and int(num_videos) == 1
+        ):
+            return False
+        profile = _pep.resolve_provider_execution_profile(
+            provider="GOOGLE_FLOW",
+            model=resolved_model["key"],
+            duration_seconds=10,
+            prompt_block_count=1,
+            aspect_ratio=aspect,
+            output_count=num_videos,
+            reference_topology="ONE_REFERENCE",
+            generation_type=HYBRID_REFERENCE_OMNI_10S_PROVIDER_GENERATION_TYPE,
+            execution_transport="flow_creation_agent",
+            provider_model_key=HYBRID_REFERENCE_OMNI_10S_PROVIDER_MODEL_KEY,
+            capability_contract_version=HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION,
+            provider_tool=HYBRID_REFERENCE_OMNI_10S_PROVIDER_TOOL,
+            provider_rpc="agent_stream_chat",
+            # surface_lane is intentionally not forwarded into the profile.
         )
+        return profile["certification_status"] == _pep.PROFILE_CERTIFIED
     except (TypeError, ValueError):
         return False
 
@@ -151,7 +170,7 @@ def _certified_hybrid_reference_omni10_plan() -> dict:
     """
     from agent.services import video_execution_profile_service as _profiles
 
-    profile = _profiles.resolve_duration_model_profile(
+    duration_profile = _profiles.resolve_duration_model_profile(
         model="omni_flash",
         duration_s=10,
         aspect_ratio="9:16",
@@ -162,12 +181,43 @@ def _certified_hybrid_reference_omni10_plan() -> dict:
         logical_mode="F2V",
         source_mode="HYBRID",
     )
-    certification = _profiles.provider_certification_status(profile)
+    certification = _profiles.provider_certification_status(duration_profile)
     if not certification.get("certified"):
         return {
             "eligible": False,
             "reason": f"DIRECT_PROFILE_UNCERTIFIED:{certification.get('reason')}",
-            "duration_model_profile": profile,
+            "duration_model_profile": duration_profile,
+        }
+    provider_profile = _pep.resolve_provider_execution_profile(
+        provider="GOOGLE_FLOW",
+        model="omni_flash",
+        duration_seconds=10,
+        prompt_block_count=1,
+        aspect_ratio="9:16",
+        output_count=1,
+        reference_topology="ONE_REFERENCE",
+        generation_type=HYBRID_REFERENCE_OMNI_10S_PROVIDER_GENERATION_TYPE,
+        execution_transport="flow_creation_agent",
+        provider_model_key=HYBRID_REFERENCE_OMNI_10S_PROVIDER_MODEL_KEY,
+        capability_contract_version=HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION,
+        provider_tool=HYBRID_REFERENCE_OMNI_10S_PROVIDER_TOOL,
+        provider_rpc="agent_stream_chat",
+    )
+    provider_certification = {
+        "certified": provider_profile.get("certification_status") == _pep.PROFILE_CERTIFIED,
+        "status": provider_profile.get("certification_status"),
+        "certification_status": provider_profile.get("certification_status"),
+        "reason": provider_profile.get("certification_reason"),
+        "profile_id": provider_profile.get("profile_id"),
+        "profile_digest": provider_profile.get("provider_profile_digest"),
+    }
+    if not provider_certification["certified"]:
+        return {
+            "eligible": False,
+            "reason": f"DIRECT_PROFILE_UNCERTIFIED:{provider_certification.get('reason')}",
+            "duration_model_profile": duration_profile,
+            "provider_profile": provider_profile,
+            "provider_profile_certification": provider_certification,
         }
     return {
         "eligible": False,
@@ -184,8 +234,16 @@ def _certified_hybrid_reference_omni10_plan() -> dict:
             "captured_flow_agent_contract[abra_r2v_10s]"
         ),
         "contract_version": HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION,
-        "duration_model_profile": profile,
+        "duration_model_profile": duration_profile,
         "provider_profile_certification": certification,
+        "duration_profile_certification": certification,
+        # Provider certification is shared across active surfaces.  The lane
+        # adapter persists its own surface/custody provenance separately.
+        "provider_profile": provider_profile,
+        "provider_profile_id": provider_profile["profile_id"],
+        "provider_profile_digest": provider_profile["provider_profile_digest"],
+        "provider_profile_status": provider_certification["certification_status"],
+        "provider_profile_evidence_id": provider_profile["certification_evidence_id"],
     }
 
 
@@ -1491,6 +1549,15 @@ def _build_reference_routing_receipt(
         "provider_tool": (plan or {}).get("provider_tool"),
         "provider_model_usage_key": (plan or {}).get("provider_model_usage_key"),
         "transport_contract_version": (plan or {}).get("contract_version"),
+        # Shared provider certification is a separate axis from this lane's
+        # surface/copy/custody envelope.  Keep only the provider proof here;
+        # surface provenance is persisted by video_surface_provenance.
+        "provider_profile_id": (plan or {}).get("provider_profile_id"),
+        "provider_profile_digest": (plan or {}).get("provider_profile_digest"),
+        "provider_profile_status": (plan or {}).get("provider_profile_status"),
+        "provider_profile_evidence_id": (plan or {}).get(
+            "provider_profile_evidence_id"
+        ),
         "pre_provider": {
             "classification": "READY" if reference_mode_authorized else "BLOCKED",
             "provider_calls": 0,
@@ -1828,7 +1895,8 @@ def _image_provider_operation_reference(response: dict) -> dict[str, str | None]
 async def _verify_generation_approval(
     *, mode, prompt, source_mode, model, aspect, duration_s, num_videos,
     image_model, asset_fingerprints, image_media_ids, product_id,
-    manifest_id, execution_identity, execution_profile_context,
+    manifest_id, execution_identity, execution_profile_context=None,
+    provider_profile=None,
 ):
     """Run the normal WYSIWYG approval gate for non-capture dispatches."""
     from agent.services import execution_approval_service as _eas
@@ -1866,6 +1934,7 @@ async def _verify_generation_approval(
             asset_fingerprints=asset_fingerprints, asset_media_ids=_assets,
             product_id=product_id, execution_identity=execution_identity,
             execution_profile_context=execution_profile_context,
+            provider_profile=provider_profile,
         )
         _pinned_snapshot_id = (_resolved or {}).get("snapshot_id")
     await _eas.verify_and_bind_dispatch(
@@ -1876,6 +1945,7 @@ async def _verify_generation_approval(
         product_id=product_id, snapshot_id=_pinned_snapshot_id,
         execution_identity=execution_identity,
         execution_profile_context=execution_profile_context,
+        provider_profile=provider_profile,
     )
 
 
@@ -2173,6 +2243,11 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 image_media_ids=image_media_ids, product_id=product_id,
                 manifest_id=manifest_id, execution_identity=execution_identity,
                 execution_profile_context=execution_profile_context,
+                provider_profile=(
+                    (_direct_plan or {}).get("provider_profile")
+                    if isinstance(_direct_plan, dict)
+                    else None
+                ),
             )
         except _eas.ExecutionApprovalError as _gate_err:
             return {"status": "REJECTED", "error": _gate_err.code,
@@ -3119,6 +3194,10 @@ def direct_video_readiness(
         "eligible": route_ready,
         "selected_route": selected_route,
         "plan": plan,
+        "provider_profile_id": plan.get("provider_profile_id"),
+        "provider_profile_digest": plan.get("provider_profile_digest"),
+        "provider_profile_status": plan.get("provider_profile_status"),
+        "provider_profile_evidence_id": plan.get("provider_profile_evidence_id"),
         "blockers": blockers,
         "certified_agent_route": {
             "status": "READY" if certified_agent_route else "NOT_APPLICABLE",
@@ -3147,6 +3226,15 @@ def direct_video_readiness(
                 if certified_agent_route
                 else None
             ),
+            "provider_profile_id": (
+                plan.get("provider_profile_id") if certified_agent_route else None
+            ),
+            "provider_profile_digest": (
+                plan.get("provider_profile_digest") if certified_agent_route else None
+            ),
+            "provider_profile_status": (
+                plan.get("provider_profile_status") if certified_agent_route else None
+            ),
             "provider_calls": 0,
             "credit_spend": False,
         },
@@ -3164,6 +3252,18 @@ def direct_video_readiness(
                 HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION
                 if ten_second_certified
                 else None
+            ),
+            "provider_profile_id": (
+                ten_second_plan.get("provider_profile_id")
+                if ten_second_certified else None
+            ),
+            "provider_profile_digest": (
+                ten_second_plan.get("provider_profile_digest")
+                if ten_second_certified else None
+            ),
+            "provider_profile_status": (
+                ten_second_plan.get("provider_profile_status")
+                if ten_second_certified else None
             ),
         },
     }

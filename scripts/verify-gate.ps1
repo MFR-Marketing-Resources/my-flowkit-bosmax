@@ -104,6 +104,7 @@ $SmokeTests = @(
     # Final Prompt Approval Gate (WYSIWYG per-dispatch execution approval).
     'tests/unit/test_execution_approval_gate.py',
     'tests/unit/test_execution_approval_backstop.py',
+    'tests/unit/test_provider_execution_profile.py',
     'tests/api/test_execution_approval_api.py'
 )
 
