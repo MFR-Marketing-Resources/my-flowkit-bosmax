@@ -1,8 +1,11 @@
+import pytest
+
 from agent.access_control_constants import ROLE_PERMISSION_CODES
 from agent.security.access_control import required_permission
 from agent.services.product_release_service import (
     HIDDEN,
     RELEASED,
+    annotate_product_release_state,
     resolve_product_release_state,
 )
 
@@ -71,3 +74,57 @@ def test_release_permission_is_separate_and_owner_only():
     assert "products.release" not in ROLE_PERMISSION_CODES["EDITOR"]
     assert "products.release" not in ROLE_PERMISSION_CODES["OPERATOR"]
     assert "products.release" not in ROLE_PERMISSION_CODES["VIEWER"]
+
+
+@pytest.mark.asyncio
+async def test_release_annotation_uses_one_set_based_visual_projection_for_the_page(monkeypatch):
+    visual_calls: list[list[str]] = []
+
+    async def annotate_visuals(products):
+        visual_calls.append([str(product["id"]) for product in products])
+        for product in products:
+            product["visual_readiness"] = {
+                "canonical_media_status": "AVAILABLE",
+                "exact_commerce_status": "EXACT_COMMERCE_CUTOUT_READY",
+            }
+
+    monkeypatch.setattr(
+        "agent.services.product_visual_onboarding_service.annotate_products_visual_readiness",
+        annotate_visuals,
+    )
+
+    products = [_eligible_product(id=f"product-{index}") for index in range(3)]
+    await annotate_product_release_state(products, attach_truth=False)
+
+    assert visual_calls == [["product-0", "product-1", "product-2"]]
+    assert all(product["minimum_eligibility_status"] == "ELIGIBLE" for product in products)
+
+
+@pytest.mark.asyncio
+async def test_release_annotation_does_not_call_single_product_visual_readiness(monkeypatch):
+    single_product_calls = 0
+
+    async def forbidden_single_product_readiness(_product_id):
+        nonlocal single_product_calls
+        single_product_calls += 1
+        raise AssertionError("release-control page must not fan out visual readiness reads")
+
+    async def annotate_visuals(products):
+        for product in products:
+            product["visual_readiness"] = {
+                "canonical_media_status": "AVAILABLE",
+                "exact_commerce_status": "EXACT_COMMERCE_CUTOUT_READY",
+            }
+
+    monkeypatch.setattr(
+        "agent.services.product_visual_onboarding_service.get_product_visual_readiness",
+        forbidden_single_product_readiness,
+    )
+    monkeypatch.setattr(
+        "agent.services.product_visual_onboarding_service.annotate_products_visual_readiness",
+        annotate_visuals,
+    )
+
+    await annotate_product_release_state([_eligible_product(id="product-batch")], attach_truth=False)
+
+    assert single_product_calls == 0
