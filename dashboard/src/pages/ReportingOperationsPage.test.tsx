@@ -1,10 +1,10 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import ReportingOperationsPage from "./ReportingOperationsPage";
-import { useExceptionPage, usePiQuality } from "../api/reporting";
+import { useExceptionPage, useExceptions, usePiQuality } from "../api/reporting";
 
 // Mission-08D: the INTEL QUALITY DEBT card is the operator-visible face of the four-way
 // PI classification. These tests pin the contract: backend numbers rendered verbatim
@@ -73,29 +73,53 @@ const renderPage = () =>
 	);
 
 describe("Operations — INTEL QUALITY DEBT (08D)", () => {
+	beforeEach(() => {
+		vi.mocked(useExceptionPage).mockClear();
+		vi.mocked(useExceptions).mockClear();
+		vi.mocked(usePiQuality).mockClear();
+	});
+
 	afterEach(() => cleanup());
 
-	it("keeps ACTIVE and ALL card totals on the selected backend scope", async () => {
+	it("keeps Operations on ACTIVE scope and removes the archived selector", async () => {
 		renderPage();
 		const card = await screen.findByTestId("intel-quality-debt-card");
 		await waitFor(() => expect(usePiQuality).toHaveBeenCalledWith("ACTIVE"));
 		expect(card).toHaveTextContent("300");
 		expect(card).toHaveTextContent("20");
+		expect(screen.queryByRole("button", { name: /All \(incl\. archived\)/i })).not.toBeInTheDocument();
+		expect(vi.mocked(usePiQuality).mock.calls.every(([lifecycle]) => lifecycle === "ACTIVE")).toBe(true);
+		expect(vi.mocked(useExceptions).mock.calls.every(([, filters]) => filters.lifecycle_status === "ACTIVE")).toBe(true);
+		expect(vi.mocked(useExceptionPage).mock.calls.every(([, filters]) => filters.lifecycle_status === "ACTIVE")).toBe(true);
+	});
 
-		fireEvent.click(screen.getByRole("button", { name: /All \(incl\. archived\)/i }));
-		await waitFor(() => expect(usePiQuality).toHaveBeenCalledWith("ALL"));
-		expect(card).toHaveTextContent("PI fully complete");
-		expect(card).toHaveTextContent("121");
-		expect(card).toHaveTextContent("Approved · governed absence");
-		expect(card).toHaveTextContent("Legacy approved incomplete");
-		expect(card).toHaveTextContent("319");
-		expect(card).toHaveTextContent("Missing approved intel");
-		expect(card).toHaveTextContent("210");
-		expect(card).toHaveTextContent("20 active + 190 archived");
-		expect(screen.getByText(/8 test fixtures excluded/i)).toBeInTheDocument();
-		expect(
-			screen.getByText(/WITHOUT governed dispositions; they are never relabelled/i),
-		).toBeInTheDocument();
+	it("renames the copy card while preserving the missing_copy drill-down", async () => {
+		renderPage();
+		const copyCard = await screen.findByRole("button", {
+			name: /Missing production copy authority/i,
+		});
+		expect(screen.queryByText("Missing copywriting")).not.toBeInTheDocument();
+		fireEvent.click(copyCard);
+		await waitFor(() => {
+			const call = vi.mocked(useExceptionPage).mock.calls.at(-1);
+			expect(call?.[0]).toBe("missing_copy");
+			expect(call?.[1]).toMatchObject({ lifecycle_status: "ACTIVE" });
+		});
+	});
+
+	it("keeps the other operational cards present", async () => {
+		renderPage();
+		for (const label of [
+			"Missing product intel",
+			"Missing image",
+			"Missing cluster",
+			"Missing product type",
+			"Mapping blocked",
+			"Prompt not ready",
+			"Scene strategy gaps",
+		]) {
+			expect(await screen.findByRole("button", { name: new RegExp(label) })).toBeInTheDocument();
+		}
 	});
 
 	it("maps a class to the exact server kind and keeps card/table totals equal", async () => {
