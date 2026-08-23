@@ -53,6 +53,15 @@ def deterministic_id(prefix: str, value: Any, *, length: int = 24) -> str:
     return f"{token}_{deterministic_digest(value)[:length]}"
 
 
+def route_key_for_fact_ids(fact_ids: tuple[str, ...] | list[str]) -> str:
+    """Return the stable identity for one evidence-anchored narrative route."""
+
+    anchors = tuple(sorted(dict.fromkeys(str(item).strip() for item in fact_ids if str(item).strip())))
+    if not anchors:
+        raise ValueError("V3_ROUTE_ANCHOR_REQUIRED")
+    return deterministic_id("route", list(anchors))
+
+
 def normalized_text(value: str) -> str:
     return " ".join(str(value or "").split()).strip()
 
@@ -97,6 +106,29 @@ class V3FormulaRef(BaseModel):
 
     formula_id: str = Field(min_length=1)
     formula_version: str = Field(min_length=1)
+
+
+class V3RouteIdentity(BaseModel):
+    """Typed identity for one Storyline Family semantic route.
+
+    The database keeps this value inside the existing governed
+    ``narrative_route_json`` column.  It is a value object rather than a new
+    authority table, and its key is derived from approved evidence identities.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    route_key: str = Field(min_length=1)
+    route_anchor_fact_ids: tuple[str, ...] = Field(min_length=1, max_length=24)
+
+    @model_validator(mode="after")
+    def _route_identity_is_deterministic(self) -> "V3RouteIdentity":
+        anchors = tuple(dict.fromkeys(normalized_text(item) for item in self.route_anchor_fact_ids if normalized_text(item)))
+        if anchors != self.route_anchor_fact_ids:
+            raise ValueError("V3_ROUTE_ANCHORS_MUST_BE_UNIQUE_AND_NORMALIZED")
+        if self.route_key != route_key_for_fact_ids(list(anchors)):
+            raise ValueError("V3_ROUTE_KEY_NOT_DERIVED_FROM_ANCHORS")
+        return self
 
 
 class V3EvidenceRef(BaseModel):
@@ -299,6 +331,7 @@ class V3StorylineFamily(BaseModel):
     objective_compatibility: dict[str, Any] = Field(default_factory=dict)
     reviewed_definition: str = Field(min_length=1)
     narrative_route: dict[str, Any] = Field(default_factory=dict)
+    route_identity: V3RouteIdentity | None = None
     entry_contract: dict[str, Any] = Field(default_factory=dict)
     exit_contract: dict[str, Any] = Field(default_factory=dict)
     proof_placement: dict[str, Any] = Field(default_factory=dict)
@@ -613,6 +646,7 @@ __all__ = [
     "V3ProductTruthLineage",
     "V3Objective",
     "V3FormulaRef",
+    "V3RouteIdentity",
     "V3EvidenceRef",
     "V3BridgeContract",
     "V3ValidationReceipt",
@@ -632,6 +666,7 @@ __all__ = [
     "canonical_json",
     "deterministic_digest",
     "deterministic_id",
+    "route_key_for_fact_ids",
     "normalized_text",
     "word_count",
     "digest_text",

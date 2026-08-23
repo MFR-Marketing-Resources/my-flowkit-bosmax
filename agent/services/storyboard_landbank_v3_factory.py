@@ -39,6 +39,7 @@ from agent.models.storyboard_landbank_v3 import (
     V3ProductTruthLineage,
     V3ProjectedStageSlice,
     V3RevisionRef,
+    V3RouteIdentity,
     V3ReviewEvent,
     V3SeamState,
     V3StoryboardComponent,
@@ -52,6 +53,7 @@ from agent.models.storyboard_landbank_v3 import (
     normalized_text,
     projected_stage_allocations_digest,
     projection_content_digest,
+    route_key_for_fact_ids,
     validation_receipt_digest,
     word_count,
 )
@@ -68,12 +70,14 @@ from agent.models.storyboard_landbank_v3_round1 import (
 from agent.services import canonical_prompt_compiler
 from agent.services.storyboard_landbank_v3_validators import (
     BridgeContinuityValidator,
+    ClaimModifierValidator,
     ComponentStageValidator,
     DurationProjectionValidator,
     EvidenceLineageValidator,
     FormulaContractValidator,
     MasterStoryboardValidator,
     StorylineCompatibilityValidator,
+    StorylineRouteCompatibilityValidator,
     V3ValidationResult,
     receipt_from_result,
 )
@@ -371,6 +375,14 @@ def compile_master_storyboard(
         issues.append("COMPONENT_LINEAGE_MISMATCH")
     if [item.semantic_class for item in components] != ["HOOK", "BODY_CORE", "CTA"]:
         issues.append("COMPONENT_SEMANTIC_CLASS_SET_INVALID")
+    route_result = StorylineRouteCompatibilityValidator.validate(
+        storyline_family,
+        components,
+        evidence_registry=evidence_registry,
+    )
+    if not route_result.valid:
+        issues.extend(route_result.issue_codes)
+        details.extend(route_result.details)
 
     required = tuple(required_formula_stage_keys(formula.formula_id))
     by_stage: dict[str, tuple[V3StoryboardComponent, V3ComponentStageSegment]] = {}
@@ -532,6 +544,7 @@ def compile_duration_projection(
     engine: str = "GOOGLE_FLOW",
     preferred_lane: str | None = None,
     stage_text_overrides: Mapping[str, str] | None = None,
+    allow_unsafe_deterministic_claim_compression: bool = False,
     derivation_source: str = "DETERMINISTIC",
     created_by: str = "round1-compiler",
     source: str = ROUND1_SOURCE,
@@ -611,6 +624,7 @@ def compile_duration_projection(
         chosen: int | None = None
         chosen_text: str | None = None
         override_failure: str | None = None
+        unsafe_claim_compression_required = False
 
         # Look ahead using the minimum representable unit (one authored token)
         # for each later required stage.  This prevents the current stage from
@@ -644,6 +658,9 @@ def compile_duration_projection(
                         override_failure = f"AI stage override overflow: {stage.formula_stage_key}"
                         continue
                 else:
+                    if stage.claim_bearing and not allow_unsafe_deterministic_claim_compression:
+                        unsafe_claim_compression_required = True
+                        continue
                     candidate = _compress_ordered(full, maximum_words)
                     if candidate is None:
                         continue
@@ -655,6 +672,12 @@ def compile_duration_projection(
             break
 
         if chosen is None or chosen_text is None:
+            if unsafe_claim_compression_required:
+                return None, (
+                    "CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION",
+                ), (
+                    f"stage={stage.formula_stage_key}; governed semantic rewrite required",
+                )
             if override_failure:
                 return None, ("WPS_DURATION_FIT_SHORTFALL",), (override_failure,)
             residual_capacity = sum(
@@ -788,6 +811,15 @@ def compile_duration_projection(
         created_by=created_by,
     )
     projection = projection.model_copy(update={"exact_projection_digest": projection_content_digest(projection)})
+    if allow_unsafe_deterministic_claim_compression and any(
+        item.transform_mode == "COMPRESSED" and master.stages[item.order].claim_bearing
+        for item in projection.stage_allocations
+    ):
+        # Private discovery only for the governed AI-assisted projection path.
+        # The caller must replace these allocations before persistence; this
+        # branch is deliberately not reachable from enumeration or normal
+        # project_duration calls.
+        return projection, (), ()
     result = DurationProjectionValidator.validate(projection, master, evidence_registry=evidence_registry)
     if not result.valid:
         return None, result.issue_codes, result.details
@@ -1002,13 +1034,27 @@ def _row_to_entity(entity_type: str, row: Mapping[str, Any]) -> Any:
         supersedes = None
         if data.get("supersedes_family_id"):
             supersedes = _ref(data["supersedes_family_id"], data["supersedes_family_revision"])
+        narrative_route = _loads(data.get("narrative_route_json"), {})
+        route_identity = None
+        if isinstance(narrative_route, Mapping) and narrative_route.get("route_key") and narrative_route.get("route_anchor_fact_ids"):
+            try:
+                route_identity = V3RouteIdentity(
+                    route_key=str(narrative_route.get("route_key")),
+                    route_anchor_fact_ids=tuple(str(item) for item in narrative_route.get("route_anchor_fact_ids") or ()),
+                )
+            except Exception:
+                # Preserve the historical row for forensic validation.  The
+                # route validator will report the malformed identity instead
+                # of making the row unreadable.
+                route_identity = None
         return V3StorylineFamily(
             family_id=data["family_id"], revision=int(data["revision"]), product_id=data["product_id"],
             product_truth=truth, angle=_ref(data["angle_id"], data["angle_revision"]),
             formula=V3FormulaRef(formula_id=data["formula_id"], formula_version=data["formula_version"]),
             objective_compatibility=_loads(data.get("objective_compatibility_json"), {}),
             reviewed_definition=data["reviewed_definition"],
-            narrative_route=_loads(data.get("narrative_route_json"), {}),
+            narrative_route=narrative_route,
+            route_identity=route_identity,
             entry_contract=_loads(data.get("entry_contract_json"), {}),
             exit_contract=_loads(data.get("exit_contract_json"), {}),
             proof_placement=_loads(data.get("proof_placement_json"), {}),
@@ -1171,6 +1217,9 @@ def _entity_row(model: Any) -> tuple[str, dict[str, Any]]:
             "created_at": model.created_at, "created_by": model.created_by,
         }
     if isinstance(model, V3StorylineFamily):
+        narrative_route = dict(model.narrative_route)
+        if model.route_identity is not None:
+            narrative_route.update(model.route_identity.model_dump(mode="json"))
         return "STORYLINE_FAMILY", {
             "family_id": model.family_id, "revision": model.revision, "product_id": model.product_id,
             "product_truth_snapshot_id": model.product_truth.snapshot_id,
@@ -1179,7 +1228,7 @@ def _entity_row(model: Any) -> tuple[str, dict[str, Any]]:
             "angle_id": model.angle.entity_id, "angle_revision": model.angle.revision,
             "formula_id": model.formula.formula_id, "formula_version": model.formula.formula_version,
             "objective_compatibility_json": _json(model.objective_compatibility),
-            "reviewed_definition": model.reviewed_definition, "narrative_route_json": _json(model.narrative_route),
+            "reviewed_definition": model.reviewed_definition, "narrative_route_json": _json(narrative_route),
             "entry_contract_json": _json(model.entry_contract), "exit_contract_json": _json(model.exit_contract),
             "proof_placement_json": _json(model.proof_placement), "cta_closure_intent_json": _json(model.cta_closure_intent),
             "evidence_requirements_json": _json(model.evidence_requirements), "status": model.status,
@@ -1991,6 +2040,17 @@ class V3CopyFactoryService:
         return tuple(dict.fromkeys(normalized_text(str(item)) for item in raw if normalized_text(str(item))))
 
     @staticmethod
+    def _route_anchor_ids(data: Mapping[str, Any], route: Mapping[str, Any]) -> tuple[str, ...]:
+        raw = data.get("route_anchor_fact_ids")
+        if raw is None:
+            raw = route.get("route_anchor_fact_ids")
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, (list, tuple, set, frozenset)):
+            return ()
+        return tuple(dict.fromkeys(normalized_text(str(item)) for item in raw if normalized_text(str(item))))
+
+    @staticmethod
     def _ensure_no_approval(data: Mapping[str, Any]) -> None:
         if str(data.get("status") or "DRAFT").upper() == "APPROVED":
             raise V3FactoryError("ROUND1_APPROVAL_FORBIDDEN", "APPROVAL is not available in Macro Round 1; only DRAFT/reviewable records are created.", status_code=403)
@@ -2091,6 +2151,29 @@ class V3CopyFactoryService:
             route = {"stage_keys": list(required_formula_stage_keys(formula.formula_id)), "order_locked": True}
         if not isinstance(route, Mapping):
             raise V3FactoryError("STORYLINE_ROUTE_INVALID", "narrative_route must be an ordered object.", status_code=422)
+        route = dict(route)
+        route_anchor_fact_ids = self._route_anchor_ids(data, route)
+        supplied_route_key = normalized_text(str(data.get("route_key") or route.get("route_key") or ""))
+        route_identity = None
+        if route_anchor_fact_ids:
+            expected_route_key = route_key_for_fact_ids(list(route_anchor_fact_ids))
+            if supplied_route_key and supplied_route_key != expected_route_key:
+                raise V3FactoryError("STORYLINE_ROUTE_KEY_INVALID", "route_key must be deterministically derived from route_anchor_fact_ids.", status_code=422)
+            route_identity = V3RouteIdentity(
+                route_key=expected_route_key,
+                route_anchor_fact_ids=route_anchor_fact_ids,
+            )
+            for fact_id in route_anchor_fact_ids:
+                fact = bundle.registry.get(bundle.lineage.snapshot_id, fact_id)
+                if fact is None:
+                    raise V3FactoryError("ROUTE_ANCHOR_FACT_MISSING", "Storyline Family route anchor is outside current approved evidence.", status_code=409)
+                if fact.fact_kind.upper() in {"PRODUCT_DESCRIPTION", "TARGET_CUSTOMER"}:
+                    raise V3FactoryError("ROUTE_ANCHOR_GENERIC_FACT_FORBIDDEN", "Generic Product Truth context cannot identify a use-case route.", status_code=409)
+            route.update(route_identity.model_dump(mode="json"))
+        elif supplied_route_key:
+            raise V3FactoryError("STORYLINE_ROUTE_ANCHOR_REQUIRED", "A route_key cannot exist without route_anchor_fact_ids.", status_code=422)
+        if bool(data.get("require_route_identity")) and route_identity is None:
+            raise V3FactoryError("STORYLINE_ROUTE_ANCHOR_REQUIRED", "This Storyline Family CREATE requires an explicit approved route anchor.", status_code=409)
         evidence_requirements = data.get("evidence_requirements") or {}
         evidence_ids = self._evidence_ids(data)
         if evidence_ids:
@@ -2117,6 +2200,7 @@ class V3CopyFactoryService:
             objective_compatibility=dict(data.get("objective_compatibility") or {}),
             reviewed_definition=definition,
             narrative_route=dict(route),
+            route_identity=route_identity,
             entry_contract=dict(data.get("entry_contract") or {}),
             exit_contract=dict(data.get("exit_contract") or {}),
             proof_placement=dict(data.get("proof_placement") or {}),
@@ -2264,6 +2348,22 @@ class V3CopyFactoryService:
         selection = EvidenceRelevanceService.rank(bundle, requested_fact_ids=tuple(dict.fromkeys(fact_id for item in segments for fact_id in item.evidence_fact_ids)), require_claim_evidence=any(item.claim_bearing for item in segments))
         if selection.outcome != "ENOUGH_EVIDENCE" and any(item.claim_bearing for item in segments):
             raise V3FactoryError("EVIDENCE_SHORTFALL", "Claim-bearing component stages require current approved evidence.", status_code=409, details=selection.model_dump(mode="json"))
+        for segment in segments:
+            if not segment.claim_bearing:
+                continue
+            modifier_result = ClaimModifierValidator.validate(
+                segment.authored_text,
+                segment.evidence_fact_ids,
+                bundle.registry,
+                product_truth=bundle.lineage,
+            )
+            if not modifier_result.valid:
+                raise V3FactoryError(
+                    "CLAIM_REVIEW_REQUIRED",
+                    "Claim-bearing component contains an unsupported temporal, intensity, guarantee, or permanence modifier.",
+                    status_code=409,
+                    details=modifier_result.model_dump(mode="json"),
+                )
         authored_text = " ".join(item.authored_text for item in segments).strip()
         evidence_ids: list[str] = []
         for item in segments:
@@ -2666,6 +2766,8 @@ class V3CopyFactoryService:
         exclusions: list[V3ExclusionReceipt] = []
         structural_valid = 0
         evidence_valid = 0
+        semantic_valid = 0
+        weak_review_required = 0
         duration_valid = 0
         evaluated = 0
         skipped = 0
@@ -2722,6 +2824,7 @@ class V3CopyFactoryService:
                 ))
                 continue
             selected_fingerprints.add(fingerprint)
+            semantic_valid += 1
             projections: list[V3DurationProjection] = []
             projection_issue: tuple[str, ...] = ()
             projection_details: tuple[str, ...] = ()
@@ -2736,6 +2839,11 @@ class V3CopyFactoryService:
                         break
                     projections.append(projection)
             if projection_issue:
+                if projection_issue[0] in {
+                    "CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION",
+                    "PROJECTION_SEMANTIC_FRAGMENT_INVALID",
+                }:
+                    weak_review_required += 1
                 exclusion = V3ExclusionReceipt(candidate_id=candidate_id, code=projection_issue[0], details=(projection_details[0] if projection_details else "Duration projection rejected candidate"), dimensions={**refs, "durations": ",".join(str(item) for item in requested_durations)})
                 exclusions.append(exclusion)
                 candidates.append(V3CandidateCombination(
@@ -2745,18 +2853,26 @@ class V3CopyFactoryService:
                 ))
                 continue
             duration_valid += 1
+            review_required = any(
+                projection.status == "REVIEW_REQUIRED"
+                or any(item.transform_mode != "IDENTITY" for item in projection.stage_allocations)
+                for projection in projections
+            )
+            if review_required:
+                weak_review_required += 1
             candidates.append(V3CandidateCombination(
                 candidate_id=candidate_id, recipe=_ref(recipe.recipe_id, recipe.revision), angle=_ref(angle.angle_id, angle.revision),
                 storyline_family=_ref(family.family_id, family.revision), hook=_ref(hook.component_id, hook.revision), body_core=_ref(body.component_id, body.revision), cta=_ref(cta.component_id, cta.revision),
-                status="VALID", master=result.master, projections=tuple(projections), validation_receipts=result.receipts,
+                status="REVIEW_REQUIRED" if review_required else "VALID", master=result.master, projections=tuple(projections), validation_receipts=result.receipts,
             ))
         if not candidates and setup_reasons:
             exclusions.extend(
                 V3ExclusionReceipt(candidate_id=deterministic_id("setup_exclusion", {"recipe": recipe.recipe_id, "code": code}), code=code, details="No compatible component supply exists for the locked recipe.", dimensions={"recipe": recipe.recipe_id})
                 for code in setup_reasons
             )
+        requested_capacity = int(recipe.target_capacity.get("requested_capacity") or theoretical)
         return V3CandidatePage(
-            requested_capacity=int(recipe.target_capacity.get("requested_capacity") or theoretical),
+            requested_capacity=requested_capacity,
             theoretical_capacity=theoretical,
             structurally_valid_capacity=structural_valid,
             evidence_valid_capacity=evidence_valid,
@@ -2768,6 +2884,10 @@ class V3CopyFactoryService:
             next_cursor=encode_cursor(offset + limit, seed=seed) if more else None,
             candidates=tuple(candidates),
             exclusions=tuple(exclusions),
+            theoretical_raw_capacity=theoretical,
+            semantic_valid_capacity=semantic_valid,
+            weak_review_required_capacity=weak_review_required,
+            fast54_ready=semantic_valid >= requested_capacity and duration_valid >= requested_capacity and weak_review_required == 0,
         )
 
     async def capacity(
@@ -2784,7 +2904,7 @@ class V3CopyFactoryService:
         exclusion_counts = Counter(item.code for item in page.exclusions)
         duration_counts: dict[str, int] = {str(duration): 0 for duration in recipe.supported_durations_seconds}
         for candidate in page.candidates:
-            if candidate.status != "VALID":
+            if candidate.status not in {"VALID", "REVIEW_REQUIRED"}:
                 continue
             for projection in candidate.projections:
                 duration_counts[str(projection.target_duration_seconds)] = duration_counts.get(str(projection.target_duration_seconds), 0) + 1
@@ -2800,13 +2920,24 @@ class V3CopyFactoryService:
         shortfalls: list[str] = []
         if page.theoretical_capacity < page.requested_capacity:
             shortfalls.append("REQUESTED_CAPACITY_SHORTFALL")
+        if page.semantic_valid_capacity < page.requested_capacity:
+            shortfalls.append("SEMANTIC_CAPACITY_SHORTFALL")
+        if page.duration_valid_capacity < page.requested_capacity:
+            shortfalls.append("DURATION_CAPACITY_SHORTFALL")
+        if page.weak_review_required_capacity:
+            shortfalls.append("REVIEW_REQUIRED_CAPACITY_PRESENT")
         shortfalls.extend(code for code in ("MISSING_HOOK_VARIETY", "MISSING_BODY_CORE_ROUTE", "MISSING_CTA_VARIETY", "MISSING_STORYLINE_FAMILY") if code in exclusion_counts or page.theoretical_capacity == 0)
-        shortfalls.extend(sorted(code for code in exclusion_counts if code in {"BRIDGE_SHORTFALL", "EVIDENCE_SHORTFALL", "WPS_DURATION_FIT_SHORTFALL", "EXACT_DUPLICATE", "MISSING_FORMULA_STAGE"}))
+        shortfalls.extend(sorted(code for code in exclusion_counts if code in {"BRIDGE_SHORTFALL", "EVIDENCE_SHORTFALL", "WPS_DURATION_FIT_SHORTFALL", "EXACT_DUPLICATE", "MISSING_FORMULA_STAGE", "ROUTE_HOOK_BODY_INCOMPATIBLE", "ROUTE_COMPONENT_ANCHOR_MISMATCH", "ROUTE_USE_CASE_EVIDENCE_REQUIRED", "CLAIM_MODIFIER_UNSUPPORTED", "CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION"}))
         snapshot_payload = {
             "recipe": [recipe.recipe_id, recipe.revision, recipe.config_digest],
             "requested": page.requested_capacity, "theoretical": page.theoretical_capacity,
             "structural": page.structurally_valid_capacity, "evidence": page.evidence_valid_capacity,
-            "duration": page.duration_valid_capacity, "exclusions": dict(exclusion_counts),
+            "raw": page.theoretical_raw_capacity,
+            "semantic_valid": page.semantic_valid_capacity,
+            "weak_review_required": page.weak_review_required_capacity,
+            "duration": page.duration_valid_capacity,
+            "fast54_ready": page.fast54_ready,
+            "exclusions": dict(exclusion_counts),
         }
         return V3CapacitySnapshot(
             recipe=_ref(recipe.recipe_id, recipe.revision),
@@ -2815,7 +2946,7 @@ class V3CopyFactoryService:
             structurally_valid_capacity=page.structurally_valid_capacity,
             evidence_valid_capacity=page.evidence_valid_capacity,
             duration_valid_capacity=page.duration_valid_capacity,
-            reviewable_capacity=page.duration_valid_capacity,
+            reviewable_capacity=page.semantic_valid_capacity,
             approved_capacity=0,
             executable_capacity=0,
             duration_counts=duration_counts,
@@ -2825,6 +2956,10 @@ class V3CopyFactoryService:
             evaluated_count=page.evaluated_count,
             bounded=page.bounded,
             snapshot_digest=deterministic_digest(snapshot_payload),
+            theoretical_raw_capacity=page.theoretical_raw_capacity,
+            semantic_valid_capacity=page.semantic_valid_capacity,
+            weak_review_required_capacity=page.weak_review_required_capacity,
+            fast54_ready=page.fast54_ready,
         )
 
     async def compile_master(
@@ -2886,12 +3021,19 @@ class V3CopyFactoryService:
         wps_mode: str = "SAFE",
         preferred_lane: str | None = None,
         stage_text_overrides: Mapping[str, str] | None = None,
+        allow_unsafe_deterministic_claim_compression: bool = False,
         derivation_source: str = "DETERMINISTIC",
         persist: bool = False,
         actor_id: str | None = None,
         request_id: str | None = None,
         source: str = ROUND1_SOURCE,
     ) -> tuple[V3DurationProjection | None, tuple[str, ...], tuple[str, ...]]:
+        if allow_unsafe_deterministic_claim_compression and persist:
+            raise V3FactoryError(
+                "UNSAFE_PROJECTION_PERSIST_FORBIDDEN",
+                "Unsafe deterministic claim compression is available only for private rewrite discovery.",
+                status_code=409,
+            )
         master = await self.repository.get("MASTER_STORYBOARD", master_id, master_revision)
         if not isinstance(master, V3MasterStoryboard):
             raise V3FactoryError("MASTER_NOT_FOUND", "Master Storyboard was not found.", status_code=404)
@@ -2899,7 +3041,9 @@ class V3CopyFactoryService:
         projection, issues, details = compile_duration_projection(
             master, duration_seconds=duration_seconds, evidence_registry=bundle.registry,
             language_profile=language_profile, wps_mode=wps_mode, preferred_lane=preferred_lane,
-            stage_text_overrides=stage_text_overrides, derivation_source=derivation_source,
+            stage_text_overrides=stage_text_overrides,
+            allow_unsafe_deterministic_claim_compression=allow_unsafe_deterministic_claim_compression,
+            derivation_source=derivation_source,
             created_by=actor_id or "round1-compiler", source=source,
         )
         if projection is not None and persist:

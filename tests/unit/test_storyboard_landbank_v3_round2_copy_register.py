@@ -1446,7 +1446,7 @@ async def test_round2_ai_assisted_projection_fails_closed_when_formula_cannot_fi
 
 
 @pytest.mark.asyncio
-async def test_round2_pas_8s_body_allocation_reserves_later_stage_capacity():
+async def test_round2_pas_8s_claim_body_compression_fails_closed_without_fragment():
     factory, master = await _seed_malay_master("round2-pas-body-reserve", "PAS")
     bundle = await factory.truth_adapter.current(master.product_id)
     projection, issues, details = compile_duration_projection(
@@ -1456,17 +1456,9 @@ async def test_round2_pas_8s_body_allocation_reserves_later_stage_capacity():
         language_profile="Malay",
         wps_mode="SAFE",
     )
-    assert projection is not None, (issues, details)
-    assert projection.status == "REVIEW_REQUIRED"
-    assert all(item.projected_text for item in projection.stage_allocations)
-    assert any(item.transform_mode == "COMPRESSED" for item in projection.stage_allocations)
-    assert all(
-        count <= budget
-        for count, budget in zip(
-            projection.per_block_word_counts,
-            projection.per_block_word_budgets,
-        )
-    )
+    assert projection is None
+    assert issues == ("CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION",)
+    assert details == ("stage=solution; governed semantic rewrite required",)
 
 
 @pytest.mark.asyncio

@@ -76,7 +76,7 @@ class V3AssistantPlan(BaseModel):
     # for the "Review Evidence" panel.  The provider receives only fact_ids.
     evidence_selection: dict[str, Any] = Field(default_factory=dict)
     language_profile: str = Field(default="Malay", min_length=1)
-    current_capacity: dict[str, int] = Field(default_factory=dict)
+    current_capacity: dict[str, Any] = Field(default_factory=dict)
     # EXPAND/FILL_CAPACITY capacity-engine signals (deficits, marginal unlock per
     # component dimension, and the reviewable/duration capacity before the run).
     diversity_deficits: tuple[str, ...] = Field(default_factory=tuple)
@@ -155,6 +155,8 @@ class V3StorylineFamilyProposal(BaseModel):
 
     reviewed_definition: str = Field(min_length=8, max_length=500)
     narrative_route: dict[str, Any] = Field(default_factory=dict)
+    route_key: str = Field(min_length=1, max_length=120)
+    route_anchor_fact_ids: tuple[str, ...] = Field(min_length=1, max_length=24)
     rationale: str = Field(default="", max_length=800)
 
 

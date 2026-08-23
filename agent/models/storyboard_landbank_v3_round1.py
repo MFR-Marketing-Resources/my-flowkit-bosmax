@@ -89,6 +89,13 @@ class V3CandidatePage(BaseModel):
     next_cursor: str | None = None
     candidates: tuple[V3CandidateCombination, ...] = Field(default_factory=tuple)
     exclusions: tuple[V3ExclusionReceipt, ...] = Field(default_factory=tuple)
+    # ``theoretical_capacity`` is retained as a compatibility alias for the
+    # raw Cartesian count.  Semantic capacity is the only FAST54 eligibility
+    # signal; duration and review counts remain separately observable.
+    theoretical_raw_capacity: int = Field(default=0, ge=0)
+    semantic_valid_capacity: int = Field(default=0, ge=0)
+    weak_review_required_capacity: int = Field(default=0, ge=0)
+    fast54_ready: bool = False
 
 
 class V3CapacitySnapshot(BaseModel):
@@ -110,6 +117,10 @@ class V3CapacitySnapshot(BaseModel):
     evaluated_count: int = Field(ge=0)
     bounded: bool = True
     snapshot_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    theoretical_raw_capacity: int = Field(default=0, ge=0)
+    semantic_valid_capacity: int = Field(default=0, ge=0)
+    weak_review_required_capacity: int = Field(default=0, ge=0)
+    fast54_ready: bool = False
 
 
 class V3CompileResult(BaseModel):
