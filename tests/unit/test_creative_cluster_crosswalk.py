@@ -8,6 +8,10 @@ test hard-fails — a loud build break, never a runtime fallback.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 from agent.services.product_cluster_grouping import (
     RESOLVED,
@@ -38,14 +42,35 @@ def _code_domain() -> set[str]:
 
 
 def _creative_12() -> set[str]:
-    from agent.config import BASE_DIR
+    from agent.config import SOURCE_ROOT
 
     data = json.loads(
-        (BASE_DIR / "agent" / "authority" / "creative_category_cluster_map.json").read_text(
+        (SOURCE_ROOT / "agent" / "authority" / "creative_category_cluster_map.json").read_text(
             encoding="utf-8"
         )
     )
     return set(data["clusters"])
+
+
+def test_crosswalk_uses_source_root_when_runtime_storage_is_relocated(tmp_path: Path):
+    repo_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    env["FLOW_AGENT_DIR"] = str(tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from agent.services.product_cluster_grouping import crosswalk_domain; "
+            "print(len(crosswalk_domain()))",
+        ],
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == "40"
+    assert not (tmp_path / "agent" / "authority").exists()
 
 
 def test_domain_equals_the_40_code_union_exactly():

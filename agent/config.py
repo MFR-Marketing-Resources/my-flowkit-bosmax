@@ -79,7 +79,11 @@ if not (
     _load_env_file()
 
 # ─── Paths ───────────────────────────────────────────────────
-BASE_DIR = Path(os.environ.get("FLOW_AGENT_DIR", Path(__file__).parent.parent))
+# BASE_DIR is relocatable runtime storage (DB, data, output). Static code assets
+# must remain anchored to the immutable source/release tree when FLOW_AGENT_DIR
+# points at the external canonical state root.
+SOURCE_ROOT = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(os.environ.get("FLOW_AGENT_DIR", SOURCE_ROOT))
 
 
 def _running_under_pytest() -> bool:
