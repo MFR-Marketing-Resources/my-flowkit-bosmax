@@ -5,8 +5,9 @@
 .DESCRIPTION
   Creates C:\Users\USER\Desktop\_bosmax_runtime\releases\<sha> as a clean git
   worktree at <sha>, builds the dashboard SPA there, stamps runtime_manifest.json,
-  and updates the `current` release pointer. Code lives here; the canonical
-  MUTABLE DB stays external at the dev root (never copied into the release).
+  and updates the `current` release pointer. Code lives in the release; the
+  canonical MUTABLE DB and product byte store stay in a stable external state
+  root (never copied into the release).
 
   Production must NEVER be launched directly from the mutable dev checkout
   (C:\Users\USER\Desktop\_ref_flowkit). Use start-canonical-runtime.ps1 to serve.
@@ -18,12 +19,36 @@ param(
   [Parameter(Mandatory = $true)][string]$Sha,
   [string]$Repo = "C:\Users\USER\Desktop\_ref_flowkit",
   [string]$RuntimeRoot = "C:\Users\USER\Desktop\_bosmax_runtime",
+  [string]$StateRoot = "",
   [string]$Python = "C:\tmp\cutout-activation-venv\Scripts\python.exe"
 )
 $ErrorActionPreference = "Stop"
 
+if ([string]::IsNullOrWhiteSpace($StateRoot)) { $StateRoot = Join-Path $RuntimeRoot "state" }
+$repoResolved = [System.IO.Path]::GetFullPath($Repo).TrimEnd('\')
+$stateResolved = [System.IO.Path]::GetFullPath($StateRoot).TrimEnd('\')
+if ($stateResolved.Equals($repoResolved, [System.StringComparison]::OrdinalIgnoreCase) -or
+    $stateResolved.StartsWith($repoResolved + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+  Write-Error "PRODUCTION_RUNTIME_STATE_ROOT_NOT_EXTERNAL: $stateResolved"
+  exit 1
+}
+if (-not (Test-Path -LiteralPath $StateRoot -PathType Container)) {
+  Write-Error "PRODUCTION_RUNTIME_STATE_ROOT_MISSING: run scripts/migrate-canonical-runtime-state.ps1 -Apply"
+  exit 1
+}
 $Release = Join-Path $RuntimeRoot "releases\$Sha"
-$CanonicalDb = Join-Path $Repo "flow_agent.db"
+$CanonicalDb = Join-Path $StateRoot "flow_agent.db"
+if (-not (Test-Path -LiteralPath $CanonicalDb -PathType Leaf)) {
+  Write-Error "PRODUCTION_RUNTIME_STATE_DB_MISSING: $CanonicalDb"
+  exit 1
+}
+if (-not (Test-Path -LiteralPath (Join-Path $StateRoot "data") -PathType Container)) {
+  Write-Error "PRODUCTION_RUNTIME_STATE_DATA_MISSING: $StateRoot"
+  exit 1
+}
+$env:BOSMAX_RUNTIME_ROOT = $RuntimeRoot
+$env:BOSMAX_CANONICAL_STATE_ROOT = $StateRoot
+$env:BOSMAX_CANONICAL_DB = $CanonicalDb
 
 Write-Host "Deploying $Sha -> $Release"
 New-Item -ItemType Directory -Force -Path (Join-Path $RuntimeRoot "releases") | Out-Null

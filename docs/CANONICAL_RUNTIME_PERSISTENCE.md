@@ -19,7 +19,31 @@ was also audited as a duplicate startup path and is disabled by the installer.
 
 `BACKGROUND: the runtime being canonical ≠ the runtime being persistent.` The
 provenance lock (`/api/local-agent/runtime-provenance`) proves *what* is serving;
-persistence makes the *canonical* one serve on every boot.
+persistence makes the *canonical* one serve on every boot. The DB and Product
+Truth byte store must also live outside both the source checkout and immutable
+release worktrees.
+
+## Durable state root — required before canonical launch
+
+The canonical launcher binds `FLOW_AGENT_DIR` to
+`C:\Users\USER\Desktop\_bosmax_runtime\state` (or the explicit `-StateRoot`),
+not to a code checkout. It refuses to start if that root, its DB, or its `data`
+directory is missing. This prevents a deploy or reboot from silently creating a
+new empty DB beside a release.
+
+Migrate the existing state with the read-only preview first:
+
+```powershell
+pwsh -File scripts/migrate-canonical-runtime-state.ps1
+pwsh -File scripts/migrate-canonical-runtime-state.ps1 -Apply
+```
+
+`-Apply` requires a new destination, copies `flow_agent.db` and `data\` into a
+staging directory, verifies DB SHA-256 plus Product Truth row/byte counts, and
+then moves the verified directory into place. The source checkout is never
+deleted. Existing missing bytes are reported and preserved as evidence; the
+Product Truth tombstone path handles genuinely unrecoverable history during a
+later replacement.
 
 ## Fix — auto-start the canonical runtime, retire the stale launcher
 Run once (idempotent, reversible, no dev-root mutation, no provider spend):

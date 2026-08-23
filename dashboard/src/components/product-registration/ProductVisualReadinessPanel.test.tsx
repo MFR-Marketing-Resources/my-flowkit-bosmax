@@ -116,6 +116,22 @@ const approvedManual: ProductVisualReadiness = {
 	current_system_visual: { card: "MANUAL_CUTOUT", label: "Manual / Canva Cutout", status: "OFFICIAL" },
 };
 
+const brokenApproved: ProductVisualReadiness = {
+	...approvedAuto,
+	active_visual_source: "BROKEN_OFFICIAL_VISUAL",
+	auto_cutout_preview_url: null,
+	active_cutout_preview_url: null,
+	visual_grounding_status: "VISUAL_GROUNDING_BLOCKED",
+	exact_commerce_status: "EXACT_COMMERCE_BLOCKED",
+	current_system_visual: {
+		card: null,
+		label: "Official Visual Needs Recovery",
+		status: "BROKEN_OFFICIAL_VISUAL",
+	},
+	blockers: ["OFFICIAL_PRODUCT_VISUAL_INVALID"],
+	warnings: ["OFFICIAL_VISUAL_RECOVERY_REQUIRED"],
+};
+
 const trustedSourcePendingAuto: ProductVisualReadiness = {
 	...pending,
 	active_visual_source: "SAME_PRODUCT_TRUSTED_SOURCE",
@@ -335,6 +351,15 @@ describe("ProductVisualReadinessPanel", () => {
 		const manual = screen.getByTestId("card-badge-manual");
 		expect(within(manual).getByText("OFFICIAL CUTOUT")).toBeInTheDocument();
 		expect(within(manual).getByText("CURRENT SYSTEM REFERENCE")).toBeInTheDocument();
+	});
+
+	it("never labels a broken approved visual as official or current", () => {
+		render(<ProductVisualReadinessPanel productId="product-1" readiness={brokenApproved} />);
+
+		expect(screen.getByTestId("current-system-visual")).toHaveTextContent("recovery");
+		expect(screen.getByTestId("current-system-visual")).toHaveTextContent("no official cutout is active");
+		expect(screen.queryByText("OFFICIAL CUTOUT")).not.toBeInTheDocument();
+		expect(screen.queryByText("CURRENT SYSTEM REFERENCE")).not.toBeInTheDocument();
 	});
 
 	it("keeps exactly one card marked as the current system reference", () => {

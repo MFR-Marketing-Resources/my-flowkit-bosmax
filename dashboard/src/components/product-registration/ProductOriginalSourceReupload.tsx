@@ -53,6 +53,7 @@ export default function ProductOriginalSourceReupload({
 	const [message, setMessage] = useState<string | null>(null);
 
 	const previousSha = readiness?.canonical_source_sha256 || "";
+	const officialVisualBroken = readiness?.official_visual_status === "INVALID";
 	if (!previousSha) return null;
 
 	const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -130,7 +131,9 @@ export default function ProductOriginalSourceReupload({
 				<div>
 					<h3 className="text-base font-semibold text-white">Original Source Image</h3>
 					<p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-400">
-						{readiness?.original_source_reauthorization_required
+						{officialVisualBroken
+							? "The persisted Official Product Visual is broken or unavailable. Upload a product-bound replacement, then explicitly re-authorize it."
+							: readiness?.original_source_reauthorization_required
 							? "The previous Original Source bytes are unavailable or changed. Upload a replacement, then explicitly re-authorize it."
 							: "Upload a newer product image. Saving it requires explicit source reauthorization and preserves the existing Product Truth history."}
 					</p>

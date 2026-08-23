@@ -10,7 +10,8 @@ Contract: production launches ONLY from an immutable RELEASE directory
 (``_bosmax_runtime/releases/<sha>``), pinned by a ``current`` pointer, carrying a
 ``runtime_manifest.json`` whose ``deployed_sha`` matches the release's git HEAD
 and whose ``dashboard_bundle`` matches the built SPA. The canonical mutable DB
-stays EXTERNAL at the dev root (code and mutable data are separate). The launcher
+and byte store stay EXTERNAL in a stable runtime state root (code and mutable
+data are separate). The launcher
 FAILS CLOSED — never silently serves stale source — if any invariant is violated.
 
 This module is pure/inspectable so both the launcher (fail-closed startup) and
@@ -34,6 +35,7 @@ ERR_SHA_UNRESOLVABLE = "PRODUCTION_RUNTIME_SHA_UNRESOLVABLE"
 ERR_DIRTY = "PRODUCTION_RUNTIME_DIRTY"
 ERR_SHA_MISMATCH = "PRODUCTION_RUNTIME_SHA_MISMATCH"
 ERR_DB_PATH = "PRODUCTION_DB_PATH_MISMATCH"
+ERR_DB_MISSING = "PRODUCTION_RUNTIME_STATE_DB_MISSING"
 ERR_BUNDLE = "PRODUCTION_BUNDLE_MISMATCH"
 ERR_FILES_MISSING = "PRODUCTION_RUNTIME_FILES_MISSING"
 
@@ -45,8 +47,17 @@ def dev_root() -> Path:
     return Path(os.environ.get("BOSMAX_DEV_ROOT", r"C:/Users/USER/Desktop/_ref_flowkit")).resolve()
 
 
+def canonical_state_root() -> Path:
+    """Return the stable mutable state root used by the canonical launcher."""
+    configured = os.environ.get("BOSMAX_CANONICAL_STATE_ROOT")
+    if configured:
+        return Path(configured).resolve()
+    runtime_root = os.environ.get("BOSMAX_RUNTIME_ROOT", r"C:/Users/USER/Desktop/_bosmax_runtime")
+    return (Path(runtime_root) / "state").resolve()
+
+
 def canonical_db_path() -> Path:
-    return Path(os.environ.get("BOSMAX_CANONICAL_DB", str(dev_root() / "flow_agent.db"))).resolve()
+    return Path(os.environ.get("BOSMAX_CANONICAL_DB", str(canonical_state_root() / "flow_agent.db"))).resolve()
 
 
 def source_root() -> Path:
@@ -177,6 +188,9 @@ def resolve_provenance(source_root, db_path, *, origin_main: str | None = None) 
         "dev_root": str(dev),
         "dev_root_serving_production": dev_root_serving,
         "db_path": str(Path(db_path).resolve()),
+        "state_root": str(canonical_state_root()),
+        "db_exists": Path(db_path).is_file(),
+        "db_size_bytes": Path(db_path).stat().st_size if Path(db_path).is_file() else None,
         "db_canonical": db_canonical,
         "dashboard_bundle": bundle,
         "bundle_matches": bundle_matches,
@@ -209,6 +223,8 @@ def validate_production_release(source_root, db_path) -> tuple[bool, str | None,
         return False, ERR_SHA_MISMATCH, p
     if not p["db_canonical"]:
         return False, ERR_DB_PATH, p
+    if not p["db_exists"] or not p["db_size_bytes"]:
+        return False, ERR_DB_MISSING, p
     if not p["bundle_matches"]:
         return False, ERR_BUNDLE, p
     return True, None, p

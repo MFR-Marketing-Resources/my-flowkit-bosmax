@@ -47,6 +47,7 @@ const BADGE: Record<string, string> = {
 	PREPARING: "bg-sky-500/15 text-sky-300",
 	PREPARATION_FAILED: "bg-red-500/15 text-red-300",
 	BLOCKED: "bg-red-500/15 text-red-300",
+	BROKEN_OFFICIAL_VISUAL: "bg-red-500/15 text-red-300",
 	REJECTED: "bg-red-500/15 text-red-300",
 	SUPERSEDED: "bg-slate-700/40 text-slate-400",
 	VISUAL_GROUNDING_READY_FALLBACK: "bg-amber-500/15 text-amber-300",
@@ -936,6 +937,8 @@ export default function ProductVisualReadinessPanel({
 	const csvStatusLine =
 		csv?.status === "OFFICIAL"
 			? "Official cutout."
+			: csv?.status === "BROKEN_OFFICIAL_VISUAL"
+				? "Official visual bytes need recovery; no official cutout is active."
 			: autoPending
 				? "Auto cutout is waiting for review."
 				: csv?.status === "ORIGINAL_FALLBACK"

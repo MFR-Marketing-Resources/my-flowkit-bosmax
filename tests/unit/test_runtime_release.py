@@ -54,6 +54,15 @@ def test_manifest_round_trip(tmp_path):
     assert m["dashboard_bundle"] == "index-ABC.js"
 
 
+def test_default_canonical_db_uses_stable_runtime_state_root(monkeypatch, tmp_path):
+    monkeypatch.delenv("BOSMAX_CANONICAL_DB", raising=False)
+    monkeypatch.setenv("BOSMAX_RUNTIME_ROOT", str(tmp_path / "runtime"))
+    monkeypatch.delenv("BOSMAX_CANONICAL_STATE_ROOT", raising=False)
+
+    assert rr.canonical_state_root() == (tmp_path / "runtime" / "state").resolve()
+    assert rr.canonical_db_path() == (tmp_path / "runtime" / "state" / "flow_agent.db").resolve()
+
+
 def test_canonical_release_passes(env, clean_git, tmp_path):
     _dev, canon = env
     root = _make_release(tmp_path, db=canon)

@@ -1633,6 +1633,8 @@ export interface ProductVisualReadiness {
 	auto_cutout_status?: ProductVisualCutoutStatus | string;
 	manual_cutout_status?: ProductVisualCutoutStatus | string;
 	active_visual_source?: string;
+	official_visual_status?: "VALID" | "INVALID" | "NOT_APPROVED" | string;
+	official_visual_failure_code?: string | null;
 	canonical_source_media_id?: string | null;
 	canonical_source_sha256?: string | null;
 	original_source_reauthorization_required?: boolean;

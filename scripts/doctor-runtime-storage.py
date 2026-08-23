@@ -15,6 +15,7 @@ Note: this reports the checkout it is RUN FROM. To prove what the *running*
 """
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -49,6 +50,33 @@ async def main() -> int:
     print(f"git_sha:        {_git('rev-parse', '--short', 'HEAD')}")
 
     warnings: list[str] = []
+    verifier = Path(__file__).with_name("verify-canonical-runtime-state.py")
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(verifier), "--root", str(config.BASE_DIR), "--db", str(db_path), "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        state_report = json.loads(completed.stdout or "{}")
+        print(f"truth_lock_rows: {state_report.get('truth_lock_rows', 0)}")
+        print(f"approved_truth_locks: {state_report.get('approved_truth_locks', 0)}")
+        print(f"approved_missing_bytes: {state_report.get('approved_missing_bytes', 0)}")
+        print(f"approved_sha_mismatches: {state_report.get('approved_sha_mismatches', 0)}")
+        if state_report.get("error"):
+            warnings.append(f"TRUTH_LOCK_STATE_READ_FAILED:{state_report['error']}")
+        if int(state_report.get("approved_missing_bytes") or 0) > 0:
+            warnings.append(
+                f"TRUTH_LOCK_BYTES_MISSING: {state_report['approved_missing_bytes']} approved lock(s) lack persisted bytes"
+            )
+        if int(state_report.get("approved_sha_mismatches") or 0) > 0:
+            warnings.append(
+                f"TRUTH_LOCK_BYTES_SHA_MISMATCH: {state_report['approved_sha_mismatches']} approved lock(s) have mismatched bytes"
+            )
+        if int(state_report.get("truth_lock_paths_outside_root") or 0) > 0:
+            warnings.append("TRUTH_LOCK_PATH_OUTSIDE_STATE_ROOT")
+    except Exception as exc:
+        warnings.append(f"TRUTH_LOCK_STATE_PROBE_FAILED:{exc}")
     try:
         product_count = await crud.count_products()
         manual_count = await crud.count_products(source="MANUAL")

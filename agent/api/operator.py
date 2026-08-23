@@ -1276,6 +1276,10 @@ async def runtime_storage_status(include_authority_context_count: bool = False):
             warnings.append("DB_PATH_PARENT_DIFFERS_FROM_CWD")
     except Exception:
         cwd = ""
+    canonical_state_root = runtime_release.canonical_state_root()
+    state_root_canonical = config_db_path.parent.resolve() == canonical_state_root.resolve()
+    if not state_root_canonical:
+        warnings.append("CANONICAL_STATE_ROOT_MISMATCH")
 
     return {
         "status": "ok" if not read_error else "degraded",
@@ -1284,6 +1288,8 @@ async def runtime_storage_status(include_authority_context_count: bool = False):
         "flow_agent_dir_override": os.environ.get("FLOW_AGENT_DIR") or None,
         "config_db_path": str(agent_config.DB_PATH),
         "effective_db_path": effective_db_path,
+        "canonical_state_root": str(canonical_state_root),
+        "state_root_canonical": state_root_canonical,
         "db_exists": db_exists,
         "db_size_bytes": db_size_bytes,
         "product_count": product_count,
