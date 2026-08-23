@@ -2408,7 +2408,11 @@ async def annotate_products_visual_readiness(products: list[dict[str, Any]]) -> 
         prep = preps.get(pid)
         official_visual_valid, official_visual_error = _official_visual_gate(pid, lock)
         source = _reference_file(product)
-        source_available = bool(source) or bool(_reference_pack_file(pack)) or official_visual_valid is True
+        source_available = (
+            bool(_preview_servable_path(source))
+            or bool(_preview_servable_path(_reference_pack_file(pack)))
+            or official_visual_valid is True
+        )
         blocked = "PURGED_ALIAS" if pid in tombstoned else _purge_reason(product)
         if not blocked and is_archived(product):
             blocked = "ARCHIVED_PRODUCT"
