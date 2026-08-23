@@ -1233,7 +1233,9 @@ def compile_ugc_video_prompt(
             int(allocation["block_index"]): allocation
             for allocation in segment_allocations
         }
-    elif resolved_source_mode != "IMAGES" and not treatment:
+    elif resolved_source_mode != "IMAGES" and (
+        not treatment or approved_dialogue is not None
+    ):
         planner_route = (
             "DEV_MANUAL_BLOCK_PLAN"
             if resolved_generation_mode == "EXTEND" and not requested_total_duration_seconds
