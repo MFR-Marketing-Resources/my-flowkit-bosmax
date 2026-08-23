@@ -1791,9 +1791,11 @@ domains:
       # bounded Round 2 Copy Register / AI Copy Assistant review plane.
       - agent/api/storyboard_landbank_v3.py
       - agent/models/storyboard_landbank_v3.py
+      - agent/models/storyboard_landbank_v3_round1.py
       - agent/models/storyboard_landbank_v3_round2.py
       - agent/services/storyboard_landbank_v3_factory.py
       - agent/services/storyboard_landbank_v3_round2.py
+      - agent/services/storyboard_landbank_v3_validators.py
       - dashboard/src/api/storyboardLandbankV3Round2.ts
       - dashboard/src/pages/StoryboardLandbankV3Page.tsx
       - dashboard/src/pages/StoryboardLandbankV3Page.test.tsx

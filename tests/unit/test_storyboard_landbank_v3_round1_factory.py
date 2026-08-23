@@ -224,6 +224,10 @@ async def test_round1_fast54_real_factory_is_lazy_and_compiles_all_compatible_ca
     page = await service.enumerate_candidates(recipe.recipe_id, limit=100, durations=(8, 16, 24))
     elapsed = time.perf_counter() - start
     assert page.theoretical_capacity == 54
+    assert page.theoretical_raw_capacity == 54
+    assert page.semantic_valid_capacity == 54
+    assert page.weak_review_required_capacity == 0
+    assert page.fast54_ready is True
     assert page.evaluated_count == 54
     assert page.duration_valid_capacity == 54, page.exclusions[:3]
     assert len(page.candidates) == 54

@@ -38,10 +38,12 @@ from agent.models.storyboard_landbank_v3 import (
     validation_receipt_digest,
     word_count,
 )
+from agent.models.storyboard_landbank_v3_round1 import V3CapacitySnapshot
 from agent.services import canonical_prompt_compiler as canonical
 from agent.services.storyboard_landbank_v3_validators import (
     BridgeContinuityValidator,
     CandidateGateEvaluator,
+    ClaimModifierValidator,
     ComponentStageValidator,
     DeterministicDigestValidator,
     DurationProjectionValidator,
@@ -51,6 +53,7 @@ from agent.services.storyboard_landbank_v3_validators import (
     MasterStoryboardValidator,
     RevisionImmutabilityValidator,
     StorylineCompatibilityValidator,
+    StorylineRouteCompatibilityValidator,
 )
 
 
@@ -934,3 +937,182 @@ def test_v3_validator_module_has_no_database_or_provider_dependency():
     assert "make_video" not in source
     assert "httpx" not in source
     assert "playwright" not in source
+
+
+def _route_fact(fact_id: str, fact_kind: str, text: str) -> EvidenceFact:
+    return EvidenceFact(
+        snapshot_id="synthetic-snapshot-1",
+        fact_id=fact_id,
+        product_id="synthetic-product",
+        fact_kind=fact_kind,
+        text=text,
+        text_digest=digest_evidence_text(text),
+        snapshot_version=1,
+        snapshot_status="APPROVED",
+        approved=True,
+        source_ref="synthetic-route-fixture",
+    )
+
+
+def _rebind_component_fact(component: V3StoryboardComponent, fact_id: str) -> V3StoryboardComponent:
+    return component.model_copy(
+        update={
+            "evidence_fact_ids": (fact_id,),
+            "evidence_digest": deterministic_digest([fact_id]),
+        }
+    )
+
+
+def test_fast54_route_contract_a_to_d_blocks_mixed_use_cases_and_generic_bridges():
+    context = _context("PAS")
+    hook = context["components"][0]
+    body = context["components"][1]
+    facts = EvidenceRegistry(
+        facts=(
+            _route_fact("fact-hook-route", "BENEFIT", "hook route benefit"),
+            _route_fact("fact-body-route", "BENEFIT", "body route benefit"),
+            _route_fact("fact-generic", "PRODUCT_DESCRIPTION", "one generic product description"),
+        )
+    )
+    incompatible = StorylineRouteCompatibilityValidator.validate(
+        context["family"],
+        (_rebind_component_fact(hook, "fact-hook-route"), _rebind_component_fact(body, "fact-body-route")),
+        evidence_registry=facts,
+    )
+    assert "ROUTE_HOOK_BODY_INCOMPATIBLE" in incompatible.issue_codes
+
+    generic = StorylineRouteCompatibilityValidator.validate(
+        context["family"],
+        (_rebind_component_fact(hook, "fact-generic"), _rebind_component_fact(body, "fact-generic")),
+        evidence_registry=facts,
+    )
+    assert "ROUTE_USE_CASE_EVIDENCE_REQUIRED" in generic.issue_codes
+
+    matched = StorylineRouteCompatibilityValidator.validate(
+        context["family"],
+        (_rebind_component_fact(hook, "fact-hook-route"), _rebind_component_fact(body, "fact-hook-route")),
+        evidence_registry=facts,
+    )
+    assert matched.valid
+
+    numbness_hook = _rebind_component_fact(hook, "fact-hook-route")
+    unrelated_body = _rebind_component_fact(body, "fact-body-route")
+    assert "ROUTE_HOOK_BODY_INCOMPATIBLE" in StorylineRouteCompatibilityValidator.validate(
+        context["family"], (numbness_hook, unrelated_body), evidence_registry=facts
+    ).issue_codes
+
+
+def test_fast54_capacity_truth_fails_closed_for_raw_54_valid_13_and_keeps_families_isolated():
+    snapshot = V3CapacitySnapshot(
+        recipe=V3RevisionRef(entity_id="recipe-fast54", revision=1),
+        requested_capacity=54,
+        theoretical_capacity=54,
+        structurally_valid_capacity=54,
+        evidence_valid_capacity=54,
+        duration_valid_capacity=13,
+        reviewable_capacity=13,
+        theoretical_raw_capacity=54,
+        semantic_valid_capacity=13,
+        weak_review_required_capacity=5,
+        fast54_ready=False,
+        evaluated_count=54,
+        snapshot_digest="a" * 64,
+    )
+    assert snapshot.theoretical_raw_capacity == 54
+    assert snapshot.semantic_valid_capacity == 13
+    assert snapshot.fast54_ready is False
+    context = _context("PAS")
+    cross = context["components"][1].model_copy(
+        update={"storyline_family": V3RevisionRef(entity_id="other-family", revision=1)}
+    )
+    assert "CROSS_STORYLINE_COMPOSITION_BLOCKED" in StorylineCompatibilityValidator.validate_component_set(
+        (context["components"][0], cross)
+    ).issue_codes
+
+
+def _long_claim_master() -> tuple[dict, V3MasterStoryboard]:
+    context = _context("PAS")
+    stages = []
+    for stage in context["master"].stages:
+        text = stage.authored_text
+        if stage.formula_stage_key == "solution":
+            text = ("Minyak Warisan melegakan perut kembung dengan rasa hangat " * 8).strip() + "."
+        stages.append(stage.model_copy(update={"authored_text": text, "text_digest": digest_text(text)}))
+    master = context["master"].model_copy(
+        update={
+            "stages": tuple(stages),
+            "word_count": sum(word_count(stage.authored_text) for stage in stages),
+            "exact_content_digest": "0" * 64,
+            "duplicate_fingerprint": "0" * 64,
+        }
+    )
+    return context, master.model_copy(
+        update={
+            "exact_content_digest": master_content_digest(master),
+            "duplicate_fingerprint": exact_resolved_content_fingerprint(master),
+        }
+    )
+
+
+def test_safe_duration_contract_i_to_l_rejects_claim_fragments_for_8s_16s_but_preserves_24s_identity():
+    context, master = _long_claim_master()
+    for duration in (8, 16):
+        projection, issues, details = __import__(
+            "agent.services.storyboard_landbank_v3_factory",
+            fromlist=["compile_duration_projection"],
+        ).compile_duration_projection(
+            master, duration_seconds=duration, evidence_registry=context["registry"]
+        )
+        assert projection is None
+        assert issues == ("CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION",)
+        assert details and "governed semantic rewrite required" in details[0]
+
+    identity = _projection(context["master"], 24)
+    assert DurationProjectionValidator.validate(
+        identity, context["master"], evidence_registry=context["registry"]
+    ).valid
+
+    malformed = _projection(context["master"], 8)
+    allocation = malformed.stage_allocations[2].model_copy(
+        update={
+            "projected_text": "Minyak",
+            "projected_text_digest": digest_text("Minyak"),
+            "transform_mode": "COMPRESSED",
+        }
+    )
+    broken = _rebind_projection(
+        malformed,
+        (malformed.stage_allocations[0], malformed.stage_allocations[1], allocation, malformed.stage_allocations[3]),
+    )
+    issues = DurationProjectionValidator.validate(
+        broken, context["master"], evidence_registry=context["registry"]
+    ).issue_codes
+    assert "CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION" in issues
+    assert "PROJECTION_SEMANTIC_FRAGMENT_INVALID" in issues
+
+
+def test_claim_review_and_authority_safety_m_to_o_remain_fail_closed():
+    context = _context("PAS")
+    modifier = ClaimModifierValidator.validate(
+        "Rasa lega serta-merta.",
+        ("fact-lightweight",),
+        context["registry"],
+        product_truth=context["truth"],
+    )
+    assert "CLAIM_MODIFIER_UNSUPPORTED" in modifier.issue_codes
+    assert context["master"].status != "APPROVED"
+    assert V3CapacitySnapshot(
+        recipe=V3RevisionRef(entity_id="recipe", revision=1),
+        requested_capacity=1,
+        theoretical_capacity=1,
+        structurally_valid_capacity=1,
+        evidence_valid_capacity=1,
+        duration_valid_capacity=1,
+        reviewable_capacity=1,
+        approved_capacity=0,
+        executable_capacity=0,
+        evaluated_count=1,
+        snapshot_digest="b" * 64,
+    ).approved_capacity == 0
+    source = inspect.getsource(StorylineRouteCompatibilityValidator.validate)
+    assert "get_db" not in source and "provider" not in source.lower()

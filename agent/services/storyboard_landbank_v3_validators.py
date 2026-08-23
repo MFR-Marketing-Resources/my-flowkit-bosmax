@@ -7,6 +7,7 @@ call a provider, author copy, approve a revision, or materialize V2/P6 data.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,6 +27,7 @@ from agent.models.storyboard_landbank_v3 import (
     V3MasterStoryboard,
     V3ProductTruthLineage,
     V3RevisionRef,
+    V3RouteIdentity,
     V3StoryboardComponent,
     V3StorylineFamily,
     V3ValidationReceipt,
@@ -36,6 +38,7 @@ from agent.models.storyboard_landbank_v3 import (
     normalized_text,
     projected_stage_allocations_digest,
     projection_content_digest,
+    route_key_for_fact_ids,
     validation_receipt_digest,
     word_count,
 )
@@ -199,6 +202,206 @@ def _ordered_token_subsequence(projected: str, source: str) -> bool:
         except ValueError:
             return False
     return True
+
+
+# Product Description and Target Customer are useful grounding context, but
+# they do not identify a use-case route.  A route must be anchored by a more
+# specific approved fact (benefit, allowed claim, USP, pain point, usage, or a
+# product-specific authority kind).
+_GENERIC_ROUTE_FACT_KINDS = {"PRODUCT_DESCRIPTION", "TARGET_CUSTOMER"}
+
+# This is deliberately a small governed vocabulary, not a sentiment or
+# language-quality heuristic.  A modifier is unsafe only when it appears in
+# authored claim-bearing text and is absent from every cited approved fact.
+_CLAIM_MODIFIERS: tuple[tuple[str, str], ...] = (
+    ("TEMPORAL_IMMEDIACY", "serta-merta"),
+    ("TEMPORAL_IMMEDIACY", "segera"),
+    ("TEMPORAL_IMMEDIACY", "terus"),
+    ("TEMPORAL_IMMEDIACY", "instant"),
+    ("TEMPORAL_IMMEDIACY", "immediate"),
+    ("GUARANTEE", "dijamin"),
+    ("GUARANTEE", "jaminan"),
+    ("GUARANTEE", "guaranteed"),
+    ("GUARANTEE", "guarantee"),
+    ("INTENSITY_OR_MAGNITUDE", "paling"),
+    ("INTENSITY_OR_MAGNITUDE", "100%"),
+    ("INTENSITY_OR_MAGNITUDE", "completely"),
+    ("PERMANENCE", "kekal"),
+    ("PERMANENCE", "selamanya"),
+    ("PERMANENCE", "permanent"),
+)
+
+
+def _contains_phrase(text: str, phrase: str) -> bool:
+    return bool(re.search(r"(?<![\w-])" + re.escape(phrase) + r"(?![\w-])", normalized_text(text).casefold()))
+
+
+def _route_fact_ids(
+    fact_ids: Sequence[str],
+    *,
+    product_truth: V3ProductTruthLineage,
+    evidence_registry: EvidenceRegistry | None,
+) -> tuple[str, ...]:
+    if evidence_registry is None:
+        return ()
+    result: list[str] = []
+    for fact_id in fact_ids:
+        fact = evidence_registry.get(product_truth.snapshot_id, str(fact_id))
+        if fact is not None and fact.fact_kind.upper() not in _GENERIC_ROUTE_FACT_KINDS:
+            result.append(str(fact_id))
+    return tuple(dict.fromkeys(result))
+
+
+def _family_route_identity(family: V3StorylineFamily) -> tuple[V3RouteIdentity | None, bool]:
+    """Return (identity, malformed_metadata) for current and legacy rows."""
+
+    if family.route_identity is not None:
+        return family.route_identity, False
+    route = family.narrative_route
+    if not isinstance(route, Mapping):
+        return None, bool(route)
+    route_key = normalized_text(str(route.get("route_key") or ""))
+    raw_anchors = route.get("route_anchor_fact_ids")
+    if not route_key and raw_anchors is None:
+        return None, False
+    if isinstance(raw_anchors, str):
+        raw_anchors = [raw_anchors]
+    try:
+        identity = V3RouteIdentity(
+            route_key=route_key,
+            route_anchor_fact_ids=tuple(normalized_text(str(item)) for item in (raw_anchors or ()) if normalized_text(str(item))),
+        )
+    except Exception:
+        return None, True
+    return identity, False
+
+
+class ClaimModifierValidator:
+    """Flag unsupported temporal, intensity, guarantee, and permanence claims."""
+
+    name = "ClaimModifierValidator"
+
+    @classmethod
+    def validate(
+        cls,
+        claim_text: str,
+        evidence_fact_ids: Sequence[str],
+        evidence_registry: EvidenceRegistry | None,
+        *,
+        product_truth: V3ProductTruthLineage | None = None,
+    ) -> V3ValidationResult:
+        if not normalized_text(claim_text) or evidence_registry is None or product_truth is None:
+            return _result(cls.name)
+        cited_text = " ".join(
+            fact.text
+            for fact_id in evidence_fact_ids
+            if (fact := evidence_registry.get(product_truth.snapshot_id, str(fact_id))) is not None
+        ).casefold()
+        issues: list[tuple[str, str]] = []
+        for category, phrase in _CLAIM_MODIFIERS:
+            if _contains_phrase(claim_text, phrase) and not _contains_phrase(cited_text, phrase):
+                issues.append(
+                    (
+                        "CLAIM_MODIFIER_UNSUPPORTED",
+                        f"{category} modifier {phrase!r} is absent from cited approved evidence",
+                    )
+                )
+        return _result(cls.name, issues)
+
+
+class StorylineRouteCompatibilityValidator:
+    """Enforce one coherent evidence-anchored route per Storyline Family."""
+
+    name = "StorylineRouteCompatibilityValidator"
+
+    @classmethod
+    def validate(
+        cls,
+        storyline_family: V3StorylineFamily,
+        components: Sequence[V3StoryboardComponent],
+        *,
+        evidence_registry: EvidenceRegistry | None,
+    ) -> V3ValidationResult:
+        issues: list[tuple[str, str]] = []
+        identity, malformed = _family_route_identity(storyline_family)
+        if malformed:
+            issues.append(("STORYLINE_ROUTE_IDENTITY_INVALID", "Storyline Family route identity is malformed or non-deterministic"))
+        anchor_ids = set(identity.route_anchor_fact_ids) if identity is not None else set()
+        if identity is not None:
+            if identity.route_key != route_key_for_fact_ids(list(identity.route_anchor_fact_ids)):
+                issues.append(("STORYLINE_ROUTE_KEY_INVALID", "route_key is not derived from route_anchor_fact_ids"))
+            if evidence_registry is None:
+                issues.append(("ROUTE_EVIDENCE_REGISTRY_REQUIRED", "route identity requires current approved evidence"))
+            else:
+                for fact_id in identity.route_anchor_fact_ids:
+                    fact = evidence_registry.get(storyline_family.product_truth.snapshot_id, fact_id)
+                    if fact is None:
+                        issues.append(("ROUTE_ANCHOR_FACT_MISSING", fact_id))
+                    elif fact.fact_kind.upper() in _GENERIC_ROUTE_FACT_KINDS:
+                        issues.append(("ROUTE_ANCHOR_GENERIC_FACT_FORBIDDEN", fact_id))
+
+        hooks = [item for item in components if item.semantic_class == "HOOK"]
+        bodies = [item for item in components if item.semantic_class == "BODY_CORE"]
+        claim_route_components = [
+            item for item in components
+            if item.claim_bearing and item.semantic_class in {"HOOK", "BODY_CORE", "CTA"}
+        ]
+        route_ids_by_component = {
+            item.component_id: set(
+                _route_fact_ids(
+                    item.evidence_fact_ids,
+                    product_truth=storyline_family.product_truth,
+                    evidence_registry=evidence_registry,
+                )
+            )
+            for item in claim_route_components
+        }
+        for component in claim_route_components:
+            route_ids = route_ids_by_component[component.component_id]
+            if not route_ids:
+                issues.append(
+                    (
+                        "ROUTE_USE_CASE_EVIDENCE_REQUIRED",
+                        f"{component.component_id} has no non-generic route evidence",
+                    )
+                )
+            elif anchor_ids and not route_ids.intersection(anchor_ids):
+                issues.append(
+                    (
+                        "ROUTE_COMPONENT_ANCHOR_MISMATCH",
+                        f"{component.component_id} does not cite the Storyline Family route anchor",
+                    )
+                )
+
+        if not anchor_ids:
+            # Legacy families without an explicit identity remain readable, but
+            # their candidate composition is now constrained by the same
+            # evidence intersection law.  Generic Product Description overlap
+            # was removed above, so it cannot bridge unrelated use cases.
+            for hook in hooks:
+                hook_ids = set(
+                    _route_fact_ids(
+                        hook.evidence_fact_ids,
+                        product_truth=storyline_family.product_truth,
+                        evidence_registry=evidence_registry,
+                    )
+                )
+                for body in bodies:
+                    body_ids = set(
+                        _route_fact_ids(
+                            body.evidence_fact_ids,
+                            product_truth=storyline_family.product_truth,
+                            evidence_registry=evidence_registry,
+                        )
+                    )
+                    if not hook_ids or not body_ids or not hook_ids.intersection(body_ids):
+                        issues.append(
+                            (
+                                "ROUTE_HOOK_BODY_INCOMPATIBLE",
+                                f"hook={hook.component_id}; body={body.component_id} do not share a route anchor",
+                            )
+                        )
+        return _result(cls.name, issues)
 
 
 class FormulaContractValidator:
@@ -544,6 +747,7 @@ class EvidenceLineageValidator:
         registry: EvidenceRegistry | None,
         *,
         claim_bearing: bool = False,
+        claim_text: str | None = None,
         required_fact_ids: Sequence[str] = (),
         evidence_refs: Sequence[Any] = (),
     ) -> V3ValidationResult:
@@ -581,6 +785,14 @@ class EvidenceLineageValidator:
         )
         if missing_required:
             issues.append(("REQUIRED_EVIDENCE_MISSING", repr(sorted(missing_required))))
+        if claim_bearing and claim_text:
+            modifier_result = ClaimModifierValidator.validate(
+                claim_text,
+                evidence_fact_ids,
+                registry,
+                product_truth=product_truth,
+            )
+            issues.extend(zip(modifier_result.issue_codes, modifier_result.details))
         return _result(cls.name, issues)
 
 
@@ -622,6 +834,13 @@ class MasterStoryboardValidator:
             master, angle=angle, storyline_family=storyline_family
         )
         issues.extend(zip(storyline_result.issue_codes, storyline_result.details))
+        if storyline_family is not None and components:
+            route_result = StorylineRouteCompatibilityValidator.validate(
+                storyline_family,
+                components,
+                evidence_registry=evidence_registry,
+            )
+            issues.extend(zip(route_result.issue_codes, route_result.details))
 
         if not master.resolved_component_refs:
             issues.append(("COMPONENT_REFS_REQUIRED", "master must retain resolved component revisions"))
@@ -671,6 +890,7 @@ class MasterStoryboardValidator:
                 stage.evidence_fact_ids,
                 evidence_registry,
                 claim_bearing=stage.claim_bearing,
+                claim_text=stage.authored_text,
             )
             issues.extend(zip(evidence_result.issue_codes, evidence_result.details))
 
@@ -855,6 +1075,7 @@ class DurationProjectionValidator:
                     allocation.source_evidence_fact_ids,
                     evidence_registry,
                     claim_bearing=stage.claim_bearing,
+                    claim_text=allocation.projected_text,
                 )
                 issues.extend(zip(evidence_result.issue_codes, evidence_result.details))
 
@@ -935,6 +1156,21 @@ class DurationProjectionValidator:
                             allocation.master_stage_key,
                         )
                     )
+                if stage.claim_bearing and projection.derivation_source != "AI_ASSISTED":
+                    issues.append(
+                        (
+                            "CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION",
+                            f"claim-bearing stage {allocation.master_stage_key} requires a governed semantic rewrite",
+                        )
+                    )
+                if stage.claim_bearing or normalized_text(stage.authored_text)[-1:] in ".?!…":
+                    if normalized_text(allocation.projected_text)[-1:] not in ".?!…":
+                        issues.append(
+                            (
+                                "PROJECTION_SEMANTIC_FRAGMENT_INVALID",
+                                f"compressed stage {allocation.master_stage_key} is not a complete sentence",
+                            )
+                        )
             elif allocation.transform_mode == "MERGED_ADJACENT":
                 issues.append(
                     (
@@ -1246,8 +1482,10 @@ __all__ = [
     "V3_VALIDATOR_VERSION",
     "V3ValidationResult",
     "receipt_from_result",
+    "ClaimModifierValidator",
     "FormulaContractValidator",
     "StorylineCompatibilityValidator",
+    "StorylineRouteCompatibilityValidator",
     "ComponentStageValidator",
     "BridgeContinuityValidator",
     "EvidenceLineageValidator",
