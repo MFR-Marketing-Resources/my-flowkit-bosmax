@@ -102,6 +102,37 @@ def _with_round3_selection(
     return base
 
 
+def _p6_treatment_lineage(
+    treatment: dict[str, Any] | None,
+    *,
+    generation_mode: str,
+) -> dict[str, Any] | None:
+    """Keep recipe bridges as lineage-complete as the shared WGP path."""
+
+    if not isinstance(treatment, dict):
+        return None
+    segment_plan = treatment.get("segment_plan")
+    return {
+        "treatment_id": treatment["treatment_id"],
+        "treatment_sha256": treatment["treatment_sha256"],
+        "visual_fingerprint_sha256": treatment["visual_fingerprint_sha256"],
+        "dependency_hashes": treatment["dependency_hashes"],
+        "variation_group": treatment["variation_group"],
+        "format": treatment["format"],
+        "generation_mode": generation_mode,
+        "segment_plan_sha256": (
+            segment_plan.get("segment_plan_sha256")
+            if isinstance(segment_plan, dict)
+            else None
+        ),
+        "ordered_segment_sha256s": (
+            segment_plan.get("ordered_segment_sha256s", [])
+            if isinstance(segment_plan, dict)
+            else []
+        ),
+    }
+
+
 async def _create_p6_execution_bridge(
     *,
     item: dict[str, Any],
@@ -109,6 +140,7 @@ async def _create_p6_execution_bridge(
     package: dict[str, Any],
     source_lane: str,
     recipe_metadata: dict[str, Any],
+    treatment: dict[str, Any] | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     """Persist a P6-readable wrapper around an existing recipe authority.
 
@@ -208,6 +240,14 @@ async def _create_p6_execution_bridge(
         "temporal_occupancy": package.get("temporal_occupancy"),
         "shot_handling": package.get("shot_handling"),
         "generation_mode": str(package.get("generation_mode") or "SINGLE").upper(),
+        "treatment_lineage": _p6_treatment_lineage(
+            treatment,
+            generation_mode=str(
+                (treatment or {}).get("generation_mode")
+                or package.get("generation_mode")
+                or "SINGLE"
+            ).upper(),
+        ),
         "recipe_execution": recipe_metadata,
         "copy_architecture_v2": package.get("copy_architecture_v2"),
         "status": package.get("status") or package.get("readiness"),
@@ -324,6 +364,7 @@ async def _compile_faceless_recipe(
         package=package,
         source_lane="FACELESS",
         recipe_metadata=metadata,
+        treatment=treatment,
     )
 
 
@@ -447,6 +488,7 @@ async def _compile_montage_recipe(
         package=bridge_package,
         source_lane="MONTAGE",
         recipe_metadata=metadata,
+        treatment=treatment,
     )
     evidence["montage_run_id"] = str(run["montage_run_id"])
     evidence["montage_scene_count"] = int(run.get("total_scenes") or len(scenes))

@@ -275,6 +275,7 @@ async def test_faceless_compiler_delegates_to_canonical_faceless_and_wep_authori
     assert wgp_id == "p6recipe-faceless"
     wep.assert_awaited_once()
     bridge.assert_awaited_once()
+    assert bridge.await_args.kwargs["treatment"] == _treatment()
     assert evidence["recipe_execution"]["production_recipe"] == "FACELESS"
 
 
@@ -346,7 +347,26 @@ async def test_montage_compiler_delegates_to_canonical_montage_run_authority(
     create_run.assert_awaited_once()
     assert create_run.await_args.kwargs["default_policy"] is SceneReferencePolicy.PRODUCT_ANCHOR
     bridge.assert_awaited_once()
+    assert bridge.await_args.kwargs["treatment"] == _treatment()
     assert evidence["montage_run_id"] == "montage-run-1"
+
+
+def test_recipe_bridge_treatment_lineage_matches_scheduler_contract():
+    from agent.services import creative_production_compile_service as compiler
+
+    assert compiler._p6_treatment_lineage(
+        _treatment(), generation_mode="SINGLE"
+    ) == {
+        "treatment_id": "treatment-1",
+        "treatment_sha256": "a" * 64,
+        "visual_fingerprint_sha256": "b" * 64,
+        "dependency_hashes": {"copy_set_sha256": "c" * 64},
+        "variation_group": {"group_sha256": "d" * 64},
+        "format": "UGC",
+        "generation_mode": "SINGLE",
+        "segment_plan_sha256": None,
+        "ordered_segment_sha256s": [],
+    }
 
 
 @pytest.mark.asyncio
