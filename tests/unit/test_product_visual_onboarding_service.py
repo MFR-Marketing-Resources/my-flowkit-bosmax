@@ -983,6 +983,57 @@ async def test_pending_truth_lock_source_is_safe_input_but_not_approved_truth(tm
 
 
 @pytest.mark.asyncio
+async def test_prepare_resolves_pending_lock_before_stale_external_product_source(tmp_path, monkeypatch):
+    monkeypatch.setattr(service, "BASE_DIR", tmp_path)
+    source = tmp_path / "data" / "exact-product" / "pending-source.png"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (32, 48), (20, 90, 30)).save(source)
+    source_sha = service._sha256_bytes(source.read_bytes())
+    product = {
+        "id": "pending-lock-preparation",
+        "local_image_path": str(tmp_path / "external-checkout" / "stale.jpg"),
+    }
+    lock = {
+        "review_status": "PENDING_REVIEW",
+        "canonical_source_path": "data/exact-product/pending-source.png",
+        "canonical_sha256": source_sha,
+        "provenance_json": json.dumps({"source_kind": "AUTO_GENERATED"}),
+    }
+    resolver = AsyncMock(side_effect=AssertionError("stale external resolver must not win"))
+    monkeypatch.setattr(service.crud, "get_product_truth_lock", AsyncMock(return_value=lock))
+    monkeypatch.setattr(service, "resolve_product_reference_image", resolver)
+
+    reference = await service._resolve_source(product)
+
+    assert reference.source_type == "PRODUCT_TRUTH_LOCK_SOURCE_CANDIDATE"
+    assert reference.media_id is None
+    assert Path(reference.local_path).resolve() == source.resolve()
+    assert reference.sha256 == source_sha
+    resolver.assert_not_awaited()
+
+
+def test_blocked_preparation_is_not_masked_by_pending_lock(tmp_path, monkeypatch):
+    monkeypatch.setattr(service, "BASE_DIR", tmp_path)
+    readiness = service._readiness_payload(
+        {"id": "blocked-pending"},
+        lock={
+            "review_status": "PENDING_REVIEW",
+            "canonical_cutout_path": "data/exact-product/missing-cutout.png",
+        },
+        pack=None,
+        prep={"status": "BLOCKED", "failure_code": "CANONICAL_MEDIA_ID_REQUIRED"},
+        reference=None,
+        source_available=False,
+        source_error="CANONICAL_MEDIA_ID_REQUIRED",
+        history=[],
+    )
+
+    assert readiness["cutout_status"] == "BLOCKED"
+    assert readiness["cutout_review_status"] == "PENDING_REVIEW"
+    assert "CANONICAL_MEDIA_ID_REQUIRED" in readiness["warnings"]
+
+
+@pytest.mark.asyncio
 async def test_canonical_media_registration_replaces_stale_pointer_without_overwrite(
     tmp_path,
     monkeypatch,
