@@ -400,6 +400,7 @@ def test_deterministic_cutout_bytes_preserve_canonical_source_dimensions(tmp_pat
 
 @pytest.mark.asyncio
 async def test_deterministic_prepare_creates_pending_review_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(service, "BASE_DIR", tmp_path)
     source = tmp_path / "source.png"
     Image.new("RGB", (24, 24), (30, 120, 150)).save(source)
     product = await crud.create_product(
@@ -937,6 +938,105 @@ async def test_trusted_original_remaps_external_schema_to_governed_twin(tmp_path
     )
     assert readiness["manual_cutout_status"] == "REJECTED"
     assert readiness["provider_operations"] == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_truth_lock_source_is_safe_input_but_not_approved_truth(tmp_path, monkeypatch):
+    monkeypatch.setattr(service, "BASE_DIR", tmp_path)
+    source = tmp_path / "data" / "exact-product" / "pending-source.png"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (32, 48), (20, 90, 30)).save(source)
+    source_sha = service._sha256_bytes(source.read_bytes())
+    product = {"id": "pending-lock-source"}
+    lock = {
+        "review_status": "PENDING_REVIEW",
+        "canonical_source_path": "data/exact-product/pending-source.png",
+        "canonical_sha256": source_sha,
+        "canonical_media_id": "stale-source-media",
+        "provenance_json": json.dumps({
+            "source_kind": "AUTO_GENERATED",
+            "active_selection": "CANDIDATE",
+        }),
+    }
+
+    reference, available, error = await service._resolve_trusted_original_reference(
+        product,
+        lock=lock,
+        pack=None,
+    )
+
+    assert error is None
+    assert available is True
+    assert reference is not None
+    assert reference.source_type == "PRODUCT_TRUTH_LOCK_SOURCE_CANDIDATE"
+    assert reference.media_id is None
+    assert Path(reference.local_path).resolve() == source.resolve()
+
+    approved_reference, approved_available, approved_error = await service._resolve_trusted_original_reference(
+        product,
+        lock={**lock, "review_status": "APPROVED"},
+        pack=None,
+    )
+    assert approved_reference is None
+    assert approved_available is False
+    assert approved_error == "TRUSTED_SAME_PRODUCT_SOURCE_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_canonical_media_registration_replaces_stale_pointer_without_overwrite(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(service, "BASE_DIR", tmp_path)
+    source = tmp_path / "data" / "exact-product" / "candidate-source.png"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (24, 24), (40, 80, 120)).save(source)
+    source_sha = service._sha256_bytes(source.read_bytes())
+    stale = {
+        "media_id": "stale-source-media",
+        "product_id": "registry-product",
+        "kind": "image",
+        "status": "STORED",
+        "local_path": "data/products/images/missing-authoring-copy.png",
+    }
+    created: dict[str, object] = {}
+    updates: list[dict[str, object]] = []
+
+    monkeypatch.setattr(service.crud, "get_product_source_media", AsyncMock(return_value=stale))
+    monkeypatch.setattr(service.crud, "list_product_source_media", AsyncMock(return_value=[stale]))
+
+    async def create_media(_draft_id, _kind, **kwargs):
+        created.update(kwargs)
+        return {"media_id": "governed-source-media"}
+
+    async def update_product(_product_id, **kwargs):
+        updates.append(kwargs)
+        return {"id": "registry-product", **kwargs}
+
+    monkeypatch.setattr(service.crud, "create_product_source_media", create_media)
+    monkeypatch.setattr(service.crud, "update_product", update_product)
+
+    media_id = await service._ensure_canonical_media(
+        {"id": "registry-product"},
+        SimpleNamespace(
+            media_id="stale-source-media",
+            local_path=str(source),
+            sha256=source_sha,
+            mime_type="image/png",
+            width=24,
+            height=24,
+        ),
+    )
+
+    assert media_id == "governed-source-media"
+    assert created["local_path"] == "data/exact-product/candidate-source.png"
+    assert created["status"] == "STORED"
+    assert updates[-1] == {
+        "media_id": "governed-source-media",
+        "local_image_path": "data/exact-product/candidate-source.png",
+        "image_asset_status": "READY",
+        "asset_status": "DOWNLOADED",
+    }
 
 
 @pytest.mark.asyncio

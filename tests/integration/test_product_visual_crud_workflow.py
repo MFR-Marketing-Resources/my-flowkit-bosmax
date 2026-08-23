@@ -13,6 +13,7 @@ from PIL import Image
 from agent.config import DB_PATH
 from agent.db import crud
 from agent.services import product_truth_lock_service
+from agent.services import product_visual_grounding_resolver
 from agent.services import product_visual_onboarding_service as service
 
 
@@ -37,6 +38,7 @@ async def test_product_visual_crud_workflow_is_provider_free(tmp_path, monkeypat
     isolated_runtime_root.mkdir()
     monkeypatch.setattr(service, "BASE_DIR", isolated_runtime_root)
     monkeypatch.setattr(product_truth_lock_service, "BASE_DIR", isolated_runtime_root)
+    monkeypatch.setattr(product_visual_grounding_resolver, "BASE_DIR", isolated_runtime_root)
 
     # Source must live under the monkeypatched BASE_DIR so readiness and the
     # preview endpoint share the same servable-byte authority (no outside-root files).

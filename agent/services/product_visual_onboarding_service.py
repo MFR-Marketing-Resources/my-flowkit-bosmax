@@ -557,6 +557,53 @@ def _truth_lock_source_reference(lock: dict[str, Any] | None, product: dict[str,
     )
 
 
+def _pending_truth_lock_source_reference(
+    lock: dict[str, Any] | None,
+    product: dict[str, Any],
+) -> Any | None:
+    """Resolve a byte-backed source carried by a non-approved visual candidate.
+
+    A pending/rejected candidate can preserve an exact source byte under the
+    governed runtime store even when the product row and its older source-media
+    registry entry still point at an authoring path.  That byte is safe input
+    evidence for local preparation, but it is not approved Product Truth.  Do
+    not use this path for an approved lock: broken approved truth must remain in
+    the explicit owner-recovery lane.
+    """
+    if not lock or str(lock.get("review_status") or "").upper() == APPROVED:
+        return None
+    path = _preview_servable_path(lock.get("canonical_source_path"))
+    expected_sha = str(lock.get("canonical_sha256") or "").strip().lower()
+    if path is None or len(expected_sha) != 64:
+        return None
+    try:
+        with Image.open(path) as image:
+            image_format = str(image.format or "").upper()
+            width, height = image.size
+            image.load()
+        actual_sha = _sha256_bytes(path.read_bytes())
+    except Exception:  # noqa: BLE001 - source recovery remains fail-closed
+        return None
+    if actual_sha != expected_sha:
+        return None
+    mime_type = _SOURCE_REAUTH_FORMATS.get(image_format, ("", "image/octet-stream"))[1]
+    return SimpleNamespace(
+        source_type="PRODUCT_TRUTH_LOCK_SOURCE_CANDIDATE",
+        # The persisted media id may point to a stale authoring-path row.  The
+        # registry seam below re-validates it and creates a governed row when
+        # necessary, so do not treat it as canonical merely by identity.
+        media_id=None,
+        local_path=str(path),
+        image_url=product.get("image_url"),
+        mime_type=mime_type,
+        sha256=actual_sha,
+        width=int(width),
+        height=int(height),
+        provenance="PRODUCT_VISUAL_TRUTH_LOCK_CANDIDATE",
+        validation_status="VALIDATED",
+    )
+
+
 async def _resolve_trusted_original_reference(
     product: dict[str, Any],
     *,
@@ -586,6 +633,9 @@ async def _resolve_trusted_original_reference(
     locked_reference = _truth_lock_source_reference(lock, product)
     if locked_reference is not None:
         return locked_reference, True, None
+    pending_lock_reference = _pending_truth_lock_source_reference(lock, product)
+    if pending_lock_reference is not None:
+        return pending_lock_reference, True, None
 
     resolver_product = await _enrich_product_with_source_media(product)
     # Match prior readiness gates: local file / schema / pack / approved lock / PSM bytes.
@@ -1178,28 +1228,70 @@ async def _resolve_source(product: dict[str, Any]) -> Any:
 
 
 async def _ensure_canonical_media(product: dict[str, Any], reference: Any) -> str:
+    source_path = _preview_servable_path(getattr(reference, "local_path", None))
+    if source_path is None:
+        raise ProductVisualOnboardingError(
+            "CANONICAL_MEDIA_ID_REQUIRED",
+            "Canonical source is not a governed local readable image.",
+        )
+    product_id = str(product["id"])
+    source_sha = str(getattr(reference, "sha256", "") or "").strip().lower()
+    actual_sha = _sha256_bytes(source_path.read_bytes())
+    if source_sha and actual_sha != source_sha:
+        raise ProductVisualOnboardingError(
+            "CANONICAL_PRODUCT_SOURCE_INVALID",
+            "Canonical source bytes changed during registration.",
+        )
+    source_sha = actual_sha
+
     existing_media_id = str(getattr(reference, "media_id", None) or "").strip()
     if existing_media_id:
-        return existing_media_id
-    source_path = _path(getattr(reference, "local_path", None))
-    if source_path is None:
-        raise ProductVisualOnboardingError("CANONICAL_MEDIA_ID_REQUIRED", "Canonical source is not a local readable image.")
-    product_id = str(product["id"])
-    source_sha = str(getattr(reference, "sha256", "") or "")
+        existing = await crud.get_product_source_media(existing_media_id)
+        existing_path = _preview_servable_path((existing or {}).get("local_path"))
+        existing_status = str((existing or {}).get("status") or "").upper()
+        if (
+            existing
+            and str(existing.get("product_id") or "") == product_id
+            and str(existing.get("kind") or "").lower() == "image"
+            and existing_status == "STORED"
+            and existing_path is not None
+            and _sha256_bytes(existing_path.read_bytes()) == source_sha
+        ):
+            relative_path = str(existing_path.relative_to(BASE_DIR.resolve())).replace("\\", "/")
+            await crud.update_product(
+                product_id,
+                media_id=existing_media_id,
+                local_image_path=relative_path,
+                image_asset_status="READY",
+                asset_status="DOWNLOADED",
+            )
+            return existing_media_id
+
     for row in await crud.list_product_source_media(product_id=product_id):
-        if str(row.get("kind") or "") != "image":
+        if (
+            str(row.get("kind") or "").lower() != "image"
+            or str(row.get("status") or "").upper() != "STORED"
+        ):
             continue
-        candidate = _path(row.get("local_path"))
+        candidate = _preview_servable_path(row.get("local_path"))
         if candidate and _sha256_bytes(candidate.read_bytes()) == source_sha:
             media_id = str(row.get("media_id") or "").strip()
             if media_id:
-                await crud.update_product(product_id, media_id=media_id)
+                relative_path = str(candidate.relative_to(BASE_DIR.resolve())).replace("\\", "/")
+                await crud.update_product(
+                    product_id,
+                    media_id=media_id,
+                    local_image_path=relative_path,
+                    image_asset_status="READY",
+                    asset_status="DOWNLOADED",
+                )
                 return media_id
+    relative_path = str(source_path.relative_to(BASE_DIR.resolve())).replace("\\", "/")
     row = await crud.create_product_source_media(
         f"visual-source:{product_id}",
         "image",
         product_id=product_id,
-        local_path=str(source_path),
+        local_path=relative_path,
         filename=source_path.name,
         mime=str(getattr(reference, "mime_type", None) or "image/jpeg"),
         bytes=source_path.stat().st_size,
@@ -1210,7 +1302,13 @@ async def _ensure_canonical_media(product: dict[str, Any], reference: Any) -> st
     media_id = str((row or {}).get("media_id") or "").strip()
     if not media_id:
         raise ProductVisualOnboardingError("CANONICAL_MEDIA_ID_REQUIRED", "Source media registry did not return a media ID.")
-    await crud.update_product(product_id, media_id=media_id)
+    await crud.update_product(
+        product_id,
+        media_id=media_id,
+        local_image_path=relative_path,
+        image_asset_status="READY",
+        asset_status="DOWNLOADED",
+    )
     return media_id
 
 
@@ -2413,6 +2511,8 @@ async def annotate_products_visual_readiness(products: list[dict[str, Any]]) -> 
             or bool(_preview_servable_path(_reference_pack_file(pack)))
             or official_visual_valid is True
         )
+        if not source_available and _pending_truth_lock_source_reference(lock, product) is not None:
+            source_available = True
         blocked = "PURGED_ALIAS" if pid in tombstoned else _purge_reason(product)
         if not blocked and is_archived(product):
             blocked = "ARCHIVED_PRODUCT"
