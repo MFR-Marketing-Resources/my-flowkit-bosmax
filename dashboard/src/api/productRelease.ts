@@ -1,4 +1,5 @@
 import { fetchAPI, postAPI } from "./client";
+import type { ProductVisualReadiness } from "../types";
 
 export interface ProductReleaseRow {
 	id: string;
@@ -6,7 +7,12 @@ export interface ProductReleaseRow {
 	product_display_name?: string | null;
 	product_short_name?: string | null;
 	brand?: string | null;
+	source?: string | null;
 	lifecycle_status?: string | null;
+	image_url?: string | null;
+	image_readiness_status?: string | null;
+	rendered_img_src?: string | null;
+	image_analysis?: { image_url?: string | null } | null;
 	staff_release_status: "HIDDEN" | "RELEASED";
 	minimum_eligibility_status: "ELIGIBLE" | "BLOCKED";
 	current_minimum_eligibility: boolean;
@@ -18,13 +24,7 @@ export interface ProductReleaseRow {
 	mapping_status?: string | null;
 	prompt_readiness_status?: string | null;
 	claim_gate?: string | null;
-	visual_readiness?: {
-		canonical_media_status?: string;
-		visual_grounding_status?: string;
-		exact_commerce_status?: string;
-		cutout_status?: string;
-		blockers?: string[];
-	};
+	visual_readiness?: ProductVisualReadiness;
 	release_history?: {
 		released_at?: string | null;
 		hidden_at?: string | null;
@@ -64,6 +64,8 @@ export function fetchProductReleaseControl(params: {
 	visibility?: string;
 	eligibility?: string;
 	blocker?: string;
+	limit?: number;
+	offset?: number;
 } = {}): Promise<ProductReleaseResponse> {
 	const query = new URLSearchParams();
 	if (params.q) query.set("q", params.q);
@@ -71,7 +73,8 @@ export function fetchProductReleaseControl(params: {
 	if (params.visibility) query.set("visibility", params.visibility);
 	if (params.eligibility) query.set("eligibility", params.eligibility);
 	if (params.blocker) query.set("blocker", params.blocker);
-	query.set("limit", "1000");
+	query.set("limit", String(params.limit ?? 50));
+	query.set("offset", String(params.offset ?? 0));
 	return fetchAPI<ProductReleaseResponse>(`/api/product-release?${query.toString()}`);
 }
 
