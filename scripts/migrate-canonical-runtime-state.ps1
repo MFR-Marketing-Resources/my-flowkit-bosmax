@@ -31,6 +31,8 @@ $sourceDb = Join-Path $repoResolved "flow_agent.db"
 $sourceData = Join-Path $repoResolved "data"
 $verifier = Join-Path $PSScriptRoot "verify-canonical-runtime-state.py"
 $relocator = Join-Path $PSScriptRoot "relocate-runtime-state-db.py"
+$providerMigrator = Join-Path $PSScriptRoot "migrate-provider-settings-state.py"
+$sourceProviderSettings = Join-Path $repoResolved ".local-agent\ai-provider-settings.json"
 if (-not (Test-Path -LiteralPath $sourceDb -PathType Leaf)) {
   Write-Error "PRODUCTION_RUNTIME_STATE_SOURCE_DB_MISSING: $sourceDb"
   exit 1
@@ -45,6 +47,10 @@ if (-not (Test-Path -LiteralPath $verifier -PathType Leaf)) {
 }
 if (-not (Test-Path -LiteralPath $relocator -PathType Leaf)) {
   Write-Error "PRODUCTION_RUNTIME_STATE_RELOCATOR_MISSING: $relocator"
+  exit 1
+}
+if (-not (Test-Path -LiteralPath $providerMigrator -PathType Leaf)) {
+  Write-Error "PRODUCTION_RUNTIME_PROVIDER_SETTINGS_MIGRATOR_MISSING: $providerMigrator"
   exit 1
 }
 
@@ -64,6 +70,7 @@ if ([int]$sourceReport.approved_missing_bytes -gt 0 -or [int]$sourceReport.appro
 }
 
 if (-not $Apply) {
+  Write-Host ("PROVIDER_SETTINGS_SOURCE_PRESENT: {0}" -f (Test-Path -LiteralPath $sourceProviderSettings -PathType Leaf))
   Write-Host "DRY_RUN_OK: no files changed. Re-run with -Apply after reviewing the source report."
   exit 0
 }
@@ -83,6 +90,15 @@ New-Item -ItemType Directory -Force -Path $staging | Out-Null
 try {
   Copy-Item -LiteralPath $sourceDb -Destination (Join-Path $staging "flow_agent.db") -Force
   Copy-Item -LiteralPath $sourceData -Destination (Join-Path $staging "data") -Recurse -Force
+
+  $stagedProviderSettings = Join-Path $staging ".local-agent\ai-provider-settings.json"
+  $providerJson = (& $Python $providerMigrator --source $sourceProviderSettings --destination $stagedProviderSettings --json | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $providerJson) {
+    throw "PRODUCTION_RUNTIME_PROVIDER_SETTINGS_MIGRATION_FAILED"
+  }
+  $providerReport = $providerJson | ConvertFrom-Json
+  Write-Host ("PROVIDER_SETTINGS_MIGRATION: status={0} source_exists={1} destination_exists={2}" -f `
+    $providerReport.status, $providerReport.source_exists, $providerReport.destination_exists)
 
   $stagedDb = Join-Path $staging "flow_agent.db"
   $sourceHash = (Get-FileHash -LiteralPath $sourceDb -Algorithm SHA256).Hash

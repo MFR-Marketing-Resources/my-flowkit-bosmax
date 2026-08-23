@@ -54,8 +54,13 @@ domains:
       # unmerged branch after every reboot.
       - scripts/install-canonical-runtime-autostart.ps1
       - scripts/verify-runtime-canonical.ps1
+      # Canonical runtime state migration also carries optional provider settings
+      # without exposing or overwriting secret-bearing state.
+      - scripts/migrate-canonical-runtime-state.ps1
+      - scripts/migrate-provider-settings-state.py
       - docs/CANONICAL_RUNTIME_PERSISTENCE.md
       - tests/unit/test_runtime_release.py
+      - tests/unit/test_canonical_runtime_state_migration.py
       - tests/unit/test_product_detail_tabs_contract.py
       - agent/api/flow.py
       # Staff & Access V1 — UserAccount authentication, human RBAC, lifecycle,
