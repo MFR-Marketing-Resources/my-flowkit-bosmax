@@ -340,6 +340,38 @@ def test_reference_pack_source_is_trusted_display(tmp_path):
     assert readiness["original_display_url"].endswith("/pack-source/cutout/preview/original")
 
 
+@pytest.mark.asyncio
+async def test_catalog_projection_requires_governed_source_bytes(tmp_path, monkeypatch):
+    external_source = tmp_path / "external-authoring-source.png"
+    Image.new("RGB", (24, 24), (30, 120, 150)).save(external_source)
+    products = [{"id": "external-catalog-source", "lifecycle_status": "ACTIVE"}]
+
+    class _Cursor:
+        async def fetchall(self):
+            return []
+
+    class _Db:
+        async def execute(self, *_args, **_kwargs):
+            return _Cursor()
+
+    monkeypatch.setattr(service.crud, "list_product_truth_locks", AsyncMock(return_value={}))
+    monkeypatch.setattr(service.crud, "list_product_reference_packs_by_products", AsyncMock(return_value={}))
+    monkeypatch.setattr(service.crud, "list_product_cutout_preparations", AsyncMock(return_value={}))
+    monkeypatch.setattr(service.crud, "list_product_truth_lock_histories", AsyncMock(return_value={}))
+    monkeypatch.setattr(service, "_list_canva_workflow_rows", AsyncMock(return_value={}))
+    monkeypatch.setattr(service, "_reference_file", lambda _product: external_source)
+    monkeypatch.setattr(service, "_reference_pack_file", lambda _pack: None)
+    monkeypatch.setattr("agent.db.schema.get_db", AsyncMock(return_value=_Db()))
+
+    await service.annotate_products_visual_readiness(products)
+
+    readiness = products[0]["visual_readiness"]
+    assert readiness["canonical_media_status"] == "MISSING"
+    assert readiness["exact_commerce_status"] == "EXACT_COMMERCE_BLOCKED"
+    assert readiness["blockers"] == ["TRUSTED_SAME_PRODUCT_SOURCE_REQUIRED"]
+    assert readiness["original_display_trust_status"] == "UNAVAILABLE"
+
+
 def test_deterministic_cutout_bytes_preserve_canonical_source_dimensions(tmp_path, monkeypatch):
     source = tmp_path / "source.png"
     Image.new("RGB", (24, 24), (30, 120, 150)).save(source)
@@ -429,7 +461,8 @@ async def test_deterministic_prepare_creates_pending_review_only(tmp_path, monke
 
 
 @pytest.mark.asyncio
-async def test_bulk_preview_excludes_archived_and_fixture_rows(tmp_path):
+async def test_bulk_preview_excludes_archived_and_fixture_rows(tmp_path, monkeypatch):
+    monkeypatch.setattr(service, "BASE_DIR", tmp_path)
     source = tmp_path / "source.png"
     Image.new("RGB", (24, 24), (30, 120, 150)).save(source)
     await crud.create_product(
