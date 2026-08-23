@@ -26,7 +26,7 @@ import { CopyAuthorityAttentionPanel } from "../components/reporting/CopyAuthori
 // into the exact product list. Every exception widget owns its own fetch.
 
 const KIND_META: { kind: ExceptionKind; label: string; tone: KpiTone }[] = [
-	{ kind: "missing_copy", label: "Missing copywriting", tone: "danger" },
+	{ kind: "missing_copy", label: "Missing production copy authority", tone: "danger" },
 	{ kind: "missing_intelligence", label: "Missing product intel", tone: "warn" },
 	{ kind: "missing_image", label: "Missing image", tone: "warn" },
 	{ kind: "missing_cluster", label: "Missing cluster", tone: "warn" },
@@ -36,28 +36,6 @@ const KIND_META: { kind: ExceptionKind; label: string; tone: KpiTone }[] = [
 	{ kind: "scene_strategy_gaps", label: "Scene strategy gaps", tone: "warn" },
 	{ kind: "failed_generation", label: "Failed gen (all-time historical)", tone: "danger" },
 ];
-
-function LifecycleToggle() {
-	const f = useReportingFilters();
-	return (
-		<div className="inline-flex rounded-lg border border-slate-800 bg-slate-900 p-0.5 text-xs">
-			{(["ACTIVE", "ALL"] as const).map((s) => (
-				<button
-					key={s}
-					type="button"
-					onClick={() => f.setLifecycle(s)}
-					className={`rounded-md px-3 py-1 transition ${
-						f.lifecycle_status === s
-							? "bg-sky-600 text-white"
-							: "text-slate-400 hover:text-slate-200"
-					}`}
-				>
-					{s === "ACTIVE" ? "Active only" : "All (incl. archived)"}
-				</button>
-			))}
-		</div>
-	);
-}
 
 function ExceptionKpi({
 	kind,
@@ -310,7 +288,6 @@ function OperationsInner() {
 						one to fix it.
 					</p>
 				</div>
-				<LifecycleToggle />
 			</div>
 
 			<div className="grid grid-cols-2 gap-4 md:grid-cols-4">
