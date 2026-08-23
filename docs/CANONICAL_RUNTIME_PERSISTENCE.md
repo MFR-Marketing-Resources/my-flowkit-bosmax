@@ -39,11 +39,13 @@ pwsh -File scripts/migrate-canonical-runtime-state.ps1 -Apply
 ```
 
 `-Apply` requires a new destination, copies `flow_agent.db` and `data\` into a
-staging directory, verifies DB SHA-256 plus Product Truth row/byte counts, and
-then moves the verified directory into place. The source checkout is never
-deleted. Existing missing bytes are reported and preserved as evidence; the
-Product Truth tombstone path handles genuinely unrecoverable history during a
-later replacement.
+staging directory, relocates any absolute Product Truth paths proven to be under
+the source checkout to state-root-relative paths, verifies the source and staged
+DB SHA-256 values plus Product Truth row/byte counts, and then moves the verified
+directory into place. An absolute path outside the source checkout fails closed.
+The source checkout is never deleted. Existing missing bytes are reported and
+preserved as evidence; the Product Truth tombstone path handles genuinely
+unrecoverable history during a later replacement.
 
 ## Fix — auto-start the canonical runtime, retire the stale launcher
 Run once (idempotent, reversible, no dev-root mutation, no provider spend):
