@@ -15,9 +15,9 @@ import json
 from functools import lru_cache
 from typing import Any
 
-from agent.config import BASE_DIR
+from agent.config import SOURCE_ROOT
 
-_CROSSWALK_PATH = BASE_DIR / "agent" / "authority" / "creative_cluster_crosswalk.json"
+_CROSSWALK_PATH = SOURCE_ROOT / "agent" / "authority" / "creative_cluster_crosswalk.json"
 _GENERIC = "generic_unclassified"
 
 # grouping statuses
