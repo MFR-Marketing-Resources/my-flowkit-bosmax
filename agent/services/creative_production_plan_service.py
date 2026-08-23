@@ -3799,6 +3799,27 @@ async def materialize_content_matrix(
     ) + 1
 
     now = _now()
+    base_dedupe_guards = [
+        f"dna:{dna}"
+        for dna, _, _ in selected
+        if not controlled_reuse_reason
+    ]
+    dedupe_guard_owners = await p6db.list_dedupe_guard_owners(
+        base_dedupe_guards
+    )
+    for dedupe_guard, owner in dedupe_guard_owners.items():
+        if owner["provider_free_failed"]:
+            continue
+        raise CreativeProductionError(
+            "DEDUPE_GUARD_COLLISION",
+            "Exact creative DNA already owns a non-re-preparable dedupe guard.",
+            status_code=409,
+            details={
+                "dedupe_guard_key": dedupe_guard,
+                "item_id": owner["item_id"],
+                "status": owner["status"],
+            },
+        )
     items: list[dict[str, Any]] = []
     for dna, dimensions, item_ordinal in selected:
         reuse_cycle = sum(
@@ -3814,10 +3835,15 @@ async def materialize_content_matrix(
             > scene_fair_cap
         ):
             dimensions["quota_status"] = "WARNING"
-        dedupe_guard = (
+        base_dedupe_guard = (
             f"reuse:{plan_id}:{item_ordinal}:{dna}"
             if reuse_reason
             else f"dna:{dna}"
+        )
+        dedupe_guard = (
+            f"reprepare:{plan_id}:{item_ordinal}:{dna}"
+            if base_dedupe_guard in dedupe_guard_owners
+            else base_dedupe_guard
         )
         items.append(
             {
