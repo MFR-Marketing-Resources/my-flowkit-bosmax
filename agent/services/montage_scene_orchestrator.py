@@ -6,7 +6,7 @@ No second video engine. No DOM lane. Credit fire only via injected generate_fn
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable, Optional, Sequence
 
 from agent.services.montage_scene_execution_routing import (
@@ -16,6 +16,9 @@ from agent.services.montage_scene_execution_routing import (
     plan_to_dict,
 )
 from agent.services.montage_scene_reference_policy import SceneReferencePolicy
+from agent.services.exact_product_video_compositor_service import (
+    EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,
+)
 from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
     copy_v2_handoff_context,
@@ -54,6 +57,7 @@ class SceneJobState:
     error_code: Optional[str] = None
     detail: str = ""
     copy_architecture_v2: Optional[dict[str, Any]] = None
+    product_visual_custody: Optional[dict[str, Any]] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +80,7 @@ class SceneJobState:
             "error_code": self.error_code,
             "detail": self.detail,
             "copy_architecture_v2": self.copy_architecture_v2,
+            "product_visual_custody": self.product_visual_custody,
         }
 
 
@@ -149,6 +154,47 @@ def _snapshot_is_transportable(snapshot: Optional[dict[str, Any]]) -> bool:
     )
 
 
+def _is_exact_product_resolution(
+    faceless_resolution: Optional[dict[str, Any]],
+) -> bool:
+    """Return whether this scene must use the exact-product scaffold route.
+
+    Montage remains its own operator surface.  The Faceless receipt is reused
+    only as the already-proven internal custody/route authority for an exact
+    product; it must never turn the Montage surface into a Faceless request.
+    """
+    exact_video = (
+        faceless_resolution.get("exact_product_video")
+        if isinstance(faceless_resolution, dict)
+        else None
+    )
+    return bool(
+        isinstance(exact_video, dict)
+        and exact_video.get("selected_execution_route")
+        == EXACT_PRODUCT_DETERMINISTIC_COMPOSITE
+    )
+
+
+def _normalize_exact_product_plan(
+    plan: MontageSceneExecutionPlan,
+) -> MontageSceneExecutionPlan:
+    """Route exact-product Montage through T2V scaffold generation.
+
+    The provider never receives the canonical product reference on this route;
+    the server-side compositor inserts the Product Truth cutout after the
+    provider returns the scene scaffold.  Keep the policy as PRODUCT_ANCHOR so
+    the operator contract remains truthful, while the internal transport is
+    explicitly direct T2V and therefore does not create a phantom image job.
+    """
+    return replace(
+        plan,
+        route=SceneExecutionRoute.DIRECT_VIDEO,
+        transport_mode="T2V",
+        source_mode="T2V",
+        image_generation_required=False,
+    )
+
+
 def _start_frame_for_plan(plan: MontageSceneExecutionPlan) -> Optional[str]:
     if plan.reference_media_ids:
         return plan.reference_media_ids[0]
@@ -174,8 +220,12 @@ async def execute_scene_plan(
     mascot_block_count: Optional[int] = None,
     mascot_atomic_seconds: Optional[int] = None,
     mascot_has_dialogue: bool = True,
+    faceless_resolution: Optional[dict[str, Any]] = None,
 ) -> SceneJobState:
     """Run one planned scene through existing package (+ optional generate) path."""
+    exact_product_route = _is_exact_product_resolution(faceless_resolution)
+    if exact_product_route:
+        plan = _normalize_exact_product_plan(plan)
     resolved_copy_v2_context = copy_v2_context
     try:
         v2_resolution = await resolve_persisted_copy_execution_binding(
@@ -332,6 +382,13 @@ async def execute_scene_plan(
         "scene_context_override": scene_context_override,
         "copy_v2_context": resolved_copy_v2_context,
     }
+    if exact_product_route:
+        # Explicitly retain the canonical internal lineage.  Do not let the
+        # Montage reference policy's ordinary HYBRID mapping reintroduce a
+        # provider product reference for an exact product.
+        source_mode = "T2V"
+        kwargs["source_mode"] = source_mode
+        kwargs["faceless_resolution"] = faceless_resolution
     # Optional identity is carried on active API calls, while legacy/provider-free
     # package factories may not accept the newer kwargs when no profile is given.
     if staff_id:
@@ -393,8 +450,27 @@ async def execute_scene_plan(
         state.error_code = "ERR_MONTAGE_PACKAGE_INVALID"
         state.detail = "workspace package factory returned a non-object result"
         return state
+    if exact_product_route:
+        custody = pkg.get("product_visual_custody")
+        if (
+            pkg.get("selected_execution_route")
+            != EXACT_PRODUCT_DETERMINISTIC_COMPOSITE
+            or not isinstance(custody, dict)
+            or custody.get("provider_route")
+            != EXACT_PRODUCT_DETERMINISTIC_COMPOSITE
+            or custody.get("provider_product_reference_forbidden") is not True
+        ):
+            state.status = "PACKAGE_FAILED"
+            state.error_code = "ERR_MONTAGE_EXACT_PRODUCT_ROUTE_NOT_PROVEN"
+            state.detail = (
+                "Exact-product Montage requires the deterministic scene-scaffold "
+                "route and canonical custody receipt"
+            )
+            return state
     if isinstance(pkg.get("copy_architecture_v2"), dict):
         state.copy_architecture_v2 = pkg["copy_architecture_v2"]
+    if isinstance(pkg.get("product_visual_custody"), dict):
+        state.product_visual_custody = pkg["product_visual_custody"]
     state.workspace_execution_package_id = str(
         pkg.get("workspace_execution_package_id") or ""
     ) or None
@@ -485,6 +561,7 @@ async def orchestrate_montage_scenes(
     mascot_block_count: Optional[int] = None,
     mascot_atomic_seconds: Optional[int] = None,
     mascot_has_dialogue: bool = True,
+    faceless_resolution: Optional[dict[str, Any]] = None,
 ) -> MontageOrchestrationReport:
     """Beat → route → package (/ optional generate) for the full scene set."""
     if not str(product_id or "").strip():
@@ -499,6 +576,8 @@ async def orchestrate_montage_scenes(
         per_beat_policy=per_beat_policy,
         product_media_id=product_media_id,
     )
+    if _is_exact_product_resolution(faceless_resolution):
+        plans = [_normalize_exact_product_plan(plan) for plan in plans]
     resolved_copy_v2_context = copy_v2_context
     try:
         v2 = await resolve_persisted_copy_execution_binding(
@@ -546,6 +625,7 @@ async def orchestrate_montage_scenes(
             mascot_block_count=mascot_block_count,
             mascot_atomic_seconds=mascot_atomic_seconds,
             mascot_has_dialogue=mascot_has_dialogue,
+            faceless_resolution=faceless_resolution,
         )
         report.scenes.append(state)
         if state.video_media_id:
