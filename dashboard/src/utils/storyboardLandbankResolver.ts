@@ -16,6 +16,7 @@ import type {
 	V3AssistantPlan,
 	V3LandbankItem,
 	V3ProductionCapacity,
+	V3ProviderStatus,
 } from "../api/storyboardLandbankV3Round2";
 import type { BadgeTone } from "../components/ui";
 
@@ -53,6 +54,31 @@ export interface OperatorBlocker {
 	message: string;
 	actionLabel?: string;
 	actionRoute?: string;
+}
+
+export type GenerateLane = "LIVE_TEXT_ASSIST" | "FAKE_TEST";
+
+/**
+ * Resolve the only provider lane the page is allowed to execute. Live
+ * execution requires both backend readiness flags; fake execution is available
+ * only when the backend explicitly permits it.
+ */
+export function resolveGenerateLane(provider: V3ProviderStatus | null | undefined): GenerateLane | null {
+	if (provider?.configured && provider.execution_enabled) return "LIVE_TEXT_ASSIST";
+	if (provider?.fake_provider_allowed) return "FAKE_TEST";
+	return null;
+}
+
+/**
+ * Translate provider readiness into the same fail-closed blocker channel used
+ * by Product Truth and evidence. A permitted fake lane is executable and is
+ * therefore not treated as a blocker.
+ */
+export function resolveProviderBlocker(provider: V3ProviderStatus | null | undefined): OperatorBlocker | null {
+	if (resolveGenerateLane(provider)) return null;
+	if (!provider) return blockerToOperator("PROVIDER_STATUS_UNAVAILABLE");
+	if (!provider.configured) return blockerToOperator("PROVIDER_NOT_CONFIGURED");
+	return blockerToOperator("PROVIDER_EXECUTION_DISABLED");
 }
 
 // Operator-language translations for the fail-closed reasons the backend can
@@ -100,7 +126,19 @@ const BLOCKER_MAP: Record<string, Omit<OperatorBlocker, "code">> = {
 		actionLabel: "Set Up Campaign",
 	},
 	PROVIDER_NOT_CONFIGURED: {
-		message: "The AI copywriter is not connected, so live copy cannot be generated yet. Ask an administrator to connect the copy provider.",
+		message: "The AI copywriter is not connected, so copy cannot be generated yet. Ask an administrator to connect the text-assist provider in Settings.",
+		actionLabel: "Open AI Settings",
+		actionRoute: "/settings",
+	},
+	PROVIDER_EXECUTION_DISABLED: {
+		message: "The text-assist provider is configured but execution is disabled, so copy cannot be generated yet. Enable the text-assist lane in Settings.",
+		actionLabel: "Open AI Settings",
+		actionRoute: "/settings",
+	},
+	PROVIDER_STATUS_UNAVAILABLE: {
+		message: "The text-assist provider status is unavailable, so copy generation is paused until readiness can be verified.",
+		actionLabel: "Retry in Settings",
+		actionRoute: "/settings",
 	},
 	// Operational (generation-time) codes — kept human, never a bare code dump.
 	DUPLICATE_COMPONENT: {
@@ -336,6 +374,7 @@ export function buildPreflightSummary(input: {
 	/** Current derived evidence fact count for the product (V3 read model). */
 	truthFactCount: number;
 	planError?: string | null;
+	providerBlocker?: OperatorBlocker | null;
 }): PreflightSummary {
 	const approved = Math.max(0, input.capacity?.semantic_capacity ?? 0);
 	const target = Math.max(0, Math.floor(input.target || 0));
@@ -358,6 +397,9 @@ export function buildPreflightSummary(input: {
 	const truthBlocker = resolvePrimaryTruthBlocker({ truthApproved: input.truthApproved, truthFactCount: input.truthFactCount });
 	if (!blockers.length && truthBlocker) {
 		blockers.push(truthBlocker);
+	}
+	if (!blockers.length && input.providerBlocker) {
+		blockers.push(input.providerBlocker);
 	}
 	const ready = blockers.length === 0 && Boolean(plan);
 	return {

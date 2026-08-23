@@ -46,6 +46,8 @@ import {
 	missingCopies,
 	reconstructStep,
 	resolveNextAction,
+	resolveGenerateLane,
+	resolveProviderBlocker,
 	resolvePrimaryTruthBlocker,
 	reviewBuckets,
 	STEP_META,
@@ -557,12 +559,14 @@ export default function StoryboardLandbankV3Page() {
 		() => (selectedProduct ? resolvePrimaryTruthBlocker({ truthApproved, truthFactCount: truthFacts.length }) : null),
 		[selectedProduct, truthApproved, truthFacts.length],
 	);
+	const providerBlocker = useMemo(() => resolveProviderBlocker(provider), [provider]);
+	const generationBlocker = primaryTruthBlocker ?? (recipeId ? providerBlocker : null);
 
 	const nextAction = useMemo(
-		() => resolveNextAction({ hasProduct: Boolean(selectedProduct), recipeReady: Boolean(recipeId), counts, blocker: primaryTruthBlocker }),
+		() => resolveNextAction({ hasProduct: Boolean(selectedProduct), recipeReady: Boolean(recipeId), counts, blocker: generationBlocker }),
 		// counts is derived; depend on its scalar members to avoid a churn loop.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[selectedProduct, recipeId, target, approvedCount, buckets.reviewable, productionReadyCount, needsPreparation, preparedActivationTargets.length, capacity?.stale_copy_count, primaryTruthBlocker],
+		[selectedProduct, recipeId, target, approvedCount, buckets.reviewable, productionReadyCount, needsPreparation, preparedActivationTargets.length, capacity?.stale_copy_count, generationBlocker],
 	);
 
 	const urlStep = searchParams.get("step");
@@ -592,8 +596,8 @@ export default function StoryboardLandbankV3Page() {
 	}, [selectedProduct?.id, step]);
 
 	const preflight = useMemo(
-		() => buildPreflightSummary({ plan, capacity, target, truthApproved, truthFactCount: truthFacts.length, planError }),
-		[plan, capacity, target, truthApproved, truthFacts.length, planError],
+		() => buildPreflightSummary({ plan, capacity, target, truthApproved, truthFactCount: truthFacts.length, planError, providerBlocker }),
+		[plan, capacity, target, truthApproved, truthFacts.length, planError, providerBlocker],
 	);
 
 	const goToStep = (next: WizardStep) => {
@@ -704,11 +708,7 @@ export default function StoryboardLandbankV3Page() {
 		]);
 	};
 
-	const generateLane: "LIVE_TEXT_ASSIST" | "FAKE_TEST" | null = provider?.configured
-		? "LIVE_TEXT_ASSIST"
-		: provider?.fake_provider_allowed
-			? "FAKE_TEST"
-			: null;
+	const generateLane = resolveGenerateLane(provider);
 
 	const handleGenerate = async () => {
 		if (!plan || !selectedProduct || !generateLane || !preflight.ready) return;
@@ -762,11 +762,15 @@ export default function StoryboardLandbankV3Page() {
 	};
 
 	const handleRegenerate = async (ref: { entity_id: string; revision: number }) => {
+		if (!generateLane) {
+			setError(providerBlocker?.message ?? "Copy generation is not available until the provider lane is ready.");
+			return;
+		}
 		setBusy(true);
 		setError("");
 		setSuccess("");
 		try {
-			const response = await regenerateV3Component(ref.entity_id, ref.revision, provider?.configured ? "LIVE_TEXT_ASSIST" : "FAKE_TEST");
+			const response = await regenerateV3Component(ref.entity_id, ref.revision, generateLane);
 			setSuccess(`Copy regenerated (version ${response.source_revision} → ${response.new_revision}). It stays unapproved until you approve it.`);
 			if (selectedProduct) await loadLandbank(selectedProduct.id);
 		} catch (reason) {
@@ -916,6 +920,12 @@ export default function StoryboardLandbankV3Page() {
 			goToStep("PRODUCTION");
 			return;
 		}
+		if (nextAction.kind === "GENERATE" && step === "GENERATE") {
+			const generateButton = document.getElementById("v3-generate");
+			generateButton?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+			generateButton?.focus();
+			return;
+		}
 		goToStep(nextAction.step);
 	};
 
@@ -1023,7 +1033,7 @@ export default function StoryboardLandbankV3Page() {
 								<div className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">Estimated AI calls <span className="font-semibold">{preflight.estimatedAiCalls}</span></div>
 							</div>
 							<div className="mt-4 flex flex-wrap items-center gap-3">
-								<button type="button" disabled={busy || !generateLane} onClick={() => void handleGenerate()} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40" data-testid="v3-generate" title={generateLane ? undefined : "The AI copywriter is not connected yet."}><Wand2 size={15} /> {missing > 0 ? "Generate missing copy" : "Generate another copy"}</button>
+								<button id="v3-generate" type="button" disabled={busy || !generateLane} onClick={() => void handleGenerate()} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40" data-testid="v3-generate" title={generateLane ? undefined : "The AI copywriter is not connected yet."}><Wand2 size={15} /> {missing > 0 ? "Generate missing copy" : "Generate another copy"}</button>
 								<HelperText>Each run adds one reviewable copy with {preflight.durations.map((duration) => `${duration}s`).join(" / ")} versions. {generateLane === "FAKE_TEST" ? "Test mode is active — zero credits." : missing > 0 ? `${missing} still missing.` : "Target reached."}</HelperText>
 							</div>
 						</div>
@@ -1052,7 +1062,7 @@ export default function StoryboardLandbankV3Page() {
 					<TechnicalDetails className="mt-4" testId="v3-generate-technical" title="Advanced / technical details">
 						<div className="flex flex-wrap items-center gap-2">
 							<button type="button" disabled={busy || !plan} onClick={() => void handlePreview()} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200 disabled:opacity-40" data-testid="v3-prompt-preview">Preview AI prompt</button>
-							<span className="text-[11px] text-slate-500">Provider: {provider?.configured ? `${provider.provider_id} · ${provider.model_id}` : provider?.fake_provider_allowed ? "test mode" : "not connected"} · calls {provider?.provider_calls ?? 0} · credit {provider?.credit_spend ?? 0}</span>
+							<span className="text-[11px] text-slate-500">Provider: {generateLane === "LIVE_TEXT_ASSIST" ? `${provider?.provider_id} · ${provider?.model_id}` : generateLane === "FAKE_TEST" ? "test mode" : provider?.configured ? "configured · execution disabled" : "not connected"} · calls {provider?.provider_calls ?? 0} · credit {provider?.credit_spend ?? 0}</span>
 						</div>
 						{plan ? <div className="mt-2 text-[11px] text-slate-500">Plan {plan.plan_id} · mode {plan.mode} · recipe {plan.recipe.entity_id} · WPS {plan.wps_mode} · evidence {plan.evidence_fact_ids?.length ?? 0} fact(s)</div> : null}
 						{promptDigest ? <div className="mt-1 font-mono text-[10px] text-slate-500" data-testid="v3-prompt-digest">Prompt digest: {promptDigest}</div> : null}

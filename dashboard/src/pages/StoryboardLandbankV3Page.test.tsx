@@ -265,6 +265,50 @@ describe("Copywriting Landbank operator wizard", () => {
 		await waitFor(() => expect(mockedExecute).toHaveBeenCalledWith("plan-v3", "FAKE_TEST"));
 	});
 
+	it("uses Generate GO to focus the real CTA without executing generation", async () => {
+		mockedLandbank.mockResolvedValue(landbankResponse([]));
+		mockedCapacity.mockResolvedValue(capacityFixture());
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=GENERATE");
+		await screen.findByTestId("v3-preflight-ready");
+
+		const generate = screen.getByTestId("v3-generate");
+		fireEvent.click(screen.getByTestId("v3-next-action-go"));
+
+		expect(mockedExecute).not.toHaveBeenCalled();
+		expect(document.activeElement).toBe(generate);
+	});
+
+	it("moves Generate GO to the Generate step when the operator is elsewhere", async () => {
+		mockedLandbank.mockResolvedValue(landbankResponse([]));
+		mockedCapacity.mockResolvedValue(capacityFixture());
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=GENERATE");
+		await screen.findByTestId("v3-preflight-ready");
+
+		fireEvent.click(screen.getByTestId("v3-step-setup"));
+		await screen.findByTestId("v3-create-campaign");
+		fireEvent.click(screen.getByTestId("v3-next-action-go"));
+		await waitFor(() => expect(screen.getByTestId("v3-preflight-ready")).toBeInTheDocument());
+		expect(mockedExecute).not.toHaveBeenCalled();
+	});
+
+	it("blocks the workflow explicitly when neither live nor fake provider execution is available", async () => {
+		mockedStatus.mockResolvedValue({ lane: "text_assist", status: "NOT_CONFIGURED", configured: false, provider_id: null, model_id: null, execution_enabled: false, provider_calls: 0, credit_spend: 0, fake_provider_allowed: false });
+		mockedLandbank.mockResolvedValue(landbankResponse([]));
+		mockedCapacity.mockResolvedValue(capacityFixture());
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=GENERATE");
+
+		const blocked = await screen.findByTestId("v3-preflight-blocked");
+		await waitFor(() => expect(blocked).toHaveTextContent(/AI copywriter is not connected/i));
+		expect(blocked).toHaveTextContent("PROVIDER_NOT_CONFIGURED");
+		expect(screen.queryByTestId("v3-generate")).not.toBeInTheDocument();
+		const nextLabel = await screen.findByTestId("v3-next-action-label");
+		expect(nextLabel).toHaveTextContent(/Open AI Settings/i);
+		expect(nextLabel).not.toHaveTextContent(/Generate/i);
+		fireEvent.click(screen.getByTestId("v3-next-action-go"));
+		expect(mockNavigate).toHaveBeenCalledWith("/settings?product_id=p1");
+		expect(mockedExecute).not.toHaveBeenCalled();
+	});
+
 	it("routes the primary Generate CTA to the live provider when it is configured", async () => {
 		mockedStatus.mockResolvedValue({ lane: "text_assist", status: "READY", configured: true, provider_id: "qwen", model_id: "qwen-plus", execution_enabled: true, provider_calls: 0, credit_spend: 0, fake_provider_allowed: false });
 		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=GENERATE");
