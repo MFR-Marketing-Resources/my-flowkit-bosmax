@@ -168,6 +168,88 @@ async def _require_montage_product(product_id: str) -> None:
         ) from exc
 
 
+async def _resolve_exact_product_montage_resolution(
+    *,
+    product_id: str,
+    hook_id: str,
+    background_id: str,
+) -> dict[str, Any] | None:
+    """Resolve the shared exact-product receipt for the Montage surface.
+
+    Montage keeps its own surface lane and scene plan.  For an exact product,
+    however, its provider package must use the same deterministic scaffold /
+    server-composite authority as Faceless.  Reuse only that receipt; do not
+    expose Faceless as a user-facing Montage mode and do not pass a product
+    reference to the provider.
+    """
+    from agent.db import crud
+    from agent.services.product_visual_custody_service import exact_product_required
+    from agent.services import faceless_lane_service as fl
+
+    product = await crud.get_product(product_id)
+    if not product or not exact_product_required(product):
+        return None
+    try:
+        authority = await fl.resolve_faceless_scene_authority(
+            product_id=product_id,
+            hook_id=hook_id,
+            background_id=background_id,
+            actor_profile="AUTO",
+        )
+        resolution = fl.build_faceless_resolution(
+            product_id=product_id,
+            hook_id=hook_id,
+            background_id=background_id,
+            actor_profile="AUTO",
+            scene_authority=authority,
+        )
+    except ValueError as exc:
+        error_code = getattr(exc, "code", None) or str(exc).split(":", 1)[0]
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": error_code,
+                "message": str(exc),
+                "surface_lane": "MONTAGE",
+            },
+        ) from exc
+
+    receipt = resolution.get("faceless_resolution")
+    exact_video = resolution.get("exact_product_video")
+    if (
+        not isinstance(receipt, dict)
+        or not isinstance(exact_video, dict)
+        or exact_video.get("selected_execution_route")
+        != "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+        or receipt.get("exact_product_video") is None
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": "ERR_MONTAGE_EXACT_PRODUCT_ROUTE_NOT_PROVEN",
+                "message": (
+                    "Exact-product Montage requires a canonical deterministic "
+                    "scene-scaffold/composite receipt."
+                ),
+                "surface_lane": "MONTAGE",
+            },
+        )
+    return receipt
+
+
+def _montage_uses_product_anchor(
+    default_policy: SceneReferencePolicy,
+    per_beat_policy: Optional[dict[str, str]],
+) -> bool:
+    """Return true only when every declared Montage scene is product-anchor."""
+    if default_policy is not SceneReferencePolicy.PRODUCT_ANCHOR:
+        return False
+    return all(
+        parse_scene_reference_policy(value) is SceneReferencePolicy.PRODUCT_ANCHOR
+        for value in (per_beat_policy or {}).values()
+    )
+
+
 class MontageSceneReadyInput(BaseModel):
     scene_id: str
     mandatory: bool = True
@@ -396,6 +478,15 @@ async def montage_execute_scenes(body: MontageExecuteRequest) -> dict[str, Any]:
         default_policy = parse_scene_reference_policy(body.default_policy)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    exact_product_resolution = None
+    if not body.use_product_mascot and _montage_uses_product_anchor(
+        default_policy, body.per_beat_policy
+    ):
+        exact_product_resolution = await _resolve_exact_product_montage_resolution(
+            product_id=body.product_id,
+            hook_id=body.hook_id,
+            background_id=body.background_id,
+        )
     from agent.services.montage_run_service import _resolve_montage_single_settings
 
     mascot_start_asset = None
@@ -435,6 +526,7 @@ async def montage_execute_scenes(body: MontageExecuteRequest) -> dict[str, Any]:
         mascot_start_asset=mascot_start_asset,
         mascot_block_count=mascot_block_count,
         mascot_atomic_seconds=mascot_atomic_seconds,
+        faceless_resolution=exact_product_resolution,
     )
     payload = report.to_dict()
     payload["hook_id"] = body.hook_id
@@ -543,6 +635,15 @@ async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
         default_policy = parse_scene_reference_policy(body.default_policy)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    exact_product_resolution = None
+    if not body.use_product_mascot and _montage_uses_product_anchor(
+        default_policy, body.per_beat_policy
+    ):
+        exact_product_resolution = await _resolve_exact_product_montage_resolution(
+            product_id=body.product_id,
+            hook_id=body.hook_id,
+            background_id=body.background_id,
+        )
     mascot_start_asset = None
     mascot_block_count = None
     mascot_atomic_seconds = None
@@ -578,6 +679,7 @@ async def montage_create_run(body: MontageRunCreateRequest) -> dict[str, Any]:
             mascot_start_asset=mascot_start_asset,
             mascot_block_count=mascot_block_count,
             mascot_atomic_seconds=mascot_atomic_seconds,
+            faceless_resolution=exact_product_resolution,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

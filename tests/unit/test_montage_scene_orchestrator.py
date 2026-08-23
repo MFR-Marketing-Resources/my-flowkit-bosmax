@@ -274,3 +274,140 @@ async def test_image_first_blocked_without_frame_or_image_fn() -> None:
     assert state.status == "IMAGE_PENDING"
     assert state.error_code == "ERR_MONTAGE_IMAGE_REQUIRED"
     pkg_factory.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_exact_product_montage_uses_t2v_scaffold_and_custody(monkeypatch) -> None:
+    async def legacy_test_copy_resolver(*_args, **_kwargs):
+        return SimpleNamespace(v2_enabled=False)
+
+    monkeypatch.setattr(
+        "agent.services.montage_scene_orchestrator.resolve_persisted_copy_execution_binding",
+        legacy_test_copy_resolver,
+    )
+    plan = MontageSceneExecutionPlan(
+        scene_id="scene-1-hook",
+        beat_id="hook",
+        block_index=0,
+        route=SceneExecutionRoute.IMAGE_FIRST,
+        reference_policy=SceneReferencePolicy.PRODUCT_ANCHOR,
+        transport_mode="F2V",
+        source_mode="HYBRID",
+        image_generation_required=True,
+        video_generation_required=True,
+        objective="open",
+        visual_action="label-forward hero plate",
+        product_media_id="canonical-cutout-media",
+    )
+    faceless_receipt = {
+        "transport_mode": "T2V",
+        "source_mode": "T2V",
+        "actor_profile": {"resolved_profile": "FEMALE"},
+        "exact_product_video": {
+            "selected_execution_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+            "generate_eligibility": True,
+        },
+    }
+    custody = {
+        "provider_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+        "provider_product_reference_forbidden": True,
+        "product_fidelity_qc_status": "PRODUCT_FIDELITY_QC_PENDING",
+    }
+    pkg_factory = AsyncMock(
+        return_value={
+            "workspace_execution_package_id": "wep-exact-montage",
+            "prompt_text": "scene scaffold",
+            "execution_allowed": True,
+            "selected_execution_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+            "product_visual_custody": custody,
+        }
+    )
+
+    state = await execute_scene_plan(
+        plan,
+        product_id="p1",
+        package_factory=pkg_factory,
+        model="Veo 3.1 - Lite",
+        duration_seconds=8,
+        faceless_resolution=faceless_receipt,
+    )
+
+    assert state.status == "PACKAGE_READY"
+    assert state.route == "DIRECT_VIDEO"
+    assert state.transport_mode == "T2V"
+    assert state.source_mode == "T2V"
+    assert state.product_visual_custody == custody
+    kwargs = pkg_factory.await_args.kwargs
+    assert kwargs["mode"] == "T2V"
+    assert kwargs["source_mode"] == "T2V"
+    assert kwargs["faceless_resolution"] == faceless_receipt
+    assert "product_reference_asset_id" not in kwargs
+    assert "start_frame_asset_id" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_exact_product_montage_normalizes_every_scene_without_image_ops(monkeypatch) -> None:
+    async def legacy_test_copy_resolver(*_args, **_kwargs):
+        return SimpleNamespace(v2_enabled=False)
+
+    monkeypatch.setattr(
+        "agent.services.montage_scene_orchestrator.resolve_persisted_copy_execution_binding",
+        legacy_test_copy_resolver,
+    )
+    beats = [
+        SimpleNamespace(beat_id="hook", role="HOOK", objective="o1", visual_action="v1"),
+        SimpleNamespace(beat_id="body", role="BODY", objective="o2", visual_action="v2"),
+    ]
+    receipt = {
+        "transport_mode": "T2V",
+        "source_mode": "T2V",
+        "exact_product_video": {
+            "selected_execution_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+            "generate_eligibility": True,
+        },
+    }
+    pkg_factory = AsyncMock(
+        side_effect=[
+            {
+                "workspace_execution_package_id": "wep-exact-a",
+                "prompt_text": "a",
+                "execution_allowed": True,
+                "selected_execution_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+                "product_visual_custody": {
+                    "provider_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+                    "provider_product_reference_forbidden": True,
+                },
+            },
+            {
+                "workspace_execution_package_id": "wep-exact-b",
+                "prompt_text": "b",
+                "execution_allowed": True,
+                "selected_execution_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+                "product_visual_custody": {
+                    "provider_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+                    "provider_product_reference_forbidden": True,
+                },
+            },
+        ]
+    )
+
+    report = await orchestrate_montage_scenes(
+        product_id="p1",
+        story_beats=beats,
+        package_factory=pkg_factory,
+        default_policy=SceneReferencePolicy.PRODUCT_ANCHOR,
+        product_media_id="canonical-cutout-media",
+        model="Veo 3.1 - Lite",
+        duration_seconds=8,
+        faceless_resolution=receipt,
+    )
+
+    assert report.ok is True
+    assert [scene.route for scene in report.scenes] == ["DIRECT_VIDEO", "DIRECT_VIDEO"]
+    assert all(scene.transport_mode == "T2V" for scene in report.scenes)
+    assert all(scene.source_mode == "T2V" for scene in report.scenes)
+    assert all(scene.status == "PACKAGE_READY" for scene in report.scenes)
+    assert all(
+        "product_reference_asset_id" not in call.kwargs
+        for call in pkg_factory.await_args_list
+    )

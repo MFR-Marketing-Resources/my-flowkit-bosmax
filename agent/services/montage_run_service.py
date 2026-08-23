@@ -104,6 +104,7 @@ async def create_montage_discrete_run(
     mascot_block_count: Optional[int] = None,
     mascot_atomic_seconds: Optional[int] = None,
     mascot_has_dialogue: bool = True,
+    faceless_resolution: Optional[dict[str, Any]] = None,
     staff_id: str | None = None,
     staff_display_name_snapshot: str | None = None,
 ) -> dict[str, Any]:
@@ -171,6 +172,7 @@ async def create_montage_discrete_run(
         mascot_block_count=mascot_block_count,
         mascot_atomic_seconds=mascot_atomic_seconds,
         mascot_has_dialogue=mascot_has_dialogue,
+        faceless_resolution=faceless_resolution,
     )
 
     run_id = str(uuid.uuid4())
@@ -211,6 +213,17 @@ async def create_montage_discrete_run(
                 if scene.copy_architecture_v2
             ),
             None,
+        ),
+        # Montage keeps its own surface identity while persisting the exact
+        # product scaffold/custody receipt used by the shared package factory.
+        # This is the restart/audit source of truth; it is never a provider
+        # reference and never a user-facing T2V surface selection.
+        "surface_lane": "MONTAGE",
+        "faceless_resolution": faceless_resolution,
+        "exact_product_video": (
+            faceless_resolution.get("exact_product_video")
+            if isinstance(faceless_resolution, dict)
+            else None
         ),
         "final_edit_cadence": (
             {
@@ -1612,6 +1625,7 @@ def _item_to_public(item: dict[str, Any]) -> dict[str, Any]:
         "detail": payload.get("detail") or "",
         "product_media_id": payload.get("product_media_id"),
         "copy_architecture_v2": payload.get("copy_architecture_v2"),
+        "product_visual_custody": payload.get("product_visual_custody"),
     }
 
 
