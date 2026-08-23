@@ -9,6 +9,7 @@ No second video engine. No DOM lane. Credit fire is never automatic.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import uuid
@@ -82,6 +83,31 @@ def _loads(raw: Any, default: Any = None) -> Any:
         return json.loads(raw)
     except (TypeError, ValueError, json.JSONDecodeError):
         return {} if default is None else default
+
+
+async def load_montage_execution_identity(
+    workspace_execution_package_id: str | None,
+) -> dict[str, Any] | None:
+    """Load the immutable Faceless identity persisted with a Montage package.
+
+    The identity is package lineage, not scene-local input. Returning ``None``
+    when it is absent keeps the canonical Flow gate fail-closed instead of
+    allowing a Montage builder to invent or silently downgrade the identity.
+    """
+    package_id = str(workspace_execution_package_id or "").strip()
+    if not package_id:
+        return None
+    package = await crud.get_workspace_execution_package(package_id)
+    if not isinstance(package, dict):
+        return None
+
+    identity = package.get("faceless_execution_identity")
+    if isinstance(identity, str):
+        identity = _loads(identity, None)
+    if not isinstance(identity, dict):
+        lineage = _loads(package.get("request_lineage_payload"), {})
+        identity = lineage.get("faceless_execution_identity") if isinstance(lineage, dict) else None
+    return copy.deepcopy(identity) if isinstance(identity, dict) else None
 
 
 async def create_montage_discrete_run(
@@ -412,6 +438,103 @@ def _has_transportable_plate(scene: dict[str, Any]) -> bool:
         or snapshot.get("localFilePath")
         or snapshot.get("local_file_path")
     )
+
+
+def _is_provider_free_identity_failure(
+    item: dict[str, Any], payload: dict[str, Any]
+) -> bool:
+    """Recognize only the known pre-provider identity wiring failure.
+
+    This guard is deliberately narrower than a generic failed-scene retry. Any
+    provider handle, media target, generation count, or retry history makes the
+    item ineligible, so accepted/uncertain provider work remains fail-closed.
+    """
+    if str(item.get("status") or "").upper() != "GENERATE_FAILED":
+        return False
+    if str(item.get("error") or "") != "ERR_MONTAGE_GENERATE":
+        return False
+    detail = str(payload.get("detail") or payload.get("error") or "")
+    if "FACELESS_EXECUTION_IDENTITY_REQUIRED" not in detail:
+        return False
+
+    provider_fields = (
+        "provider_job_id",
+        "video_job_id",
+        "job_id",
+        "provider_identity",
+        "provider_operation_ids",
+        "direct_media_targets",
+        "video_media_id",
+        "media_id",
+    )
+    if item.get("job_id") or item.get("media_id"):
+        return False
+    if any(payload.get(field) for field in provider_fields):
+        return False
+    try:
+        submit_count = int(payload.get("provider_generation_submit_count") or 0)
+        retry_count = int(item.get("retry_count") or 0)
+    except (TypeError, ValueError):
+        return False
+    return submit_count == 0 and retry_count == 0
+
+
+async def recover_provider_free_montage_failures(run_id: str) -> list[str]:
+    """Restore only known pre-submit Montage failures to the durable work queue.
+
+    The server-owned worker uses this transition after a code-only gate repair.
+    It never resets a provider-touched row and does not increment retry_count;
+    the original failure is retained in ``pre_provider_recovery`` for audit.
+    """
+    recovered: list[str] = []
+    items = await crud.list_bulk_generation_items(run_id)
+    for item in items:
+        payload = _loads(item.get("payload_json"), {})
+        if not isinstance(payload, dict) or not _is_provider_free_identity_failure(item, payload):
+            continue
+        scene_id = str(payload.get("scene_id") or item.get("source_ref") or "").strip()
+        if not scene_id or not payload.get("workspace_execution_package_id"):
+            continue
+        failure_detail = str(payload.get("detail") or payload.get("error") or "")[:400]
+        updated_payload = {
+            **payload,
+            "status": "PACKAGE_READY",
+            "detail": "",
+            "error_code": None,
+            "provider_identity": {},
+            "provider_generation_submit_count": 0,
+            "provider_resubmission": False,
+            "resubmission_allowed": False,
+            "pre_provider_recovery": {
+                "error_code": "FACELESS_EXECUTION_IDENTITY_REQUIRED",
+                "detail": failure_detail,
+                "recovered_at": _now(),
+                "provider_generation_submit_count": 0,
+                "provider_resubmission": False,
+            },
+        }
+        for key in (
+            "next_action",
+            "next_poll_at",
+            "poll_deadline_at",
+            "poll_backoff_s",
+            "poll_attempts",
+            "last_poll_status",
+        ):
+            updated_payload.pop(key, None)
+        await crud.update_bulk_generation_item(
+            item["bulk_item_id"],
+            status="PACKAGE_READY",
+            job_id=None,
+            media_id=None,
+            retry_count=0,
+            error=None,
+            payload_json=json.dumps(updated_payload),
+            completed_at=None,
+            updated_at=_now(),
+        )
+        recovered.append(scene_id)
+    return recovered
 
 
 def estimate_montage_generation_from_scenes(
@@ -1177,6 +1300,9 @@ async def _default_montage_generate_fn(run_id: str, **kwargs: Any) -> dict[str, 
 
     state = await get_montage_discrete_run(run_id)
     cfg = state.get("config") or {}
+    execution_identity = await load_montage_execution_identity(
+        kwargs.get("workspace_execution_package_id")
+    )
     start_asset = kwargs.get("start_asset")
     image_media_ids: list[str] = []
     mid = kwargs.get("image_media_id")
@@ -1197,6 +1323,7 @@ async def _default_montage_generate_fn(run_id: str, **kwargs: Any) -> dict[str, 
         source_mode=kwargs.get("source_mode") or None,
         surface_lane="MONTAGE",
         workspace_execution_package_id=kwargs.get("workspace_execution_package_id") or None,
+        execution_identity=execution_identity,
         model=kwargs.get("model") or None,
         duration_s=kwargs.get("duration_s"),
         generation_mode="SINGLE",
@@ -1297,6 +1424,7 @@ async def montage_scheduler_tick(
         advanced = 0
         provider_calls = 0
         provider_generation_submits = 0
+        pre_provider_recoveries = 0
         errors: list[dict[str, Any]] = []
         for run in runs:
             if str(run.get("kind") or "").upper() != KIND:
@@ -1318,6 +1446,8 @@ async def montage_scheduler_tick(
             else:
                 effective_generate = generate_fn
             try:
+                recovered = await recover_provider_free_montage_failures(run_id)
+                pre_provider_recoveries += len(recovered)
                 active = await _montage_has_active_poll(run_id)
                 if active:
                     result = await resume_montage_run(
@@ -1352,6 +1482,7 @@ async def montage_scheduler_tick(
             "runs_advanced": advanced,
             "provider_calls": provider_calls,
             "provider_generation_submits": provider_generation_submits,
+            "pre_provider_recoveries": pre_provider_recoveries,
             "errors": errors,
         }
 

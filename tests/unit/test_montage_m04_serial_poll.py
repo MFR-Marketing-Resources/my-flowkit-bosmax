@@ -63,7 +63,12 @@ async def test_serial_poll_second_scene_waits_for_first_done() -> None:
         "kind": KIND,
         "status": "PREPARED",
         "config_json": json.dumps(
-            {"product_id": "p1", "model": "Veo 3.1 - Lite", "duration_seconds": 8}
+            {
+                "product_id": "p1",
+                "staff_id": "staff_m04_fixture",
+                "model": "Veo 3.1 - Lite",
+                "duration_seconds": 8,
+            }
         ),
     }
     items = _pkg_items()
@@ -130,6 +135,7 @@ async def test_serial_poll_second_scene_waits_for_first_done() -> None:
             poll_fn=poll_fn,
             max_polls=5,
             poll_interval_s=0.0,
+            staff_id="staff_m04_fixture",
         )
 
     assert out["ok"] is True
@@ -152,7 +158,12 @@ async def test_failed_scene_stops_remaining() -> None:
         "bulk_run_id": "run-fail",
         "kind": KIND,
         "status": "PREPARED",
-        "config_json": json.dumps({"product_id": "p1", "model": "Veo 3.1 - Lite", "duration_seconds": 8}),
+        "config_json": json.dumps({
+            "product_id": "p1",
+            "staff_id": "staff_m04_fixture",
+            "model": "Veo 3.1 - Lite",
+            "duration_seconds": 8,
+        }),
     }
     items = _pkg_items()
     submits: list[str] = []
@@ -203,6 +214,7 @@ async def test_failed_scene_stops_remaining() -> None:
             poll_fn=poll_fn,
             max_polls=3,
             poll_interval_s=0.0,
+            staff_id="staff_m04_fixture",
         )
 
     assert out["ok"] is False
