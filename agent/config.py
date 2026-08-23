@@ -141,6 +141,10 @@ IMAGE_MODELS = _MODELS["image_models"]
 # direct lane cannot prove it can honor that model and declines to the agent
 # lane (never a silent downgrade). Empty until the live-capture gate runs.
 DIRECT_VIDEO_MODEL_KEYS = _MODELS.get("direct_video_model_keys", {})
+# Shared provider proof is keyed by the immutable duration/model execution
+# profile digest. Missing entries mean the exact profile has not been
+# provider-proven; no key or certification is fabricated.
+PROVIDER_CERTIFICATION_PROFILES = _MODELS.get("provider_certification_profiles", {})
 
 # Creative Campaign is deliberately opt-in.  Exact Commerce remains the
 # production default until a bounded live benchmark produces artifact-backed

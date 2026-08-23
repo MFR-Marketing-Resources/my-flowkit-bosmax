@@ -34,6 +34,7 @@ class ReviewSnapshotRequest(BaseModel):
     asset_fingerprints: list[str] | None = None
     asset_media_ids: list[str] | None = None
     execution_identity: dict[str, Any] | None = None
+    execution_profile_context: dict[str, Any] | None = None
     review_session_id: str | None = None
     created_by: str | None = None
 
@@ -74,6 +75,7 @@ async def create_review(req: ReviewSnapshotRequest) -> dict[str, Any]:
         asset_fingerprints=req.asset_fingerprints,
         asset_media_ids=req.asset_media_ids,
         execution_identity=req.execution_identity,
+        execution_profile_context=req.execution_profile_context,
         review_session_id=req.review_session_id,
         created_by=req.created_by,
     )

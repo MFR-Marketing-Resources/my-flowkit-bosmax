@@ -92,23 +92,20 @@ def hybrid_reference_omni10_route_matches(
     num_videos: int,
     surface_lane: str | None = None,
 ) -> bool:
-    """Return whether the request is the captured, certified Hybrid 10s tuple.
+    """Return whether the request consumes the captured 10s reference profile.
 
     ``abra_r2v_10s`` is deliberately not resolved here as a direct
     ``videoModelKey``.  The captured identity belongs to the
-    ``flowCreationAgent`` reference-aware tool, so this predicate only gates
-    the exact logical settings that the certified conversational route can
-    honor.
+    ``flowCreationAgent`` reference-aware tool, so this predicate gates the
+    exact provider-facing settings. ``surface_lane`` remains a compatibility
+    argument but is intentionally not part of provider certification identity;
+    lane-specific content gates run separately.
     """
     try:
         resolved_model = video_models.resolve(model)
         return (
             str(mode or "").strip().upper() == "F2V"
             and str(source_mode or "").strip().upper() == "HYBRID"
-            and (
-                not str(surface_lane or "").strip()
-                or str(surface_lane).strip().upper() == "HYBRID"
-            )
             and resolved_model.get("key") == "omni_flash"
             and int(duration_s) == 10
             and str(aspect or "").strip() == "9:16"
@@ -145,7 +142,33 @@ def hybrid_reference_omni10_provider_route(
 
 
 def _certified_hybrid_reference_omni10_plan() -> dict:
-    """Return the immutable transport contract for the certified agent lane."""
+    """Return the shared certified 10s reference-profile transport contract.
+
+    The historical function name is retained for wire/test compatibility. The
+    returned provider proof is keyed by the duration/model/transport profile,
+    not by the Hybrid surface, so another lane with the same compiled route may
+    consume it after its own content gate passes.
+    """
+    from agent.services import video_execution_profile_service as _profiles
+
+    profile = _profiles.resolve_duration_model_profile(
+        model="omni_flash",
+        duration_s=10,
+        aspect_ratio="9:16",
+        provider_transport_key_provenance=(
+            "captured_flow_agent_contract[abra_r2v_10s]"
+        ),
+        transport_route=HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE,
+        logical_mode="F2V",
+        source_mode="HYBRID",
+    )
+    certification = _profiles.provider_certification_status(profile)
+    if not certification.get("certified"):
+        return {
+            "eligible": False,
+            "reason": f"DIRECT_PROFILE_UNCERTIFIED:{certification.get('reason')}",
+            "duration_model_profile": profile,
+        }
     return {
         "eligible": False,
         "reason": HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE,
@@ -161,6 +184,8 @@ def _certified_hybrid_reference_omni10_plan() -> dict:
             "captured_flow_agent_contract[abra_r2v_10s]"
         ),
         "contract_version": HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION,
+        "duration_model_profile": profile,
+        "provider_profile_certification": certification,
     }
 
 
@@ -1803,10 +1828,33 @@ def _image_provider_operation_reference(response: dict) -> dict[str, str | None]
 async def _verify_generation_approval(
     *, mode, prompt, source_mode, model, aspect, duration_s, num_videos,
     image_model, asset_fingerprints, image_media_ids, product_id,
-    manifest_id, execution_identity,
+    manifest_id, execution_identity, execution_profile_context,
 ):
     """Run the normal WYSIWYG approval gate for non-capture dispatches."""
     from agent.services import execution_approval_service as _eas
+    from agent.services import video_execution_profile_service as _profiles
+
+    if execution_profile_context is not None:
+        try:
+            _canonical_context = _profiles.normalize_approval_context(
+                execution_profile_context
+            )
+            _certification = _profiles.provider_certification_status(
+                _canonical_context["duration_model_profile"]
+            )
+        except _profiles.ExecutionProfileError as exc:
+            raise _eas.ExecutionApprovalError(
+                "EXECUTION_PROFILE_CONTEXT_INVALID",
+                str(exc),
+                details={"code": exc.code, "details": exc.details},
+            ) from exc
+        if not _certification.get("certified"):
+            raise _eas.ExecutionApprovalError(
+                "DURATION_PROFILE_NOT_CERTIFIED",
+                "Provider proof is missing for this exact duration/model profile.",
+                details=_certification,
+            )
+        execution_profile_context = _canonical_context
 
     _assets = [] if manifest_id else list(image_media_ids or [])
     _pinned_snapshot_id = None
@@ -1817,6 +1865,7 @@ async def _verify_generation_approval(
             duration_s=duration_s, count=num_videos, image_model=image_model,
             asset_fingerprints=asset_fingerprints, asset_media_ids=_assets,
             product_id=product_id, execution_identity=execution_identity,
+            execution_profile_context=execution_profile_context,
         )
         _pinned_snapshot_id = (_resolved or {}).get("snapshot_id")
     await _eas.verify_and_bind_dispatch(
@@ -1826,6 +1875,7 @@ async def _verify_generation_approval(
         asset_fingerprints=asset_fingerprints, asset_media_ids=_assets,
         product_id=product_id, snapshot_id=_pinned_snapshot_id,
         execution_identity=execution_identity,
+        execution_profile_context=execution_profile_context,
     )
 
 
@@ -1843,6 +1893,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          manifest_id: str | None = None,
                          asset_fingerprints: list[str] | None = None,
                          execution_identity: dict | None = None,
+                         execution_profile_context: dict | None = None,
                          product_visual_custody: dict | None = None,
                          request_id: str | None = None,
                          idempotency_key: str | None = None,
@@ -2121,6 +2172,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 asset_fingerprints=asset_fingerprints,
                 image_media_ids=image_media_ids, product_id=product_id,
                 manifest_id=manifest_id, execution_identity=execution_identity,
+                execution_profile_context=execution_profile_context,
             )
         except _eas.ExecutionApprovalError as _gate_err:
             return {"status": "REJECTED", "error": _gate_err.code,
@@ -2947,9 +2999,36 @@ def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
             # Veo 8s default is provably delivered. Anything else is rejected
             # for a reference-bearing request before provider approval.
             return _decline(f"DIRECT_DURATION_UNPROVEN:{duration_s}")
+    direct_profile = None
+    if model:
+        # A captured videoModelKey is transport evidence, not a lane-specific
+        # provider certification. The exact direct route must also have one
+        # shared duration/model profile proof; that proof is reusable by every
+        # eligible lane with the same profile digest.
+        from agent.services import video_execution_profile_service as _profiles
+
+        try:
+            direct_profile = _profiles.resolve_duration_model_profile(
+                model=spec["key"],
+                duration_s=normalized_duration if duration_s is not None else 8,
+                aspect_ratio=aspect,
+                audio_dialogue_route=_profiles.DEFAULT_AUDIO_DIALOGUE_ROUTE,
+                provider_transport_key_provenance=model_key_source,
+                transport_route=f"GOOGLE_FLOW_DIRECT:{gen_type}:{aspect_enum}",
+                logical_mode=mode,
+                source_mode=sm,
+            )
+            profile_status = _profiles.provider_certification_status(direct_profile)
+        except _profiles.ExecutionProfileError as exc:
+            return _decline(f"DIRECT_PROFILE_UNPROVEN:{exc.code}")
+        if not profile_status.get("certified"):
+            return _decline(
+                f"DIRECT_PROFILE_UNCERTIFIED:{profile_status.get('reason')}"
+            )
     return {"eligible": True, "reason": None, "rpc": rpc, "gen_type": gen_type,
             "aspect_enum": aspect_enum, "video_model_key": video_model_key,
-            "model_key_source": model_key_source}
+            "model_key_source": model_key_source,
+            "duration_model_profile": direct_profile}
 
 
 def direct_video_readiness(
