@@ -148,6 +148,38 @@ async def list_items(
     return [dict(row) for row in await cursor.fetchall()]
 
 
+async def list_dedupe_guard_owners(
+    dedupe_guard_keys: Iterable[str],
+) -> dict[str, dict[str, Any]]:
+    normalized = sorted({str(value) for value in dedupe_guard_keys if value})
+    if not normalized:
+        return {}
+    db = await get_db()
+    marks = ",".join("?" for _ in normalized)
+    cursor = await db.execute(
+        "SELECT i.dedupe_guard_key, i.item_id, i.status, "
+        "CASE WHEN i.status='FAILED' AND NOT EXISTS ("
+        "SELECT 1 FROM creative_generation_attempt a "
+        "WHERE a.item_id=i.item_id AND ("
+        "NULLIF(TRIM(COALESCE(a.provider_job_id,'')),'') IS NOT NULL "
+        "OR NULLIF(TRIM(COALESCE(a.provider_project_id,'')),'') IS NOT NULL "
+        "OR COALESCE(a.credit_spend_intended,0)=1"
+        ")"
+        ") THEN 1 ELSE 0 END AS provider_free_failed "
+        "FROM creative_production_item i "
+        f"WHERE i.dedupe_guard_key IN ({marks})",
+        tuple(normalized),
+    )
+    return {
+        str(row[0]): {
+            "item_id": str(row[1]),
+            "status": str(row[2]),
+            "provider_free_failed": bool(row[3]),
+        }
+        for row in await cursor.fetchall()
+    }
+
+
 async def list_historical_dna(
     product_ids: list[str],
     dna_hashes: list[str],

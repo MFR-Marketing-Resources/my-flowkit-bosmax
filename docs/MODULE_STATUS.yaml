@@ -312,6 +312,7 @@ domains:
       - dashboard/src/pages/CreativeProductionStudioPage.tsx
       - dashboard/src/pages/CreativeProductionStudioPage.test.tsx
       - tests/api/test_creative_production_api.py
+      - tests/unit/test_creative_production_historical_dna.py
       - tests/unit/test_creative_production_orchestrator.py
       - tests/unit/test_creative_production_migration.py
       - agent/services/creative_production_recipe_service.py
