@@ -30,6 +30,7 @@ if ($stateResolved.Equals($repoResolved, [System.StringComparison]::OrdinalIgnor
 $sourceDb = Join-Path $repoResolved "flow_agent.db"
 $sourceData = Join-Path $repoResolved "data"
 $verifier = Join-Path $PSScriptRoot "verify-canonical-runtime-state.py"
+$relocator = Join-Path $PSScriptRoot "relocate-runtime-state-db.py"
 if (-not (Test-Path -LiteralPath $sourceDb -PathType Leaf)) {
   Write-Error "PRODUCTION_RUNTIME_STATE_SOURCE_DB_MISSING: $sourceDb"
   exit 1
@@ -40,6 +41,10 @@ if (-not (Test-Path -LiteralPath $sourceData -PathType Container)) {
 }
 if (-not (Test-Path -LiteralPath $verifier -PathType Leaf)) {
   Write-Error "PRODUCTION_RUNTIME_STATE_VERIFIER_MISSING: $verifier"
+  exit 1
+}
+if (-not (Test-Path -LiteralPath $relocator -PathType Leaf)) {
+  Write-Error "PRODUCTION_RUNTIME_STATE_RELOCATOR_MISSING: $relocator"
   exit 1
 }
 
@@ -81,11 +86,22 @@ try {
 
   $stagedDb = Join-Path $staging "flow_agent.db"
   $sourceHash = (Get-FileHash -LiteralPath $sourceDb -Algorithm SHA256).Hash
+  $relocationJson = (& $Python $relocator --db $stagedDb --source-root $repoResolved --state-root $staging --json | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or -not $relocationJson) {
+    throw "PRODUCTION_RUNTIME_STATE_PATH_RELOCATION_FAILED: $stagedDb"
+  }
+  $relocation = $relocationJson | ConvertFrom-Json
+  $relocatedAbsolutePaths = [int]$relocation.relocated_absolute_paths
   $stagedHash = (Get-FileHash -LiteralPath $stagedDb -Algorithm SHA256).Hash
-  if ($sourceHash -ne $stagedHash) { throw "PRODUCTION_RUNTIME_STATE_DB_HASH_MISMATCH" }
+  if ($relocatedAbsolutePaths -gt 0 -and $sourceHash -eq $stagedHash) {
+    throw "PRODUCTION_RUNTIME_STATE_RELOCATION_NOT_REFLECTED_IN_DB"
+  }
+  if ($relocatedAbsolutePaths -eq 0 -and $sourceHash -ne $stagedHash) {
+    throw "PRODUCTION_RUNTIME_STATE_DB_HASH_MISMATCH"
+  }
 
   $stagedReport = Read-StateReport -Root $staging -Db $stagedDb
-  foreach ($key in @("product_count", "truth_lock_rows", "approved_truth_locks", "approved_missing_bytes", "approved_sha_mismatches", "truth_lock_paths_outside_root")) {
+  foreach ($key in @("product_count", "truth_lock_rows", "approved_truth_locks", "approved_missing_bytes", "approved_sha_mismatches", "truth_lock_paths_outside_root", "truth_lock_paths_missing", "truth_lock_paths_sha_mismatch")) {
     if ([string]$sourceReport.$key -ne [string]$stagedReport.$key) {
       throw "PRODUCTION_RUNTIME_STATE_REPORT_MISMATCH: $key source=$($sourceReport.$key) staged=$($stagedReport.$key)"
     }
@@ -98,6 +114,8 @@ try {
     source_root = $repoResolved
     state_root = $stateResolved
     source_db_sha256 = $sourceHash
+    state_db_sha256 = $stagedHash
+    relocated_absolute_paths = $relocatedAbsolutePaths
     product_count = $stagedReport.product_count
     truth_lock_rows = $stagedReport.truth_lock_rows
     approved_truth_locks = $stagedReport.approved_truth_locks
