@@ -123,6 +123,26 @@ def test_recipe_resolver_preserves_retirement_error_for_private_callers():
     assert error.value.code == "PRODUCTION_RECIPE_RETIRED"
 
 
+def test_recipe_copy_validation_preserves_surface_and_transport_lanes():
+    from agent.services import creative_production_scheduler_service as scheduler
+
+    assert scheduler._copy_validation_lane(
+        {"lane": "FACELESS"},
+        {"production_recipe": "FACELESS"},
+        "PRODUCTION_STUDIO_P6",
+    ) == "FACELESS"
+    assert scheduler._copy_validation_lane(
+        {"lane": "MONTAGE"},
+        {"production_recipe": "MONTAGE"},
+        "PRODUCTION_STUDIO_P6",
+    ) == "MONTAGE"
+    assert scheduler._copy_validation_lane(
+        {"lane": "FACELESS"},
+        {"production_recipe": "HYBRID"},
+        "PRODUCTION_STUDIO_P6",
+    ) == "PRODUCTION_STUDIO_P6"
+
+
 def test_historical_plan_recipe_is_not_invented():
     historical = {
         "logical_mode": "T2V",
