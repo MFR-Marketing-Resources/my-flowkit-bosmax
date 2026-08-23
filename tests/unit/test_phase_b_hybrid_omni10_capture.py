@@ -163,7 +163,7 @@ def test_certified_route_is_not_a_direct_video_model_key():
     )
 
 
-def test_certified_route_requires_the_hybrid_active_surface():
+def test_certified_route_is_reusable_by_other_surfaces_with_same_transport_profile():
     plan = make_video._direct_lane_plan(
         "F2V",
         "HYBRID",
@@ -175,11 +175,15 @@ def test_certified_route_requires_the_hybrid_active_surface():
         require_flag=False,
         surface_lane="FACELESS",
     )
-    assert plan["reason"] == make_video.DIRECT_10S_CONTRACT_NOT_CERTIFIED
+    assert plan["reason"] == make_video.HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+    assert plan["duration_model_profile"]["duration_s"] == 10
+    assert plan["provider_profile_certification"]["certified"] is True
     receipt = make_video._build_reference_routing_receipt(
         "F2V", "HYBRID", ["ref-1"], plan
     )
-    assert receipt["selected_execution_route"] == "BLOCKED_REFERENCE_ROUTE"
+    assert receipt["selected_execution_route"] == (
+        make_video.HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+    )
     assert receipt["pre_provider"]["provider_calls"] == 0
 
 

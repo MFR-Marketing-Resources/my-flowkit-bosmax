@@ -1015,6 +1015,9 @@ class GenerateRequest(BaseModel):
     # The generate route compares this receipt with the referenced workspace
     # execution package before any provider-adjacent work begins.
     execution_identity: Optional[dict[str, Any]] = None
+    # Immutable shared duration/model profile plus current lane/product/copy
+    # authority digests. The approval service canonicalizes this receipt.
+    execution_profile_context: Optional[dict[str, Any]] = None
 
 
 @router.get("/video-models")
@@ -2383,6 +2386,7 @@ async def generate(body: GenerateRequest):
         ),
         manifest_id=body.manifest_id,
         execution_identity=body.execution_identity,
+        execution_profile_context=body.execution_profile_context,
         production_recipe=_production_recipe or None,
     )
     if isinstance(result, dict) and result.get("status") == "REJECTED":
@@ -4951,6 +4955,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         idempotency_key=request_id,
         product_visual_custody=body.get("product_visual_custody"),
         execution_identity=body.get("execution_identity"),
+        execution_profile_context=body.get("execution_profile_context"),
         production_recipe=_manual_recipe or None,
         copy_execution_binding=(
             v2_resolution.to_metadata(

@@ -39,10 +39,11 @@ import logging
 import os
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Mapping
 
 from agent.db import execution_approval_crud as _crud
 from agent.services.production_prompt_approval_service import scan_prompt_text
+from agent.services import video_execution_profile_service as _profile_service
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +185,7 @@ def compute_dispatch_identity(
     asset_media_ids: list[str] | None = None,
     product_id: str | None = None,
     execution_identity: dict[str, Any] | None = None,
+    execution_profile_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """THE canonical envelope+hash builder (Envelope v2). Called with identical
     semantics at review time and at the dispatch boundary, so equal provider-affecting
@@ -237,6 +239,25 @@ def compute_dispatch_identity(
         # Faceless V1 carries a structured, persisted receipt. Canonicalize it
         # before hashing so key order cannot create a false approval mismatch.
         envelope["execution_identity"] = json.loads(_stable_json(execution_identity))
+    if execution_profile_context is not None:
+        # The profile and all current authority digests are part of the frozen
+        # envelope. A changed duration, route, lane adapter, Product Truth,
+        # Copy V2, SweetWPS, compositor, or compiler digest therefore cannot
+        # reuse an older APPROVED snapshot.
+        try:
+            envelope["execution_profile_context"] = json.loads(
+                _stable_json(
+                    _profile_service.normalize_approval_context(
+                        execution_profile_context
+                    )
+                )
+            )
+        except _profile_service.ExecutionProfileError as exc:
+            raise ExecutionApprovalError(
+                "EXECUTION_PROFILE_CONTEXT_INVALID",
+                str(exc),
+                details={"code": exc.code, "details": exc.details},
+            ) from exc
     return {
         "prompt_sha256": prompt_sha256,
         "execution_envelope": envelope,
@@ -332,6 +353,7 @@ async def create_review_snapshot(
     asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
     execution_identity: dict[str, Any] | None = None,
+    execution_profile_context: Mapping[str, Any] | None = None,
     review_session_id: str | None = None,
     created_by: str | None = None,
     manifest_id: str | None = None,
@@ -361,6 +383,7 @@ async def create_review_snapshot(
         asset_fingerprints=canonical_fps,
         product_id=product_id,
         execution_identity=execution_identity,
+        execution_profile_context=execution_profile_context,
     )
     scan = scan_prompt_text(final_prompt_text, product_id=product_id)
     scan_clean = not any(scan.values())
@@ -508,6 +531,7 @@ async def resolve_manifest_approved_snapshot(
     asset_media_ids: list[str] | None = None,
     product_id: str | None = None,
     execution_identity: dict[str, Any] | None = None,
+    execution_profile_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """RESOLVE / BIND (never manufacture) a human-approved manifest item whose
     frozen execution-envelope SHA (canonical Envelope v2 identity — PR #815 server-
@@ -538,6 +562,7 @@ async def resolve_manifest_approved_snapshot(
         asset_fingerprints=canonical_fps,
         product_id=product_id,
         execution_identity=execution_identity,
+        execution_profile_context=execution_profile_context,
     )
     return await _crud.find_approved_manifest_item(
         _norm(manifest_id), identity["execution_envelope_sha256"],
@@ -559,6 +584,7 @@ async def ensure_upstream_approved_snapshot(
     image_model: str | None = None,
     asset_fingerprints: list[str] | None = None,
     asset_media_ids: list[str] | None = None,
+    execution_profile_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """RESOLVE / BIND-ONLY upstream approval (corrective GAP 2 refactor of the
     former create-and-auto-approve helper). Computes the canonical Envelope v2
@@ -585,6 +611,7 @@ async def ensure_upstream_approved_snapshot(
         image_model=image_model,
         asset_fingerprints=canonical_fps,
         product_id=product_id,
+        execution_profile_context=execution_profile_context,
     )
     return await _crud.find_approved_by_envelope(identity["execution_envelope_sha256"])
 
@@ -769,6 +796,7 @@ async def verify_and_bind_dispatch(
     snapshot_id: str | None = None,
     provider_job_id: str | None = None,
     execution_identity: dict[str, Any] | None = None,
+    execution_profile_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """THE dispatch-boundary gate.
 
@@ -800,6 +828,7 @@ async def verify_and_bind_dispatch(
         asset_fingerprints=canonical_fps,
         product_id=product_id,
         execution_identity=execution_identity,
+        execution_profile_context=execution_profile_context,
     )
     dispatched_env_sha = identity["execution_envelope_sha256"]
     dispatched_prompt_sha = identity["prompt_sha256"]
@@ -890,5 +919,6 @@ def _recompute_from_snapshot(snap: dict[str, Any], *, final_prompt_text: str) ->
         asset_fingerprints=env.get("asset_fingerprints"),
         product_id=env.get("product_id") or snap.get("product_id"),
         execution_identity=env.get("execution_identity"),
+        execution_profile_context=env.get("execution_profile_context"),
     )
 

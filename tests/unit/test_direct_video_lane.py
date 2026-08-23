@@ -19,6 +19,7 @@ import base64
 
 import agent.services.make_video as mv
 from agent.services.flow_client import FlowClient, resolve_video_model_key
+from agent.services import video_execution_profile_service as profiles
 
 _MID = "11111111-2222-3333-4444-555555555555"
 _VBYTES = b"\x00\x00\x00\x18ftypmp42" + b"x" * 64
@@ -39,6 +40,24 @@ def _plan(**kw):
             "num_videos": 1, "require_flag": False}
     args.update(kw)
     return mv._direct_lane_plan(**args)
+
+
+def _seed_direct_profile_certification(monkeypatch):
+    """Fixture the shared 8s direct profile; never mutates repository proof."""
+    profile = profiles.resolve_duration_model_profile(
+        model="veo_3_1_lite",
+        duration_s=8,
+        aspect_ratio="9:16",
+        provider_transport_key_provenance="direct_video_model_keys[veo_3_1_lite]",
+        transport_route="GOOGLE_FLOW_DIRECT:reference_frame_2_video:VIDEO_ASPECT_RATIO_PORTRAIT",
+        logical_mode="F2V",
+        source_mode="HYBRID",
+    )
+    monkeypatch.setitem(
+        profiles.PROVIDER_CERTIFICATION_PROFILES,
+        profile["profile_digest"],
+        {"profile_digest": profile["profile_digest"], "status": "CERTIFIED"},
+    )
 
 
 class _FakeDirectClient:
@@ -204,10 +223,20 @@ def test_plan_explicit_model_without_captured_key_declines():
 def test_plan_explicit_model_with_captured_key_is_eligible(monkeypatch):
     monkeypatch.setitem(
         mv.DIRECT_VIDEO_MODEL_KEYS, "veo_3_1_lite",
-        {"reference_frame_2_video": {"VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_r2v_lite"}})
+            {"reference_frame_2_video": {"VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_r2v_lite"}})
+    _seed_direct_profile_certification(monkeypatch)
     p = _plan(model="veo_3_1_lite")
     assert p["eligible"] and p["video_model_key"] == "veo_3_1_r2v_lite"
     assert "direct_video_model_keys" in p["model_key_source"]
+
+
+def test_plan_captured_key_without_shared_profile_proof_declines(monkeypatch):
+    monkeypatch.setitem(
+        mv.DIRECT_VIDEO_MODEL_KEYS, "veo_3_1_lite",
+        {"reference_frame_2_video": {"VIDEO_ASPECT_RATIO_PORTRAIT": "veo_3_1_r2v_lite"}})
+    p = _plan(model="veo_3_1_lite")
+    assert p["eligible"] is False
+    assert p["reason"] == "DIRECT_PROFILE_UNCERTIFIED:NO_PROVIDER_CERTIFICATION_FOR_PROFILE"
 
 
 def test_plan_unknown_model_declines_to_canonical_fail_closed():
@@ -742,6 +771,7 @@ def test_capture_forwards_explicit_model_and_duration_after_key_capture(
         mv.DIRECT_VIDEO_MODEL_KEYS, "veo_3_1_lite",
         {"reference_frame_2_video": {
             "VIDEO_ASPECT_RATIO_PORTRAIT": "captured_r2v_portrait"}})
+    _seed_direct_profile_certification(monkeypatch)
     client = _FakeDirectClient()
     _patch_direct_runtime(monkeypatch, tmp_path, client)
 

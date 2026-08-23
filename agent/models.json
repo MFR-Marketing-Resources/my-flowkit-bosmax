@@ -38,5 +38,16 @@
     "NANO_BANANA_2": "NARWHAL",
     "NANO_BANANA_2_LITE": "PENDING_ID"
   },
-  "direct_video_model_keys": {}
+  "direct_video_model_keys": {},
+  "provider_certification_profiles": {
+    "53cc7134eb6ffc09cada1e2a3715b86bb4fb62119f3a9f97ff2a5300766e65f2": {
+      "profile_digest": "53cc7134eb6ffc09cada1e2a3715b86bb4fb62119f3a9f97ff2a5300766e65f2",
+      "status": "CERTIFIED",
+      "proof_id": "HYBRID_REFERENCE_OMNI_10S_CONTRACT_CAPTURE",
+      "provider_tool": "generate_video_with_references",
+      "provider_model_usage_key": "abra_r2v_10s",
+      "contract_version": "flow-agent-reference-omni10-v1",
+      "evidence_source": ".ai/status/CURRENT_STATE.md"
+    }
+  }
 }
