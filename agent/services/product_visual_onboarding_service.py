@@ -943,12 +943,19 @@ def _prep_state(
         if official_visual_valid is False:
             return BROKEN_OFFICIAL_VISUAL
         return APPROVED
+    state = str((prep or {}).get("status") or NOT_PREPARED).upper()
+    # A pending lock is not evidence that preparation succeeded.  When the
+    # preparation receipt is blocked/failed and no cutout bytes are servable,
+    # expose the operational failure instead of masking it as PENDING_REVIEW.
+    if state in {BLOCKED, PREPARATION_FAILED} and _preview_servable_path(
+        (lock or {}).get("canonical_cutout_path")
+    ) is None:
+        return state
     review_status = str((lock or {}).get("review_status") or "").upper()
     if review_status == "PENDING_REVIEW":
         return PENDING_REVIEW
     if review_status == "REJECTED":
         return REJECTED
-    state = str((prep or {}).get("status") or NOT_PREPARED).upper()
     return state if state in PREPARATION_STATES else NOT_PREPARED
 
 
@@ -1219,6 +1226,12 @@ def _readiness_payload(
 
 
 async def _resolve_source(product: dict[str, Any]) -> Any:
+    product_id = str(product.get("id") or product.get("product_id") or "").strip()
+    if product_id:
+        lock = await crud.get_product_truth_lock(product_id)
+        pending_reference = _pending_truth_lock_source_reference(lock, product)
+        if pending_reference is not None:
+            return pending_reference
     try:
         return resolve_product_reference_image(product, prefer_approved_cutout=False)
     except ProductVisualReferenceRequiredError as exc:
