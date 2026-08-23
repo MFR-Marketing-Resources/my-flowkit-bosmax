@@ -18,7 +18,10 @@ jobs:
   verify:
     name: verify
     runs-on: windows-latest
-    timeout-minutes: 30
+    # The gate intentionally runs the full curated dashboard, product-data,
+    # and backend smoke set in one job. Keep all coverage; allow the Windows
+    # runner enough time for the database-heavy backend suites to finish.
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
