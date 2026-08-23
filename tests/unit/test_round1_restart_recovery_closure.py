@@ -14,6 +14,8 @@ from agent.db import crud
 from agent.services import make_video
 from agent.services.montage_run_service import (
     KIND,
+    _default_montage_generate_fn,
+    load_montage_execution_identity,
     montage_scheduler_tick,
 )
 
@@ -245,6 +247,180 @@ async def _seed_montage_run(run_id: str, items: list[tuple[str, str, dict]], *, 
             payload_json=json.dumps(payload),
             status=item_status,
         )
+
+
+@pytest.mark.asyncio
+async def test_montage_generate_builders_forward_persisted_faceless_identity(monkeypatch):
+    identity = {
+        "identity_version": "FACELESS_EXECUTION_IDENTITY_V1",
+        "lane": "FACELESS",
+        "transport_mode": "T2V",
+        "source_mode": "T2V",
+    }
+    monkeypatch.setattr(
+        crud,
+        "get_workspace_execution_package",
+        AsyncMock(
+            return_value={
+                "request_lineage_payload": json.dumps(
+                    {"faceless_execution_identity": identity}
+                )
+            }
+        ),
+    )
+    assert await load_montage_execution_identity("wep-identity") == identity
+
+    from agent.api import flow
+
+    captured = {}
+
+    async def fake_generate(body):
+        captured["body"] = body
+        return {"job_id": "g-montage-identity", "media_id": None}
+
+    monkeypatch.setattr(
+        "agent.services.montage_run_service.get_montage_discrete_run",
+        AsyncMock(
+            return_value={
+                "config": {
+                    "staff_id": "staff-provider-free",
+                    "approved_manifest_id": "manifest-provider-free",
+                }
+            }
+        ),
+    )
+    monkeypatch.setattr(flow, "generate", fake_generate)
+
+    result = await _default_montage_generate_fn(
+        "montage-identity",
+        product_id="product-identity",
+        mode="T2V",
+        source_mode="T2V",
+        workspace_execution_package_id="wep-identity",
+        prompt="identity forwarding fixture",
+        scene_id="scene-identity",
+        model="Veo 3.1 - Lite",
+        duration_s=8,
+    )
+
+    assert result["job_id"] == "g-montage-identity"
+    assert captured["body"].execution_identity == identity
+    assert captured["body"].workspace_execution_package_id == "wep-identity"
+
+
+@pytest.mark.asyncio
+async def test_montage_authorize_api_builder_forwards_persisted_faceless_identity(monkeypatch):
+    from agent.api import flow, montage
+    from agent.api.montage import MontageAuthorizeGenerationRequest
+
+    identity = {
+        "identity_version": "FACELESS_EXECUTION_IDENTITY_V1",
+        "lane": "FACELESS",
+        "transport_mode": "T2V",
+        "source_mode": "T2V",
+    }
+    captured = {}
+    monkeypatch.setattr(
+        montage,
+        "_require_montage_staff",
+        AsyncMock(return_value={"staff_id": "staff-api", "display_name": "API Fixture"}),
+    )
+    monkeypatch.setattr(
+        montage,
+        "get_montage_discrete_run",
+        AsyncMock(return_value={"product_id": "product-api", "config": {}}),
+    )
+    monkeypatch.setattr(montage, "_require_montage_product", AsyncMock())
+    monkeypatch.setattr(
+        montage,
+        "load_montage_execution_identity",
+        AsyncMock(return_value=identity),
+    )
+    monkeypatch.setattr(
+        "agent.services.execution_approval_service.approved_manifest_id_for_run",
+        AsyncMock(return_value="manifest-api"),
+    )
+
+    async def fake_generate(body):
+        captured["body"] = body
+        return {"job_id": "g-api-identity", "media_id": None}
+
+    async def fake_authorize(_run_id, **kwargs):
+        await kwargs["generate_fn"](
+            product_id="product-api",
+            mode="T2V",
+            source_mode="T2V",
+            workspace_execution_package_id="wep-api",
+            prompt="api identity forwarding fixture",
+            scene_id="scene-api",
+            model="Veo 3.1 - Lite",
+            duration_s=8,
+        )
+        return {"ok": True}
+
+    monkeypatch.setattr(flow, "generate", fake_generate)
+    monkeypatch.setattr(montage, "authorize_montage_run_generation", fake_authorize)
+    result = await montage.montage_authorize_generation(
+        "montage-api",
+        MontageAuthorizeGenerationRequest(
+            confirm_credit_burn=True,
+            staff_id="staff-api",
+            expected_video_generations=1,
+            expected_provider_operations=1,
+            dry_run=False,
+        ),
+        object(),
+    )
+
+    assert result["ok"] is True
+    assert captured["body"].execution_identity == identity
+    assert captured["body"].manifest_id == "manifest-api"
+
+
+@pytest.mark.asyncio
+async def test_montage_scheduler_repairs_only_pre_provider_identity_failure_and_submits_once():
+    run_id = f"montage-identity-repair-{uuid4().hex}"
+    failure = {
+        "detail": (
+            "409: {'error': 'FACELESS_EXECUTION_IDENTITY_REQUIRED', "
+            "'detail': 'The persisted Faceless execution identity is required for dispatch.'}"
+        )
+    }
+    await _seed_montage_run(
+        run_id,
+        [
+            ("scene-1", "GENERATE_FAILED", failure),
+            ("scene-2", "GENERATE_FAILED", failure),
+        ],
+        status="PARTIAL",
+    )
+    for item in await crud.list_bulk_generation_items(run_id):
+        await crud.update_bulk_generation_item(
+            item["bulk_item_id"], error="ERR_MONTAGE_GENERATE"
+        )
+
+    submits: list[str] = []
+
+    async def generate_fn(**kwargs):
+        submits.append(kwargs["scene_id"])
+        return {"job_id": f"g-{kwargs['scene_id']}", "media_id": None}
+
+    out = await montage_scheduler_tick(generate_fn=generate_fn)
+
+    assert out["pre_provider_recoveries"] == 2
+    assert out["provider_generation_submits"] == 1
+    assert submits == ["scene-1"]
+    items = await crud.list_bulk_generation_items(run_id)
+    by_scene = {
+        json.loads(item["payload_json"])["scene_id"]: item for item in items
+    }
+    first_payload = json.loads(by_scene["scene-1"]["payload_json"])
+    second_payload = json.loads(by_scene["scene-2"]["payload_json"])
+    assert by_scene["scene-1"]["status"] == "VIDEO_SUBMITTED"
+    assert second_payload["status"] == "PACKAGE_READY"
+    assert second_payload["pre_provider_recovery"]["provider_generation_submit_count"] == 0
+    assert by_scene["scene-2"]["retry_count"] == 0
+    assert first_payload["provider_generation_submit_count"] == 1
 
 
 @pytest.mark.asyncio

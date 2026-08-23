@@ -34,6 +34,7 @@ from agent.services.montage_run_service import (
     create_montage_discrete_run,
     estimate_montage_run_generation,
     get_montage_discrete_run,
+    load_montage_execution_identity,
     readiness_from_montage_run,
     resume_montage_run,
 )
@@ -1003,6 +1004,9 @@ async def montage_authorize_generation(
                 sm = start_asset.get("mediaId") or start_asset.get("media_id")
                 if sm and str(sm) not in image_media_ids:
                     image_media_ids.append(str(sm))
+            execution_identity = await load_montage_execution_identity(
+                kwargs.get("workspace_execution_package_id")
+            )
             gen_body = GenerateRequest(
                 mode=str(kwargs.get("mode") or "F2V"),
                 prompt=str(kwargs.get("prompt") or f"Montage scene {kwargs.get('scene_id')}"),
@@ -1021,6 +1025,7 @@ async def montage_authorize_generation(
                 source_mode=kwargs.get("source_mode") or None,
                 surface_lane="MONTAGE",
                 workspace_execution_package_id=kwargs.get("workspace_execution_package_id") or None,
+                execution_identity=execution_identity,
                 model=kwargs.get("model") or None,
                 duration_s=kwargs.get("duration_s"),
                 generation_mode="SINGLE",
