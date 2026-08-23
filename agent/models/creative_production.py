@@ -20,12 +20,14 @@ from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
 # Re-pinned 2026-08-21: the P6 launch cohort is now claim-safe by construction —
 # the matrix builder blocks any product whose latest approved Product Intelligence
 # is not CLAIM_SAFE (see catalog_coverage_service._claim_safety_launch_blocker).
-# Post-freeze re-derivation had grown the (claim-blind) cohort to 581; gating out
+# Post-freeze re-derivation had grown the (claim-blind) cohort to 582; gating out
 # the 7 CLAIM_REVIEW_REQUIRED products (3 HIGH / 4 MEDIUM health-claim items) yields
-# the certified claim-safe set 574. Owner-approved acceptance of that vetted cohort.
-P58_COHORT_COUNT = 574
+# the current deterministic claim-safe set 575.  The canonical runtime authority
+# recomputation on 2026-08-23 produced the sorted-product-ID SHA below; keep the
+# count and digest pinned together so drift fails closed instead of widening scope.
+P58_COHORT_COUNT = 575
 P58_COHORT_SHA256 = (
-    "add708e17fb9b474764b7287c025724cb01f8a8c19eb35929cff9cc97da9ba14"
+    "9579facb84d0bbe40c40a8be313ac745fb6e3e201590877947e184f79de0a35a"
 )
 P6_LIVE_CONFIRMATION = "AUTHORIZE_P6_LIVE_CREDIT_SPEND"
 
