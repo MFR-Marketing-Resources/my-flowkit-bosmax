@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent.services import canonical_prompt_compiler as _canonical
+from agent.services import provider_execution_profile as _pep
 
 ROUTE_DURATION_AUTHORITY_MISSING = "ROUTE_DURATION_AUTHORITY_MISSING"
 
@@ -307,6 +308,21 @@ def resolve_native_extend_execution(
         capability_authority("GOOGLE_FLOW_FINAL_CONCAT_EXPORT") == AUTHORIZED)
 
     route_executable = not blockers
+    provider_profile = None
+    if total_duration_seconds in (16, 24) and block_plan:
+        provider_profile = _pep.resolve_provider_execution_profile(
+            provider="GOOGLE_FLOW",
+            model="veo_3_1_lite",
+            duration_seconds=int(total_duration_seconds),
+            prompt_block_count=len(block_plan),
+            aspect_ratio="9:16",
+            output_count=1,
+            reference_topology="SOURCE_AGNOSTIC",
+            generation_type="native_extend",
+            execution_transport="google_flow_native_extend",
+            provider_model_key="veo_3_1_extension_lite",
+            capability_contract_version="google-flow-native-extend-v1",
+        )
     return {
         "route_id": NATIVE_EXTEND_ROUTE_ID,
         "transport_proven": transport_proven,
@@ -319,6 +335,16 @@ def resolve_native_extend_execution(
         "route_executable": route_executable,
         "final_concat_export_available": final_concat_available,
         "model_key": "veo_3_1_extension_lite",
+        "provider_profile": provider_profile,
+        "provider_profile_id": (
+            provider_profile.get("profile_id") if provider_profile else None
+        ),
+        "provider_profile_digest": (
+            provider_profile.get("provider_profile_digest") if provider_profile else None
+        ),
+        "provider_profile_status": (
+            provider_profile.get("certification_status") if provider_profile else None
+        ),
         "block_duration_seconds": 8,
         "planned_block_count": planned_block_count,
         "planned_operation_count": (

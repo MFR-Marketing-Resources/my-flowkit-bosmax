@@ -35,6 +35,7 @@ class ReviewSnapshotRequest(BaseModel):
     asset_media_ids: list[str] | None = None
     execution_identity: dict[str, Any] | None = None
     execution_profile_context: dict[str, Any] | None = None
+    provider_profile: dict[str, Any] | None = None
     review_session_id: str | None = None
     created_by: str | None = None
 
@@ -76,6 +77,7 @@ async def create_review(req: ReviewSnapshotRequest) -> dict[str, Any]:
         asset_media_ids=req.asset_media_ids,
         execution_identity=req.execution_identity,
         execution_profile_context=req.execution_profile_context,
+        provider_profile=req.provider_profile,
         review_session_id=req.review_session_id,
         created_by=req.created_by,
     )
@@ -136,6 +138,7 @@ class PrepareDispatchRequest(BaseModel):
     image_model: str | None = None
     asset_media_ids: list[str] | None = None
     execution_identity: dict[str, Any] | None = None
+    provider_profile: dict[str, Any] | None = None
     visual_lane_id: str | None = None
     reference_pack_id: str | None = None
     creative_mode: str | None = None
@@ -196,6 +199,7 @@ async def prepare_dispatch(req: PrepareDispatchRequest) -> dict[str, Any]:
         image_model=req.image_model,
         asset_media_ids=asset_ids,
         execution_identity=req.execution_identity,
+        provider_profile=req.provider_profile,
         review_session_id=req.review_session_id,
         created_by=req.created_by,
     )
@@ -218,6 +222,7 @@ class ManifestItemRequest(BaseModel):
     image_model: str | None = None
     asset_media_ids: list[str] | None = None
     execution_identity: dict[str, Any] | None = None
+    provider_profile: dict[str, Any] | None = None
 
 
 class CreateManifestRequest(BaseModel):

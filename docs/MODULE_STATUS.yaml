@@ -84,10 +84,12 @@ domains:
       # and the FlowClient provider boundary. Ships observe-only (inert) until
       # EXECUTION_APPROVAL_GATE_ENFORCED.
       - agent/services/execution_approval_service.py
+      - agent/services/provider_execution_profile.py
       - agent/db/execution_approval_crud.py
       - agent/api/execution_approval.py
       - tests/unit/test_execution_approval_gate.py
       - tests/unit/test_execution_approval_backstop.py
+      - tests/unit/test_provider_execution_profile.py
       - tests/api/test_execution_approval_api.py
       - tests/unit/test_hybrid_approval_gate_drift.py
       - agent/db/schema.py
