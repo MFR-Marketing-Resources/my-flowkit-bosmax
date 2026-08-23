@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { V3AssistantPlan, V3LandbankItem, V3ProductionCapacity } from "../api/storyboardLandbankV3Round2";
+import type { V3AssistantPlan, V3LandbankItem, V3ProductionCapacity, V3ProviderStatus } from "../api/storyboardLandbankV3Round2";
 import {
 	blockerToOperator,
 	buildPreflightSummary,
@@ -11,7 +11,9 @@ import {
 	materializationToOperator,
 	missingCopies,
 	reconstructStep,
+	resolveGenerateLane,
 	resolveNextAction,
+	resolveProviderBlocker,
 	reviewBuckets,
 	toOperatorError,
 	type WorkflowCounts,
@@ -96,6 +98,21 @@ function landbankItem(overrides: { status?: string; hardPass?: boolean; masterId
 
 const baseCounts: WorkflowCounts = { target: 54, approved: 0, reviewable: 0, productionReady: 0, needsPreparation: 0, needsRevalidation: 0, activationRequired: 0 };
 
+function provider(overrides: Partial<V3ProviderStatus> = {}): V3ProviderStatus {
+	return {
+		lane: "text_assist",
+		status: "NOT_CONFIGURED",
+		configured: false,
+		provider_id: null,
+		model_id: null,
+		execution_enabled: false,
+		provider_calls: 0,
+		credit_spend: 0,
+		fake_provider_allowed: false,
+		...overrides,
+	};
+}
+
 describe("inferAssistantMode", () => {
 	it("returns CREATE when there is no approved supply", () => {
 		expect(inferAssistantMode({ existingApproved: 0, target: 54 })).toBe("CREATE");
@@ -179,6 +196,29 @@ describe("resolvePrimaryTruthBlocker", () => {
 	});
 });
 
+describe("provider readiness", () => {
+	it("requires both live provider readiness flags", () => {
+		expect(resolveGenerateLane(provider())).toBeNull();
+		expect(resolveGenerateLane(provider({ configured: true, execution_enabled: false, provider_id: "qwen", model_id: "qwen-plus" }))).toBeNull();
+		expect(resolveGenerateLane(provider({ configured: true, execution_enabled: true, provider_id: "qwen", model_id: "qwen-plus" }))).toBe("LIVE_TEXT_ASSIST");
+	});
+
+	it("allows only an explicitly permitted fake lane when live execution is unavailable", () => {
+		expect(resolveGenerateLane(provider({ fake_provider_allowed: true }))).toBe("FAKE_TEST");
+	});
+
+	it("returns an operator blocker when no executable lane is available", () => {
+		const blocker = resolveProviderBlocker(provider());
+		expect(blocker?.code).toBe("PROVIDER_NOT_CONFIGURED");
+		expect(blocker?.message).toMatch(/cannot be generated yet/i);
+		expect(blocker?.actionRoute).toBe("/settings");
+	});
+
+	it("blocks a configured provider when execution is disabled", () => {
+		expect(resolveProviderBlocker(provider({ configured: true, provider_id: "qwen", model_id: "qwen-plus" }))?.code).toBe("PROVIDER_EXECUTION_DISABLED");
+	});
+});
+
 describe("reconstructStep", () => {
 	it("honors a valid explicit URL step", () => {
 		expect(reconstructStep({ urlStep: "GENERATE", hasProduct: true, recipeReady: false, reviewableCount: 0, approvedCount: 0 })).toBe("GENERATE");
@@ -255,6 +295,18 @@ describe("buildPreflightSummary", () => {
 		const summary = buildPreflightSummary({ plan: null, capacity: capacity(), target: 54, truthApproved: true, truthFactCount: 3, planError: "COPY_V3_EVIDENCE_AUTHORITY_MISMATCH: mismatch" });
 		expect(summary.ready).toBe(false);
 		expect(summary.blockers[0].code).toBe("COPY_V3_EVIDENCE_AUTHORITY_MISMATCH");
+	});
+	it("fails closed when the provider has no executable lane", () => {
+		const summary = buildPreflightSummary({
+			plan: plan(),
+			capacity: capacity(),
+			target: 54,
+			truthApproved: true,
+			truthFactCount: 3,
+			providerBlocker: resolveProviderBlocker(provider()),
+		});
+		expect(summary.ready).toBe(false);
+		expect(summary.blockers[0].code).toBe("PROVIDER_NOT_CONFIGURED");
 	});
 });
 
