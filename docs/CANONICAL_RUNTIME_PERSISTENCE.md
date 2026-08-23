@@ -38,11 +38,21 @@ pwsh -File scripts/migrate-canonical-runtime-state.ps1
 pwsh -File scripts/migrate-canonical-runtime-state.ps1 -Apply
 ```
 
-`-Apply` requires a new destination, copies `flow_agent.db` and `data\` into a
-staging directory, relocates any absolute Product Truth paths proven to be under
-the source checkout to state-root-relative paths, verifies the source and staged
-DB SHA-256 values plus Product Truth row/byte counts, and then moves the verified
-directory into place. An absolute path outside the source checkout fails closed.
+`-Apply` requires a new destination, copies `flow_agent.db`, `data\`, and the
+optional source provider state at `.local-agent\ai-provider-settings.json` into
+a staging directory, relocates any absolute Product Truth paths proven to be
+under the source checkout to state-root-relative paths, verifies the source and
+staged DB SHA-256 values plus Product Truth row/byte counts, and then moves the
+verified directory into place. An absolute path outside the source checkout
+fails closed.
+
+Provider settings are copied byte-for-byte only when the source file exists. The
+provider migration verifies source/destination file hashes, provider key
+presence/length/fingerprints, active provider, and lane metadata in memory. It
+never prints key values or writes them to the migration receipt. The source
+settings file is retained. A destination that already contains provider keys or
+conflicting provider/lane state fails closed; a missing source provider file does
+not block DB/data migration.
 The source checkout is never deleted. Existing missing bytes are reported and
 preserved as evidence; the Product Truth tombstone path handles genuinely
 unrecoverable history during a later replacement.
