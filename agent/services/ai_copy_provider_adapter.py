@@ -50,7 +50,13 @@ _MODEL_ENV = "PRODUCT_TEXT_ASSIST_MODEL"
 _TIMEOUT_SECONDS = 120.0
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_MAX_TOKENS = 1024
-_OPENAI_JSON_MAX_TOKENS = 4096
+# The current repository catalog declares provider/model identity and transport,
+# but no per-model output-token capability.  These are therefore explicit
+# structured-output transport ceilings, not invented provider claims.  Callers
+# must govern their request within this seam; the adapter clamps again at the
+# actual transport boundary.
+OPENAI_COMPATIBLE_JSON_MAX_TOKENS = 4096
+ANTHROPIC_JSON_MAX_TOKENS = _ANTHROPIC_MAX_TOKENS
 _JSON_OUTPUT_PROVIDER_IDS = frozenset({"deepseek", "openai"})
 _DEEPSEEK_THINKING_MODE_MODELS = frozenset(
     {"deepseek-v4-pro", "deepseek-v4-flash"}
@@ -143,6 +149,8 @@ def _begin_provider_call(
     transport: str,
     structured_output_requested: bool,
     json_output_mode: str | None,
+    requested_output_tokens: int | None = None,
+    effective_output_tokens: int | None = None,
 ) -> int:
     global _provider_call_count, _last_provider_call_receipt
     with _provider_call_lock:
@@ -168,6 +176,13 @@ def _begin_provider_call(
             "diagnostic_metadata": {},
             "usage": {},
         }
+        if requested_output_tokens is not None or effective_output_tokens is not None:
+            receipt.update(
+                {
+                    "requested_output_tokens": requested_output_tokens,
+                    "effective_output_tokens": effective_output_tokens,
+                }
+            )
         _provider_call_receipt_by_id[call_id] = dict(receipt)
         while len(_provider_call_receipt_by_id) > 512:
             _provider_call_receipt_by_id.pop(next(iter(_provider_call_receipt_by_id)))
@@ -319,6 +334,56 @@ def _resolve_model(provider_id: str | None) -> str | None:
     return env or None
 
 
+def structured_output_token_limit(
+    provider_id: str | None,
+    model_id: str | None = None,
+) -> int:
+    """Return the repository-declared structured-output transport ceiling.
+
+    The mutable model catalog currently declares no per-model output-token
+    capability.  ``model_id`` is accepted so a future catalog capability can be
+    added without changing the call contract; today the selected provider's
+    transport ceiling is the only supported limit we can prove locally.
+    """
+
+    del model_id
+    transport = get_provider_transport(str(provider_id or "").lower())
+    if transport == TRANSPORT_OPENAI_COMPATIBLE:
+        return OPENAI_COMPATIBLE_JSON_MAX_TOKENS
+    if transport == TRANSPORT_ANTHROPIC_MESSAGES:
+        return ANTHROPIC_JSON_MAX_TOKENS
+    raise AICopyProviderError(
+        ERR_CALL_FAILED,
+        detail="structured output transport limit is not declared",
+    )
+
+
+def clamp_structured_output_tokens(
+    requested: int | None,
+    *,
+    provider_id: str | None,
+    model_id: str | None,
+) -> int:
+    """Clamp one governed request to the selected lane's known safe ceiling."""
+
+    limit = structured_output_token_limit(provider_id, model_id)
+    if requested is None:
+        return limit
+    try:
+        requested_value = int(requested)
+    except (TypeError, ValueError) as exc:
+        raise AICopyProviderError(
+            ERR_CALL_FAILED,
+            detail="structured output token budget must be an integer",
+        ) from exc
+    if requested_value < 1:
+        raise AICopyProviderError(
+            ERR_CALL_FAILED,
+            detail="structured output token budget must be positive",
+        )
+    return min(requested_value, limit)
+
+
 def _extract_json_object(
     text: str,
     *,
@@ -431,7 +496,12 @@ def _split_system_and_turns(
 
 
 def _complete_anthropic(
-    messages: list[dict[str, str]], api_key: str, base_url: str, model: str
+    messages: list[dict[str, str]],
+    api_key: str,
+    base_url: str,
+    model: str,
+    *,
+    max_output_tokens: int | None = None,
 ) -> tuple[str, int | None, dict[str, int | float], str | None]:
     """Native Anthropic Messages transport (/v1/messages). Scoped to the
     text_assist lane; disabled by default and exercised only via unit tests."""
@@ -447,7 +517,10 @@ def _complete_anthropic(
         },
         json={
             "model": model,
-            "max_tokens": _ANTHROPIC_MAX_TOKENS,
+            "max_tokens": min(
+                int(max_output_tokens or ANTHROPIC_JSON_MAX_TOKENS),
+                ANTHROPIC_JSON_MAX_TOKENS,
+            ),
             "temperature": 0.5,
             "system": system,
             "messages": turns,
@@ -482,6 +555,7 @@ def _complete_openai_compatible(
     *,
     provider_id: str,
     json_output_enabled: bool,
+    max_output_tokens: int | None = None,
 ) -> tuple[str, int | None, dict[str, int | float], str | None]:
     """OpenAI-compatible /chat/completions transport (qwen/openai/gemini/deepseek).
     Mirrors the proven product_knowledge_service httpx pattern."""
@@ -494,7 +568,10 @@ def _complete_openai_compatible(
     }
     if json_output_enabled:
         payload["response_format"] = {"type": "json_object"}
-        payload["max_tokens"] = _OPENAI_JSON_MAX_TOKENS
+        payload["max_tokens"] = min(
+            int(max_output_tokens or OPENAI_COMPATIBLE_JSON_MAX_TOKENS),
+            OPENAI_COMPATIBLE_JSON_MAX_TOKENS,
+        )
         if (
             provider_id == "deepseek"
             and model in _DEEPSEEK_THINKING_MODE_MODELS
@@ -543,6 +620,7 @@ def _complete(
     messages: list[dict[str, str]],
     *,
     structured_output: bool = False,
+    max_output_tokens: int | None = None,
 ) -> tuple[str, str | None, int]:
     """Execute a chat completion via the configured text_assist lane. Anthropic
     speaks its native /v1/messages shape; every other provider is OpenAI-compatible.
@@ -568,17 +646,32 @@ def _complete(
         and transport == TRANSPORT_OPENAI_COMPATIBLE
         and provider_id in _JSON_OUTPUT_PROVIDER_IDS
     )
+    effective_output_tokens = (
+        clamp_structured_output_tokens(
+            max_output_tokens,
+            provider_id=provider_id,
+            model_id=model,
+        )
+        if structured_output
+        else None
+    )
     call_id = _begin_provider_call(
         provider_id=provider_id,
         model=model,
         transport=transport,
         structured_output_requested=structured_output,
         json_output_mode="json_object" if json_output_enabled else None,
+        requested_output_tokens=max_output_tokens if structured_output else None,
+        effective_output_tokens=effective_output_tokens,
     )
     try:
         if transport == TRANSPORT_ANTHROPIC_MESSAGES:
             text, http_status, usage, finish_reason = _complete_anthropic(
-                messages, api_key, base_url, model
+                messages,
+                api_key,
+                base_url,
+                model,
+                max_output_tokens=effective_output_tokens,
             )
         else:
             text, http_status, usage, finish_reason = _complete_openai_compatible(
@@ -588,6 +681,7 @@ def _complete(
                 model,
                 provider_id=provider_id,
                 json_output_enabled=json_output_enabled,
+                max_output_tokens=effective_output_tokens,
             )
         _finish_provider_call(
             call_id,
@@ -685,6 +779,8 @@ def generate_candidate(brief: str) -> dict[str, Any]:
 def complete_json_with_receipt(
     system: str,
     user: str,
+    *,
+    max_output_tokens: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return parsed JSON plus provenance for the exact call that produced it.
 
@@ -699,6 +795,7 @@ def complete_json_with_receipt(
         text, finish_reason, call_id = _complete(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             structured_output=True,
+            max_output_tokens=max_output_tokens,
         )
     except AICopyProviderError as exc:
         # _complete has already finished the exact call.  Drain its usage and
@@ -737,9 +834,18 @@ def complete_json_with_receipt(
     return parsed, receipt
 
 
-def complete_json(system: str, user: str) -> dict[str, Any]:
+def complete_json(
+    system: str,
+    user: str,
+    *,
+    max_output_tokens: int | None = None,
+) -> dict[str, Any]:
     """Generic structured-JSON call via the configured text_assist lane. Fail-closed
     when the lane is unconfigured (raises AICopyProviderNotConfigured). Reuses the
     SAME provider/key/model/transport as copy — no new secrets, no hardcoded model."""
-    parsed, _receipt = complete_json_with_receipt(system, user)
+    parsed, _receipt = complete_json_with_receipt(
+        system,
+        user,
+        max_output_tokens=max_output_tokens,
+    )
     return parsed

@@ -240,6 +240,48 @@ class _TransportFailureProvider:
         raise error
 
 
+class _TruncatedResponseProvider:
+    def __init__(self):
+        self.calls = 0
+
+    def complete_json_with_receipt(self, _system: str, _user: str):
+        self.calls += 1
+        error = ai_copy_provider_adapter.AICopyProviderError(
+            ai_copy_provider_adapter.ERR_RESPONSE_INVALID,
+            detail="structured JSON response ended at the governed output limit",
+            diagnostic_category=ai_copy_provider_adapter.DIAGNOSTIC_TRUNCATED_RESPONSE,
+            diagnostic_metadata={"finish_reason": "length"},
+            http_status=200,
+            finish_reason="length",
+            usage={
+                "prompt_tokens": 10189,
+                "completion_tokens": 4096,
+                "total_tokens": 14285,
+            },
+        )
+        error.call_id = 1
+        error.provider_receipt = {
+            "lane": "text_assist",
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-flash",
+            "call_id": 1,
+            "response_status": "SUCCEEDED",
+            "http_status": 200,
+            "finish_reason": "length",
+            "json_parse_status": "INVALID",
+            "diagnostic_category": ai_copy_provider_adapter.DIAGNOSTIC_TRUNCATED_RESPONSE,
+            "diagnostic_metadata": {"finish_reason": "length"},
+            "requested_output_tokens": 20_000,
+            "effective_output_tokens": 4096,
+            "usage": {
+                "prompt_tokens": 10189,
+                "completion_tokens": 4096,
+                "total_tokens": 14285,
+            },
+        }
+        raise error
+
+
 async def _run_schema_failure_case(product_id: str, mutate):
     factory, recipe, _angle, _family = await _seed_round2_fixture(product_id)
     provider = _SchemaFailureProvider()
@@ -748,6 +790,80 @@ async def test_round2_provider_transport_failure_retains_exact_call_receipt():
 
 
 @pytest.mark.asyncio
+async def test_round2_truncated_response_is_diagnosed_without_v3_supply_or_retry():
+    product_id = "round2-truncated-response"
+    factory, recipe = await _seed_zero_supply_recipe(product_id)
+    provider = _TruncatedResponseProvider()
+    service = V3CopyRegisterRound2Service(factory=factory, provider=provider)
+    plan = await service.plan_assistant(
+        recipe.product_id,
+        recipe.recipe_id,
+        mode="CREATE",
+        max_output_tokens=20_000,
+        actor_id="round2-truncation-test",
+        request_id=f"{product_id}:plan",
+    )
+
+    with pytest.raises(Exception) as error:
+        await service.execute_assistant(
+            plan.plan_id,
+            actor_id="round2-truncation-test",
+            request_id=f"{product_id}:execute",
+        )
+    assert error.value.code == ai_copy_provider_adapter.ERR_RESPONSE_INVALID
+    assert provider.calls == 1
+
+    db = await get_db()
+    row = await (await db.execute(
+        "SELECT status, error_code, provider_receipt_json, token_usage_json, "
+        "provider_calls, output_digest, result_json "
+        "FROM v3_ai_authoring_run WHERE run_id=?",
+        (plan.run_id,),
+    )).fetchone()
+    assert row["status"] == "FAILED"
+    assert row["error_code"] == ai_copy_provider_adapter.ERR_RESPONSE_INVALID
+    assert row["provider_calls"] == 1
+    assert row["output_digest"] is None
+    assert json.loads(row["token_usage_json"]) == {
+        "prompt_tokens": 10189,
+        "completion_tokens": 4096,
+        "total_tokens": 14285,
+    }
+    receipt = json.loads(row["provider_receipt_json"])
+    assert receipt["finish_reason"] == "length"
+    assert receipt["json_parse_status"] == "INVALID"
+    assert receipt["diagnostic_category"] == ai_copy_provider_adapter.DIAGNOSTIC_TRUNCATED_RESPONSE
+    assert receipt["requested_output_tokens"] == 20_000
+    assert receipt["effective_output_tokens"] == 4096
+
+    failure = json.loads(row["result_json"])
+    assert failure["failure_evidence"]["kind"] == "V3_PROVIDER_FAILURE"
+    assert failure["failure_evidence"]["provider"]["diagnostic_category"] == ai_copy_provider_adapter.DIAGNOSTIC_TRUNCATED_RESPONSE
+    assert failure["failure_evidence"]["provider_output"] is None
+
+    for table in (
+        "angle_v3",
+        "storyline_family_v3",
+        "storyboard_component_v3",
+        "master_storyboard_v3",
+        "duration_projection_v3",
+    ):
+        count = await (await db.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE product_id=?", (product_id,)
+        )).fetchone()
+        assert count[0] == 0, table
+
+    with pytest.raises(Exception) as retry_error:
+        await service.execute_assistant(
+            plan.plan_id,
+            actor_id="round2-truncation-test",
+            request_id=f"{product_id}:retry",
+        )
+    assert retry_error.value.code == ai_copy_provider_adapter.ERR_RESPONSE_INVALID
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_round2_failure_persistence_is_idempotent():
     plan, provider, service, row, _failure = await _run_schema_failure_case(
         "round2-schema-idempotent", _add_unknown_field
@@ -1048,6 +1164,65 @@ async def test_round2_batch_approval_rejects_cross_product(monkeypatch):
             request_id="round2:xprod-batch",
         )
     assert error.value.code == "APPROVAL_BATCH_CROSS_PRODUCT"
+
+
+@pytest.mark.asyncio
+async def test_round2_live_plan_and_adapter_share_one_bounded_output_budget(monkeypatch):
+    monkeypatch.setattr(
+        ai_copy_provider_adapter,
+        "provider_status",
+        lambda: {
+            "lane": "text_assist",
+            "configured": True,
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-flash",
+            "execution_enabled": True,
+        },
+    )
+    factory, recipe, _angle, _family = await _seed_round2_fixture(
+        "round2-output-budget-contract"
+    )
+    service = V3CopyRegisterRound2Service(factory=factory)
+    plan = await service.plan_assistant(
+        recipe.product_id,
+        recipe.recipe_id,
+        mode="CREATE",
+        max_output_tokens=20_000,
+        actor_id="round2-budget-contract",
+        request_id="round2:budget-contract-plan",
+    )
+
+    assert plan.max_output_tokens == 4096
+
+    captured = {}
+
+    def fake_complete_json_with_receipt(_system, _user, *, max_output_tokens=None):
+        captured["max_output_tokens"] = max_output_tokens
+        return {}, {
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-flash",
+            "response_status": "SUCCEEDED",
+            "json_parse_status": "VALID",
+            "usage": {},
+        }
+
+    monkeypatch.setattr(
+        ai_copy_provider_adapter,
+        "complete_json_with_receipt",
+        fake_complete_json_with_receipt,
+    )
+    bundle = await factory.truth_adapter.current(recipe.product_id)
+    raw, _receipt = await service._call_provider(
+        "system",
+        "user",
+        mode="LIVE_TEXT_ASSIST",
+        plan=plan,
+        recipe=recipe,
+        bundle=bundle,
+    )
+
+    assert raw == {}
+    assert captured["max_output_tokens"] == 4096
 
 
 @pytest.mark.asyncio
