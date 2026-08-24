@@ -736,6 +736,7 @@ async def _list_products_response(
     claim_risk_level: str | None = None,
     freshness: str | None = None,
     image: str | None = None,
+    visual_review: str | None = None,
     group: str | None = None,
     product_family: str | None = None,
     copy_route: str | None = None,
@@ -979,6 +980,35 @@ async def _list_products_response(
             product
             for product in filtered_all
             if matches_product_truth_filter(product, product_truth)
+        ]
+
+    # Smart Registration's visual facet uses the same batched Product Visual
+    # read model as the owner queue.  Apply it before pagination so filtered
+    # totals and pages remain truthful; this is read-only and never prepares,
+    # approves, or calls a provider.
+    requested_visual_review = str(visual_review or "").strip().upper()
+    if requested_visual_review:
+        if requested_visual_review not in {
+            "PENDING_VISUAL_REVIEW",
+            "SOURCE_REUPLOAD_REQUIRED",
+            "BROKEN_APPROVED_VISUAL",
+            "VISUAL_READY",
+        }:
+            raise HTTPException(status_code=400, detail="INVALID_VISUAL_REVIEW_FILTER")
+        from agent.services.product_visual_onboarding_service import (
+            annotate_products_visual_readiness,
+            visual_review_filter_matches,
+        )
+
+        await annotate_products_visual_readiness(filtered_all)
+        filtered_all = [
+            product
+            for product in filtered_all
+            if visual_review_filter_matches(
+                product,
+                product.get("visual_readiness") or {},
+                requested_visual_review,
+            )
         ]
     product_truth_summary = summarize_product_truth(filtered_all)
 
@@ -1438,6 +1468,7 @@ async def list_products(
     claim_risk_level: str | None = Query(default=None),
     freshness: str | None = Query(default=None),
     image: str | None = Query(default=None),
+    visual_review: str | None = Query(default=None),
     group: str | None = Query(default=None),
     product_family: str | None = Query(default=None),
     copy_route: str | None = Query(default=None),
@@ -1472,6 +1503,7 @@ async def list_products(
         claim_risk_level=claim_risk_level,
         freshness=freshness,
         image=image,
+        visual_review=visual_review,
         group=group,
         product_family=product_family,
         copy_route=copy_route,

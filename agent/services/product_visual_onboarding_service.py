@@ -2604,6 +2604,27 @@ def _visual_review_cohort(
     return "SOURCE_REUPLOAD_REQUIRED"
 
 
+def visual_review_filter_matches(
+    product: dict[str, Any], readiness: dict[str, Any], visual_filter: str
+) -> bool:
+    """Match the catalog facet against the same read model as the owner queue."""
+    normalized = str(visual_filter or "").strip().upper()
+    if not normalized or normalized == "ALL":
+        return True
+    if normalized == "VISUAL_READY":
+        if str(readiness.get("official_visual_status") or "").upper() == "INVALID":
+            return False
+        return (
+            str(readiness.get("exact_commerce_status") or "").upper()
+            == "EXACT_COMMERCE_CUTOUT_READY"
+            or (
+                str(readiness.get("cutout_status") or "").upper() == "APPROVED"
+                and str(readiness.get("cutout_review_status") or "").upper() == "APPROVED"
+            )
+        )
+    return _visual_review_cohort(product, readiness) == normalized
+
+
 def _visual_review_item(
     product: dict[str, Any], readiness: dict[str, Any], cohort: str
 ) -> dict[str, Any]:

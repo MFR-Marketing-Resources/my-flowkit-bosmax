@@ -148,4 +148,17 @@ describe("product registry request cache", () => {
 		await fetchProductRegistry({ limit: 20, offset: 0 });
 		expect(vi.mocked(fetch)).toHaveBeenCalledTimes(2);
 	});
+
+	it("serializes the server-authoritative visual review facet", async () => {
+		await fetchProductRegistry({
+			visualReview: "PENDING_VISUAL_REVIEW",
+			limit: 20,
+			offset: 0,
+		});
+
+		expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+			"/api/products?visual_review=PENDING_VISUAL_REVIEW&view=REGISTRY&limit=20&offset=0",
+			expect.anything(),
+		);
+	});
 });
