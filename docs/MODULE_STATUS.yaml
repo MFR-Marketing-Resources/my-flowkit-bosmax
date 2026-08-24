@@ -134,11 +134,20 @@ domains:
       - agent/services/canva_cutout_workflow_service.py
       - tests/unit/test_product_truth_lock_service.py
       - agent/services/product_visual_onboarding_service.py
+      - agent/db/crud.py
       - dashboard/src/utils/productVisualPresentation.ts
       - dashboard/src/utils/productVisualPresentation.test.ts
+      - dashboard/src/api/productVisualOnboarding.ts
+      - dashboard/src/components/product-registration/AllProductsTab.tsx
+      - dashboard/src/components/product-registration/AllProductsTab.test.tsx
+      - dashboard/src/components/product-registration/ProductVisualReviewQueue.tsx
+      - dashboard/src/components/product-registration/ProductVisualReviewQueue.test.tsx
+      - dashboard/src/pages/ProductRegistrationPage.test.tsx
       - tests/unit/test_product_visual_onboarding_service.py
       - tests/unit/test_product_visual_original_source_reauthorization.py
       - tests/api/test_product_visual_onboarding_api.py
+      - tests/api/test_product_visual_review_queue_api.py
+      - tests/unit/test_product_visual_review_queue_service.py
       - tests/integration/test_product_visual_crud_workflow.py
       - tests/unit/test_canonical_runtime_lock.py
       - tests/unit/test_canva_cutout_workflow_service.py

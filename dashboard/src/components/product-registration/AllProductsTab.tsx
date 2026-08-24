@@ -8,6 +8,7 @@ import {
 } from "../../api/products";
 import type { Product, ProductCatalogResponse } from "../../types";
 import { resolveProductPreviewUrl } from "../../utils/productVisualPresentation";
+import ProductVisualReviewQueue from "./ProductVisualReviewQueue";
 
 const SOURCE_BADGE: Record<string, string> = {
 	FASTMOSS: "bg-indigo-500/20 text-indigo-300",
@@ -470,6 +471,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 
 return (
 		<div className="min-w-0 space-y-5">
+			<ProductVisualReviewQueue onOpenProduct={onOpenProduct} />
 			{/* Header */}
 			<div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
 				<div className="flex flex-wrap items-center justify-between gap-2">
@@ -485,8 +487,8 @@ return (
 						</p>
 					</div>
 					<div className="flex items-center gap-2">
-						<span className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-400" data-testid="per-product-visual-workflow">
-							Visual work is per product
+						<span className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-400" data-testid="visual-queue-workflow">
+							Visual review queue + detail authority
 						</span>
 						<span className="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-700/30 text-slate-400">
 							Total: {total.toLocaleString()}

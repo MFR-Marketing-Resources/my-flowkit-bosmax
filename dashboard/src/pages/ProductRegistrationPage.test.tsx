@@ -8,6 +8,12 @@ import ProductRegistrationPage from "./ProductRegistrationPage";
 
 // Mock the API client so the page's on-mount draft fetch resolves harmlessly.
 vi.mock("../api/client", () => ({
+	fetchAPI: vi.fn().mockResolvedValue({
+		items: [],
+		total_count: 0,
+		cohort_counts: {},
+		has_pagination: false,
+	}),
 	getAPI: vi.fn().mockResolvedValue([]),
 	postAPI: vi.fn().mockResolvedValue({}),
 }));

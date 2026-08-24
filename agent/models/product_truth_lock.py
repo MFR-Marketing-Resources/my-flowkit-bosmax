@@ -83,3 +83,19 @@ class ProductTruthLockApprovalRequest(BaseModel):
     # unrelated props, food, decoration, or secondary objects remain (the CHEEZY
     # GARLIC "bread retained" class of defect). Fail-closed; the human decides.
     confirm_product_isolation: bool = False
+    # Optional optimistic-concurrency binding used by the owner review queue.
+    # The legacy single-product form may omit these fields; the queue always
+    # supplies all three so a reviewed candidate cannot be silently replaced
+    # between preview and approval.
+    expected_candidate_sha256: str | None = Field(
+        default=None, min_length=64, max_length=64,
+        pattern=r"^[0-9a-fA-F]{64}$",
+    )
+    expected_candidate_media_id: str | None = Field(default=None, max_length=256)
+    expected_lock_updated_at: str | None = Field(default=None, max_length=64)
+    # These are server-derived authenticated StaffProfile facts.  They are
+    # deliberately optional for existing non-HTTP/unit callers, but the new
+    # owner queue binds them from AuthContext and never accepts them from JSON.
+    reviewer_user_id: str | None = Field(default=None, max_length=256)
+    reviewer_staff_id: str | None = Field(default=None, max_length=256)
+    reviewer_display_name: str | None = Field(default=None, max_length=256)

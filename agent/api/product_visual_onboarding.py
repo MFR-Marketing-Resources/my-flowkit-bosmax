@@ -36,7 +36,10 @@ from agent.services.product_visual_onboarding_service import (
     upload_original_source_candidate,
     upload_manual_product_cutout,
     use_original_product_fallback,
+    approve_selected_product_visuals,
+    get_product_visual_review_queue,
 )
+from agent.security.access_control import get_current_auth_context
 from agent.services.canva_cutout_workflow_service import (
     CanvaCutoutWorkflowError,
     advance_canva_stage,
@@ -86,6 +89,9 @@ class VisualSetupSaveRequest(BaseModel):
     expected_previous_canonical_sha256: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
     expected_replacement_sha256: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
     replacement_media_id: str | None = Field(default=None, max_length=256)
+    expected_candidate_sha256: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
+    expected_candidate_media_id: str | None = Field(default=None, max_length=256)
+    expected_lock_updated_at: str | None = Field(default=None, max_length=64)
 
 
 class CutoutTargetRequest(BaseModel):
@@ -169,6 +175,29 @@ class CanvaBulkBypassRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+class VisualReviewQueueApprovalItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str = Field(min_length=1, max_length=256)
+    candidate_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
+    candidate_media_id: str = Field(min_length=1, max_length=256)
+    expected_lock_updated_at: str = Field(min_length=1, max_length=64)
+    candidate_source_kind: Literal["AUTO_GENERATED", "USER_UPLOAD"]
+
+
+class VisualReviewQueueApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm: bool = False
+    confirmation_phrase: Literal["APPROVE SELECTED VISUALS"] | None = None
+    review_note: str = Field(min_length=1, max_length=2000)
+    confirm_identity: bool = False
+    confirm_label_logo: bool = False
+    confirm_geometry_scale: bool = False
+    confirm_product_isolation: bool = False
+    items: list[VisualReviewQueueApprovalItem] = Field(min_length=1, max_length=50)
+
+
 def _error(exc: ProductVisualOnboardingError) -> HTTPException:
     status = getattr(exc, "status_code", None) or (404 if exc.code == "PRODUCT_NOT_FOUND" else 409)
     return HTTPException(status_code=status, detail={"code": exc.code, "message": exc.message})
@@ -183,6 +212,55 @@ def _canva_error(exc: CanvaCutoutWorkflowError) -> HTTPException:
 async def get_catalog_visual_summary(limit: int = Query(default=1000, ge=1, le=1000)):
     """Read-only visual cohort summary; no lazy generation or provider work."""
     return await preview_bulk_cutout_preparation(limit=limit)
+
+
+@router.get("/review-queue")
+async def get_visual_review_queue(
+    cohort: Literal[
+        "PENDING_VISUAL_REVIEW",
+        "SOURCE_REUPLOAD_REQUIRED",
+        "BROKEN_APPROVED_VISUAL",
+    ] = "PENDING_VISUAL_REVIEW",
+    limit: int = Query(default=25, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+):
+    """Read-only, paginated owner visual review projection."""
+    try:
+        return await get_product_visual_review_queue(cohort=cohort, limit=limit, offset=offset)
+    except ProductVisualOnboardingError as exc:
+        raise _error(exc) from exc
+
+
+@router.post("/review-queue/approve-selected")
+async def approve_visual_review_queue_selection(request: VisualReviewQueueApprovalRequest):
+    """Approve only selected, candidate-bound rows through Product Truth."""
+    actor = get_current_auth_context()
+    if actor is None:
+        raise HTTPException(status_code=401, detail={"code": "AUTHENTICATION_REQUIRED", "message": "An authenticated OWNER session is required."})
+    if "OWNER" not in {str(role).upper() for role in actor.role_codes}:
+        raise HTTPException(status_code=403, detail={"code": "OWNER_REQUIRED", "message": "Only OWNER may approve visual review queue candidates."})
+    if "products.update" not in actor.permission_codes:
+        raise HTTPException(status_code=403, detail={"code": "PERMISSION_DENIED", "message": "The authenticated OWNER session lacks products.update."})
+    if not request.confirm or request.confirmation_phrase != "APPROVE SELECTED VISUALS":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "EXPLICIT_CONFIRMATION_REQUIRED",
+                "message": "Confirm APPROVE SELECTED VISUALS after reviewing the exact selected products.",
+            },
+        )
+    try:
+        return await approve_selected_product_visuals(
+            [item.model_dump() for item in request.items],
+            review_note=request.review_note,
+            actor=actor,
+            confirm_identity=request.confirm_identity,
+            confirm_label_logo=request.confirm_label_logo,
+            confirm_geometry_scale=request.confirm_geometry_scale,
+            confirm_product_isolation=request.confirm_product_isolation,
+        )
+    except ProductVisualOnboardingError as exc:
+        raise _error(exc) from exc
 
 
 @router.get("/cutout-engine/readiness")
@@ -392,6 +470,12 @@ async def save_visual_setup(product_id: str, request: VisualSetupSaveRequest):
             kwargs["expected_replacement_sha256"] = request.expected_replacement_sha256
         if request.replacement_media_id is not None:
             kwargs["replacement_media_id"] = request.replacement_media_id
+        if request.expected_candidate_sha256 is not None:
+            kwargs["expected_candidate_sha256"] = request.expected_candidate_sha256
+        if request.expected_candidate_media_id is not None:
+            kwargs["expected_candidate_media_id"] = request.expected_candidate_media_id
+        if request.expected_lock_updated_at is not None:
+            kwargs["expected_lock_updated_at"] = request.expected_lock_updated_at
         return await save_product_visual_setup(
             **kwargs,
         )

@@ -164,6 +164,11 @@ def _action_for_path(path: str, method: str, module: str) -> str:
 def required_permission(path: str, method: str) -> str:
     normalized = path.rstrip("/") or "/"
     upper_method = method.upper()
+    # Visual Truth approval remains a Product Truth update, not a production
+    # execution permission. The endpoint performs its stricter OWNER role check
+    # in the handler after middleware authentication.
+    if _path_has_prefix(normalized, "/api/product-visual-onboarding/review-queue/approve-selected"):
+        return "products.update"
     # Product release is a separate owner-governed authority.  It must never
     # inherit products.create/update from the generic /api/product-* mapper.
     if _path_has_prefix(normalized, "/api/product-release"):

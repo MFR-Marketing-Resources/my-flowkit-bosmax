@@ -117,6 +117,140 @@ export interface ProductVisualBulkRun {
 	estimated_throughput?: string | null;
 }
 
+export type VisualReviewCohort =
+	| "PENDING_VISUAL_REVIEW"
+	| "SOURCE_REUPLOAD_REQUIRED"
+	| "BROKEN_APPROVED_VISUAL";
+
+export interface ProductVisualReviewQueueItem {
+	product_id: string;
+	product_name: string;
+	raw_product_title?: string | null;
+	lifecycle_status: string;
+	cohort: VisualReviewCohort;
+	review_status: string;
+	source_status: string;
+	cutout_status: string;
+	candidate_status: string;
+	candidate_source_kind?: "AUTO_GENERATED" | "USER_UPLOAD" | null;
+	candidate_sha256?: string | null;
+	candidate_media_id?: string | null;
+	expected_lock_updated_at?: string | null;
+	expected_source_sha256?: string | null;
+	expected_cutout_sha256?: string | null;
+	candidate_preview_url?: string | null;
+	original_source_url?: string | null;
+	original_source_trust_status?: string | null;
+	original_source_provenance?: Record<string, unknown>;
+	historical_evidence_count: number;
+	missing_canonical_bytes: string[];
+	current_system_visual: {
+		card?: string | null;
+		label?: string | null;
+		status?: string | null;
+	};
+	current_system_visual_url?: string | null;
+	blocker_state: string[];
+	release_status: string;
+	readiness_impact: {
+		current_exact_commerce_status?: string | null;
+		current_visual_source_status?: string | null;
+		after_visual_approval_exact_commerce_status?: string | null;
+		release_decision?: string | null;
+		auto_release: boolean;
+	};
+	actions: {
+		can_approve_selected: boolean;
+		can_reupload_source: boolean;
+		can_recover_broken_visual: boolean;
+	};
+	provider_operations: number;
+}
+
+export interface ProductVisualReviewQueueResponse {
+	cohort: VisualReviewCohort;
+	items: ProductVisualReviewQueueItem[];
+	total_count: number;
+	returned_count: number;
+	limit: number;
+	offset: number;
+	has_pagination: boolean;
+	cohort_counts: Record<VisualReviewCohort, number>;
+	selection_policy: string;
+	metadata_read_policy: string;
+	provider_operations: number;
+	created_without_credit: boolean;
+}
+
+export interface ProductVisualReviewApprovalItem {
+	product_id: string;
+	candidate_sha256: string;
+	candidate_media_id: string;
+	expected_lock_updated_at: string;
+	candidate_source_kind: "AUTO_GENERATED" | "USER_UPLOAD";
+}
+
+export interface ProductVisualReviewApprovalResult {
+	product_id: string;
+	status: "APPROVED" | "ALREADY_APPROVED" | "STALE_CANDIDATE" | "REJECTED" | "FAILED";
+	error_code?: string;
+	error_message?: string;
+	readiness?: ProductVisualReadiness;
+	release_status?: string;
+	minimum_eligibility_status?: string | null;
+	ready_for_owner_release_review?: boolean;
+	auto_release?: boolean;
+}
+
+export interface ProductVisualReviewApprovalResponse {
+	batch_id: string;
+	status: "COMPLETED" | "PARTIAL_SUCCESS";
+	all_succeeded: boolean;
+	total_selected: number;
+	approved_count: number;
+	already_approved_count: number;
+	failed_count: number;
+	results: ProductVisualReviewApprovalResult[];
+	provider_operations: number;
+	created_without_credit: boolean;
+	auto_release: boolean;
+}
+
+export function fetchProductVisualReviewQueue(
+	cohort: VisualReviewCohort,
+	limit = 25,
+	offset = 0,
+	signal?: AbortSignal,
+): Promise<ProductVisualReviewQueueResponse> {
+	const query = new URLSearchParams({
+		cohort,
+		limit: String(limit),
+		offset: String(offset),
+	});
+	return fetchAPI<ProductVisualReviewQueueResponse>(
+		`/api/product-visual-onboarding/review-queue?${query.toString()}`,
+		{ signal },
+	);
+}
+
+export function approveSelectedProductVisuals(input: {
+	items: ProductVisualReviewApprovalItem[];
+	review_note: string;
+	confirm_identity: boolean;
+	confirm_label_logo: boolean;
+	confirm_geometry_scale: boolean;
+	confirm_product_isolation: boolean;
+}): Promise<ProductVisualReviewApprovalResponse> {
+	return postAPI<ProductVisualReviewApprovalResponse>(
+		"/api/product-visual-onboarding/review-queue/approve-selected",
+		{
+			confirm: true,
+			confirmation_phrase: "APPROVE SELECTED VISUALS",
+			...input,
+		},
+	);
+}
+
 export interface ProductVisualCutoutHistoryItem {
 	history_id: string | null;
 	source_kind: string;

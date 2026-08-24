@@ -8,6 +8,7 @@ import {
 	fetchProductRegistry,
 	fetchProductStrategyTypeRegistry,
 } from "../../api/products";
+import { fetchProductVisualReviewQueue } from "../../api/productVisualOnboarding";
 import AllProductsTab from "./AllProductsTab";
 
 vi.mock("../../api/products", async (importOriginal) => {
@@ -21,8 +22,37 @@ vi.mock("../../api/products", async (importOriginal) => {
 	};
 });
 
+vi.mock("../../api/productVisualOnboarding", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../api/productVisualOnboarding")>();
+	return {
+		...actual,
+		fetchProductVisualReviewQueue: vi.fn(),
+		approveSelectedProductVisuals: vi.fn(),
+	};
+});
+
+const emptyVisualReviewQueue = {
+	cohort: "PENDING_VISUAL_REVIEW",
+	items: [],
+	total_count: 0,
+	returned_count: 0,
+	limit: 25,
+	offset: 0,
+	has_pagination: false,
+	cohort_counts: {
+		PENDING_VISUAL_REVIEW: 0,
+		SOURCE_REUPLOAD_REQUIRED: 0,
+		BROKEN_APPROVED_VISUAL: 0,
+	},
+	selection_policy: "EXPLICIT_VISIBLE_PAGE_ONLY",
+	metadata_read_policy: "BATCHED_VISUAL_READ_MODEL",
+	provider_operations: 0,
+	created_without_credit: true,
+} as never;
+
 describe("AllProductsTab visual surface", () => {
 	beforeEach(() => {
+		vi.mocked(fetchProductVisualReviewQueue).mockResolvedValue(emptyVisualReviewQueue);
 		vi.mocked(fetchProductRegistry).mockResolvedValue({
 			items: [],
 			total_count: 0,
@@ -52,12 +82,11 @@ describe("AllProductsTab visual surface", () => {
 		cleanup();
 	});
 
-	it("keeps visual work per product and exposes no bulk cutout controls", async () => {
+	it("surfaces the owner review queue without exposing bulk cutout controls", async () => {
 		render(<AllProductsTab />);
 
-		expect(await screen.findByTestId("per-product-visual-workflow")).toHaveTextContent(
-			"Visual work is per product",
-		);
+		expect(await screen.findByTestId("product-visual-review-queue")).toBeInTheDocument();
+		expect(screen.getByText("Owner Visual Review Queue")).toBeInTheDocument();
 		const bodyText = document.body.textContent ?? "";
 		expect(bodyText).not.toMatch(/bulk cutout|cutout queue|run all|queue all|pause all|resume all|cancel all/i);
 	});
@@ -201,6 +230,7 @@ describe("All Products Product Truth operator surface", () => {
 	});
 
 	beforeEach(() => {
+		vi.mocked(fetchProductVisualReviewQueue).mockResolvedValue(emptyVisualReviewQueue);
 		vi.mocked(fetchImportSoftReconciliationPreview).mockResolvedValue({
 			safe_candidate_count: 549,
 			review_required_count: 6,
