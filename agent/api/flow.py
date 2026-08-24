@@ -2138,13 +2138,19 @@ async def generate(body: GenerateRequest):
         VideoSurfaceProvenanceError,
         resolve_surface_lane,
     )
+    _resolved_copy_lane = (body.copy_v2_context or {}).get("lane")
+    if not _resolved_copy_lane and v2_resolution is not None:
+        _to_metadata = getattr(v2_resolution, "to_metadata", None)
+        if callable(_to_metadata):
+            _resolved_copy_lane = _to_metadata().get("lane")
+        else:
+            _resolved_copy_lane = getattr(v2_resolution, "lane", None)
     try:
         effective_surface_lane = resolve_surface_lane(
             explicit=body.surface_lane,
             mode=mode,
             source_mode=effective_source_mode,
-            copy_lane=(body.copy_v2_context or {}).get("lane")
-            or (v2_resolution.to_metadata().get("lane") if v2_resolution else None),
+            copy_lane=_resolved_copy_lane,
             execution_identity=body.execution_identity,
             package=_package,
             execution_mode=body.generation_mode,

@@ -938,6 +938,16 @@ def compose_exact_product_video_artifact(
             "media_id": scene_artifact.get("media_id"),
             "local_path": str(scene_path),
             "sha256": scene_sha,
+            "provider_operation_id": (
+                (scene_artifact.get("correlation") or {}).get("provider_operation_id")
+                if isinstance(scene_artifact.get("correlation"), Mapping)
+                else None
+            ),
+            "provider_operation_id_source": (
+                (scene_artifact.get("correlation") or {}).get("provider_operation_id_source")
+                if isinstance(scene_artifact.get("correlation"), Mapping)
+                else None
+            ),
         },
         "canonical_product_asset": {
             "canonical_media_id": canonical["canonical_media_id"],
@@ -1012,6 +1022,16 @@ def compose_exact_product_video_artifact(
             "matched_on": "provider_scene_artifact",
             "scene_media_id": scene_artifact.get("media_id"),
             "scene_sha256": scene_sha,
+            "provider_operation_id": (
+                (scene_artifact.get("correlation") or {}).get("provider_operation_id")
+                if isinstance(scene_artifact.get("correlation"), Mapping)
+                else None
+            ),
+            "provider_operation_id_source": (
+                (scene_artifact.get("correlation") or {}).get("provider_operation_id_source")
+                if isinstance(scene_artifact.get("correlation"), Mapping)
+                else None
+            ),
         },
         "exact_product_lineage": lineage,
         "product_fidelity_qc_evidence": evidence,
