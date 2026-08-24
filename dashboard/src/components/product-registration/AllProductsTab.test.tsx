@@ -40,9 +40,9 @@ const emptyVisualReviewQueue = {
 	offset: 0,
 	has_pagination: false,
 	cohort_counts: {
-		PENDING_VISUAL_REVIEW: 0,
-		SOURCE_REUPLOAD_REQUIRED: 0,
-		BROKEN_APPROVED_VISUAL: 0,
+		PENDING_VISUAL_REVIEW: 280,
+		SOURCE_REUPLOAD_REQUIRED: 11,
+		BROKEN_APPROVED_VISUAL: 16,
 	},
 	selection_policy: "EXPLICIT_VISIBLE_PAGE_ONLY",
 	metadata_read_policy: "BATCHED_VISUAL_READ_MODEL",
@@ -82,11 +82,16 @@ describe("AllProductsTab visual surface", () => {
 		cleanup();
 	});
 
-	it("surfaces the owner review queue without exposing bulk cutout controls", async () => {
+	it("keeps the catalog default and opens the owner review workspace without exposing bulk cutout controls", async () => {
 		render(<AllProductsTab />);
 
+		expect(screen.getByTestId("workspace-product-catalog")).toHaveAttribute("aria-selected", "true");
+		expect(screen.queryByTestId("product-visual-review-queue")).not.toBeInTheDocument();
+		fireEvent.click(screen.getByTestId("workspace-visual-review"));
 		expect(await screen.findByTestId("product-visual-review-queue")).toBeInTheDocument();
+		expect(screen.getByTestId("workspace-visual-review")).toHaveTextContent("280");
 		expect(screen.getByText("Owner Visual Review Queue")).toBeInTheDocument();
+		expect(screen.queryByText("All Products")).not.toBeInTheDocument();
 		const bodyText = document.body.textContent ?? "";
 		expect(bodyText).not.toMatch(/bulk cutout|cutout queue|run all|queue all|pause all|resume all|cancel all/i);
 	});

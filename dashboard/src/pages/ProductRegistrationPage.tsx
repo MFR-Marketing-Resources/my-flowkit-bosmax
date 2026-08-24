@@ -154,7 +154,7 @@ export default function ProductRegistrationPage() {
 	);
 
 	return (
-		<div className="flex h-full flex-col bg-slate-950 px-4 py-4 md:px-8 md:py-8 overflow-y-auto">
+		<div className="flex h-full w-full min-w-0 max-w-full flex-col overflow-x-hidden overflow-y-auto bg-slate-950 px-4 py-4 md:px-8 md:py-8">
 			<div className="mb-6 flex flex-col gap-4 lg:mb-8 lg:flex-row lg:items-center lg:justify-between">
 				<div>
 					<h2 className="text-xl font-bold tracking-tight text-white md:text-2xl">
@@ -265,8 +265,8 @@ export default function ProductRegistrationPage() {
 			)}
 
 			{activeTab === "single" && (
-				<div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-8">
-					<div className="space-y-8 pb-20">
+				<div className="grid min-w-0 grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_400px]">
+					<div className="min-w-0 space-y-8 pb-20">
 						{!reviewDraft && (
 							<>
 								<AIFormPack

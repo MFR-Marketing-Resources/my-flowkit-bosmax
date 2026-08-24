@@ -12,6 +12,7 @@ type Props = {
 		productId: string,
 		opts?: { tab?: "EDIT" | "INTELLIGENCE" | "CREATIVE" | "VISUAL" },
 	) => void;
+	onCohortCountsChange?: (counts: Record<VisualReviewCohort, number>) => void;
 };
 
 const COHORTS: Array<{ key: VisualReviewCohort; label: string }> = [
@@ -20,10 +21,6 @@ const COHORTS: Array<{ key: VisualReviewCohort; label: string }> = [
 	{ key: "BROKEN_APPROVED_VISUAL", label: "Broken Approved Visual" },
 ];
 const PAGE_SIZES = [25, 50];
-
-function shortSha(value?: string | null): string {
-	return value ? `${value.slice(0, 12)}…` : "—";
-}
 
 function Preview({
 	label,
@@ -37,12 +34,12 @@ function Preview({
 	transparent?: boolean;
 }) {
 	return (
-		<div className="min-w-0">
+		<div className="w-full min-w-0 max-w-full overflow-hidden">
 			<div className="mb-1 text-[8px] font-bold uppercase tracking-widest text-slate-500">
 				{label}
 			</div>
 			<div
-				className={`flex h-36 items-center justify-center overflow-hidden rounded-lg border border-slate-700 ${
+				className={`flex h-44 w-full max-w-full items-center justify-center overflow-hidden rounded-lg border border-slate-700 sm:h-48 ${
 					transparent ? "bg-white" : "bg-slate-950"
 				}`}
 			>
@@ -75,7 +72,7 @@ function StatusPill({ value, tone = "muted" }: { value: string; tone?: "ok" | "w
 		muted: "bg-slate-700/40 text-slate-300",
 	}[tone];
 	return (
-		<span className={`inline-flex rounded px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-widest ${classes}`}>
+		<span className={`inline-flex max-w-full min-w-0 rounded px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-widest break-words ${classes}`}>
 			{value.replace(/_/g, " ")}
 		</span>
 	);
@@ -87,7 +84,7 @@ function itemTone(item: ProductVisualReviewQueueItem): "ok" | "warn" | "bad" | "
 	return "muted";
 }
 
-export default function ProductVisualReviewQueue({ onOpenProduct }: Props) {
+export default function ProductVisualReviewQueue({ onOpenProduct, onCohortCountsChange }: Props) {
 	const [cohort, setCohort] = useState<VisualReviewCohort>("PENDING_VISUAL_REVIEW");
 	const [pageSize, setPageSize] = useState(25);
 	const [offset, setOffset] = useState(0);
@@ -111,7 +108,10 @@ export default function ProductVisualReviewQueue({ onOpenProduct }: Props) {
 		setConfirmOpen(false);
 		void fetchProductVisualReviewQueue(cohort, pageSize, offset, controller.signal)
 			.then((result) => {
-				if (!controller.signal.aborted) setQueue(result);
+				if (!controller.signal.aborted) {
+					setQueue(result);
+					onCohortCountsChange?.(result.cohort_counts);
+				}
 			})
 			.catch((reason: unknown) => {
 				if (!controller.signal.aborted) {
@@ -123,7 +123,7 @@ export default function ProductVisualReviewQueue({ onOpenProduct }: Props) {
 				if (!controller.signal.aborted) setLoading(false);
 			});
 		return () => controller.abort();
-	}, [cohort, offset, pageSize]);
+	}, [cohort, offset, pageSize, onCohortCountsChange]);
 
 	const rows = queue?.items ?? [];
 	const selectedRows = useMemo(
@@ -183,6 +183,7 @@ export default function ProductVisualReviewQueue({ onOpenProduct }: Props) {
 			// The approved rows leave PENDING_VISUAL_REVIEW after the next read.
 			const refreshed = await fetchProductVisualReviewQueue(cohort, pageSize, 0);
 			setQueue(refreshed);
+			onCohortCountsChange?.(refreshed.cohort_counts);
 		} catch (reason: unknown) {
 			setError(reason instanceof Error ? reason.message : "Selected visual approval failed.");
 		} finally {
@@ -191,15 +192,15 @@ export default function ProductVisualReviewQueue({ onOpenProduct }: Props) {
 	}
 
 	return (
-		<section className="rounded-2xl border border-amber-500/30 bg-slate-950/70 p-4" data-testid="product-visual-review-queue">
-			<div className="flex flex-wrap items-start justify-between gap-3">
-				<div>
-					<div className="flex flex-wrap items-center gap-2">
+		<section className="w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-amber-500/30 bg-slate-950/70 p-3 sm:p-4" data-testid="product-visual-review-queue">
+			<div className="flex w-full min-w-0 flex-wrap items-start justify-between gap-3">
+				<div className="min-w-0 flex-1">
+					<div className="flex min-w-0 flex-wrap items-center gap-2">
 						<h3 className="text-sm font-bold text-white">Owner Visual Review Queue</h3>
 						<StatusPill value="OWNER GOVERNED" tone="warn" />
 						<StatusPill value="PROVIDER SPEND 0" tone="ok" />
 					</div>
-					<p className="mt-1 max-w-3xl text-[10px] leading-relaxed text-slate-400">
+					<p className="mt-1 max-w-3xl break-words text-[10px] leading-relaxed text-slate-400">
 						Review the original source and prepared cutout side by side. Selection is explicit, page-scoped, candidate-bound, and never releases a product.
 					</p>
 				</div>
@@ -208,7 +209,7 @@ export default function ProductVisualReviewQueue({ onOpenProduct }: Props) {
 						type="button"
 						onClick={() => setConfirmOpen(true)}
 						disabled={selectedRows.length === 0 || loading}
-						className="rounded-lg bg-emerald-600/90 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-white disabled:cursor-not-allowed disabled:opacity-40"
+						className="max-w-full shrink-0 rounded-lg bg-emerald-600/90 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-white disabled:cursor-not-allowed disabled:opacity-40"
 						data-testid="approve-selected-visuals"
 					>
 						Approve selected ({selectedRows.length})
@@ -216,7 +217,7 @@ export default function ProductVisualReviewQueue({ onOpenProduct }: Props) {
 				)}
 			</div>
 
-			<div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Visual review cohorts">
+			<div className="mt-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-3" role="tablist" aria-label="Visual review cohorts">
 				{COHORTS.map((entry) => {
 					const active = cohort === entry.key;
 					const count = queue?.cohort_counts?.[entry.key];
@@ -227,7 +228,7 @@ export default function ProductVisualReviewQueue({ onOpenProduct }: Props) {
 							role="tab"
 							aria-selected={active}
 							onClick={() => changeCohort(entry.key)}
-							className={`rounded-lg border px-3 py-2 text-left text-[9px] font-bold uppercase tracking-widest transition-colors ${active ? "border-amber-400/60 bg-amber-500/15 text-amber-200" : "border-slate-800 bg-slate-900 text-slate-400 hover:text-white"}`}
+							className={`w-full min-w-0 max-w-full rounded-lg border px-3 py-2 text-left text-[9px] font-bold uppercase tracking-widest break-words transition-colors ${active ? "border-amber-400/60 bg-amber-500/15 text-amber-200" : "border-slate-800 bg-slate-900 text-slate-400 hover:text-white"}`}
 							data-testid={`visual-review-cohort-${entry.key}`}
 						>
 							{entry.label} <span className="ml-1 font-mono">({count ?? "—"})</span>
@@ -236,12 +237,12 @@ export default function ProductVisualReviewQueue({ onOpenProduct }: Props) {
 				})}
 			</div>
 
-			<div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[9px] text-slate-500">
-				<div>
+			<div className="mt-3 flex w-full min-w-0 flex-wrap items-center justify-between gap-2 text-[9px] text-slate-500" data-testid="visual-review-toolbar">
+				<div className="min-w-0 break-words">
 					{loading ? "Loading review projection…" : queue ? `Showing ${rangeStart}–${rangeEnd} of ${queue.total_count}` : "Review projection unavailable"}
 					{canSelect && selectedRows.length > 0 ? ` · ${selectedRows.length} visible rows selected` : ""}
 				</div>
-				<label className="flex items-center gap-2 uppercase tracking-widest">
+				<label className="flex min-w-0 items-center gap-2 uppercase tracking-widest">
 					Rows per page
 					<select
 						value={pageSize}
@@ -271,13 +272,13 @@ export default function ProductVisualReviewQueue({ onOpenProduct }: Props) {
 				<div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/60 p-6 text-center text-[10px] uppercase tracking-widest text-slate-500">No products in this review cohort.</div>
 			)}
 
-			<div className="mt-4 grid gap-3">
+			<div className="mt-4 grid min-w-0 gap-3">
 				{rows.map((item) => {
 					const selectedRow = selected.has(item.product_id);
 					const selectable = canSelect && item.actions.can_approve_selected;
 					return (
-						<article key={item.product_id} className={`rounded-xl border p-3 ${selectedRow ? "border-emerald-400/60 bg-emerald-500/5" : "border-slate-800 bg-slate-900/50"}`} data-testid={`visual-review-row-${item.product_id}`}>
-							<div className="flex flex-wrap items-start justify-between gap-3">
+						<article key={item.product_id} className={`w-full min-w-0 max-w-full overflow-hidden rounded-xl border p-3 ${selectedRow ? "border-emerald-400/60 bg-emerald-500/5" : "border-slate-800 bg-slate-900/50"}`} data-testid={`visual-review-row-${item.product_id}`}>
+							<div className="flex w-full min-w-0 flex-wrap items-start justify-between gap-3">
 								<div className="flex min-w-0 items-start gap-2">
 									{selectable && (
 										<input
@@ -289,36 +290,46 @@ export default function ProductVisualReviewQueue({ onOpenProduct }: Props) {
 											className="mt-1 h-4 w-4 accent-emerald-500"
 										/>
 									)}
-									<div className="min-w-0">
-										<div className="truncate text-xs font-bold text-white">{item.product_name}</div>
+									<div className="min-w-0 max-w-full">
+										<div className="max-w-full truncate text-xs font-bold text-white" title={item.product_name}>{item.product_name}</div>
 										<div className="mt-1 break-all font-mono text-[9px] text-slate-500">{item.product_id}</div>
 									</div>
 								</div>
-								<div className="flex flex-wrap items-center gap-1.5">
+								<div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
 									<StatusPill value={item.candidate_status} tone={itemTone(item)} />
 									<StatusPill value={`RELEASE ${item.release_status}`} tone="muted" />
 								</div>
 							</div>
 
-							<div className="mt-3 grid gap-3 md:grid-cols-2">
+							<div className="mt-3 grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2" data-testid={`visual-review-previews-${item.product_id}`}>
 								<Preview label={`Original source · ${item.original_source_trust_status || "UNKNOWN"}`} src={item.original_source_url} alt={`${item.product_name} original source`} />
 								<Preview label="Prepared cutout candidate" src={item.candidate_preview_url} alt={`${item.product_name} prepared cutout`} transparent />
 							</div>
 
-							<div className="mt-3 grid gap-2 text-[9px] text-slate-400 sm:grid-cols-2 lg:grid-cols-4">
-								<div><span className="text-slate-600">PROVENANCE</span><br />{Object.entries(item.original_source_provenance || {}).map(([key, value]) => <span key={key} className="mr-2 inline-block">{key}: {String(value)}</span>)}</div>
-								<div><span className="text-slate-600">CANDIDATE / EXPECTED BYTES</span><br />Candidate: <span className="font-mono" title={item.candidate_sha256 || undefined}>{shortSha(item.candidate_sha256)}</span> · {item.candidate_media_id || "—"}<br />Source: <span className="font-mono" title={item.expected_source_sha256 || undefined}>{shortSha(item.expected_source_sha256)}</span> · Cutout: <span className="font-mono" title={item.expected_cutout_sha256 || undefined}>{shortSha(item.expected_cutout_sha256)}</span><br />{item.review_status} · {item.cutout_status}</div>
-								<div><span className="text-slate-600">CURRENT SYSTEM VISUAL</span><br />{item.current_system_visual.label || item.current_system_visual.status || "Not selected"}<br />{item.readiness_impact.current_exact_commerce_status || "—"}</div>
-								<div><span className="text-slate-600">BLOCKER / IMPACT</span><br />{item.blocker_state.join(", ") || "—"}<br />After approval: {item.readiness_impact.after_visual_approval_exact_commerce_status || "—"}</div>
-							</div>
+							<div className="mt-3 grid min-w-0 gap-2 text-[9px] text-slate-400 sm:grid-cols-2 xl:grid-cols-4">
+								<div className="min-w-0 break-words"><span className="text-slate-600">PROVENANCE</span><br />{item.original_source_trust_status || "UNKNOWN"} · {Object.entries(item.original_source_provenance || {}).map(([key, value]) => <span key={key} className="mr-2 inline-block max-w-full break-words">{key}: {String(value)}</span>)}</div>
+								<div className="min-w-0 break-words"><span className="text-slate-600">CANDIDATE STATUS</span><br />{item.review_status} · {item.cutout_status}<br />{item.candidate_source_kind || "UNKNOWN"}</div>
+								<div className="min-w-0 break-words"><span className="text-slate-600">CURRENT SYSTEM VISUAL</span><br />{item.current_system_visual.label || item.current_system_visual.status || "Not selected"}<br />{item.readiness_impact.current_exact_commerce_status || "—"}</div>
+								<div className="min-w-0 break-words"><span className="text-slate-600">BLOCKER / IMPACT</span><br />{item.blocker_state.join(", ") || "—"}<br />After approval: {item.readiness_impact.after_visual_approval_exact_commerce_status || "—"}</div>
+			</div>
 
-							<div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 pt-2">
-								<div className="text-[9px] text-slate-600">History evidence: {item.historical_evidence_count} · Auto-release: NO · Provider operations: {item.provider_operations}</div>
+							<details className="mt-3 min-w-0 max-w-full rounded-lg border border-slate-800/80 bg-slate-950/50 px-3 py-2" data-testid={`visual-review-technical-${item.product_id}`}>
+								<summary className="cursor-pointer select-none text-[9px] font-bold uppercase tracking-widest text-slate-500">Technical evidence</summary>
+								<div className="mt-2 grid min-w-0 gap-2 text-[9px] text-slate-500 sm:grid-cols-2">
+									<div className="min-w-0 break-words"><span className="text-slate-600">SOURCE PROVENANCE</span><br />{Object.entries(item.original_source_provenance || {}).map(([key, value]) => <span key={key} className="block min-w-0 break-words [overflow-wrap:anywhere]">{key}: {String(value)}</span>)}</div>
+									<div className="min-w-0 break-words"><span className="text-slate-600">CANDIDATE MEDIA</span><br />Media ID: <span className="break-all font-mono text-slate-400">{item.candidate_media_id || "—"}</span><br />Candidate SHA: <span className="break-all font-mono text-slate-400">{item.candidate_sha256 || "—"}</span><br />Source SHA: <span className="break-all font-mono text-slate-400">{item.expected_source_sha256 || "—"}</span><br />Cutout SHA: <span className="break-all font-mono text-slate-400">{item.expected_cutout_sha256 || "—"}</span></div>
+									<div className="min-w-0 break-words"><span className="text-slate-600">LOCK / HISTORY</span><br />Lock updated: <span className="break-all font-mono text-slate-400">{item.expected_lock_updated_at || "—"}</span><br />Historical evidence: {item.historical_evidence_count}</div>
+									<div className="min-w-0 break-words"><span className="text-slate-600">CANONICAL BYTES</span><br />{item.missing_canonical_bytes.length ? item.missing_canonical_bytes.map((value) => <span key={value} className="block break-all font-mono text-amber-300">{value}</span>) : "No missing canonical bytes"}</div>
+								</div>
+							</details>
+
+							<div className="mt-3 flex w-full min-w-0 flex-wrap items-center justify-between gap-2 border-t border-slate-800 pt-2">
+								<div className="min-w-0 break-words text-[9px] text-slate-600">Auto-release: NO · Provider operations: {item.provider_operations}</div>
 								<button
 									type="button"
 									onClick={() => onOpenProduct?.(item.product_id, { tab: "VISUAL" })}
 									disabled={!onOpenProduct}
-									className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
+									className="max-w-full shrink-0 rounded-lg bg-slate-800 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
 									data-testid={`visual-review-open-${item.product_id}`}
 								>
 									{item.cohort === "SOURCE_REUPLOAD_REQUIRED" ? "Upload / Re-authorize Source" : item.cohort === "BROKEN_APPROVED_VISUAL" ? "Open Recovery" : "Open Visual Detail"}
@@ -338,13 +349,13 @@ export default function ProductVisualReviewQueue({ onOpenProduct }: Props) {
 			)}
 
 			{confirmOpen && (
-				<div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4" role="dialog" aria-modal="true" aria-labelledby="visual-review-confirm-title" data-testid="visual-review-confirmation">
-					<div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-amber-500/40 bg-slate-900 p-5 shadow-2xl">
+				<div className="fixed inset-0 z-50 flex min-w-0 max-w-full items-center justify-center overflow-x-hidden bg-slate-950/80 p-3 sm:p-4" role="dialog" aria-modal="true" aria-labelledby="visual-review-confirm-title" data-testid="visual-review-confirmation">
+					<div className="max-h-[90vh] w-full min-w-0 max-w-2xl overflow-x-hidden overflow-y-auto rounded-2xl border border-amber-500/40 bg-slate-900 p-4 shadow-2xl sm:p-5">
 						<h4 id="visual-review-confirm-title" className="text-sm font-bold text-white">Approve selected official visuals</h4>
 						<p className="mt-2 text-[10px] leading-relaxed text-amber-200">This promotes only the selected candidate bytes to official Product Truth visual authority. It does not release or publish any product.</p>
 						<div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-[10px] text-slate-300">
 							<div className="font-bold uppercase tracking-widest text-slate-500">Exact selected products ({selectedRows.length})</div>
-							<ul className="mt-2 space-y-1">{selectedRows.map((item) => <li key={item.product_id}><span className="font-semibold text-white">{item.product_name}</span> <span className="break-all font-mono text-slate-500">({item.product_id})</span></li>)}</ul>
+							<ul className="mt-2 min-w-0 space-y-1">{selectedRows.map((item) => <li key={item.product_id} className="min-w-0 break-words"><span className="font-semibold text-white">{item.product_name}</span> <span className="break-all font-mono text-slate-500">({item.product_id})</span></li>)}</ul>
 						</div>
 						<label className="mt-3 block text-[9px] font-bold uppercase tracking-widest text-slate-500">Batch review note<input value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-normal normal-case tracking-normal text-white" /></label>
 						<div className="mt-3 grid gap-2 text-[10px] text-slate-300 sm:grid-cols-2">
@@ -353,7 +364,7 @@ export default function ProductVisualReviewQueue({ onOpenProduct }: Props) {
 							<label><input type="checkbox" checked={confirmGeometryScale} onChange={(event) => setConfirmGeometryScale(event.target.checked)} className="mr-1 accent-emerald-500" /> Geometry / scale</label>
 							<label><input type="checkbox" checked={confirmProductIsolation} onChange={(event) => setConfirmProductIsolation(event.target.checked)} className="mr-1 accent-emerald-500" /> Product only / no unrelated objects</label>
 						</div>
-						<div className="mt-4 flex justify-end gap-2">
+						<div className="mt-4 flex flex-wrap justify-end gap-2">
 							<button type="button" onClick={() => setConfirmOpen(false)} className="rounded-lg bg-slate-800 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-slate-300">Cancel</button>
 							<button type="button" onClick={() => void confirmApproval()} disabled={!reviewNote.trim() || !confirmIdentity || !confirmLabelLogo || !confirmGeometryScale || !confirmProductIsolation || loading} className="rounded-lg bg-emerald-600 px-3 py-2 text-[9px] font-bold uppercase tracking-widest text-white disabled:opacity-40">Confirm approve selected</button>
 						</div>
