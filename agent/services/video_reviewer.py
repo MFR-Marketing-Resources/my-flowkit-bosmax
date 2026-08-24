@@ -1,8 +1,8 @@
-"""Video review engine — frame extraction + Claude Vision analysis.
+"""Video review engine — explicit VIDEO lane + frame extraction.
 
-Two analysis backends:
-  1. Claude CLI subprocess (default) — no API key needed, uses contact sheet
-  2. Anthropic SDK (if ANTHROPIC_API_KEY set) — direct API, individual frames
+V4 routes review through the operator-selected Anthropic video-capable model.
+The historical global Claude CLI branch is intentionally not part of the runtime
+path because it bypassed lane ownership and execution gating.
 """
 import asyncio
 import base64
@@ -18,14 +18,13 @@ import ssl
 import aiohttp
 import certifi
 
-from agent.config import REVIEW_MODEL, REVIEW_FPS_LIGHT, REVIEW_FPS_DEEP, REVIEW_MAX_FRAMES
+from agent.config import REVIEW_FPS_LIGHT, REVIEW_FPS_DEEP, REVIEW_MAX_FRAMES
 from agent.db.crud import list_scenes, get_project_characters
 from agent.models.review import DimensionScores, SceneReview, SegmentScore, VideoError, VideoReview
 from agent.services.ai_provider_settings_service import (
-    get_active_provider_id,
-    get_lane_api_key,
+    get_lane_api_key_for_execution,
+    get_lane_model,
     get_lane_provider,
-    get_provider_api_key,
     is_lane_execution_enabled,
 )
 
@@ -301,36 +300,7 @@ def _parse_json_response(raw: str) -> dict:
     return json.loads(raw)
 
 
-# ─── Backend 1: Claude CLI (default, no API key needed) ──────
-
-async def _analyze_cli(
-    contact_sheet: Path,
-    n_frames: int,
-    fps: float,
-    scene: dict,
-) -> dict:
-    """Analyze contact sheet via claude CLI subprocess."""
-    prompt = _build_prompt(n_frames, fps, scene)
-    full_prompt = (
-        f"Read the image at {contact_sheet}. "
-        f"It is a contact sheet of {n_frames} video frames at {fps}fps with timestamps.\n\n"
-        f"{prompt}"
-    )
-    logger.info("Calling claude CLI for vision analysis (%d frames)", n_frames)
-    proc = await asyncio.create_subprocess_exec(
-        "claude", "-p", full_prompt,
-        "--allowedTools", "Read",
-        "--output-format", "text",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise RuntimeError(f"claude CLI failed (rc={proc.returncode}): {stderr.decode()[-500:]}")
-    return _parse_json_response(stdout.decode())
-
-
-# ─── Backend 2: Anthropic SDK (when API key is set) ──────────
+# ─── Anthropic VIDEO lane analysis ───────────────────────────
 
 async def _analyze_sdk(
     frames: list,
@@ -340,9 +310,10 @@ async def _analyze_sdk(
 ) -> dict:
     """Send individual frames to Claude Vision via Anthropic SDK."""
     import anthropic
-    api_key = get_lane_api_key("vision")
-    if not api_key:
-        raise RuntimeError("VISION_LANE_KEY_NOT_CONFIGURED")
+    api_key = get_lane_api_key_for_execution("video")
+    model = get_lane_model("video")
+    if not api_key or not model:
+        raise RuntimeError("VIDEO_LANE_NOT_CONFIGURED")
     client = anthropic.AsyncAnthropic(api_key=api_key)
     character_names = _parse_character_names(scene)
     prompt_text = _build_prompt(len(frames), fps, scene)
@@ -365,7 +336,7 @@ async def _analyze_sdk(
     content.append({"type": "text", "text": prompt_text})
 
     response = await client.messages.create(
-        model=REVIEW_MODEL, max_tokens=1024,
+        model=model, max_tokens=1024,
         messages=[{"role": "user", "content": content}],
     )
     return _parse_json_response(response.content[0].text)
@@ -388,7 +359,8 @@ async def review_scene_video(
 
     if not video_url:
         raise ValueError(f"No video URL found for scene {scene['id']} ({orientation})")
-    if get_lane_provider("vision") == "anthropic" and not is_lane_execution_enabled("vision"):
+    provider_id = get_lane_provider("video")
+    if provider_id != "anthropic" or not is_lane_execution_enabled("video"):
         raise RuntimeError(VISION_PROVIDER_EXECUTION_DISABLED_ERROR)
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -407,34 +379,21 @@ async def review_scene_video(
                         scene["id"], type(e).__name__, media_id[:12])
             await _download_via_get_media(media_id, video_path)
 
-        if (
-            get_lane_provider("vision") == "anthropic"
-            and get_lane_api_key("vision")
-            and is_lane_execution_enabled("vision")
-        ):
-            # SDK path: individual frames
-            logger.info("Extracting frames at %sfps (SDK mode)", fps)
-            frames = await asyncio.get_event_loop().run_in_executor(
-                None, _extract_frames, str(video_path), fps, tmp
-            )
-            if not frames:
-                raise RuntimeError(f"No frames extracted from scene {scene['id']}")
-            if len(frames) > REVIEW_MAX_FRAMES:
-                step = len(frames) / REVIEW_MAX_FRAMES
-                frames = [frames[int(i * step)] for i in range(REVIEW_MAX_FRAMES)]
-            n_frames = len(frames)
-            logger.info("Analyzing %d frames via Anthropic SDK", n_frames)
-            result = await _analyze_sdk(frames, fps, scene, characters)
-        else:
-            # CLI path: contact sheet (no API key needed)
-            logger.info("Creating contact sheet at %sfps (CLI mode)", fps)
-            contact_sheet, n_frames = await asyncio.get_event_loop().run_in_executor(
-                None, _create_contact_sheet, str(video_path), fps, tmp
-            )
-            if not contact_sheet.exists():
-                raise RuntimeError(f"Contact sheet not created for scene {scene['id']}")
-            logger.info("Analyzing %d frames via claude CLI", n_frames)
-            result = await _analyze_cli(contact_sheet, n_frames, fps, scene)
+        # VIDEO is an explicit provider lane.  The historical Claude CLI branch
+        # was an implicit global-provider fallback, so it is not reachable from
+        # the V4 execution path.
+        logger.info("Extracting frames at %sfps (VIDEO lane)", fps)
+        frames = await asyncio.get_event_loop().run_in_executor(
+            None, _extract_frames, str(video_path), fps, tmp
+        )
+        if not frames:
+            raise RuntimeError(f"No frames extracted from scene {scene['id']}")
+        if len(frames) > REVIEW_MAX_FRAMES:
+            step = len(frames) / REVIEW_MAX_FRAMES
+            frames = [frames[int(i * step)] for i in range(REVIEW_MAX_FRAMES)]
+        n_frames = len(frames)
+        logger.info("Analyzing %d frames via configured VIDEO provider", n_frames)
+        result = await _analyze_sdk(frames, fps, scene, characters)
 
     # Parse structured errors with severity
     errors = []

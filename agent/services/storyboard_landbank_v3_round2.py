@@ -409,12 +409,12 @@ class V3CopyRegisterRound2Service:
     ) -> None:
         self.factory = factory or V3CopyFactoryService()
         # Tests may inject a deterministic double.  Production uses the one
-        # existing text_assist adapter and never creates a second provider lane.
+        # existing STRUCTURE adapter and never creates a second provider lane.
         self.provider = provider
 
     def provider_status(self) -> V3ProviderSummary:
         try:
-            status = dict(ai_copy_provider_adapter.provider_status())
+            status = dict(ai_copy_provider_adapter.provider_status("structure"))
         except Exception:
             status = {}
         configured = bool(status.get("configured"))
@@ -1253,7 +1253,7 @@ class V3CopyRegisterRound2Service:
                 raise V3FactoryError("FAKE_PROVIDER_FORBIDDEN", "The fake provider is available only in an explicitly enabled disposable/test runtime.", status_code=403)
             if self.provider is None:
                 return self._fake_envelope(plan, recipe, bundle), {
-                    "mode": "FAKE_TEST", "lane": "text_assist", "provider_id": "fake-v3-round2",
+                    "mode": "FAKE_TEST", "lane": "structure", "provider_id": "fake-v3-round2",
                     "model_id": "fixture-realistic-copy", "call_id": None, "response_status": "SUCCEEDED",
                     "json_parse_status": "VALID", "usage": {},
                 }
@@ -1264,6 +1264,7 @@ class V3CopyRegisterRound2Service:
                     system,
                     user,
                     max_output_tokens=plan.max_output_tokens,
+                    lane="structure",
                 )
             else:
                 # Test doubles model the already-bounded provider boundary and
@@ -2052,7 +2053,12 @@ class V3CopyRegisterRound2Service:
         system, user = self._ai_projection_prompt(master, compressed, language_profile)
         provider = self.provider or ai_copy_provider_adapter
         try:
-            result = provider.complete_json_with_receipt(system, user)
+            if self.provider is None:
+                result = provider.complete_json_with_receipt(
+                    system, user, lane="structure"
+                )
+            else:
+                result = provider.complete_json_with_receipt(system, user)
         except ai_copy_provider_adapter.AICopyProviderNotConfigured as exc:
             raise V3FactoryError("AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED", "The existing text_assist lane is not configured or enabled.", status_code=409) from exc
         except Exception as exc:  # noqa: BLE001 - fail closed on any provider fault
@@ -2166,7 +2172,12 @@ class V3CopyRegisterRound2Service:
         else:
             provider = self.provider or ai_copy_provider_adapter
             try:
-                result = provider.complete_json_with_receipt(system, user)
+                if self.provider is None:
+                    result = provider.complete_json_with_receipt(
+                        system, user, lane="structure"
+                    )
+                else:
+                    result = provider.complete_json_with_receipt(system, user)
             except ai_copy_provider_adapter.AICopyProviderNotConfigured as exc:
                 raise V3FactoryError("AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED", "The existing text_assist lane is not configured or enabled.", status_code=409) from exc
             except Exception as exc:  # noqa: BLE001 - fail closed on any provider fault

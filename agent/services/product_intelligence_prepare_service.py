@@ -260,7 +260,7 @@ async def prepare_product_for_copywriting(product_id: str) -> dict[str, Any]:
 
     grounding = await resolve_copy_grounding(product)
     system, user = _build_prompt(product, grounding)
-    ai = provider.complete_json(system, user)  # raises NotConfigured / Error
+    ai = provider.complete_json(system, user, lane="structure")  # raises NotConfigured / Error
     if not isinstance(ai, dict) or not ai:
         raise provider.AICopyProviderError(provider.ERR_RESPONSE_INVALID)
 

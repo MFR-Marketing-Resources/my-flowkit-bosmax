@@ -566,8 +566,11 @@ def propose_candidates(normalized: dict[str, Any], raw: dict[str, Any]) -> dict[
     from agent.services import ai_copy_provider_adapter as adapter
 
     try:
-        proposed = adapter.complete_json(CANDIDATE_SYSTEM,
-                                         build_candidate_brief(normalized, raw))
+        proposed = adapter.complete_json(
+            CANDIDATE_SYSTEM,
+            build_candidate_brief(normalized, raw),
+            lane="text",
+        )
     except adapter.AICopyProviderNotConfigured:
         return {"candidates": {}, "candidate_status": "PROVIDER_NOT_CONFIGURED"}
     except Exception as exc:  # noqa: BLE001

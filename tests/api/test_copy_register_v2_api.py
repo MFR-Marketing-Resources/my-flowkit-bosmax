@@ -44,8 +44,8 @@ def test_text_assist_status_is_secret_free_and_zero_call(monkeypatch):
     monkeypatch.setattr(
         service.ai_provider,
         "provider_status",
-        lambda: {
-            "lane": "text_assist",
+        lambda lane="structure": {
+            "lane": "structure",
             "configured": True,
             "provider_id": "synthetic-test-provider",
             "model_id": "synthetic-test-model",
@@ -55,7 +55,7 @@ def test_text_assist_status_is_secret_free_and_zero_call(monkeypatch):
     response = _client().get("/api/copy-register/v2/provider-status")
     assert response.status_code == 200
     assert response.json() == {
-        "lane": "text_assist",
+        "lane": "structure",
         "status": "READY",
         "configured": True,
         "provider_id": "synthetic-test-provider",

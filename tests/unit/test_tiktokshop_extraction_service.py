@@ -135,7 +135,7 @@ def test_model_candidates_are_review_required_and_cannot_supply_extract_only_fie
     those fields. Those are copied from the page or absent — never generated."""
     from agent.services import ai_copy_provider_adapter as adapter
 
-    monkeypatch.setattr(adapter, "complete_json", lambda system, user: {
+    monkeypatch.setattr(adapter, "complete_json", lambda system, user, **kwargs: {
         "usage_text": "Sapu pada bahagian yang lenguh.",
         "target_customer_text": "Dewasa yang kerap sakit badan.",
         "warnings_text": "Jangan guna pada luka terbuka.",   # <- must be refused
@@ -159,7 +159,7 @@ def test_model_candidates_are_review_required_and_cannot_supply_extract_only_fie
 def test_an_unconfigured_provider_downgrades_instead_of_losing_the_extraction(monkeypatch):
     from agent.services import ai_copy_provider_adapter as adapter
 
-    def not_configured(system, user):
+    def not_configured(system, user, **kwargs):
         raise adapter.AICopyProviderNotConfigured(adapter.ERR_NOT_CONFIGURED)
 
     monkeypatch.setattr(adapter, "complete_json", not_configured)
@@ -175,7 +175,7 @@ def test_provenance_is_field_scoped_and_separates_extracted_from_proposed(monkey
     from agent.services import ai_copy_provider_adapter as adapter
 
     monkeypatch.setattr(adapter, "complete_json",
-                        lambda system, user: {"usage_text": "Sapu dua kali sehari."})
+                        lambda system, user, **kwargs: {"usage_text": "Sapu dua kali sehari."})
     result = svc.extract_product("https://shop.tiktok.com/view/product/1",
                                  page_text=LISTING_HTML, propose=True)
     by_field = {row["field_name"]: row for row in result["provenance"]}

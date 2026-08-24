@@ -260,6 +260,7 @@ def review_catalog_authority_batch(
     raw_response = ai_copy_provider_adapter.complete_json(
         _system_prompt(),
         _user_prompt(evidence),
+        lane="structure",
     )
     reviewed = CatalogAuthorityReviewResponse.model_validate(raw_response)
     returned_ids = {item.signature_id for item in reviewed.decisions}

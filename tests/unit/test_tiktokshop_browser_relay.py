@@ -366,7 +366,7 @@ async def test_relayed_evidence_runs_the_same_deterministic_rules_as_a_direct_fe
     """
     from agent.services import ai_copy_provider_adapter as adapter
 
-    monkeypatch.setattr(adapter, "complete_json", lambda system, user: {})
+    monkeypatch.setattr(adapter, "complete_json", lambda system, user, **kwargs: {})
     install_client(monkeypatch, FakeFlowClient(
         lambda params: browser_reply(params, evidence=GOOD_EVIDENCE)))
 
@@ -396,7 +396,7 @@ async def test_a_merchandising_label_relayed_from_the_browser_is_still_not_a_pac
     """
     from agent.services import ai_copy_provider_adapter as adapter
 
-    monkeypatch.setattr(adapter, "complete_json", lambda system, user: {})
+    monkeypatch.setattr(adapter, "complete_json", lambda system, user, **kwargs: {})
     payload = dict(GOOD_EVIDENCE, variant_labels=["Standard"],
                    title="Sarung Kusyen Biru", description="Sarung kusyen warna biru.",
                    page_text="Sarung Kusyen Biru Sarung kusyen warna biru.")

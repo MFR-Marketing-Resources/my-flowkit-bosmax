@@ -23,15 +23,15 @@ SAFE = {
 
 
 async def test_ai_assist_returns_candidates(monkeypatch):
-    monkeypatch.setattr(provider, "complete_json", lambda s, u: dict(SAFE))
+    monkeypatch.setattr(provider, "complete_json", lambda s, u, **kwargs: dict(SAFE))
     resp = await api.ai_assist(api.AICaptionAssistRequest(platform="tiktok"))
     assert resp["candidates"][0]["caption"] == "Rutin senang, hasil selesa."
     assert resp["candidates"][0]["hashtags"] == ["#fyp"]
-    assert resp["provider"]["lane"] == "text_assist"
+    assert resp["provider"]["lane"] == "text"
 
 
 async def test_ai_assist_not_configured_returns_409(monkeypatch):
-    def raise_nc(system, user):
+    def raise_nc(system, user, **kwargs):
         raise provider.AICopyProviderNotConfigured(provider.ERR_NOT_CONFIGURED)
 
     monkeypatch.setattr(provider, "complete_json", raise_nc)
@@ -42,7 +42,7 @@ async def test_ai_assist_not_configured_returns_409(monkeypatch):
 
 
 async def test_ai_assist_provider_error_returns_502(monkeypatch):
-    def raise_err(system, user):
+    def raise_err(system, user, **kwargs):
         raise provider.AICopyProviderError(provider.ERR_RESPONSE_INVALID, detail="bad")
 
     monkeypatch.setattr(provider, "complete_json", raise_err)

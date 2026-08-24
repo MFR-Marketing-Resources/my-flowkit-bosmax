@@ -1,12 +1,19 @@
-# Dynamic AI Model Catalog & Explicit Lane Configuration V1
+# Dynamic AI Model Catalog & Explicit Lane Configuration V1 (V4 lane authority)
+
+> V4 is the current lane contract. See
+> [`docs/AI_PROVIDER_FOUR_LANE_V4.md`](AI_PROVIDER_FOUR_LANE_V4.md) for the
+> four-lane consumer map, migration rules, Structure fallback, and DeepSeek
+> capability evidence. The two-lane names in the historical examples below
+> are accepted only at read/migration seams and are never emitted by V4 APIs or
+> persisted lane state.
 
 Supersedes the runtime-default behavior of `AI_PROVIDER_MODEL_AND_LANE_SETTINGS_V1`.
 Provider/model/lane configuration is now **operator-owned and mutable**, and lanes
 are **explicit** — a fresh install auto-selects nothing.
 
 The deterministic final compiler is untouched. No AI provider generates the final
-9-section prompt. These settings affect the AI assist / product-knowledge / vision
-lanes only.
+9-section prompt. These settings affect the independent `text`, `structure`,
+`image`, and `video` lanes only.
 
 ## Why hardcoded runtime defaults were removed
 

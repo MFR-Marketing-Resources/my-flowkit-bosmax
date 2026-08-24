@@ -620,7 +620,7 @@ def _extract_qwen_usp_suggestions(
         )
         if str(item or "").strip()
     )
-    status = ai_copy_provider_adapter.provider_status()
+    status = ai_copy_provider_adapter.provider_status("structure")
     if status.get("provider_id") != "qwen" or not status.get("configured"):
         return []
     try:
@@ -630,6 +630,7 @@ def _extract_qwen_usp_suggestions(
                 "one key named usp_list. No markdown and no invented claims."
             ),
             source_text,
+            lane="structure",
         )
     except (AICopyProviderError, AICopyProviderNotConfigured):
         return []
@@ -871,7 +872,7 @@ def _classify_text_assist_validation_error(
 def _complete_missing_evidence_with_text_assist(
     request: ProductKnowledgeCompleteRequest,
 ) -> tuple[TextAssistEvidenceCompletion | None, list[str], list[str]]:
-    status = ai_copy_provider_adapter.provider_status()
+    status = ai_copy_provider_adapter.provider_status("structure")
     if not bool(status.get("configured")):
         return None, ["TEXT_ASSIST_NOT_CONFIGURED"], []
 
@@ -908,6 +909,7 @@ def _complete_missing_evidence_with_text_assist(
         raw_completion = ai_copy_provider_adapter.complete_json(
             system_prompt,
             user_prompt,
+            lane="structure",
         )
         if not isinstance(raw_completion, dict):
             return (

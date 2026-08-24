@@ -286,13 +286,15 @@ def _coerce_ai_scene_profile(data: dict) -> dict | None:
 
 @router.post("/scene-context-registry/auto-generate")
 async def scene_context_registry_auto_generate(request: SceneAutoGenRequest):
-    """AI auto-generate ONE non-duplicate background scene via the configured
-    text_assist lane. Fail-closed: 503 if unconfigured, 502 on invalid AI JSON,
-    409 if the AI keeps returning a duplicate after one stronger retry."""
+    """AI auto-generate ONE non-duplicate background scene via STRUCTURE.
+
+    Duplicate output is a deterministic nonconformance, not a reason to retry
+    the primary provider. The bounded provider fallback is the only retry seam.
+    """
     from agent.services import ai_copy_provider_adapter
     from agent.services import scene_context_registry
-    if not ai_copy_provider_adapter.is_configured():
-        raise HTTPException(503, "TEXT_ASSIST_NOT_CONFIGURED")
+    if not ai_copy_provider_adapter.is_configured("structure"):
+        raise HTTPException(503, "STRUCTURE_NOT_CONFIGURED")
 
     existing_names = ", ".join(
         p["scene_name"] for p in scene_context_registry.list_pool())
@@ -305,9 +307,9 @@ async def scene_context_registry_auto_generate(request: SceneAutoGenRequest):
     user = str(request.brief or "Generate a fresh commercial background scene.")
 
     try:
-        raw = ai_copy_provider_adapter.complete_json(system, user)
+        raw = ai_copy_provider_adapter.complete_json(system, user, lane="structure")
     except ai_copy_provider_adapter.AICopyProviderNotConfigured as exc:
-        raise HTTPException(503, "TEXT_ASSIST_NOT_CONFIGURED") from exc
+        raise HTTPException(503, "STRUCTURE_NOT_CONFIGURED") from exc
     except ai_copy_provider_adapter.AICopyProviderError as exc:
         raise HTTPException(502, "AI_SCENE_GENERATION_FAILED") from exc
 
@@ -318,20 +320,7 @@ async def scene_context_registry_auto_generate(request: SceneAutoGenRequest):
     duplicate = scene_context_registry.find_duplicate_scene(
         payload["scene_name"], payload["background_prompt"])
     if duplicate is not None:
-        retry_user = user + (
-            "\nThe previous result duplicated an existing scene. You MUST return a "
-            "DISTINCT scene_name and background not already listed.")
-        try:
-            raw = ai_copy_provider_adapter.complete_json(system, retry_user)
-        except ai_copy_provider_adapter.AICopyProviderError as exc:
-            raise HTTPException(502, "AI_SCENE_GENERATION_FAILED") from exc
-        payload = _coerce_ai_scene_profile(raw)
-        if payload is None:
-            raise HTTPException(502, "AI_SCENE_INVALID")
-        duplicate = scene_context_registry.find_duplicate_scene(
-            payload["scene_name"], payload["background_prompt"])
-        if duplicate is not None:
-            raise HTTPException(409, "SCENE_REDUNDANT_AI")
+        raise HTTPException(409, "SCENE_REDUNDANT_AI")
 
     scene_code, row = _build_scene_pool_row(scene_context_registry, payload)
     try:

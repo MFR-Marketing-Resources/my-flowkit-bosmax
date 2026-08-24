@@ -2522,7 +2522,7 @@ async def create_product_intelligence_revision_draft(product_id: str, request: d
 
 @router.post("/{product_id}/intelligence/review-drafts/prepare")
 async def prepare_product_for_copywriting_endpoint(product_id: str) -> dict:
-    """Prepare Product for Copywriting — the text_assist (DeepSeek) lane that
+    """Prepare Product for Copywriting — the STRUCTURE (DeepSeek) lane that
     drafts Product Knowledge + Customer Avatar + Recommended Formula into a review
     draft (NEVER approved). Fail-closed: 503 unconfigured, 502 invalid AI JSON,
     404 no product. Operator-initiated (spends tokens)."""
@@ -2532,8 +2532,8 @@ async def prepare_product_for_copywriting_endpoint(product_id: str) -> dict:
         prepare_product_for_copywriting,
     )
 
-    if not ai_copy_provider_adapter.is_configured():
-        raise HTTPException(status_code=503, detail="TEXT_ASSIST_NOT_CONFIGURED")
+    if not ai_copy_provider_adapter.is_configured("structure"):
+        raise HTTPException(status_code=503, detail="STRUCTURE_NOT_CONFIGURED")
     try:
         return await prepare_product_for_copywriting(product_id)
     except ai_copy_provider_adapter.AICopyProviderNotConfigured as exc:

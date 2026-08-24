@@ -116,7 +116,7 @@ def _deterministic_text_assist(monkeypatch):
 
     call_count = 0
 
-    def complete_json_with_receipt(system: str, user: str):
+    def complete_json_with_receipt(system: str, user: str, **kwargs):
         nonlocal call_count
         call_count += 1
         payload = json.loads(user)
@@ -175,7 +175,7 @@ def _deterministic_text_assist(monkeypatch):
             raise AssertionError("unexpected Copy Register V2 prompt contract")
         return result, {
             "call_id": call_count,
-            "lane": "text_assist",
+            "lane": "structure",
             "provider_id": "synthetic-test-provider",
             "model_id": "synthetic-test-model",
             "transport": "synthetic-test-transport",
@@ -194,8 +194,8 @@ def _deterministic_text_assist(monkeypatch):
     monkeypatch.setattr(
         service.ai_provider,
         "provider_status",
-        lambda: {
-            "lane": "text_assist",
+        lambda lane="structure": {
+            "lane": "structure",
             "configured": True,
             "provider_id": "synthetic-test-provider",
             "model_id": "synthetic-test-model",

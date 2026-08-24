@@ -166,7 +166,9 @@ async def suggest_product_angles(
     # Offload the blocking httpx provider call so a bulk loop never starves the
     # event loop / /health (incident PR #404). Tests mock complete_json (sync) —
     # to_thread runs + awaits them, propagating returns and exceptions unchanged.
-    ai = await asyncio.to_thread(provider.complete_json, system, user)  # raises NotConfigured / Error
+    ai = await asyncio.to_thread(
+        provider.complete_json, system, user, lane="text"
+    )  # raises NotConfigured / Error
 
     raw = ai.get("angles") if isinstance(ai, dict) else None
     if not isinstance(raw, list):

@@ -934,13 +934,15 @@ def _coerce_ai_avatar_profile(data: dict, age_band: str) -> dict | None:
 
 @router.post("/avatar-registry/auto-generate")
 async def avatar_registry_auto_generate(request: AvatarAutoGenRequest):
-    """AI auto-generate ONE non-duplicate avatar profile via the configured
-    text_assist lane. Fail-closed: 503 if the lane is unconfigured, 502 on invalid
-    AI JSON, 409 if the AI keeps returning a duplicate after one stronger retry."""
+    """AI auto-generate ONE non-duplicate avatar profile via STRUCTURE.
+
+    Duplicate output is a deterministic nonconformance and is rejected without
+    recursively retrying the primary provider.
+    """
     from agent.services import ai_copy_provider_adapter
     from agent.services import avatar_registry
-    if not ai_copy_provider_adapter.is_configured():
-        raise HTTPException(503, "TEXT_ASSIST_NOT_CONFIGURED")
+    if not ai_copy_provider_adapter.is_configured("structure"):
+        raise HTTPException(503, "STRUCTURE_NOT_CONFIGURED")
 
     existing_descriptors = ", ".join(
         "+".join(avatar_registry.descriptor_key(p)) for p in avatar_registry.list_pool()
@@ -991,9 +993,9 @@ async def avatar_registry_auto_generate(request: AvatarAutoGenRequest):
         user += "\nConstraints: " + "; ".join(constraints) + "."
 
     try:
-        raw = ai_copy_provider_adapter.complete_json(system, user)
+        raw = ai_copy_provider_adapter.complete_json(system, user, lane="structure")
     except ai_copy_provider_adapter.AICopyProviderNotConfigured as exc:
-        raise HTTPException(503, "TEXT_ASSIST_NOT_CONFIGURED") from exc
+        raise HTTPException(503, "STRUCTURE_NOT_CONFIGURED") from exc
     except ai_copy_provider_adapter.AICopyProviderError as exc:
         raise HTTPException(502, "AI_AVATAR_GENERATION_FAILED") from exc
 
@@ -1005,21 +1007,7 @@ async def avatar_registry_auto_generate(request: AvatarAutoGenRequest):
         payload["skin_tone"], payload["hair_style"], payload["wardrobe"],
         payload["expression"], payload["gender"], payload["age_band"])
     if duplicate is not None:
-        retry_user = user + (
-            "\nThe previous result duplicated an existing avatar. You MUST return a "
-            "DISTINCT skin+hair+wardrobe+expression combination not already listed.")
-        try:
-            raw = ai_copy_provider_adapter.complete_json(system, retry_user)
-        except ai_copy_provider_adapter.AICopyProviderError as exc:
-            raise HTTPException(502, "AI_AVATAR_GENERATION_FAILED") from exc
-        payload = _coerce_ai_avatar_profile(raw, request.age_band)
-        if payload is None:
-            raise HTTPException(502, "AI_AVATAR_INVALID")
-        duplicate = avatar_registry.find_duplicate_avatar(
-            payload["skin_tone"], payload["hair_style"], payload["wardrobe"],
-            payload["expression"], payload["gender"], payload["age_band"])
-        if duplicate is not None:
-            raise HTTPException(409, "AVATAR_REDUNDANT_AI")
+        raise HTTPException(409, "AVATAR_REDUNDANT_AI")
 
     avatar_code, row = _build_avatar_pool_row(avatar_registry, payload)
     try:

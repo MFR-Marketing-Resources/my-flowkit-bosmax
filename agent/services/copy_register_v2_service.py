@@ -197,7 +197,7 @@ def _provider_receipt(
         )
     return {
         "prompt_version": prompt_version,
-        "lane": call_receipt.get("lane") or "text_assist",
+        "lane": call_receipt.get("lane") or "structure",
         "provider_id": call_receipt.get("provider_id"),
         "model_id": call_receipt.get("model_id"),
         "transport": call_receipt.get("transport"),
@@ -216,7 +216,7 @@ def _call_text_assist(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Execute only from an explicit authoring endpoint and fail closed."""
 
-    if not ai_provider.is_configured():
+    if not ai_provider.is_configured("structure"):
         raise CopyRegisterV2Error(
             "COPY_V2_TEXT_AI_NOT_CONFIGURED",
             "Configure and enable the existing text_assist provider lane before generating V2 copy.",
@@ -226,6 +226,7 @@ def _call_text_assist(
         result, call_receipt = ai_provider.complete_json_with_receipt(
             system_prompt,
             _json(payload),
+            lane="structure",
         )
     except ai_provider.AICopyProviderNotConfigured as exc:
         raise CopyRegisterV2Error(
@@ -1519,16 +1520,16 @@ async def list_blueprints(product_id: str) -> list[CopyBlueprintV2]:
 
 
 def get_text_assist_provider_status() -> dict[str, Any]:
-    """Return the existing text-assist lane state without provider secrets."""
+    """Return the STRUCTURE lane state without provider secrets."""
 
-    adapter_status = ai_provider.provider_status()
+    adapter_status = ai_provider.provider_status("structure")
     registry_status: dict[str, Any] = {}
     try:
         registry_status = next(
             (
                 item
                 for item in summarize_provider_settings().get("lanes", [])
-                if item.get("lane") == "text_assist"
+                if item.get("lane") == "structure"
             ),
             {},
         )
@@ -1537,7 +1538,7 @@ def get_text_assist_provider_status() -> dict[str, Any]:
 
     configured = bool(adapter_status.get("configured"))
     return {
-        "lane": "text_assist",
+        "lane": "structure",
         "status": (
             "READY"
             if configured

@@ -27,7 +27,7 @@ UNSAFE = {**SAFE, "caption": "Dijamin cure penyakit anda, 100% berkesan ubat."}
 
 
 def _mock(monkeypatch, value):
-    def fake(system, user):
+    def fake(system, user, **kwargs):
         if isinstance(value, Exception):
             raise value
         return dict(value)
@@ -64,7 +64,7 @@ async def test_returns_normalized_safe_candidate(monkeypatch):
     assert c["hashtags"] == ["#fyp", "#rutinharian"]  # normalized with '#'
     assert c["compliance_status"] == "OK"
     assert c["blockers"] == []
-    assert out["provider"]["lane"] == "text_assist"
+    assert out["provider"]["lane"] == "text"
 
 
 async def test_unsafe_candidate_is_flagged_not_hidden(monkeypatch):

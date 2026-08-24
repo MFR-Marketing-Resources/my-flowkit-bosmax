@@ -137,22 +137,38 @@ function formatLaneStatus(status: string | null | undefined) {
 }
 
 // --- defensive registry normalization ---------------------------------------
-// The V3 SettingsPage dereferences V3-only fields (lane.status, provider.
+// The V4 SettingsPage dereferences lane.status, provider.
 // supported_lanes / current_capabilities, model.lanes, catalog entry.models).
 // A stale (pre-#208) backend, a mid-migration state file, or a corrupt catalog
-// can return an older or partial shape. Coercing every payload into the V3
+// can return an older or partial shape. Coercing every payload into the V4
 // shape here means a single missing/mistyped field can NEVER unmount the whole
-// page (the blank-screen incident). This is idempotent on a well-formed V3
-// payload.
+// page. Old lane aliases are read-only compatibility input; every card and write
+// uses a canonical V4 lane id.
 
 const asStringArray = (value: unknown): string[] =>
 	Array.isArray(value)
 		? value.filter((entry): entry is string => typeof entry === "string")
 		: [];
 
+const CANONICAL_LANES: AIProviderLaneId[] = [
+	"text",
+	"structure",
+	"image",
+	"video",
+];
 const LANE_LABELS: Record<string, string> = {
-	text_assist: "Text Assist",
-	vision: "Vision",
+	text: "Text",
+	structure: "Structure",
+	image: "Image",
+	video: "Video",
+};
+
+const canonicalLaneId = (value: unknown): AIProviderLaneId | null => {
+	if (value === "text_assist") return "text";
+	if (value === "vision") return "image";
+	return CANONICAL_LANES.includes(value as AIProviderLaneId)
+		? (value as AIProviderLaneId)
+		: null;
 };
 
 function normalizeModelOption(raw: unknown): AIProviderModelOption | null {
@@ -224,7 +240,8 @@ function normalizeProvider(raw: unknown): AIProviderSummary | null {
 function normalizeLane(raw: unknown): AIProviderLaneSetting | null {
 	if (!raw || typeof raw !== "object") return null;
 	const record = raw as Record<string, unknown>;
-	if (typeof record.lane !== "string") return null;
+	const lane = canonicalLaneId(record.lane);
+	if (!lane) return null;
 	const providerId =
 		typeof record.provider_id === "string"
 			? (record.provider_id as AIProviderId)
@@ -239,11 +256,11 @@ function normalizeLane(raw: unknown): AIProviderLaneSetting | null {
 				? "READY"
 				: "NOT_CONFIGURED";
 	return {
-		lane: record.lane as AIProviderLaneId,
+		lane,
 		label:
 			typeof record.label === "string"
 				? record.label
-				: LANE_LABELS[record.lane] || record.lane,
+				: LANE_LABELS[lane] || lane,
 		provider_id: providerId,
 		model_id: modelId,
 		execution_enabled: Boolean(record.execution_enabled),
@@ -257,6 +274,22 @@ function normalizeLane(raw: unknown): AIProviderLaneSetting | null {
 		configured: Boolean(
 			record.configured === undefined ? providerId && modelId : record.configured,
 		),
+		fallback_provider_id:
+			typeof record.fallback_provider_id === "string"
+				? (record.fallback_provider_id as AIProviderId)
+				: null,
+		fallback_model_id:
+			typeof record.fallback_model_id === "string"
+				? record.fallback_model_id
+				: null,
+		fallback_enabled: Boolean(record.fallback_enabled),
+		fallback_key_present: Boolean(record.fallback_key_present),
+		fallback_model_valid: Boolean(record.fallback_model_valid),
+		fallback_status:
+			typeof record.fallback_status === "string"
+				? (record.fallback_status as AIProviderLaneStatus)
+				: null,
+		engine_id: typeof record.engine_id === "string" ? record.engine_id : null,
 	};
 }
 
@@ -290,9 +323,25 @@ function normalizeRegistry(raw: unknown): {
 		catalogMalformed = true;
 	}
 
-	const lanes = (Array.isArray(record.lanes) ? record.lanes : [])
+	const normalizedLanes = (Array.isArray(record.lanes) ? record.lanes : [])
 		.map(normalizeLane)
 		.filter((lane): lane is AIProviderLaneSetting => lane !== null);
+	const laneById = new Map(normalizedLanes.map((lane) => [lane.lane, lane]));
+	const lanes = CANONICAL_LANES.map(
+		(lane) =>
+			laneById.get(lane) ?? {
+				lane,
+				label: LANE_LABELS[lane],
+				provider_id: null,
+				model_id: null,
+				execution_enabled: false,
+				configured_by_user: false,
+				key_present: false,
+				model_valid: false,
+				status: "NOT_CONFIGURED" as AIProviderLaneStatus,
+				configured: false,
+			},
+	);
 
 	return {
 		registry: {
@@ -493,16 +542,7 @@ export default function SettingsPage() {
 		providerRegistry?.model_catalog?.[providerId] ?? null;
 
 	const laneAllowedForProvider = (providerId: string, lane: string): boolean => {
-		const transport = catalogEntry(providerId)?.transport;
-		if (lane === "vision") {
-			// Vision is wired for BOTH transports: Anthropic (messages) and the
-			// OpenAI-compatible image_url path (OpenAI / Gemini / Qwen-VL).
-			return (
-				transport === "anthropic_messages" ||
-				transport === "openai_compatible_chat"
-			);
-		}
-		return true; // text_assist supported by all implemented transports
+		return Boolean(catalogEntry(providerId)?.supported_lanes?.includes(lane));
 	};
 
 	const modelsForLane = (
@@ -581,7 +621,7 @@ export default function SettingsPage() {
 			setBannerError("Enter a model ID to add a custom model.");
 			return;
 		}
-		const lanes = draft.lanes.length ? draft.lanes : ["text_assist"];
+		const lanes = draft.lanes.length ? draft.lanes : ["text"];
 		await handleUpsertModel(
 			providerId,
 			modelId,
@@ -636,10 +676,11 @@ export default function SettingsPage() {
 
 	// --- lane configuration ---------------------------------------------
 	const handleSaveLane = async (
-		lane: string,
+		lane: AIProviderLaneId,
 		providerId: AIProviderId,
 		modelId: string,
 		executionEnabled?: boolean,
+		overrides: Record<string, unknown> = {},
 	) => {
 		await runProviderMutation(
 			`lane:${lane}`,
@@ -651,6 +692,7 @@ export default function SettingsPage() {
 						model_id: modelId,
 						execution_enabled:
 							executionEnabled === undefined ? null : executionEnabled,
+						...overrides,
 					}),
 				}),
 			`${lane} lane set to ${providerId} / ${modelId}.`,
@@ -679,119 +721,13 @@ export default function SettingsPage() {
 		});
 	};
 
-	const textAssistLane =
-		providerRegistry?.lanes?.find((setting) => setting.lane === "text_assist") ??
-		null;
-
-	const getProviderLabel = (providerId: AIProviderId | null | undefined) =>
-		(providerRegistry?.providers ?? []).find(
-			(provider) => provider.provider_id === providerId,
-		)?.label ?? providerId ?? "another provider";
-
-	const resolveQuickAssignTextAssistModel = (provider: AIProviderSummary) => {
-		const laneModels = modelsForLane(provider.provider_id, "text_assist");
-		if (!laneModels.length) return null;
-		if (
-			provider.default_model &&
-			laneModels.some((model) => model.model_id === provider.default_model)
-		) {
-			return provider.default_model;
-		}
-		if (laneModels.length === 1) {
-			return laneModels[0]?.model_id ?? null;
-		}
-		return null;
-	};
-
-	const describeTextAssistForProvider = (provider: AIProviderSummary) => {
-		const assigned = textAssistLane?.provider_id === provider.provider_id;
-		const assignedProviderLabel = getProviderLabel(textAssistLane?.provider_id);
-		const quickAssignModelId = resolveQuickAssignTextAssistModel(provider);
-		const readyForCopyAssist =
-			assigned &&
-			textAssistLane?.status === "READY" &&
-			textAssistLane?.provider_id === provider.provider_id;
-		if (readyForCopyAssist) {
-			return {
-				assigned,
-				readyForCopyAssist,
-				statusLabel: "Text Assist: READY",
-				detail:
-					"AI Copy Assist is ready on this provider. Candidate drafts stay review-required until you approve them.",
-				actionLabel: "Text Assist Ready",
-				actionDisabled: true,
-				actionReason: "Text Assist already routes here and execution is ready.",
-				quickAssignModelId,
-			};
-		}
-		if (assigned) {
-			return {
-				assigned,
-				readyForCopyAssist,
-				statusLabel: `Text Assist: ${formatLaneStatus(textAssistLane?.status)}`,
-				detail:
-					"AI Copy Assist is routed to this provider, but the lane is blocked until the status becomes READY.",
-				actionLabel: "Finish Text Assist Setup",
-				actionDisabled: true,
-				actionReason:
-					"Use the Lane Settings section below to fix the current Text Assist lane state.",
-				quickAssignModelId,
-			};
-		}
-		if (textAssistLane?.provider_id) {
-			return {
-				assigned,
-				readyForCopyAssist,
-				statusLabel: `Text Assist: Assigned to ${assignedProviderLabel} (${formatLaneStatus(textAssistLane?.status)})`,
-				detail: `AI Copy Assist is not currently routed to ${provider.label}.`,
-				actionLabel: "Use for Text Assist + Enable",
-				actionDisabled: !provider.has_key || !quickAssignModelId,
-				actionReason: !provider.has_key
-					? `Save a ${provider.label} key first, then assign Text Assist.`
-					: !quickAssignModelId
-						? "Choose a Text Assist model in Lane Settings before assigning this provider."
-						: `Assigns ${provider.label} to Text Assist and enables execution.`,
-				quickAssignModelId,
-			};
-		}
-		return {
-			assigned,
-			readyForCopyAssist,
-			statusLabel: "Text Assist: NOT CONFIGURED",
-			detail:
-				"AI Copy Assist is not configured yet. Provider, model, key, and execution must all be valid before it is ready.",
-			actionLabel: "Use for Text Assist + Enable",
-			actionDisabled: !provider.has_key || !quickAssignModelId,
-			actionReason: !provider.has_key
-				? `Save a ${provider.label} key first, then assign Text Assist.`
-				: !quickAssignModelId
-					? "Choose a Text Assist model in Lane Settings before assigning this provider."
-					: `Assigns ${provider.label} to Text Assist and enables execution.`,
-			quickAssignModelId,
-		};
-	};
-
-	const handleUseForTextAssist = async (provider: AIProviderSummary) => {
-		const modelId = resolveQuickAssignTextAssistModel(provider);
-		if (!provider.has_key) {
-			setBannerError(`Save a ${provider.label} key before assigning Text Assist.`);
-			return;
-		}
-		if (!modelId) {
-			setBannerError(
-				`Choose a Text Assist model for ${provider.label} in Lane Settings before assigning it here.`,
-			);
-			return;
-		}
-		await handleSaveLane("text_assist", provider.provider_id, modelId, true);
-	};
-
 	const LANE_STATUS_STYLE: Record<string, string> = {
 		NOT_CONFIGURED: "border-slate-700 bg-slate-900 text-slate-400",
 		MODEL_MISSING: "border-amber-500/40 bg-amber-500/10 text-amber-300",
 		MODEL_DISABLED: "border-amber-500/40 bg-amber-500/10 text-amber-300",
 		KEY_MISSING: "border-amber-500/40 bg-amber-500/10 text-amber-300",
 		EXECUTION_DISABLED: "border-slate-700 bg-slate-900 text-slate-400",
+		FALLBACK_INVALID: "border-amber-500/40 bg-amber-500/10 text-amber-300",
 		READY: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
 	};
 
@@ -909,7 +845,6 @@ export default function SettingsPage() {
 						{providerRegistry?.providers.length ? providerRegistry.providers.map((provider) => {
 							const isBusy = mutatingProviderId === provider.provider_id;
 							const draftValue = draftKeys[provider.provider_id] || "";
-							const textAssistState = describeTextAssistForProvider(provider);
 							return (
 								<div
 									key={provider.provider_id}
@@ -951,37 +886,6 @@ export default function SettingsPage() {
 											<div>
 												{(provider.current_capabilities ?? []).join(" • ") ||
 													"No capabilities declared"}
-											</div>
-										</div>
-
-										<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
-											<div className="mb-2 flex items-center justify-between gap-3">
-												<div className="font-semibold text-slate-200">
-													Text Assist Lane
-												</div>
-												<span
-													className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${textAssistState.readyForCopyAssist ? LANE_STATUS_STYLE.READY : textAssistState.assigned ? (LANE_STATUS_STYLE[textAssistLane?.status ?? "NOT_CONFIGURED"] || LANE_STATUS_STYLE.NOT_CONFIGURED) : LANE_STATUS_STYLE.NOT_CONFIGURED}`}
-												>
-													{textAssistState.statusLabel}
-												</span>
-											</div>
-											<div className="text-[11px] leading-relaxed text-slate-400">
-												{textAssistState.detail}
-											</div>
-											<div className="mt-3 flex flex-wrap items-center gap-2">
-												<button
-													type="button"
-													onClick={() => void handleUseForTextAssist(provider)}
-													disabled={
-														isBusy || textAssistState.actionDisabled
-													}
-													className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-semibold text-blue-200 hover:border-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
-												>
-													{textAssistState.actionLabel}
-												</button>
-												<div className="text-[11px] text-slate-500">
-													{textAssistState.actionReason}
-												</div>
 											</div>
 										</div>
 
@@ -1123,7 +1027,7 @@ export default function SettingsPage() {
 														className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-blue-400/60"
 													/>
 													<div className="flex flex-wrap gap-3 text-[11px] text-slate-400">
-														{["text_assist", "vision"]
+										{CANONICAL_LANES
 															.filter((lane) =>
 																laneAllowedForProvider(provider.provider_id, lane),
 															)
@@ -1241,20 +1145,32 @@ export default function SettingsPage() {
 				</div>
 				<div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-400">
 					The <span className="font-semibold text-slate-200">global active provider</span>{" "}
-					above is a legacy runtime-wide selector. Lane Settings decide which
-					provider/model each AI task actually uses. The{" "}
-					<span className="font-semibold text-slate-200">Text Assist</span> lane
-					powers <span className="font-semibold text-slate-200">AI Copy Assist</span>{" "}
-					(candidate copy only — never the final deterministic prompt). The{" "}
-					<span className="font-semibold text-slate-200">Vision</span> lane powers
-					product-image vision tasks. Lanes ship{" "}
+					above is a legacy selector for explicit legacy consumers only; it never
+					drives these lanes. Lane Settings decide which provider/model each AI task
+					actually uses. TEXT handles natural-language copy, STRUCTURE handles strict
+					machine/schema calls, IMAGE handles product-image understanding, and VIDEO
+					handles the explicit video-review adapter. Lanes ship{" "}
 					<span className="font-semibold text-slate-200">NOT CONFIGURED</span> — a lane
 					is inactive until provider, model, key, and the execution toggle are all
 					configured.
 				</div>
 				<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-					{providerRegistry?.lanes?.length
-						? providerRegistry.lanes.map((setting) => {
+					{providerRegistry
+						? CANONICAL_LANES.map((laneId) => {
+								const setting =
+									providerRegistry.lanes.find((lane) => lane.lane === laneId) ??
+									({
+										lane: laneId,
+										label: LANE_LABELS[laneId],
+										provider_id: null,
+										model_id: null,
+										execution_enabled: false,
+										configured_by_user: false,
+										key_present: false,
+										model_valid: false,
+										status: "NOT_CONFIGURED" as AIProviderLaneStatus,
+										configured: false,
+									} as AIProviderLaneSetting);
 								const laneBusy = mutatingProviderId === `lane:${setting.lane}`;
 								const laneProviders = providersForLane(setting.lane);
 								const draftProvider = laneProviderDraft[setting.lane];
@@ -1271,6 +1187,23 @@ export default function SettingsPage() {
 								const laneModels = modelsForLane(
 									(displayProvider || null) as AIProviderId | null,
 									setting.lane,
+								);
+								const fallbackProviderKey = `${setting.lane}:fallback`;
+								const fallbackDraftProvider =
+									laneProviderDraft[fallbackProviderKey];
+								const fallbackProvider =
+									fallbackDraftProvider !== undefined
+										? fallbackDraftProvider
+										: setting.fallback_provider_id || "";
+								const fallbackProviderChanged =
+									fallbackDraftProvider !== undefined &&
+									fallbackDraftProvider !== (setting.fallback_provider_id || "");
+								const fallbackModel = fallbackProviderChanged
+									? ""
+									: setting.fallback_model_id || "";
+								const fallbackModels = modelsForLane(
+									(fallbackProvider || null) as AIProviderId | null,
+									"structure",
 								);
 								const executionAllowed =
 									setting.key_present && setting.model_valid;
@@ -1342,15 +1275,123 @@ export default function SettingsPage() {
 													className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm text-slate-200 outline-none transition focus:border-blue-400/60 disabled:cursor-not-allowed disabled:opacity-60"
 												>
 													<option value="">Select model…</option>
-													{laneModels.map((model) => (
+															{laneModels.map((model) => (
 														<option key={model.model_id} value={model.model_id}>
 															{model.label}
 														</option>
-													))}
-												</select>
-											</div>
+																))}
+															</select>
+														</div>
 
-											<label className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-4 py-2 text-xs text-slate-300">
+														{setting.lane === "structure" ? (
+															<div className="space-y-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3">
+																<div className="text-xs font-semibold text-slate-200">
+																	Bounded fallback (one call maximum)
+																</div>
+																<div className="text-[11px] text-slate-500">
+																	Fallback is used only for classified provider capability or
+																	nonconformance errors. It never retries a deterministic failure.
+																</div>
+																<select
+																	value={fallbackProvider}
+																	onChange={(event) =>
+																		setLaneProviderDraft((current) => ({
+																			...current,
+																			[fallbackProviderKey]: event.target.value,
+																		}))
+																	}
+																	disabled={laneBusy}
+																	className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm text-slate-200 outline-none focus:border-blue-400/60 disabled:opacity-60"
+																>
+																	<option value="">Select fallback provider…</option>
+																	{providersForLane("structure").map((provider) => (
+																		<option key={provider.provider_id} value={provider.provider_id}>
+																			{provider.label}
+																		</option>
+																	))}
+																</select>
+																<select
+																	value={fallbackModel}
+																	onChange={(event) =>
+																		setting.provider_id && setting.model_id && fallbackProvider && event.target.value
+																			? void handleSaveLane(
+																					"structure",
+																					setting.provider_id,
+																					setting.model_id,
+																					setting.execution_enabled,
+																					{
+																						fallback_provider_id: fallbackProvider,
+																						fallback_model_id: event.target.value,
+																						fallback_enabled: setting.fallback_enabled ?? false,
+																					},
+																				)
+																			: undefined
+																	}
+																	disabled={laneBusy || !fallbackProvider}
+																	className="min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm text-slate-200 outline-none focus:border-blue-400/60 disabled:opacity-60"
+																>
+																	<option value="">Select fallback model…</option>
+																	{fallbackModels.map((model) => (
+																		<option key={model.model_id} value={model.model_id}>
+																			{model.label}
+																		</option>
+																	))}
+																</select>
+																<label className="flex items-center justify-between text-xs text-slate-300">
+																	<span>Fallback execution enabled</span>
+																	<input
+																		type="checkbox"
+																		checked={Boolean(setting.fallback_enabled)}
+																		onChange={(event) =>
+																		setting.provider_id && setting.model_id
+																			? void handleSaveLane(
+																					"structure",
+																					setting.provider_id,
+																					setting.model_id,
+																					setting.execution_enabled,
+																					{
+																						fallback_provider_id: fallbackProvider || null,
+																						fallback_model_id: fallbackModel || null,
+																						fallback_enabled: event.target.checked,
+																					},
+																				)
+																			: undefined
+																	}
+																		disabled={laneBusy || !fallbackProvider || !fallbackModel}
+																		className="h-4 w-4 accent-blue-500 disabled:opacity-50"
+																	/>
+																</label>
+																<div className="text-[11px] text-slate-500">
+																	Status: {formatLaneStatus(setting.fallback_status)}
+																</div>
+															</div>
+														) : null}
+
+														{setting.lane === "video" ? (
+															<div className="space-y-2 rounded-xl border border-purple-500/20 bg-purple-500/5 p-3">
+																<label className="text-xs font-medium text-slate-300">
+																	Video engine
+																	<input
+																		defaultValue={setting.engine_id || ""}
+																		placeholder="engine id (required for explicit video authority)"
+																		onBlur={(event) =>
+																		setting.provider_id && setting.model_id && event.target.value.trim()
+																			? void handleSaveLane(
+																					"video",
+																					setting.provider_id,
+																					setting.model_id,
+																					setting.execution_enabled,
+																					{ engine_id: event.target.value.trim() },
+																				)
+																			: undefined
+																		}
+																		className="mt-1 min-w-0 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none focus:border-purple-400/60"
+																	/>
+																</label>
+															</div>
+														) : null}
+
+													<label className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950/60 px-4 py-2 text-xs text-slate-300">
 												<span>Execution enabled</span>
 												<input
 													type="checkbox"
@@ -1372,9 +1413,13 @@ export default function SettingsPage() {
 
 											<div className="flex items-center justify-between gap-2">
 												<div className="text-[11px] text-slate-500">
-													{setting.lane === "text_assist"
-														? "Consumed by AI Copy Assist candidate generation."
-														: "Consumed by product-image vision tasks."}
+															{setting.lane === "text"
+																? "Natural-language copy, captions, angles, and ideation."
+																: setting.lane === "structure"
+																	? "Strict JSON, Product Intelligence, V3/FAST54, and schema extraction."
+																	: setting.lane === "image"
+																		? "Product-image understanding and visual classification."
+																		: "Explicit provider-backed video review only."}
 												</div>
 												<button
 													type="button"

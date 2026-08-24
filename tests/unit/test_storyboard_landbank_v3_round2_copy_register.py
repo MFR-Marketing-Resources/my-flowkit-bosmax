@@ -1332,8 +1332,8 @@ async def test_round2_live_plan_and_adapter_share_one_bounded_output_budget(monk
     monkeypatch.setattr(
         ai_copy_provider_adapter,
         "provider_status",
-        lambda: {
-            "lane": "text_assist",
+        lambda lane="structure": {
+            "lane": "structure",
             "configured": True,
             "provider_id": "deepseek",
             "model_id": "deepseek-v4-flash",
@@ -1357,7 +1357,7 @@ async def test_round2_live_plan_and_adapter_share_one_bounded_output_budget(monk
 
     captured = {}
 
-    def fake_complete_json_with_receipt(_system, _user, *, max_output_tokens=None):
+    def fake_complete_json_with_receipt(_system, _user, *, max_output_tokens=None, lane="structure"):
         captured["max_output_tokens"] = max_output_tokens
         return {}, {
             "provider_id": "deepseek",

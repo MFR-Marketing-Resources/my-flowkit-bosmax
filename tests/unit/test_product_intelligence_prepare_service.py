@@ -54,7 +54,7 @@ async def _make_product() -> str:
 
 
 def _mock_complete(monkeypatch, value):
-    def fake(system, user):
+    def fake(system, user, **kwargs):
         if isinstance(value, Exception):
             raise value
         return value

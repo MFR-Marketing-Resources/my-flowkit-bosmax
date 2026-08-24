@@ -294,11 +294,11 @@ def _hermetic_complete_vision_lane(monkeypatch):
     """Configured vision lane with execution disabled (no machine state)."""
     monkeypatch.setattr(
         "agent.services.product_image_analysis_service.get_lane_provider",
-        lambda lane: "anthropic" if lane == "vision" else None,
+        lambda lane: "anthropic" if lane == "image" else None,
     )
     monkeypatch.setattr(
         "agent.services.product_image_analysis_service.get_lane_api_key",
-        lambda lane: "HERMETIC_DUMMY_KEY_NOT_A_REAL_SECRET" if lane == "vision" else None,
+        lambda lane: "HERMETIC_DUMMY_KEY_NOT_A_REAL_SECRET" if lane == "image" else None,
     )
     monkeypatch.setattr(
         "agent.services.product_image_analysis_service._resolve_vision_model",
@@ -344,7 +344,7 @@ def test_image_analysis_mocked_when_execution_enabled(monkeypatch):
     _hermetic_complete_vision_lane(monkeypatch)
     monkeypatch.setattr(
         "agent.services.product_image_analysis_service.is_lane_execution_enabled",
-        lambda lane: lane == "vision",
+        lambda lane: lane == "image",
     )
     monkeypatch.setattr(
         "agent.services.product_intelligence_service.analyze_product_image_payload",

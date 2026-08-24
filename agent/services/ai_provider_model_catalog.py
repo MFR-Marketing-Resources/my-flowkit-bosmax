@@ -1,5 +1,4 @@
-"""AI provider / model catalog — SEED + mutable local catalog + transport gating
-(Dynamic AI Model Catalog & Explicit Lane Configuration V1).
+"""AI provider / model capability catalog — seed + mutable local catalog.
 
 Two layers:
 - **Seed catalog** (source-of-truth *reference* constants below): recommended known
@@ -13,8 +12,10 @@ A model ID is treated as operator-provided runtime config, not a claim that the
 model exists. Transport compatibility is enforced: a model may serve a lane only
 if the provider's transport implements that lane. Unknown transport fails closed.
 
-This module holds NO secrets and performs NO network calls. It never sits on the
-deterministic compiler path.
+V4 makes lane capability explicit at the model entry.  A provider identity never
+implicitly grants a lane: the model must declare the lane and the selected
+transport must have a real adapter for it.  This module holds NO secrets and
+performs NO network calls.
 """
 from __future__ import annotations
 
@@ -23,11 +24,21 @@ from typing import Any
 
 from agent.config import BASE_DIR
 
-LANES: tuple[str, ...] = ("text_assist", "vision")
+LANES: tuple[str, ...] = ("text", "structure", "image", "video")
+
+# These names are accepted only at read/migration seams.  They are deliberately
+# not members of LANES and are never emitted by the V4 catalog or persisted lane
+# state.
+LEGACY_LANE_ALIASES: dict[str, str] = {
+    "text_assist": "text",
+    "vision": "image",
+}
 
 LANE_LABELS: dict[str, str] = {
-    "text_assist": "Text Assist",
-    "vision": "Vision",
+    "text": "Text",
+    "structure": "Structure",
+    "image": "Image",
+    "video": "Video",
 }
 
 # --- transports -----------------------------------------------------------
@@ -40,17 +51,15 @@ SUPPORTED_TRANSPORTS: frozenset[str] = frozenset(
     {TRANSPORT_OPENAI_COMPATIBLE, TRANSPORT_ANTHROPIC_MESSAGES}
 )
 
-# Which transports actually have a runtime implementation for each lane:
-# - text_assist: implemented in ai_copy_provider_adapter for BOTH transports.
-# - vision: BOTH transports are wired.
-#     * anthropic_messages   -> product_image_analysis anthropic SDK path (existing).
-#     * openai_compatible_chat -> vision_provider_adapter image_url path, which
-#       reaches OpenAI, Gemini (its OpenAI-compatible endpoint), and Qwen-VL
-#       (DashScope OpenAI-compatible endpoint). A model is still only vision-
-#       selectable if it ALSO lists the vision lane (deepseek ships none).
+# Which transports actually have a runtime implementation for each lane.  Video
+# is intentionally limited to the frame-based Anthropic video-review adapter;
+# Google Flow generation is a separate authenticated transport and is not an AI
+# provider-model setting.  DeepSeek has no video adapter.
 LANE_TRANSPORT_SUPPORT: dict[str, frozenset[str]] = {
-    "text_assist": frozenset({TRANSPORT_OPENAI_COMPATIBLE, TRANSPORT_ANTHROPIC_MESSAGES}),
-    "vision": frozenset({TRANSPORT_ANTHROPIC_MESSAGES, TRANSPORT_OPENAI_COMPATIBLE}),
+    "text": frozenset({TRANSPORT_OPENAI_COMPATIBLE, TRANSPORT_ANTHROPIC_MESSAGES}),
+    "structure": frozenset({TRANSPORT_OPENAI_COMPATIBLE, TRANSPORT_ANTHROPIC_MESSAGES}),
+    "image": frozenset({TRANSPORT_ANTHROPIC_MESSAGES, TRANSPORT_OPENAI_COMPATIBLE}),
+    "video": frozenset({TRANSPORT_ANTHROPIC_MESSAGES}),
 }
 
 # provider_id -> seed provider block. `models[].lanes` are the lanes the seed model
@@ -60,28 +69,31 @@ SEED_CATALOG: dict[str, dict[str, Any]] = {
         "label": "Anthropic",
         "transport": TRANSPORT_ANTHROPIC_MESSAGES,
         "models": [
-            {"model_id": "claude-sonnet-5", "label": "Claude Sonnet 5", "lanes": ["text_assist", "vision"]},
-            {"model_id": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5", "lanes": ["text_assist", "vision"]},
-            {"model_id": "claude-opus-4-8", "label": "Claude Opus 4.8", "lanes": ["text_assist", "vision"]},
+            {"model_id": "claude-sonnet-5", "label": "Claude Sonnet 5", "lanes": ["text", "structure", "image", "video"]},
+            {"model_id": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5", "lanes": ["text", "structure", "image", "video"]},
+            {"model_id": "claude-opus-4-8", "label": "Claude Opus 4.8", "lanes": ["text", "structure", "image", "video"]},
         ],
     },
     "qwen": {
         "label": "Qwen",
         "transport": TRANSPORT_OPENAI_COMPATIBLE,
         "models": [
-            {"model_id": "qwen-plus", "label": "Qwen Plus", "lanes": ["text_assist"]},
-            {"model_id": "qwen-max", "label": "Qwen Max", "lanes": ["text_assist"]},
+            {"model_id": "qwen-plus", "label": "Qwen Plus", "lanes": ["text", "structure"]},
+            {"model_id": "qwen-max", "label": "Qwen Max", "lanes": ["text", "structure"]},
             # Qwen-VL over the DashScope OpenAI-compatible endpoint (image_url).
-            {"model_id": "qwen-vl-max", "label": "Qwen VL Max", "lanes": ["vision"]},
+            {"model_id": "qwen-vl-max", "label": "Qwen VL Max", "lanes": ["image"]},
         ],
     },
     "openai": {
         "label": "OpenAI",
         "transport": TRANSPORT_OPENAI_COMPATIBLE,
         "models": [
-            # GPT-4o family is natively multimodal (text_assist + vision).
-            {"model_id": "gpt-4o-mini", "label": "GPT-4o mini", "lanes": ["text_assist", "vision"]},
-            {"model_id": "gpt-4o", "label": "GPT-4o", "lanes": ["text_assist", "vision"]},
+            # GPT-4o family is natively multimodal (text + structure + image).
+            {"model_id": "gpt-4o-mini", "label": "GPT-4o mini", "lanes": ["text", "structure", "image"]},
+            {"model_id": "gpt-4o", "label": "GPT-4o", "lanes": ["text", "structure", "image"]},
+            # Owner-requested model.  The current local adapter contract proves
+            # text/strict JSON only; no image/video capability is invented here.
+            {"model_id": "gpt-5.6-luna", "label": "GPT-5.6 Luna", "lanes": ["text", "structure"]},
         ],
     },
     "gemini": {
@@ -89,17 +101,19 @@ SEED_CATALOG: dict[str, dict[str, Any]] = {
         "transport": TRANSPORT_OPENAI_COMPATIBLE,
         "models": [
             # Gemini 2.0 Flash is multimodal via the OpenAI-compatible endpoint.
-            {"model_id": "gemini-2.0-flash", "label": "Gemini 2.0 Flash", "lanes": ["text_assist", "vision"]},
+            {"model_id": "gemini-2.0-flash", "label": "Gemini 2.0 Flash", "lanes": ["text", "structure", "image"]},
         ],
     },
     "deepseek": {
         "label": "DeepSeek",
         "transport": TRANSPORT_OPENAI_COMPATIBLE,
         "models": [
-            # DeepSeek retired `deepseek-chat` (the API now 400s it: "supported API
-            # model names are deepseek-v4-pro or deepseek-v4-flash"). Seed the current V4 line.
-            {"model_id": "deepseek-v4-pro", "label": "DeepSeek V4 Pro", "lanes": ["text_assist"]},
-            {"model_id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash", "lanes": ["text_assist"]},
+            # Official DeepSeek docs establish V4 Flash/Pro as chat/JSON models;
+            # current official docs also state V4 is text-only for vision.  Keep
+            # both models out of IMAGE and VIDEO until a first-party capability
+            # contract changes.
+            {"model_id": "deepseek-v4-pro", "label": "DeepSeek V4 Pro", "lanes": ["text", "structure"]},
+            {"model_id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash", "lanes": ["text", "structure"]},
         ],
     },
 }
@@ -114,7 +128,16 @@ AI_MODEL_CATALOG_VERSION = 1
 # --- pure helpers ---------------------------------------------------------
 
 def is_known_lane(lane: str) -> bool:
-    return str(lane or "") in LANES
+    return canonical_lane_id(lane) is not None
+
+
+def canonical_lane_id(lane: str | None) -> str | None:
+    """Return a V4 lane id, accepting V3 names only at compatibility seams."""
+
+    normalized = str(lane or "").strip().lower()
+    if normalized in LANES:
+        return normalized
+    return LEGACY_LANE_ALIASES.get(normalized)
 
 
 def _normalize_lanes(lanes: Any) -> list[str]:
@@ -122,7 +145,7 @@ def _normalize_lanes(lanes: Any) -> list[str]:
         return []
     seen: list[str] = []
     for lane in lanes:
-        lane = str(lane or "").strip()
+        lane = canonical_lane_id(str(lane or "").strip())
         if lane in LANES and lane not in seen:
             seen.append(lane)
     return [lane for lane in LANES if lane in seen]
@@ -220,8 +243,9 @@ def _forward_merge_seed_models(provider_id: str, entry: dict[str, Any]) -> bool:
     Rules (see MULTI_PROVIDER_VISION_LANE_ADAPTERS_V1 / this hotfix):
     - ADD any seed model missing from the local provider (new capabilities such as
       qwen-vl-max reach existing installs without a manual reset).
-    - For an existing model whose model_id matches a current seed model, MERGE any
-      missing seed lanes (e.g. gpt-4o / gemini-2.0-flash gain `vision`). Union only —
+     - For an existing model whose model_id matches a current seed model, MERGE any
+       missing seed lanes (for example, an updated multimodal seed may gain `image`).
+       Union only —
       existing lanes are never dropped.
     - PRESERVE everything operator-owned: custom models (non-seed ids) are untouched,
       and existing `enabled` / `label` / `source` are never overwritten. A disabled
@@ -284,8 +308,8 @@ def _load_catalog() -> dict[str, Any]:
             providers[pid] = _seed_provider(pid)
             added_seed = True
 
-    # Forward-migrate seed providers already present (pre-#210 catalogs lack the new
-    # vision seed models / lanes). Non-destructive: adds missing seed models, merges
+    # Forward-migrate seed providers already present. Non-destructive: adds missing
+    # seed models, merges
     # missing seed lanes into existing seed models, preserves everything else.
     migrated = False
     for pid in SEED_PROVIDER_IDS:
@@ -333,7 +357,8 @@ def get_provider_transport(provider_id: str) -> str | None:
 
 
 def _transport_supports_lane(transport: str, lane: str) -> bool:
-    return transport in LANE_TRANSPORT_SUPPORT.get(lane, frozenset())
+    canonical = canonical_lane_id(lane)
+    return transport in LANE_TRANSPORT_SUPPORT.get(canonical or "", frozenset())
 
 
 def _provider_supported_lanes(entry: dict[str, Any]) -> list[str]:
@@ -370,6 +395,7 @@ def get_model_entry(provider_id: str, model_id: str) -> dict[str, Any] | None:
 
 
 def models_for_lane(provider_id: str, lane: str) -> list[dict[str, Any]]:
+    lane = canonical_lane_id(lane) or ""
     entry = get_provider_entry(provider_id)
     if not entry or not entry.get("enabled"):
         return []
@@ -385,7 +411,8 @@ def models_for_lane(provider_id: str, lane: str) -> list[dict[str, Any]]:
 def model_supports_lane(provider_id: str, model_id: str, lane: str) -> bool:
     """True only when the model exists, is enabled, lists the lane, AND the
     provider's transport implements the lane. Fail-closed everywhere else."""
-    if not is_known_lane(lane):
+    lane = canonical_lane_id(lane) or ""
+    if not lane:
         return False
     entry = get_provider_entry(provider_id)
     if not entry or not entry.get("enabled"):
@@ -400,7 +427,8 @@ def model_supports_lane(provider_id: str, model_id: str, lane: str) -> bool:
 
 def validate_provider_model_for_lane(provider_id: str, model_id: str, lane: str) -> None:
     """Raise ValueError (mapped to 422 by the API) for any impermissible combo."""
-    if not is_known_lane(lane):
+    lane = canonical_lane_id(lane) or ""
+    if not lane:
         raise ValueError(f"UNSUPPORTED_LANE:{lane}")
     pid = str(provider_id or "").lower()
     entry = get_provider_entry(pid)
@@ -440,6 +468,13 @@ def upsert_provider_model(
     if not clean_model_id:
         raise ValueError("MODEL_ID_REQUIRED")
 
+    if lanes is not None:
+        for requested_lane in lanes:
+            normalized_lane = str(requested_lane or "").strip().lower()
+            if normalized_lane not in LANES:
+                # Legacy aliases are accepted only while reading/migrating old
+                # state; V4 catalog APIs persist canonical lane IDs only.
+                raise ValueError(f"UNSUPPORTED_LANE:{requested_lane}")
     requested_lanes = _normalize_lanes(lanes if lanes is not None else [])
     transport = entry.get("transport") or ""
     for lane in requested_lanes:

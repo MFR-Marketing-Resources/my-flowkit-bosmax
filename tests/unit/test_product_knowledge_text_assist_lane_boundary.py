@@ -49,7 +49,7 @@ class _QwenResp:
 
 def test_qwen_lane_calls_qwen_endpoint_with_qwen_key_and_selected_model(lane_state, monkeypatch):
     svc.update_provider_key("qwen", "sk-qwen-REAL-123456")
-    svc.update_lane_settings("text_assist", "qwen", "qwen-max", execution_enabled=True)
+    svc.update_lane_settings("structure", "qwen", "qwen-max", execution_enabled=True)
 
     calls: list[dict] = []
 
@@ -74,7 +74,7 @@ def test_anthropic_lane_skips_and_never_posts(lane_state, monkeypatch):
     svc.update_provider_key("qwen", "sk-qwen-REAL-123456")
     svc.update_provider_key("anthropic", "sk-ant-SECRET-7890")
     svc.update_lane_settings(
-        "text_assist", "anthropic", "claude-haiku-4-5-20251001", execution_enabled=True
+        "structure", "anthropic", "claude-haiku-4-5-20251001", execution_enabled=True
     )
 
     def boom(*args, **kwargs):
@@ -96,7 +96,7 @@ def test_anthropic_lane_skips_and_never_posts(lane_state, monkeypatch):
 def test_other_non_qwen_lanes_skip_and_never_post(lane_state, monkeypatch, provider, model):
     svc.update_provider_key("qwen", "sk-qwen-REAL-123456")
     svc.update_provider_key(provider, f"sk-{provider}-SECRET-abcdef")
-    svc.update_lane_settings("text_assist", provider, model, execution_enabled=True)
+    svc.update_lane_settings("structure", provider, model, execution_enabled=True)
 
     def boom(*args, **kwargs):
         raise AssertionError(f"httpx.post must not be called for {provider} text_assist lane")
@@ -152,14 +152,14 @@ def test_no_non_qwen_key_ever_reaches_qwen_request(lane_state, monkeypatch):
         ("anthropic", "claude-haiku-4-5-20251001"),
         ("openai", "gpt-4o-mini"),
     ]:
-        svc.update_lane_settings("text_assist", provider, model, execution_enabled=True)
+        svc.update_lane_settings("structure", provider, model, execution_enabled=True)
         pks._extract_qwen_usp_suggestions(_req(), {})
 
     # Non-qwen lanes never post at all.
     assert captured == []
 
     # Qwen lane posts, and only the qwen key is ever present.
-    svc.update_lane_settings("text_assist", "qwen", "qwen-plus", execution_enabled=True)
+    svc.update_lane_settings("structure", "qwen", "qwen-plus", execution_enabled=True)
     pks._extract_qwen_usp_suggestions(_req(), {})
     assert len(captured) == 1
     auth = captured[0]["headers"].get("Authorization", "")

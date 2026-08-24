@@ -6,7 +6,7 @@ no new provider, no new secrets:
 
   - ``copy_grounding_service.resolve_copy_grounding(product)`` → customer avatar +
     product knowledge + claim guardrails + stealth route (PR #258)
-  - ``ai_copy_provider_adapter.complete_json(system, user)`` → the text_assist lane
+  - ``ai_copy_provider_adapter.complete_json(system, user, lane="text")`` → the TEXT lane
     transport, DISABLED BY DEFAULT (fails closed; no hardcoded model/key)
   - ``social_copy_package_service`` platform profiles + the single claim-safe gate
 
@@ -265,7 +265,9 @@ async def generate_caption_candidates(req: dict) -> dict[str, Any]:
             record=record, copy_set=copy_set, name=name, target_angle=target_angle,
             vary=count > 1, variant_index=i,
         )
-        ai = provider.complete_json(_system_prompt(platform, profile), _user_prompt(brief))
+        ai = provider.complete_json(
+            _system_prompt(platform, profile), _user_prompt(brief), lane="text"
+        )
         if not isinstance(ai, dict):
             raise provider.AICopyProviderError(provider.ERR_RESPONSE_INVALID)
         candidates.append(_parse_candidate(ai, platform, profile))

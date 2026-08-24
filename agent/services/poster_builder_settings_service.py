@@ -116,7 +116,7 @@ def _ai_provider() -> AIProviderStatusSummary:
     status = ai_provider.provider_status()
     configured = bool(status.get("configured"))
     return AIProviderStatusSummary(
-        lane=str(status.get("lane") or "text_assist"),
+        lane=str(status.get("lane") or "text"),
         configured=configured,
         status="configured" if configured else "unavailable",
         provider_id=status.get("provider_id"),

@@ -232,7 +232,7 @@ async def _ai_ephemeral_kits(
     count: int,
 ) -> tuple[list[PosterCopyKit], list[str]]:
     warnings: list[str] = []
-    if not ai_provider.is_configured():
+    if not ai_provider.is_configured("text"):
         warnings.append("AI provider not configured — using fallback templates only.")
         return [], warnings
     kits: list[PosterCopyKit] = []
@@ -255,7 +255,7 @@ async def _ai_ephemeral_kits(
     for i in range(count):
         try:
             brief = ai_svc._build_brief(assist, product, grounding)
-            raw = ai_provider.generate_candidate(brief)
+            raw = ai_provider.generate_candidate(brief, lane="text")
             if not isinstance(raw, dict):
                 warnings.append(f"AI candidate {i + 1} invalid response.")
                 continue

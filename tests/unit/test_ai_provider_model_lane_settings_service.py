@@ -1,6 +1,6 @@
-"""Unit tests for AI Provider Model & Lane Settings (V3: explicit lanes).
+"""Unit tests for AI Provider Model & Lane Settings (V4: four explicit lanes).
 
-Covers: first-run NOT_CONFIGURED lanes, V1/V2 -> V3 migration (keys preserved,
+Covers: first-run NOT_CONFIGURED lanes, V1/V2/V3 -> V4 migration (keys preserved,
 seeded-default-without-key downgraded, real config preserved), mutable model
 catalog wiring, provider/model/lane validation, get_lane_* resolvers, and the
 no-raw-key guarantee. Both the settings file AND the model-catalog file are
@@ -42,7 +42,7 @@ def _provider(summary, pid):
 
 def test_fresh_install_lanes_are_not_configured(state):
     summary = svc.summarize_provider_settings()
-    for lane_name in ("text_assist", "vision"):
+    for lane_name in ("text", "structure", "image", "video"):
         lane = _lane(summary, lane_name)
         assert lane["provider_id"] is None
         assert lane["model_id"] is None
@@ -50,9 +50,9 @@ def test_fresh_install_lanes_are_not_configured(state):
         assert lane["configured_by_user"] is False
         assert lane["status"] == "NOT_CONFIGURED"
     # No hidden default provider/model resolves at runtime either.
-    assert svc.get_lane_provider("text_assist") is None
-    assert svc.get_lane_model("text_assist") is None
-    assert svc.get_lane_provider("vision") is None
+    assert svc.get_lane_provider("text") is None
+    assert svc.get_lane_model("text") is None
+    assert svc.get_lane_provider("image") is None
 
 
 # --- migration ------------------------------------------------------------
@@ -74,7 +74,7 @@ def test_v1_migrates_preserving_keys_but_lanes_not_configured(state):
     assert _provider(summary, "qwen")["has_key"] is True
     assert svc.get_provider_api_key("qwen") == "sk-qwen-EXISTING-123456"
     # V1 has no lanes -> explicit NOT_CONFIGURED, never auto-selected.
-    assert _lane(summary, "text_assist")["status"] == "NOT_CONFIGURED"
+    assert _lane(summary, "text")["status"] == "NOT_CONFIGURED"
 
 
 def test_v2_seeded_default_without_key_downgrades_to_not_configured(state):
@@ -97,9 +97,9 @@ def test_v2_seeded_default_without_key_downgrades_to_not_configured(state):
         encoding="utf-8",
     )
     summary = svc.summarize_provider_settings()
-    assert _lane(summary, "text_assist")["status"] == "NOT_CONFIGURED"
-    assert _lane(summary, "text_assist")["provider_id"] is None
-    assert _lane(summary, "vision")["status"] == "NOT_CONFIGURED"
+    assert _lane(summary, "text")["status"] == "NOT_CONFIGURED"
+    assert _lane(summary, "text")["provider_id"] is None
+    assert _lane(summary, "image")["status"] == "NOT_CONFIGURED"
 
 
 def test_v2_seeded_text_assist_default_with_qwen_key_downgrades_to_not_configured(state):
@@ -130,12 +130,12 @@ def test_v2_seeded_text_assist_default_with_qwen_key_downgrades_to_not_configure
     assert _provider(summary, "qwen")["has_key"] is True
     assert svc.get_provider_api_key("qwen") == "sk-qwen-existing-abcdef"
     # Lane downgraded despite the key.
-    lane = _lane(summary, "text_assist")
+    lane = _lane(summary, "text")
     assert lane["status"] == "NOT_CONFIGURED"
     assert lane["provider_id"] is None
     assert lane["model_id"] is None
-    assert svc.get_lane_provider("text_assist") is None
-    assert svc.get_lane_model("text_assist") is None
+    assert svc.get_lane_provider("text") is None
+    assert svc.get_lane_model("text") is None
 
 
 def test_v2_seeded_vision_default_with_anthropic_key_downgrades_to_not_configured(state):
@@ -161,10 +161,10 @@ def test_v2_seeded_vision_default_with_anthropic_key_downgrades_to_not_configure
     )
     summary = svc.summarize_provider_settings()
     assert _provider(summary, "anthropic")["has_key"] is True
-    lane = _lane(summary, "vision")
+    lane = _lane(summary, "image")
     assert lane["status"] == "NOT_CONFIGURED"
     assert lane["provider_id"] is None
-    assert svc.get_lane_provider("vision") is None
+    assert svc.get_lane_provider("image") is None
 
 
 def test_v2_lane_with_key_is_preserved_as_user_configured(state):
@@ -185,12 +185,12 @@ def test_v2_lane_with_key_is_preserved_as_user_configured(state):
         encoding="utf-8",
     )
     summary = svc.summarize_provider_settings()
-    lane = _lane(summary, "text_assist")
+    lane = _lane(summary, "text")
     assert lane["provider_id"] == "qwen"
     assert lane["model_id"] == "qwen-max"
     assert lane["configured_by_user"] is True
     assert lane["status"] == "READY"  # key + valid model + execution on
-    assert svc.get_lane_model("text_assist") == "qwen-max"
+    assert svc.get_lane_model("text") == "qwen-max"
 
 
 def test_v2_non_default_provider_preserved_even_without_key(state):
@@ -212,13 +212,13 @@ def test_v2_non_default_provider_preserved_even_without_key(state):
         ),
         encoding="utf-8",
     )
-    lane = _lane(svc.summarize_provider_settings(), "text_assist")
+    lane = _lane(svc.summarize_provider_settings(), "text")
     assert lane["provider_id"] == "openai"
     assert lane["configured_by_user"] is True
     assert lane["status"] == "KEY_MISSING"
 
 
-def test_load_does_not_rewrite_valid_v2_file(state):
+def test_load_upgrades_valid_v2_file_to_canonical_v4(state):
     original = {
         "version": 2,
         "active_provider": None,
@@ -226,9 +226,10 @@ def test_load_does_not_rewrite_valid_v2_file(state):
         "lanes": {"text_assist": {"provider_id": "qwen", "model_id": "qwen-max", "execution_enabled": True}},
     }
     state.write_text(json.dumps(original), encoding="utf-8")
-    svc.summarize_provider_settings()  # plain read
+    svc.summarize_provider_settings()  # idempotent canonical upgrade
     on_disk = json.loads(state.read_text(encoding="utf-8"))
-    assert on_disk["version"] == 2
+    assert on_disk["version"] == 4
+    assert set(on_disk["lanes"]) == {"text", "structure", "image", "video"}
     assert on_disk["providers"]["qwen"]["api_key"] == "sk-qwen-REAL-abcdef"
 
 
@@ -240,7 +241,7 @@ def test_summary_includes_model_catalog_and_lanes(state):
     assert "qwen" in summary["model_catalog"]
     assert summary["model_catalog"]["qwen"]["transport"] == "openai_compatible_chat"
     assert any(m["model_id"] == "qwen-max" for m in summary["model_catalog"]["qwen"]["models"])
-    assert {lane["lane"] for lane in summary["lanes"]} == {"text_assist", "vision"}
+    assert {lane["lane"] for lane in summary["lanes"]} == {"text", "structure", "image", "video"}
 
 
 def test_registry_never_returns_raw_api_key(state):
@@ -267,38 +268,38 @@ def test_update_provider_default_model_rejects_foreign_model(state):
 
 # --- lane settings --------------------------------------------------------
 
-def test_update_lane_settings_valid_text_assist(state):
+def test_update_lane_settings_valid_text(state):
     svc.update_provider_key("qwen", "sk-qwen-live-abcdef")
-    summary = svc.update_lane_settings("text_assist", "qwen", "qwen-max", execution_enabled=True)
-    lane = _lane(summary, "text_assist")
+    summary = svc.update_lane_settings("text", "qwen", "qwen-max", execution_enabled=True)
+    lane = _lane(summary, "text")
     assert lane["provider_id"] == "qwen"
     assert lane["model_id"] == "qwen-max"
     assert lane["execution_enabled"] is True
     assert lane["configured_by_user"] is True
     assert lane["status"] == "READY"
-    assert svc.get_lane_provider("text_assist") == "qwen"
-    assert svc.get_lane_model("text_assist") == "qwen-max"
-    assert svc.get_lane_api_key("text_assist") == "sk-qwen-live-abcdef"
+    assert svc.get_lane_provider("text") == "qwen"
+    assert svc.get_lane_model("text") == "qwen-max"
+    assert svc.get_lane_api_key("text") == "sk-qwen-live-abcdef"
 
 
 def test_update_lane_settings_rejects_model_not_supporting_lane(state):
     with pytest.raises(ValueError) as exc:
-        svc.update_lane_settings("vision", "qwen", "qwen-plus")
+        svc.update_lane_settings("image", "qwen", "qwen-plus")
     assert "MODEL_NOT_SUPPORTED_FOR_LANE" in str(exc.value)
 
 
-def test_update_vision_lane_gemini_multi_provider(state):
-    # Multi-provider vision: a non-Anthropic provider can own the vision lane.
+def test_update_image_lane_gemini_multi_provider(state):
+    # Multi-provider image: a non-Anthropic provider can own the image lane.
     svc.update_provider_key("gemini", "sk-gemini-live-abcdef")
     summary = svc.update_lane_settings(
-        "vision", "gemini", "gemini-2.0-flash", execution_enabled=True
+        "image", "gemini", "gemini-2.0-flash", execution_enabled=True
     )
-    lane = _lane(summary, "vision")
+    lane = _lane(summary, "image")
     assert lane["provider_id"] == "gemini"
     assert lane["model_id"] == "gemini-2.0-flash"
     assert lane["status"] == "READY"
-    assert svc.get_lane_provider("vision") == "gemini"
-    assert svc.get_lane_model("vision") == "gemini-2.0-flash"
+    assert svc.get_lane_provider("image") == "gemini"
+    assert svc.get_lane_model("image") == "gemini-2.0-flash"
     # No raw key leaks into the summary.
     import json as _json
 
@@ -307,14 +308,14 @@ def test_update_vision_lane_gemini_multi_provider(state):
 
 def test_update_lane_settings_rejects_foreign_model(state):
     with pytest.raises(ValueError) as exc:
-        svc.update_lane_settings("text_assist", "qwen", "gpt-4o-mini")
+        svc.update_lane_settings("text", "qwen", "gpt-4o-mini")
     assert "MODEL_NOT_FOUND" in str(exc.value)
 
 
 def test_update_lane_settings_rejects_disabled_model(state):
     cat.disable_provider_model("qwen", "qwen-max")
     with pytest.raises(ValueError) as exc:
-        svc.update_lane_settings("text_assist", "qwen", "qwen-max")
+        svc.update_lane_settings("text", "qwen", "qwen-max")
     assert "MODEL_DISABLED" in str(exc.value)
 
 
@@ -326,9 +327,9 @@ def test_validate_provider_model_for_lane_unknown_lane(state):
 
 def test_clear_lane_returns_to_not_configured(state):
     svc.update_provider_key("qwen", "sk-qwen-live-abcdef")
-    svc.update_lane_settings("text_assist", "qwen", "qwen-max", execution_enabled=True)
-    summary = svc.clear_lane_settings("text_assist")
-    lane = _lane(summary, "text_assist")
+    svc.update_lane_settings("text", "qwen", "qwen-max", execution_enabled=True)
+    summary = svc.clear_lane_settings("text")
+    lane = _lane(summary, "text")
     assert lane["status"] == "NOT_CONFIGURED"
     assert lane["provider_id"] is None
     assert lane["configured_by_user"] is False
@@ -336,18 +337,18 @@ def test_clear_lane_returns_to_not_configured(state):
 
 def test_lane_key_missing_status(state):
     # provider/model valid but no key.
-    svc.update_lane_settings("text_assist", "qwen", "qwen-plus", execution_enabled=True)
-    lane = _lane(svc.summarize_provider_settings(), "text_assist")
+    svc.update_lane_settings("text", "qwen", "qwen-plus", execution_enabled=True)
+    lane = _lane(svc.summarize_provider_settings(), "text")
     assert lane["status"] == "KEY_MISSING"
 
 
 def test_custom_model_selectable_for_lane(state):
     # DeepSeek example: operator adds a model that isn't in source code.
-    cat.upsert_provider_model("deepseek", "deepseek-reasoner", "DeepSeek Reasoner", ["text_assist"], True)
+    cat.upsert_provider_model("deepseek", "deepseek-reasoner", "DeepSeek Reasoner", ["text"], True)
     svc.update_provider_key("deepseek", "sk-deepseek-live-abcdef")
-    summary = svc.update_lane_settings("text_assist", "deepseek", "deepseek-reasoner", execution_enabled=True)
-    lane = _lane(summary, "text_assist")
+    summary = svc.update_lane_settings("text", "deepseek", "deepseek-reasoner", execution_enabled=True)
+    lane = _lane(summary, "text")
     assert lane["provider_id"] == "deepseek"
     assert lane["model_id"] == "deepseek-reasoner"
     assert lane["status"] == "READY"
-    assert svc.get_lane_model("text_assist") == "deepseek-reasoner"
+    assert svc.get_lane_model("text") == "deepseek-reasoner"

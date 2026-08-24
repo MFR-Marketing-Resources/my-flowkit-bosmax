@@ -1,4 +1,4 @@
-"""API contract tests for AI Provider Model & Lane Settings V3 endpoints.
+"""API contract tests for AI Provider Model & Lane Settings V4 endpoints.
 
 Covers registry shape (catalog + lanes), provider default model, lane config,
 the mutable model-catalog CRUD endpoints (add custom / disable / reset-seed),
@@ -41,7 +41,7 @@ def test_get_registry_fresh_lanes_not_configured(monkeypatch, tmp_path):
     body = client.get("/api/ai-providers").json()
     assert "model_catalog" in body and "qwen" in body["model_catalog"]
     assert body["model_catalog"]["qwen"]["transport"] == "openai_compatible_chat"
-    for lane_name in ("text_assist", "vision"):
+    for lane_name in ("text", "structure", "image", "video"):
         assert _lane(body, lane_name)["status"] == "NOT_CONFIGURED"
 
 
@@ -58,7 +58,7 @@ def test_add_custom_deepseek_model_and_select_for_lane(monkeypatch, tmp_path):
     # Operator adds a custom DeepSeek model with no code change.
     r = client.put(
         "/api/ai-providers/model-catalog/deepseek/models/deepseek-reasoner",
-        json={"label": "DeepSeek Reasoner", "lanes": ["text_assist"], "enabled": True},
+        json={"label": "DeepSeek Reasoner", "lanes": ["text"], "enabled": True},
     )
     assert r.status_code == 200
     models = r.json()["model_catalog"]["deepseek"]["models"]
@@ -68,11 +68,11 @@ def test_add_custom_deepseek_model_and_select_for_lane(monkeypatch, tmp_path):
 
     client.put("/api/ai-providers/deepseek/key", json={"api_key": "sk-deepseek-live-abcdef"})
     r2 = client.put(
-        "/api/ai-providers/lanes/text_assist",
+        "/api/ai-providers/lanes/text",
         json={"provider_id": "deepseek", "model_id": "deepseek-reasoner", "execution_enabled": True},
     )
     assert r2.status_code == 200
-    lane = _lane(r2.json(), "text_assist")
+    lane = _lane(r2.json(), "text")
     assert lane["provider_id"] == "deepseek"
     assert lane["model_id"] == "deepseek-reasoner"
     assert lane["status"] == "READY"
@@ -82,7 +82,7 @@ def test_disable_model_then_lane_selection_rejected(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     client.patch("/api/ai-providers/model-catalog/qwen/models/qwen-max/disable")
     r = client.put(
-        "/api/ai-providers/lanes/text_assist",
+        "/api/ai-providers/lanes/text",
         json={"provider_id": "qwen", "model_id": "qwen-max"},
     )
     assert r.status_code == 422
@@ -108,25 +108,25 @@ def test_put_provider_model_invalid_returns_422(monkeypatch, tmp_path):
 def test_put_lane_model_not_supporting_lane_returns_422(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     r = client.put(
-        "/api/ai-providers/lanes/vision",
+        "/api/ai-providers/lanes/image",
         json={"provider_id": "qwen", "model_id": "qwen-plus"},
     )
     assert r.status_code == 422
     assert "MODEL_NOT_SUPPORTED_FOR_LANE" in r.json()["detail"]
 
 
-def test_add_custom_qwen_vision_model_now_allowed(monkeypatch, tmp_path):
+def test_add_custom_qwen_image_model_now_allowed(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
-    # Multi-provider vision: qwen transport (openai_compatible_chat) is a wired
-    # vision transport, so a custom Qwen-VL model on the vision lane is accepted.
+    # Multi-provider image: qwen transport is a wired image transport, so a
+    # custom Qwen-VL model on the image lane is accepted.
     r = client.put(
         "/api/ai-providers/model-catalog/qwen/models/qwen-vision-x",
-        json={"label": "Q VL", "lanes": ["vision"], "enabled": True},
+        json={"label": "Q VL", "lanes": ["image"], "enabled": True},
     )
     assert r.status_code == 200
     models = r.json()["model_catalog"]["qwen"]["models"]
     custom = next(m for m in models if m["model_id"] == "qwen-vision-x")
-    assert custom["lanes"] == ["vision"]
+    assert custom["lanes"] == ["image"]
     assert custom["source"] == "custom"
 
 
@@ -134,12 +134,12 @@ def test_clear_lane_endpoint(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     client.put("/api/ai-providers/qwen/key", json={"api_key": "sk-qwen-live-abcdef"})
     client.put(
-        "/api/ai-providers/lanes/text_assist",
+        "/api/ai-providers/lanes/text",
         json={"provider_id": "qwen", "model_id": "qwen-max", "execution_enabled": True},
     )
-    r = client.delete("/api/ai-providers/lanes/text_assist")
+    r = client.delete("/api/ai-providers/lanes/text")
     assert r.status_code == 200
-    assert _lane(r.json(), "text_assist")["status"] == "NOT_CONFIGURED"
+    assert _lane(r.json(), "text")["status"] == "NOT_CONFIGURED"
 
 
 def test_registry_response_has_no_raw_key(monkeypatch, tmp_path):
@@ -151,7 +151,7 @@ def test_registry_response_has_no_raw_key(monkeypatch, tmp_path):
 
 # --- HOTFIX regression: corrupt/legacy state must never break the registry ---
 # The /settings blank-page incident traced to a shape mismatch. The frontend is
-# now defensive, and the backend must keep emitting a valid V3 registry shape
+# now defensive, and the backend must keep emitting a valid V4 registry shape
 # (never 500) even when its on-disk state files are corrupt or legacy.
 
 
@@ -159,7 +159,7 @@ def _fresh_registry_shape_ok(body: dict) -> None:
     assert isinstance(body.get("providers"), list) and body["providers"]
     assert isinstance(body.get("model_catalog"), dict) and body["model_catalog"]
     assert isinstance(body.get("lanes"), list) and body["lanes"]
-    # Every catalog entry is the V3 object shape (not a bare array).
+    # Every catalog entry is the V4 object shape (not a bare array).
     for entry in body["model_catalog"].values():
         assert isinstance(entry, dict)
         assert "transport" in entry and isinstance(entry.get("models"), list)
@@ -168,7 +168,7 @@ def _fresh_registry_shape_ok(body: dict) -> None:
         assert isinstance(lane.get("status"), str) and lane["status"]
 
 
-def test_registry_after_old_catalog_exposes_multi_provider_vision(monkeypatch, tmp_path):
+def test_registry_after_old_catalog_exposes_multi_provider_image(monkeypatch, tmp_path):
     import json
 
     # A pre-#210 local catalog: openai/gemini text_assist only, no qwen-vl-max.
@@ -193,37 +193,37 @@ def test_registry_after_old_catalog_exposes_multi_provider_vision(monkeypatch, t
     body = client.get("/api/ai-providers").json()
     providers = {p["provider_id"]: p for p in body["providers"]}
     for pid in ("anthropic", "openai", "gemini", "qwen"):
-        assert "vision" in providers[pid]["supported_lanes"], pid
-    assert "vision" not in providers["deepseek"]["supported_lanes"]
+        assert "image" in providers[pid]["supported_lanes"], pid
+    assert "image" not in providers["deepseek"]["supported_lanes"]
     # Forward-migrated new seed model reaches an existing install.
     qwen_models = {m["model_id"] for m in body["model_catalog"]["qwen"]["models"]}
     assert "qwen-vl-max" in qwen_models
     # Lanes remain NOT_CONFIGURED — migration never auto-selects.
-    assert _lane(body, "vision")["status"] == "NOT_CONFIGURED"
+    assert _lane(body, "image")["status"] == "NOT_CONFIGURED"
 
 
-def test_vision_lane_supports_multiple_providers(monkeypatch, tmp_path):
+def test_image_lane_supports_multiple_providers(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     body = client.get("/api/ai-providers").json()
-    # Vision is no longer Anthropic-only: openai/gemini/qwen expose seed vision models.
+    # Image is multi-provider: openai/gemini/qwen expose seed image models.
     catalog = body["model_catalog"]
-    assert any(m["model_id"] == "gpt-4o" and "vision" in m["lanes"] for m in catalog["openai"]["models"])
-    assert any(m["model_id"] == "gemini-2.0-flash" and "vision" in m["lanes"] for m in catalog["gemini"]["models"])
-    assert any(m["model_id"] == "qwen-vl-max" and "vision" in m["lanes"] for m in catalog["qwen"]["models"])
+    assert any(m["model_id"] == "gpt-4o" and "image" in m["lanes"] for m in catalog["openai"]["models"])
+    assert any(m["model_id"] == "gemini-2.0-flash" and "image" in m["lanes"] for m in catalog["gemini"]["models"])
+    assert any(m["model_id"] == "qwen-vl-max" and "image" in m["lanes"] for m in catalog["qwen"]["models"])
     for pid in ("anthropic", "openai", "gemini", "qwen"):
         provider = next(p for p in body["providers"] if p["provider_id"] == pid)
-        assert "vision" in provider["supported_lanes"]
+        assert "image" in provider["supported_lanes"]
 
 
-def test_select_openai_vision_lane_ready_when_keyed(monkeypatch, tmp_path):
+def test_select_openai_image_lane_ready_when_keyed(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     client.put("/api/ai-providers/openai/key", json={"api_key": "sk-openai-vision-live"})
     r = client.put(
-        "/api/ai-providers/lanes/vision",
+        "/api/ai-providers/lanes/image",
         json={"provider_id": "openai", "model_id": "gpt-4o", "execution_enabled": True},
     )
     assert r.status_code == 200
-    lane = _lane(r.json(), "vision")
+    lane = _lane(r.json(), "image")
     assert lane["provider_id"] == "openai"
     assert lane["model_id"] == "gpt-4o"
     assert lane["status"] == "READY"
@@ -231,17 +231,17 @@ def test_select_openai_vision_lane_ready_when_keyed(monkeypatch, tmp_path):
     assert "sk-openai-vision-live" not in r.text
 
 
-def test_select_openai_vision_without_key_is_key_missing(monkeypatch, tmp_path):
+def test_select_openai_image_without_key_is_key_missing(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     r = client.put(
-        "/api/ai-providers/lanes/vision",
+        "/api/ai-providers/lanes/image",
         json={"provider_id": "openai", "model_id": "gpt-4o", "execution_enabled": False},
     )
     assert r.status_code == 200
-    assert _lane(r.json(), "vision")["status"] == "KEY_MISSING"
+    assert _lane(r.json(), "image")["status"] == "KEY_MISSING"
 
 
-def test_registry_valid_v3_shape_on_fresh_state(monkeypatch, tmp_path):
+def test_registry_valid_v4_shape_on_fresh_state(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     _fresh_registry_shape_ok(client.get("/api/ai-providers").json())
 
@@ -265,7 +265,7 @@ def test_registry_survives_corrupt_provider_settings(monkeypatch, tmp_path):
 
 def test_registry_migrates_legacy_v1_provider_settings(monkeypatch, tmp_path):
     # A pre-#208 (V1, no `version`) settings file with a stored key must migrate
-    # forward: the key is preserved and a valid V3 registry is emitted.
+    # forward: the key is preserved and a valid V4 registry is emitted.
     (tmp_path / "ai-provider-settings.json").write_text(
         '{"providers": {"anthropic": {"api_key": "sk-ant-legacy-key-000111"}}}',
         encoding="utf-8",
@@ -278,3 +278,64 @@ def test_registry_migrates_legacy_v1_provider_settings(monkeypatch, tmp_path):
     anthropic = next(p for p in body["providers"] if p["provider_id"] == "anthropic")
     assert anthropic["has_key"] is True
     assert "sk-ant-legacy-key-000111" not in r.text  # masked only
+
+
+def test_legacy_lane_routes_are_rejected_after_v4(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    for legacy_lane in ("text_assist", "vision"):
+        response = client.put(
+            f"/api/ai-providers/lanes/{legacy_lane}",
+            json={"provider_id": "qwen", "model_id": "qwen-plus"},
+        )
+        assert response.status_code == 422
+
+
+def test_structure_fallback_is_visible_and_limited_to_structure_lane(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    client.put(
+        "/api/ai-providers/deepseek/key",
+        json={"api_key": "unit-test-provider-key"},
+    )
+    response = client.put(
+        "/api/ai-providers/lanes/structure",
+        json={
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-flash",
+            "execution_enabled": True,
+            "fallback_provider_id": "deepseek",
+            "fallback_model_id": "deepseek-v4-pro",
+            "fallback_enabled": True,
+        },
+    )
+    assert response.status_code == 200
+    structure = _lane(response.json(), "structure")
+    assert structure["fallback_provider_id"] == "deepseek"
+    assert structure["fallback_model_id"] == "deepseek-v4-pro"
+    assert structure["fallback_enabled"] is True
+    assert "unit-test-provider-key" not in response.text
+
+    invalid = client.put(
+        "/api/ai-providers/lanes/text",
+        json={
+            "provider_id": "deepseek",
+            "model_id": "deepseek-v4-flash",
+            "fallback_provider_id": "deepseek",
+            "fallback_model_id": "deepseek-v4-pro",
+        },
+    )
+    assert invalid.status_code == 422
+    assert "FALLBACK_ONLY_SUPPORTED_FOR_STRUCTURE" in invalid.json()["detail"]
+
+
+def test_deepseek_v4_cannot_be_selected_for_image_or_video(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    for lane in ("image", "video"):
+        response = client.put(
+            f"/api/ai-providers/lanes/{lane}",
+            json={
+                "provider_id": "deepseek",
+                "model_id": "deepseek-v4-flash",
+            },
+        )
+        assert response.status_code == 422
+        assert "MODEL_NOT_SUPPORTED_FOR_LANE" in response.json()["detail"]

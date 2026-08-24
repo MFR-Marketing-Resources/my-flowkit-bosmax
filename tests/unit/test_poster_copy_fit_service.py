@@ -40,7 +40,7 @@ def test_no_over_limit_never_calls_provider(monkeypatch):
         calls["n"] += 1
         return {}
 
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": True)
     monkeypatch.setattr(svc.ai_provider, "complete_json", _tripwire)
 
     res = svc.fit_poster_copy(
@@ -53,7 +53,7 @@ def test_no_over_limit_never_calls_provider(monkeypatch):
 
 
 def test_provider_not_configured_fails_closed(monkeypatch):
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": False)
 
     res = svc.fit_poster_copy(_req())
 
@@ -66,8 +66,8 @@ def test_provider_not_configured_fails_closed(monkeypatch):
 
 
 def test_condenses_all_over_limit_fields(monkeypatch):
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
-    monkeypatch.setattr(svc.ai_provider, "complete_json", lambda _s, _u: dict(_SHORT))
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": True)
+    monkeypatch.setattr(svc.ai_provider, "complete_json", lambda _s, _u, **kwargs: dict(_SHORT))
 
     res = svc.fit_poster_copy(_req())
 
@@ -80,11 +80,11 @@ def test_condenses_all_over_limit_fields(monkeypatch):
 
 
 def test_ai_line_still_too_long_keeps_original_and_flags(monkeypatch):
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": True)
     # AI shortens everything except hook (returns a still-too-long hook).
     bad = dict(_SHORT)
     bad["hook"] = "H" * 90
-    monkeypatch.setattr(svc.ai_provider, "complete_json", lambda _s, _u: bad)
+    monkeypatch.setattr(svc.ai_provider, "complete_json", lambda _s, _u, **kwargs: bad)
 
     res = svc.fit_poster_copy(_req())
 
@@ -98,10 +98,10 @@ def test_ai_line_still_too_long_keeps_original_and_flags(monkeypatch):
 
 
 def test_unsafe_ai_output_discarded_whole(monkeypatch):
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": True)
     unsafe = dict(_SHORT)
     unsafe["hook"] = "Ubat sakit perut"  # "ubat" is an UNSAFE_CLAIM_TERM
-    monkeypatch.setattr(svc.ai_provider, "complete_json", lambda _s, _u: unsafe)
+    monkeypatch.setattr(svc.ai_provider, "complete_json", lambda _s, _u, **kwargs: unsafe)
 
     res = svc.fit_poster_copy(_req())
 
@@ -113,9 +113,9 @@ def test_unsafe_ai_output_discarded_whole(monkeypatch):
 
 
 def test_provider_error_fails_closed(monkeypatch):
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": True)
 
-    def _boom(_s, _u):
+    def _boom(_s, _u, **kwargs):
         raise svc.ai_provider.AICopyProviderError("AI_COPY_ASSIST_CALL_FAILED")
 
     monkeypatch.setattr(svc.ai_provider, "complete_json", _boom)
@@ -129,10 +129,10 @@ def test_provider_error_fails_closed(monkeypatch):
 
 
 def test_only_over_limit_fields_are_condensed(monkeypatch):
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": True)
     seen = {}
 
-    def _capture(_system, user):
+    def _capture(_system, user, **kwargs):
         seen["user"] = user
         return dict(_SHORT)
 

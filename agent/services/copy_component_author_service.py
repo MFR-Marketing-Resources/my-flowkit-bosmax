@@ -222,7 +222,7 @@ async def author_components(
             "warnings": ["DRY_RUN_NO_PERSIST"],
         }
 
-    raw = ai_provider.complete_json(system, user)  # raises when unconfigured
+    raw = ai_provider.complete_json(system, user, lane="text")  # raises when unconfigured
     values = _extract(raw, ctype)
 
     created, deduped, rejected = [], 0, 0
@@ -249,7 +249,7 @@ async def author_components(
             dedupe_key=dkey,
             source=SOURCE,
             provenance_json=json.dumps(
-                {"lane": "text_assist", "angle_key": angle["angle_key"]},
+                {"lane": "text", "angle_key": angle["angle_key"]},
                 ensure_ascii=False,
             ),
         )
