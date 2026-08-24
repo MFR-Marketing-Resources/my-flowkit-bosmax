@@ -611,6 +611,48 @@ async def upsert_product_truth_lock(product_id: str, **kwargs) -> dict | None:
     return await _get("product_visual_truth_lock", "product_id", product_id)
 
 
+async def cas_approve_product_truth_lock(
+    product_id: str,
+    *,
+    expected_candidate_sha256: str,
+    expected_candidate_media_id: str,
+    expected_lock_updated_at: str,
+    **kwargs,
+) -> dict | None:
+    """Approve one pending visual lock only if the reviewed candidate is intact.
+
+    The owner review queue returns the candidate cutout SHA, media id, and lock
+    version that the owner inspected.  This narrow compare-and-swap writer is
+    the persistence guard for that review snapshot; it never creates a lock,
+    changes source bytes, or broadens the existing Product Truth authority.
+    """
+    _validate_table("product_visual_truth_lock")
+    allowed = _COLUMNS["product_visual_truth_lock"]
+    values = {key: value for key, value in kwargs.items() if key in allowed}
+    values["updated_at"] = _now()
+    db = await get_db()
+    async with _db_lock:
+        sets = ",".join(f"{key}=?" for key in values)
+        cur = await db.execute(
+            f"UPDATE product_visual_truth_lock SET {sets} "
+            "WHERE product_id=? AND review_status='PENDING_REVIEW' "
+            "AND canonical_cutout_sha256=? AND canonical_cutout_media_id=? "
+            "AND updated_at=?",
+            [
+                *values.values(),
+                product_id,
+                str(expected_candidate_sha256).strip().lower(),
+                str(expected_candidate_media_id).strip(),
+                str(expected_lock_updated_at).strip(),
+            ],
+        )
+        if cur.rowcount != 1:
+            await db.rollback()
+            return None
+        await db.commit()
+    return await _get("product_visual_truth_lock", "product_id", product_id)
+
+
 async def cas_reauthorize_product_truth_lock_original_source(
     product_id: str,
     *,

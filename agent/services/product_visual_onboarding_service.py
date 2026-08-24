@@ -82,6 +82,7 @@ BLOCKED = "BLOCKED"
 REJECTED = "REJECTED"
 SUPERSEDED = "SUPERSEDED"
 BROKEN_OFFICIAL_VISUAL = "BROKEN_OFFICIAL_VISUAL"
+HIDDEN = "HIDDEN"
 
 _OFFICIAL_RECOVERY_FAILURE_CODES = {
     "CANONICAL_PRODUCT_SOURCE_INVALID",
@@ -1035,6 +1036,7 @@ def _readiness_payload(
     official_status = "INVALID" if official_invalid else "VALID" if approved_candidate else "NOT_APPROVED"
     state = _prep_state(lock, prep, official_visual_valid=official_visual_valid)
     source_kind = _candidate_source_kind(lock) if lock else ""
+    provenance = _provenance(lock)
     auto_status = _candidate_status(lock, history, AUTO_GENERATED, official_visual_valid=official_visual_valid)
     manual_status = _candidate_status(lock, history, USER_UPLOAD, official_visual_valid=official_visual_valid)
     if blocked_reason or official_invalid:
@@ -1128,6 +1130,25 @@ def _readiness_payload(
         "canonical_media_status": "AVAILABLE" if source_available else "MISSING",
         "canonical_source_media_id": (lock or {}).get("canonical_media_id"),
         "canonical_source_sha256": (lock or {}).get("canonical_sha256"),
+        # Candidate identity is exposed read-only so the owner queue can bind
+        # approval to exactly the bytes that were inspected.
+        "canonical_cutout_media_id": (lock or {}).get("canonical_cutout_media_id"),
+        "canonical_cutout_sha256": (lock or {}).get("canonical_cutout_sha256"),
+        "visual_lock_updated_at": (lock or {}).get("updated_at"),
+        "candidate_source_kind": source_kind or None,
+        "candidate_provenance": {
+            key: provenance.get(key)
+            for key in (
+                "canonical_source_type",
+                "canonical_source_provenance",
+                "source_kind",
+                "created_by",
+                "active_selection",
+                "review_status",
+            )
+            if provenance.get(key) is not None
+        },
+        "historical_evidence_count": len(history),
         "official_visual_status": official_status,
         "official_visual_failure_code": official_visual_error,
         "original_source_reauthorization_required": _original_authority_requires_reauthorization(lock),
@@ -2171,6 +2192,12 @@ async def save_product_visual_setup(
     expected_previous_canonical_sha256: str | None = None,
     expected_replacement_sha256: str | None = None,
     replacement_media_id: str | None = None,
+    expected_candidate_sha256: str | None = None,
+    expected_candidate_media_id: str | None = None,
+    expected_lock_updated_at: str | None = None,
+    reviewer_user_id: str | None = None,
+    reviewer_staff_id: str | None = None,
+    reviewer_display_name: str | None = None,
 ) -> dict[str, Any]:
     """Commit one page-level visual selection through existing authorities.
 
@@ -2301,6 +2328,12 @@ async def save_product_visual_setup(
                 confirm_label_logo=confirm_label_logo,
                 confirm_geometry_scale=confirm_geometry_scale,
                 confirm_product_isolation=confirm_product_isolation,
+                expected_candidate_sha256=expected_candidate_sha256,
+                expected_candidate_media_id=expected_candidate_media_id,
+                expected_lock_updated_at=expected_lock_updated_at,
+                reviewer_user_id=reviewer_user_id,
+                reviewer_staff_id=reviewer_staff_id,
+                reviewer_display_name=reviewer_display_name,
             ),
         )
     except ProductTruthLockError as exc:
@@ -2545,6 +2578,350 @@ async def annotate_products_visual_readiness(products: list[dict[str, Any]]) -> 
             history=histories.get(pid, []),
             canva_workflow=canva_workflows.get(pid),
         )
+
+
+VISUAL_REVIEW_COHORTS = (
+    "PENDING_VISUAL_REVIEW",
+    "SOURCE_REUPLOAD_REQUIRED",
+    "BROKEN_APPROVED_VISUAL",
+)
+
+
+def _visual_review_cohort(
+    product: dict[str, Any], readiness: dict[str, Any]
+) -> str | None:
+    """Classify only the owner-review cohorts; never merge their blockers."""
+    if str(product.get("lifecycle_status") or "ACTIVE").upper() != "ACTIVE":
+        return None
+    if product.get("reference_only") or is_test_product(product) or _purge_reason(product):
+        return None
+    if str(readiness.get("official_visual_status") or "").upper() == "INVALID":
+        return "BROKEN_APPROVED_VISUAL"
+    if str(readiness.get("cutout_review_status") or "").upper() != PENDING_REVIEW:
+        return None
+    if str(readiness.get("canonical_media_status") or "").upper() == "AVAILABLE":
+        return "PENDING_VISUAL_REVIEW"
+    return "SOURCE_REUPLOAD_REQUIRED"
+
+
+def _visual_review_item(
+    product: dict[str, Any], readiness: dict[str, Any], cohort: str
+) -> dict[str, Any]:
+    product_id = str(product.get("id") or "")
+    candidate_kind = str(readiness.get("candidate_source_kind") or "").upper()
+    candidate_status = (
+        PENDING_REVIEW
+        if cohort == "PENDING_VISUAL_REVIEW"
+        else "TRUE_SOURCE_MISSING"
+        if cohort == "SOURCE_REUPLOAD_REQUIRED"
+        else BROKEN_OFFICIAL_VISUAL
+    )
+    candidate_preview = None
+    if candidate_kind == AUTO_GENERATED:
+        candidate_preview = readiness.get("auto_cutout_preview_url")
+    elif candidate_kind == USER_UPLOAD:
+        candidate_preview = readiness.get("manual_cutout_preview_url")
+
+    release_status = str(product.get("staff_release_status") or HIDDEN).upper()
+    if release_status not in {"HIDDEN", "RELEASED"}:
+        release_status = "HIDDEN"
+    visual_blockers = list(readiness.get("blockers") or [])
+    if cohort == "PENDING_VISUAL_REVIEW" and not visual_blockers:
+        visual_blockers = ["OWNER_VISUAL_APPROVAL_REQUIRED"]
+    if cohort == "SOURCE_REUPLOAD_REQUIRED":
+        visual_blockers = ["TRUE_SOURCE_MISSING", *visual_blockers]
+    if cohort == "BROKEN_APPROVED_VISUAL":
+        visual_blockers = ["BROKEN_OFFICIAL_VISUAL", *visual_blockers]
+
+    return {
+        "product_id": product_id,
+        "product_name": str(
+            product.get("product_display_name")
+            or product.get("product_short_name")
+            or product.get("raw_product_title")
+            or product_id
+        ),
+        "raw_product_title": product.get("raw_product_title"),
+        "lifecycle_status": str(product.get("lifecycle_status") or "ACTIVE").upper(),
+        "cohort": cohort,
+        "review_status": str(readiness.get("cutout_review_status") or "NOT_CREATED"),
+        "source_status": str(readiness.get("canonical_media_status") or "MISSING"),
+        "cutout_status": str(readiness.get("cutout_status") or NOT_PREPARED),
+        "candidate_status": candidate_status,
+        "candidate_source_kind": candidate_kind or None,
+        "candidate_sha256": readiness.get("canonical_cutout_sha256"),
+        "candidate_media_id": readiness.get("canonical_cutout_media_id"),
+        "expected_lock_updated_at": readiness.get("visual_lock_updated_at"),
+        "expected_source_sha256": readiness.get("canonical_source_sha256"),
+        "expected_cutout_sha256": readiness.get("canonical_cutout_sha256"),
+        "candidate_preview_url": candidate_preview,
+        "original_source_url": readiness.get("original_preview_url")
+        or readiness.get("original_display_url"),
+        "original_source_trust_status": readiness.get("original_display_trust_status"),
+        "original_source_provenance": readiness.get("candidate_provenance") or {},
+        "historical_evidence_count": int(readiness.get("historical_evidence_count") or 0),
+        "missing_canonical_bytes": (
+            ["SOURCE", "CUTOUT"]
+            if cohort == "BROKEN_APPROVED_VISUAL"
+            else ["SOURCE"]
+            if cohort == "SOURCE_REUPLOAD_REQUIRED"
+            else []
+        ),
+        "current_system_visual": readiness.get("current_system_visual") or {},
+        "current_system_visual_url": readiness.get("active_cutout_preview_url")
+        or readiness.get("original_display_url"),
+        "blocker_state": visual_blockers,
+        "release_status": release_status,
+        "readiness_impact": {
+            "current_exact_commerce_status": readiness.get("exact_commerce_status"),
+            "current_visual_source_status": readiness.get("canonical_media_status"),
+            "after_visual_approval_exact_commerce_status": (
+                "EXACT_COMMERCE_CUTOUT_READY"
+                if cohort == "PENDING_VISUAL_REVIEW"
+                else readiness.get("exact_commerce_status")
+            ),
+            "release_decision": "OWNER_RELEASE_REVIEW_REQUIRED"
+            if release_status == "HIDDEN"
+            else "RELEASED_STATE_UNCHANGED",
+            "auto_release": False,
+        },
+        "actions": {
+            "can_approve_selected": cohort == "PENDING_VISUAL_REVIEW",
+            "can_reupload_source": cohort == "SOURCE_REUPLOAD_REQUIRED",
+            "can_recover_broken_visual": cohort == "BROKEN_APPROVED_VISUAL",
+        },
+        "provider_operations": 0,
+    }
+
+
+async def get_product_visual_review_queue(
+    *, cohort: str = "PENDING_VISUAL_REVIEW", limit: int = 25, offset: int = 0
+) -> dict[str, Any]:
+    """Return the bounded owner queue from the existing visual read model.
+
+    The full cohort is classified after one set of batched lock/preparation/
+    history reads.  Pagination only slices the in-memory projection; it never
+    performs per-row readiness API calls and never mutates the database.
+    """
+    normalized = str(cohort or "PENDING_VISUAL_REVIEW").strip().upper()
+    if normalized not in VISUAL_REVIEW_COHORTS:
+        raise ProductVisualOnboardingError(
+            "VISUAL_REVIEW_COHORT_INVALID",
+            f"Unknown visual review cohort: {normalized}.",
+            status_code=400,
+        )
+    bounded_limit = max(1, min(int(limit), 50))
+    bounded_offset = max(0, int(offset))
+    products = await crud.list_products(limit=5000, include_archived=True)
+    await annotate_products_visual_readiness(products)
+    buckets: dict[str, list[dict[str, Any]]] = {key: [] for key in VISUAL_REVIEW_COHORTS}
+    for product in products:
+        readiness = product.get("visual_readiness") or {}
+        resolved = _visual_review_cohort(product, readiness)
+        if resolved:
+            buckets[resolved].append(_visual_review_item(product, readiness, resolved))
+    for rows in buckets.values():
+        rows.sort(key=lambda row: (str(row.get("product_name") or "").casefold(), row["product_id"]))
+    rows = buckets[normalized]
+    page = rows[bounded_offset : bounded_offset + bounded_limit]
+    return {
+        "cohort": normalized,
+        "items": page,
+        "total_count": len(rows),
+        "returned_count": len(page),
+        "limit": bounded_limit,
+        "offset": bounded_offset,
+        "has_pagination": bounded_offset + len(page) < len(rows),
+        "cohort_counts": {key: len(value) for key, value in buckets.items()},
+        "selection_policy": "EXPLICIT_VISIBLE_PAGE_ONLY",
+        "metadata_read_policy": "BATCHED_VISUAL_READ_MODEL",
+        "provider_operations": 0,
+        "created_without_credit": True,
+    }
+
+
+async def _record_visual_review_audit(
+    *, actor: Any, batch_id: str, item: dict[str, Any], result: dict[str, Any]
+) -> None:
+    """Record the authenticated actor without making it a second truth store."""
+    try:
+        from agent.db.schema import get_db
+        from agent.services.access_control_service import write_audit_event
+
+        db = await get_db()
+        await write_audit_event(
+            db,
+            "PRODUCT_VISUAL_REVIEW_BATCH_ITEM",
+            actor=actor,
+            success=str(result.get("status") or "").upper() in {"APPROVED", "ALREADY_APPROVED"},
+            metadata={
+                "batch_id": batch_id,
+                "product_id": item.get("product_id"),
+                "result_status": result.get("status"),
+                "candidate_sha256": item.get("candidate_sha256"),
+                "candidate_media_id": item.get("candidate_media_id"),
+                "error_code": result.get("error_code"),
+            },
+        )
+        await db.commit()
+    except Exception:  # pragma: no cover - lock provenance remains authoritative
+        logger.exception("Could not append visual review access audit for %s", item.get("product_id"))
+
+
+async def approve_selected_product_visuals(
+    items: list[dict[str, Any]],
+    *,
+    review_note: str,
+    actor: Any,
+    confirm_identity: bool,
+    confirm_label_logo: bool,
+    confirm_geometry_scale: bool,
+    confirm_product_isolation: bool,
+) -> dict[str, Any]:
+    """Approve only explicitly selected queue snapshots through per-product authority."""
+    if not items:
+        raise ProductVisualOnboardingError(
+            "VISUAL_REVIEW_SELECTION_REQUIRED",
+            "Select at least one visible candidate before approving.",
+            status_code=400,
+        )
+    if len(items) > 50:
+        raise ProductVisualOnboardingError(
+            "VISUAL_REVIEW_SELECTION_TOO_LARGE",
+            "Approve at most 50 visible candidates per review confirmation.",
+            status_code=400,
+        )
+    note = str(review_note or "").strip()
+    if not note:
+        raise ProductVisualOnboardingError(
+            "HUMAN_REVIEW_NOTE_REQUIRED",
+            "A batch review note is required.",
+            status_code=409,
+        )
+    if not all((confirm_identity, confirm_label_logo, confirm_geometry_scale, confirm_product_isolation)):
+        raise ProductVisualOnboardingError(
+            "HUMAN_REVIEW_CONFIRMATION_REQUIRED",
+            "All four visual identity confirmations are required.",
+            status_code=409,
+        )
+    actor_display = str(getattr(actor, "display_name", "") or "").strip()
+    actor_user_id = str(getattr(actor, "user_id", "") or "").strip()
+    actor_staff_id = str(getattr(actor, "staff_id", "") or "").strip()
+    if not actor_display or not actor_user_id or not actor_staff_id:
+        raise ProductVisualOnboardingError(
+            "AUTHENTICATED_OWNER_IDENTITY_REQUIRED",
+            "The authenticated OWNER StaffProfile could not be resolved.",
+            status_code=401,
+        )
+
+    product_ids = [str(item.get("product_id") or "").strip() for item in items]
+    if any(not product_id for product_id in product_ids) or len(set(product_ids)) != len(product_ids):
+        raise ProductVisualOnboardingError(
+            "VISUAL_REVIEW_SELECTION_INVALID",
+            "Each selected review row must identify one unique product.",
+            status_code=400,
+        )
+
+    batch_id = f"visual-review-{uuid.uuid4().hex}"
+    results: list[dict[str, Any]] = []
+    for item in items:
+        product_id = str(item.get("product_id") or "").strip()
+        result: dict[str, Any] = {"product_id": product_id, "status": "FAILED"}
+        try:
+            readiness = await get_product_visual_readiness(product_id)
+            current_status = str(readiness.get("cutout_review_status") or "").upper()
+            current_exact = str(readiness.get("exact_commerce_status") or "").upper()
+            if current_exact == "EXACT_COMMERCE_CUTOUT_READY":
+                result.update({"status": "ALREADY_APPROVED", "readiness": readiness})
+            else:
+                expected_sha = str(item.get("candidate_sha256") or "").strip().lower()
+                expected_media = str(item.get("candidate_media_id") or "").strip()
+                expected_updated_at = str(item.get("expected_lock_updated_at") or "").strip()
+                current_kind = str(readiness.get("candidate_source_kind") or "").upper()
+                requested_kind = str(item.get("candidate_source_kind") or current_kind).upper()
+                if (
+                    current_status != PENDING_REVIEW
+                    or not expected_sha
+                    or expected_sha != str(readiness.get("canonical_cutout_sha256") or "").lower()
+                    or expected_media != str(readiness.get("canonical_cutout_media_id") or "")
+                    or expected_updated_at != str(readiness.get("visual_lock_updated_at") or "")
+                    or requested_kind != current_kind
+                ):
+                    result.update(
+                        {
+                            "status": "STALE_CANDIDATE",
+                            "error_code": "STALE_VISUAL_REVIEW",
+                            "error_message": "The candidate changed or is no longer pending review.",
+                        }
+                    )
+                else:
+                    selected_visual = "AUTO" if current_kind == AUTO_GENERATED else "MANUAL"
+                    approved_readiness = await save_product_visual_setup(
+                        product_id,
+                        selected_visual=selected_visual,
+                        reviewed_by=actor_display,
+                        review_note=note,
+                        confirm_identity=confirm_identity,
+                        confirm_label_logo=confirm_label_logo,
+                        confirm_geometry_scale=confirm_geometry_scale,
+                        confirm_product_isolation=confirm_product_isolation,
+                        expected_candidate_sha256=expected_sha,
+                        expected_candidate_media_id=expected_media,
+                        expected_lock_updated_at=expected_updated_at,
+                        reviewer_user_id=actor_user_id,
+                        reviewer_staff_id=actor_staff_id,
+                        reviewer_display_name=actor_display,
+                    )
+                    release_state = None
+                    try:
+                        from agent.services.product_release_service import load_product_release_state
+
+                        release_state = await load_product_release_state(product_id)
+                    except Exception:
+                        logger.exception("Could not recompute release readiness for %s", product_id)
+                    result.update(
+                        {
+                            "status": "APPROVED",
+                            "readiness": approved_readiness,
+                            "release_status": (release_state or {}).get("staff_release_status")
+                            or "HIDDEN",
+                            "minimum_eligibility_status": (release_state or {}).get(
+                                "minimum_eligibility_status"
+                            ),
+                            "ready_for_owner_release_review": bool(
+                                release_state
+                                and (release_state or {}).get("staff_release_status") == "HIDDEN"
+                                and (release_state or {}).get("minimum_eligibility_status") == "ELIGIBLE"
+                            ),
+                            "auto_release": False,
+                        }
+                    )
+        except ProductVisualOnboardingError as exc:
+            result.update({
+                "status": "STALE_CANDIDATE" if exc.code == "STALE_VISUAL_REVIEW" else "REJECTED",
+                "error_code": exc.code,
+                "error_message": exc.message,
+            })
+        except Exception as exc:  # noqa: BLE001 - preserve individual failure receipt
+            logger.exception("Selected visual approval failed for %s", product_id)
+            result.update({"status": "FAILED", "error_code": "VISUAL_APPROVAL_FAILED", "error_message": str(exc)})
+        await _record_visual_review_audit(actor=actor, batch_id=batch_id, item=item, result=result)
+        results.append(result)
+
+    failed = [result for result in results if result.get("status") not in {"APPROVED", "ALREADY_APPROVED"}]
+    return {
+        "batch_id": batch_id,
+        "status": "COMPLETED" if not failed else "PARTIAL_SUCCESS",
+        "all_succeeded": not failed,
+        "total_selected": len(results),
+        "approved_count": sum(result.get("status") == "APPROVED" for result in results),
+        "already_approved_count": sum(result.get("status") == "ALREADY_APPROVED" for result in results),
+        "failed_count": len(failed),
+        "results": results,
+        "provider_operations": 0,
+        "created_without_credit": True,
+        "auto_release": False,
+    }
 
 
 def eligible_bulk_product(product: dict[str, Any], readiness: dict[str, Any]) -> bool:

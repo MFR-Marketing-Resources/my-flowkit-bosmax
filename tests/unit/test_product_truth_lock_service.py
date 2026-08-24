@@ -406,6 +406,38 @@ async def test_approval_requires_explicit_human_acknowledgement(tmp_path, monkey
 
 
 @pytest.mark.asyncio
+async def test_approval_fails_closed_when_reviewed_lock_version_is_stale(tmp_path, monkeypatch):
+    assets = _assets(tmp_path)
+    db_path = _db(tmp_path, assets, status="PENDING_REVIEW")
+    monkeypatch.setattr(lock_service, "DB_PATH", db_path)
+    original_row = lock_service._row_for_product
+
+    def row_with_version(product_id: str):
+        row = original_row(product_id)
+        assert row is not None
+        row["updated_at"] = "v-current"
+        return row
+
+    monkeypatch.setattr(lock_service, "_row_for_product", row_with_version)
+    with pytest.raises(lock_service.ProductTruthLockError) as exc:
+        await lock_service.approve_product_truth_lock(
+            "p-1",
+            ProductTruthLockApprovalRequest(
+                reviewed_by="Authenticated Owner",
+                review_note="Owner visual recovery review",
+                confirm_identity=True,
+                confirm_label_logo=True,
+                confirm_geometry_scale=True,
+                confirm_product_isolation=True,
+                expected_candidate_sha256=str(assets["cutout_sha"]),
+                expected_candidate_media_id="media-cutout",
+                expected_lock_updated_at="v-old",
+            ),
+        )
+    assert exc.value.code == "STALE_VISUAL_REVIEW"
+
+
+@pytest.mark.asyncio
 async def test_approval_rejects_missing_human_acknowledgement(tmp_path, monkeypatch):
     assets = _assets(tmp_path)
     db_path = _db(tmp_path, assets, status="PENDING_REVIEW")

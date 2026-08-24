@@ -1608,6 +1608,38 @@ async def approve_product_truth_lock(
             "confirm_product_isolation": request.confirm_product_isolation,
         }
     )
+    if request.reviewer_user_id:
+        provenance["reviewer_user_id"] = request.reviewer_user_id
+    if request.reviewer_staff_id:
+        provenance["reviewer_staff_id"] = request.reviewer_staff_id
+    if request.reviewer_display_name:
+        provenance["reviewer_display_name"] = request.reviewer_display_name
+
+    expected_fields = (
+        request.expected_candidate_sha256,
+        request.expected_candidate_media_id,
+        request.expected_lock_updated_at,
+    )
+    if any(value is not None for value in expected_fields):
+        if not all(value for value in expected_fields):
+            raise ProductTruthLockError(
+                "STALE_VISUAL_REVIEW",
+                "The owner review must include the candidate SHA, media id, and lock version.",
+                status_code=409,
+            )
+        if (
+            str(lock.canonical_cutout_sha256).lower()
+            != str(request.expected_candidate_sha256).lower()
+            or str(lock.canonical_cutout_media_id)
+            != str(request.expected_candidate_media_id)
+            or str(_row_for_product(product_id).get("updated_at") or "")
+            != str(request.expected_lock_updated_at)
+        ):
+            raise ProductTruthLockError(
+                "STALE_VISUAL_REVIEW",
+                "The visual candidate changed after the owner reviewed it. Refresh the queue before approving.",
+                status_code=409,
+            )
     candidate = lock.model_copy(
         update={
             "identity_lock": True,
@@ -1622,34 +1654,49 @@ async def approve_product_truth_lock(
         }
     )
     resolved = validate_product_truth_lock_for_approval(candidate)
-    await crud.upsert_product_truth_lock(
-        product_id,
-        canonical_media_id=candidate.canonical_media_id,
-        canonical_sha256=candidate.canonical_sha256,
-        source_width=candidate.source_width,
-        source_height=candidate.source_height,
-        canonical_source_path=candidate.canonical_source_path,
-        canonical_cutout_media_id=candidate.canonical_cutout_media_id,
-        canonical_cutout_sha256=candidate.canonical_cutout_sha256,
-        canonical_cutout_path=candidate.canonical_cutout_path,
-        alpha_mask_json=json.dumps(candidate.alpha_mask, sort_keys=True),
-        anchor_point_json=json.dumps(candidate.anchor_point, sort_keys=True),
-        min_scale=candidate.min_scale,
-        max_scale=candidate.max_scale,
-        allowed_bbox_json=json.dumps(candidate.allowed_bbox, sort_keys=True),
-        allowed_rotation=candidate.allowed_rotation,
-        allowed_perspective=candidate.allowed_perspective,
-        identity_lock=1,
-        geometry_lock=1,
-        label_lock=1,
-        logo_lock=1,
-        colour_lock=1,
-        scale_lock=1,
-        review_status="APPROVED",
-        failure_state="",
-        provenance_json=json.dumps(provenance, sort_keys=True),
-        schema_version=candidate.schema_version,
-    )
+    approval_values = {
+        "canonical_media_id": candidate.canonical_media_id,
+        "canonical_sha256": candidate.canonical_sha256,
+        "source_width": candidate.source_width,
+        "source_height": candidate.source_height,
+        "canonical_source_path": candidate.canonical_source_path,
+        "canonical_cutout_media_id": candidate.canonical_cutout_media_id,
+        "canonical_cutout_sha256": candidate.canonical_cutout_sha256,
+        "canonical_cutout_path": candidate.canonical_cutout_path,
+        "alpha_mask_json": json.dumps(candidate.alpha_mask, sort_keys=True),
+        "anchor_point_json": json.dumps(candidate.anchor_point, sort_keys=True),
+        "min_scale": candidate.min_scale,
+        "max_scale": candidate.max_scale,
+        "allowed_bbox_json": json.dumps(candidate.allowed_bbox, sort_keys=True),
+        "allowed_rotation": candidate.allowed_rotation,
+        "allowed_perspective": candidate.allowed_perspective,
+        "identity_lock": 1,
+        "geometry_lock": 1,
+        "label_lock": 1,
+        "logo_lock": 1,
+        "colour_lock": 1,
+        "scale_lock": 1,
+        "review_status": "APPROVED",
+        "failure_state": "",
+        "provenance_json": json.dumps(provenance, sort_keys=True),
+        "schema_version": candidate.schema_version,
+    }
+    if all(value for value in expected_fields):
+        persisted = await crud.cas_approve_product_truth_lock(
+            product_id,
+            expected_candidate_sha256=str(request.expected_candidate_sha256),
+            expected_candidate_media_id=str(request.expected_candidate_media_id),
+            expected_lock_updated_at=str(request.expected_lock_updated_at),
+            **approval_values,
+        )
+        if persisted is None:
+            raise ProductTruthLockError(
+                "STALE_VISUAL_REVIEW",
+                "The visual candidate changed before approval was persisted. Refresh the queue before approving.",
+                status_code=409,
+            )
+    else:
+        await crud.upsert_product_truth_lock(product_id, **approval_values)
     return _safe_result(
         product_id=product_id,
         review_status="APPROVED",
