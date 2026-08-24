@@ -513,7 +513,19 @@ async def _bind_editor_session(client, requested_project_id=None) -> dict:
     """Bind a video job to the OPEN Flow editor → {project_id, flow_tab_id, flow_project_url}.
     Fail-closed (locked patch A/G): raise if no editor project is open, or if the open editor
     differs from a requested project_id. Never mint a hidden project; never use the wrong tab."""
-    h = await client.harvest_video_urls()
+    selected_binding = None
+    bind_flow_session = getattr(client, "bind_flow_session", None)
+    if callable(bind_flow_session):
+        selected_binding = await bind_flow_session(project_id=requested_project_id)
+        if not isinstance(selected_binding, dict) or selected_binding.get("ok") is not True:
+            blocker = (selected_binding or {}).get("primary_blocker") or "NO_ELIGIBLE_EXTENSION_SESSION"
+            detail = (selected_binding or {}).get("detail") or blocker
+            raise RuntimeError(f"{blocker}: {detail}")
+        h = await client.harvest_video_urls(tab_id=selected_binding.get("flow_tab_id"))
+    else:
+        # Provider-free/frozen unit clients predate the identity-aware bridge;
+        # retain their harvest contract while the real FlowClient is strict.
+        h = await client.harvest_video_urls()
     inner = h.get("result", h) if isinstance(h, dict) else {}
     if (not isinstance(inner, dict) or inner.get("error") == "NO_FLOW_TAB"
             or inner.get("flow_tab_found") is False):
@@ -573,7 +585,20 @@ async def _bind_editor_session(client, requested_project_id=None) -> dict:
             f"PROJECT_TAB_MISMATCH: requested {requested_project_id} but the open editor is {project_id}",
             details={"requested_project_id": requested_project_id, "observed_project_id": project_id},
         )
-    return {"project_id": project_id, "flow_tab_id": flow_tab_id, "flow_project_url": flow_url}
+    binding = {
+        "project_id": project_id,
+        "flow_tab_id": flow_tab_id,
+        "flow_project_url": flow_url,
+    }
+    if isinstance(selected_binding, dict):
+        for key in (
+            "extension_session_id", "extension_id", "extension_version",
+            "extension_build", "content_build_id", "content_script_protocol_version",
+            "challenge_verified", "same_extension_session", "same_flow_tab",
+        ):
+            if selected_binding.get(key) is not None:
+                binding[key] = selected_binding[key]
+    return binding
 
 
 async def _bind_with_recovery(client, requested_project_id=None, job=None) -> dict:
@@ -1381,6 +1406,38 @@ async def reconcile_durable_single_job(
         client = provider_client
         if client is None:
             client = get_flow_client()
+        pin_session = getattr(client, "pin_extension_session", None)
+        if callable(pin_session):
+            binding = state.get("binding") if isinstance(state.get("binding"), dict) else {}
+            session_id = str(binding.get("extension_session_id") or "").strip()
+            if not session_id:
+                identity_error = "EXTENSION_SESSION_ID_MISSING"
+            elif not pin_session(session_id, binding):
+                identity_error = "PINNED_EXTENSION_SESSION_UNAVAILABLE"
+            else:
+                identity_error = None
+            if identity_error:
+                job.update(
+                    status="RECOVERY_UNRECOVERABLE",
+                    stage="recovery_unrecoverable",
+                    recovery_unrecoverable=True,
+                    error=identity_error,
+                    recovery_hint=(
+                        "The provider handle exists, but its original extension session "
+                        "is not available. No socket substitution or provider resubmission "
+                        "is allowed."
+                    ),
+                )
+                job["provider_reconciliation"].update({
+                    "state": "UNRECOVERABLE",
+                    "error_code": identity_error,
+                })
+                await _sync_durable_single_job(job)
+                fresh = await crud.get_video_production_job(job_id)
+                return _durable_public_state(
+                    fresh or row,
+                    _durable_state_from_row(fresh or row),
+                )
         if handle_kind == "media":
             poll = await _check_direct_media_targets_once(client, handles)
         else:

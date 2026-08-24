@@ -123,6 +123,9 @@ logger = logging.getLogger(__name__)
 
 def _clear_extension_if_current(client, websocket) -> bool:
     """Keep replacement extension sockets live when an older socket closes."""
+    clear_socket = getattr(client, "clear_extension_socket", None)
+    if callable(clear_socket):
+        return bool(clear_socket(websocket))
     if getattr(client, "_extension_ws", None) is not websocket:
         logger.info("Superseded extension socket disconnected; preserving active bridge")
         return False
@@ -133,7 +136,7 @@ def _clear_extension_if_current(client, websocket) -> bool:
 async def ws_handler(websocket):
     """Handle a Chrome extension WebSocket connection."""
     client = get_flow_client()
-    client.set_extension(websocket)
+    client.set_extension(websocket, require_identity=True)
     logger.info("Extension connected from %s", websocket.remote_address)
 
     # Send callback secret so extension can authenticate HTTP callbacks
@@ -143,7 +146,7 @@ async def ws_handler(websocket):
         async for raw in websocket:
             try:
                 data = json.loads(raw)
-                await client.handle_message(data)
+                await client.handle_message(data, websocket=websocket)
             except json.JSONDecodeError:
                 logger.warning("Invalid JSON from extension")
             except Exception as e:
@@ -506,6 +509,13 @@ async def ext_callback(request: Request):
                 len(client._pending),
                 "yes" if req_id and req_id in client._pending else "no")
     if req_id and req_id in client._pending:
+        record_diag = getattr(client, "_record_session_diagnostics", None)
+        if callable(record_diag):
+            pending_session = getattr(client, "_pending_session_ids", {}).get(req_id)
+            record_diag(
+                pending_session,
+                data.get("result") if isinstance(data.get("result"), dict) else data,
+            )
         future = client._pending[req_id]
         try:
             future.set_result(data)
