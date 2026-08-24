@@ -7,6 +7,7 @@ import pytest
 
 from agent import main as agent_main
 from agent.api import local_agent
+from agent.services.flow_client import FlowClient
 
 
 @pytest.fixture(autouse=True)
@@ -116,27 +117,36 @@ async def test_get_local_agent_status_uses_fail_fast_extension_timeout(monkeypat
     assert observed["timeout"] == local_agent.LOCAL_AGENT_EXTENSION_STATUS_TIMEOUT_SECONDS
 
 
-def test_superseded_socket_disconnect_preserves_current_extension_bridge():
-    class _FakeClient:
-        def __init__(self, active_socket):
-            self._extension_ws = active_socket
-            self.clear_calls = 0
+def test_registry_disconnect_removes_only_owner_connection():
+    first_socket = object()
+    second_socket = object()
+    client = FlowClient()
+    first_id = client.register_extension_connection(
+        first_socket,
+        connection_id="connection-first",
+        callback_secret="secret-first",
+    )
+    second_id = client.register_extension_connection(
+        second_socket,
+        connection_id="connection-second",
+        callback_secret="secret-second",
+    )
 
-        def clear_extension(self):
-            self.clear_calls += 1
-            self._extension_ws = None
+    assert agent_main._clear_extension_if_current(
+        client, first_socket, first_id
+    ) is True
+    assert client._connection_record(first_id) is None
+    assert client._connection_record(second_id)["websocket"] is second_socket
+    assert client.connected is True
+    assert client.ws_stats["connections"] == 1
 
-    stale_socket = object()
-    active_socket = object()
-    client = _FakeClient(active_socket)
-
-    assert agent_main._clear_extension_if_current(client, stale_socket) is False
-    assert client._extension_ws is active_socket
-    assert client.clear_calls == 0
-
-    assert agent_main._clear_extension_if_current(client, active_socket) is True
-    assert client._extension_ws is None
-    assert client.clear_calls == 1
+    assert agent_main._clear_extension_if_current(
+        client, first_socket, first_id
+    ) is False
+    assert agent_main._clear_extension_if_current(
+        client, second_socket, second_id
+    ) is True
+    assert client.connected is False
 
 
 # ── Event-loop safety: the autostart inspector must never block the loop ───
