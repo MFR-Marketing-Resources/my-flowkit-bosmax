@@ -460,6 +460,7 @@ def test_routing_flag_on_eligible_takes_direct_lane(monkeypatch):
         ran["direct"] = job_id
 
     monkeypatch.setattr(mv, "_run_generate_direct", fake_direct_run)
+    monkeypatch.setattr(mv, "get_flow_client", lambda: _FakeDirectClient())
 
     async def go():
         res = await mv.start_generate("F2V", "p", project_id="pid",
@@ -535,6 +536,7 @@ def test_exact_product_t2v_scaffold_passes_custody_guard_before_provider(monkeyp
     )
     monkeypatch.setattr(mv, "_prepare_durable_single_job", fake_prepare)
     monkeypatch.setattr(mv, "_run_generate", fake_run)
+    monkeypatch.setattr(mv, "get_flow_client", lambda: _FakeDirectClient())
     monkeypatch.setattr(
         "agent.db.crud.acquire_video_generation_lane_lease",
         fake_lease,

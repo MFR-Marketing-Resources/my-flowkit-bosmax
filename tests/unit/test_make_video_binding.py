@@ -5,6 +5,7 @@ and the single-flight video lane in start_generate via a fake client.
 """
 import asyncio
 import json
+from contextlib import nullcontext
 
 import agent.services.make_video as mv
 
@@ -33,10 +34,711 @@ def _harvest(project_id=None, url=None, tab_id=1, found=True, error=None):
     return {"result": inner}
 
 
+def _owned_harvest(
+    project_id="project-a",
+    *,
+    tab_id=41,
+    connection_id="connection-a",
+    installation_id="installation-a",
+    extension_session_id="session-a",
+    canonical_tab_id=None,
+    envelope_tab_id=None,
+):
+    url = f"https://labs.google/fx/tools/flow/project/{project_id}"
+    return {
+        "result": {
+            "connection_id": connection_id,
+            "installation_id": installation_id,
+            "extension_session_id": extension_session_id,
+            "flow_tab_found": True,
+            "flow_tab_id": tab_id if canonical_tab_id is None else canonical_tab_id,
+            "flow_url": url,
+            "flow_project_id": project_id,
+            "handled_flow_tab_id": tab_id,
+            "handled_flow_url": url,
+            "handled_flow_project_id": project_id,
+            "envelope_flow_tab_id": (
+                tab_id if envelope_tab_id is None else envelope_tab_id
+            ),
+            "envelope_flow_url": url,
+            "diag": {"projectId": project_id, "flowUrl": url},
+        }
+    }
+
+
+class _LeaseClient(_FakeClient):
+    connected = True
+
+    def __init__(self, harvest=None, *, connection_id="connection-a"):
+        super().__init__(harvest or _owned_harvest(connection_id=connection_id))
+        self.lease = {
+            "lease_id": "lease-a",
+            "connection_id": connection_id,
+            "connection_epoch": 7,
+            "installation_id": "installation-a",
+            "extension_session_id": "session-a",
+            "released": False,
+        }
+        self.acquire_filters = []
+        self.released = []
+
+    def acquire_operation_lease(self, **filters):
+        self.acquire_filters.append(filters)
+        return dict(self.lease)
+
+    def activate_operation_lease(self, lease):
+        assert lease["lease_id"] == self.lease["lease_id"]
+        return nullcontext(dict(self.lease))
+
+    def bind_operation_lease(self, lease, **bindings):
+        assert lease["lease_id"] == self.lease["lease_id"]
+        for key, value in bindings.items():
+            if value is None:
+                continue
+            current = self.lease.get(key)
+            if current is not None and current != value:
+                raise ValueError(f"ERR_OPERATION_LEASE_BINDING_MISMATCH:{key}")
+            self.lease[key] = value
+        return dict(self.lease)
+
+    def release_operation_lease(self, lease):
+        self.released.append(lease["lease_id"])
+        return True
+
+    async def get_status(self, timeout=5):
+        return {
+            "connected": True,
+            "connection_id": self.lease["connection_id"],
+            "connection_epoch": self.lease["connection_epoch"],
+            "installation_id": self.lease["installation_id"],
+            "extension_session_id": self.lease["extension_session_id"],
+            "extension_build": "build-a",
+        }
+
+    async def verify_provider_session_challenge(self, flow_tab_id=None, timeout=15):
+        project_id = (
+            self._harvest.get("result", {}).get("handled_flow_project_id")
+            or "project-a"
+        )
+        url = f"https://labs.google/fx/tools/flow/project/{project_id}"
+        return {
+            "ok": True,
+            "session_challenge_verified": True,
+            "extension_build_match": True,
+            "extension_build": "build-a",
+            "backend_connection_id": self.lease["connection_id"],
+            "backend_connection_epoch": self.lease["connection_epoch"],
+            "backend_installation_id": self.lease["installation_id"],
+            "backend_extension_session_id": self.lease["extension_session_id"],
+            "flow_tab_id": flow_tab_id,
+            "flow_project_id": project_id,
+            "flow_project_url": url,
+            "content_script_alive": True,
+            "same_extension_session": True,
+            "same_flow_tab": True,
+        }
+
+
+class _ProductionTypedLeaseClient(_LeaseClient, mv.FlowClient):
+    """FlowClient-typed double: production guards must remain active."""
+
+
 def test_bind_ok():
     url = "https://labs.google/fx/tools/flow/project/abc-123"
     b = _run(mv._bind_editor_session(_FakeClient(_harvest("abc-123", url, 42))))
     assert b == {"project_id": "abc-123", "flow_tab_id": 42, "flow_project_url": url}
+
+
+def test_binding_rejects_mixed_wrapper_and_handled_tab():
+    client = _FakeClient(_owned_harvest(canonical_tab_id=99))
+    try:
+        _run(mv._bind_editor_session(client))
+        assert False, "expected wrapper/handled tab mismatch"
+    except RuntimeError as exc:
+        assert "FLOW_BRIDGE_TAB_IDENTITY_MISMATCH" in str(exc)
+
+
+def test_binding_rejects_lease_project_mismatch():
+    client = _LeaseClient(_owned_harvest(project_id="project-b"))
+    lease = {**client.lease, "flow_project_id": "project-a"}
+    try:
+        _run(mv._bind_editor_session(client, bridge_lease=lease))
+        assert False, "expected lease/project mismatch"
+    except RuntimeError as exc:
+        assert "FLOW_BRIDGE_PROJECT_IDENTITY_MISMATCH" in str(exc)
+
+
+def test_bridge_lease_persisted_before_provider_touch(monkeypatch):
+    events = []
+    client = _LeaseClient()
+    job_id = "g_bridge_lease_persist"
+    mv._JOBS.clear()
+    mv._JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "SUBMITTED",
+        "stage": "queued",
+        "mode": "T2V",
+        "project_id": "project-a",
+        "durable": True,
+        "bridge_lease_required": True,
+        "provider_generation_submit_count": 0,
+    }
+
+    async def sync(job):
+        events.append((
+            "sync",
+            dict(job.get("bridge_lease") or {}),
+            job.get("bridge_lease_state"),
+        ))
+        return True
+
+    async def runner(actual_job_id):
+        assert actual_job_id == job_id
+        lease = mv._JOBS[job_id]["bridge_lease"]
+        assert lease["installation_id"] == "installation-a"
+        assert lease["connection_id"] == "connection-a"
+        assert lease["flow_tab_id"] == 41
+        assert lease["flow_project_id"] == "project-a"
+        events.append(("provider", dict(lease)))
+
+    runner.__module__ = mv.__name__
+
+    async def release_lane(_job_id):
+        return None
+
+    monkeypatch.setattr(mv, "get_flow_client", lambda: client)
+    monkeypatch.setattr(mv, "_sync_durable_single_job", sync)
+    monkeypatch.setattr(
+        "agent.db.crud.release_video_generation_lane_lease", release_lane
+    )
+    try:
+        _run(mv._run_generate_task(job_id, runner))
+        provider_index = next(
+            index for index, event in enumerate(events) if event[0] == "provider"
+        )
+        acquired_index = next(
+            index for index, event in enumerate(events[:provider_index])
+            if event[0] == "sync"
+            and event[2] == "ACQUIRED"
+            and event[1].get("connection_id") == "connection-a"
+            and "extension_build" not in event[1]
+        )
+        connection_bound_index = next(
+            index for index, event in enumerate(events[:provider_index])
+            if event[0] == "sync"
+            and event[2] == "CONNECTION_BOUND"
+            and event[1].get("extension_build") == "build-a"
+        )
+        editor_bound_index = next(
+            index for index, event in enumerate(events[:provider_index])
+            if event[0] == "sync"
+            and event[2] == "BOUND"
+            and event[1].get("flow_tab_id") == 41
+            and event[1].get("flow_project_id") == "project-a"
+        )
+        assert acquired_index < connection_bound_index < editor_bound_index < provider_index
+        assert client.released == ["lease-a"]
+    finally:
+        mv._JOBS.clear()
+
+
+def test_bridge_lease_missing_durable_row_blocks_provider(monkeypatch):
+    client = _LeaseClient()
+    job_id = "g_bridge_lease_missing_row"
+    provider_calls = []
+    mv._JOBS.clear()
+    mv._JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "SUBMITTED",
+        "stage": "queued",
+        "mode": "T2V",
+        "project_id": "project-a",
+        "durable": False,
+        "bridge_lease_required": True,
+        "provider_generation_submit_count": 0,
+    }
+
+    async def missing_sync(_job):
+        return False
+
+    async def runner(_actual_job_id):
+        provider_calls.append("provider")
+
+    runner.__module__ = mv.__name__
+
+    async def release_lane(_job_id):
+        return None
+
+    monkeypatch.setattr(mv, "get_flow_client", lambda: client)
+    monkeypatch.setattr(mv, "_sync_durable_single_job", missing_sync)
+    monkeypatch.setattr(
+        "agent.db.crud.release_video_generation_lane_lease", release_lane
+    )
+    try:
+        _run(mv._run_generate_task(job_id, runner))
+        assert provider_calls == []
+        assert mv._JOBS[job_id]["status"] == "FAILED"
+        assert "BRIDGE_LEASE_DURABILITY_FAILED" in mv._JOBS[job_id]["error"]
+        assert mv._JOBS[job_id]["bridge_lease_error"]["provider_calls"] == 0
+        assert mv._JOBS[job_id]["bridge_lease_error"]["credit_spend"] is False
+    finally:
+        mv._JOBS.clear()
+
+
+def test_external_runner_cannot_bypass_production_flow_client_lease(monkeypatch):
+    class _UnavailableProductionClient(_ProductionTypedLeaseClient):
+        def acquire_operation_lease(self, **_filters):
+            raise ConnectionError("ERR_EXTENSION_CONNECTION_NOT_FOUND")
+
+    client = _UnavailableProductionClient()
+    job_id = "g_external_runner_production_guard"
+    runner_calls = []
+    mv._JOBS.clear()
+    mv._JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "SUBMITTED",
+        "stage": "queued",
+        "mode": "T2V",
+        "project_id": "project-a",
+        "durable": True,
+        "bridge_lease_required": True,
+        "provider_generation_submit_count": 0,
+    }
+
+    async def sync(_job):
+        return True
+
+    async def external_runner(_actual_job_id):
+        runner_calls.append("provider")
+
+    async def release_lane(_job_id):
+        return None
+
+    monkeypatch.setattr(mv, "get_flow_client", lambda: client)
+    monkeypatch.setattr(mv, "_sync_durable_single_job", sync)
+    monkeypatch.setattr(
+        "agent.db.crud.release_video_generation_lane_lease", release_lane
+    )
+    try:
+        _run(mv._run_generate_task(job_id, external_runner))
+        assert runner_calls == []
+        assert "bridge_lease_test_seam" not in mv._JOBS[job_id]
+        assert "ERR_EXTENSION_CONNECTION_NOT_FOUND" in mv._JOBS[job_id]["error"]
+    finally:
+        mv._JOBS.clear()
+
+
+def test_legacy_extension_build_blocks_provider_before_runner(monkeypatch):
+    class _LegacyBuildClient(_LeaseClient):
+        async def get_status(self, timeout=5):
+            status = await super().get_status(timeout=timeout)
+            status["extension_build"] = "legacy"
+            return status
+
+    client = _LegacyBuildClient()
+    job_id = "g_legacy_build_guard"
+    runner_calls = []
+    mv._JOBS.clear()
+    mv._JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "SUBMITTED",
+        "stage": "queued",
+        "mode": "T2V",
+        "project_id": "project-a",
+        "durable": True,
+        "bridge_lease_required": True,
+        "provider_generation_submit_count": 0,
+    }
+
+    async def sync(_job):
+        return True
+
+    async def runner(_actual_job_id):
+        runner_calls.append("provider")
+
+    runner.__module__ = mv.__name__
+
+    async def release_lane(_job_id):
+        return None
+
+    monkeypatch.setattr(mv, "get_flow_client", lambda: client)
+    monkeypatch.setattr(mv, "_sync_durable_single_job", sync)
+    monkeypatch.setattr(
+        "agent.db.crud.release_video_generation_lane_lease", release_lane
+    )
+    try:
+        _run(mv._run_generate_task(job_id, runner))
+        assert runner_calls == []
+        assert "FLOW_BRIDGE_BUILD_IDENTITY_INVALID" in mv._JOBS[job_id]["error"]
+        assert mv._JOBS[job_id]["bridge_lease_error"] == {
+            "classification": "PRE_PROVIDER",
+            "provider_calls": 0,
+            "credit_spend": False,
+            "detail": mv._JOBS[job_id]["error"],
+        }
+    finally:
+        mv._JOBS.clear()
+
+
+def test_active_task_cancellation_during_cleanup_releases_bridge_lease(monkeypatch):
+    client = _LeaseClient()
+    job_id = "g_active_cleanup_cancel"
+    sync_calls = 0
+    runner_calls = []
+    mv._JOBS.clear()
+    mv._JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "SUBMITTED",
+        "stage": "queued",
+        "mode": "T2V",
+        "project_id": "project-a",
+        "durable": True,
+        "bridge_lease_required": True,
+        "provider_generation_submit_count": 0,
+    }
+
+    async def sync(_job):
+        nonlocal sync_calls
+        sync_calls += 1
+        if sync_calls == 4:
+            raise asyncio.CancelledError()
+        return True
+
+    async def runner(_actual_job_id):
+        runner_calls.append("provider-boundary")
+
+    runner.__module__ = mv.__name__
+
+    async def reconcile_profile(_job):
+        return None
+
+    async def release_lane(_job_id):
+        return None
+
+    monkeypatch.setattr(mv, "get_flow_client", lambda: client)
+    monkeypatch.setattr(mv, "_sync_durable_single_job", sync)
+    monkeypatch.setattr(
+        mv, "_reconcile_profile_certification_task", reconcile_profile
+    )
+    monkeypatch.setattr(
+        "agent.db.crud.release_video_generation_lane_lease", release_lane
+    )
+    try:
+        try:
+            _run(mv._run_generate_task(job_id, runner))
+            assert False, "expected cleanup cancellation to propagate"
+        except asyncio.CancelledError:
+            pass
+        assert runner_calls == ["provider-boundary"]
+        assert client.released == ["lease-a"]
+        assert mv._JOBS[job_id]["bridge_lease_state"] == "RELEASED"
+    finally:
+        mv._JOBS.clear()
+
+
+def test_restart_rebinds_only_same_installation(monkeypatch):
+    from agent.db import crud
+
+    job_id = "g_bridge_restart"
+    old_lease = {
+        "lease_id": "old-process-lease",
+        "connection_id": "connection-a1",
+        "connection_epoch": 3,
+        "installation_id": "installation-a",
+        "extension_session_id": "session-a1",
+        "extension_build": "build-a",
+        "flow_tab_id": 17,
+        "flow_url": "https://labs.google/fx/tools/flow/project/project-a",
+        "flow_project_id": "project-a",
+    }
+    state = {
+        "job_id": job_id,
+        "status": "GENERATED_BUT_UNRETRIEVED",
+        "mode": "T2V",
+        "project_id": "project-a",
+        "provider_operation_ids": ["operations/provider-a"],
+        "provider_generation_submit_count": 1,
+        "bridge_lease": old_lease,
+    }
+    row = {
+        "job_id": job_id,
+        "status": state["status"],
+        "project_id": "project-a",
+        "initial_operation_id": "operations/provider-a",
+        "stage_state_json": json.dumps(state),
+    }
+    persisted = []
+
+    class _ReconnectClient(_LeaseClient):
+        def __init__(self):
+            super().__init__(
+                _owned_harvest(
+                    connection_id="connection-a2",
+                    extension_session_id="session-a2",
+                ),
+                connection_id="connection-a2",
+            )
+            self.lease["extension_session_id"] = "session-a2"
+            self.poll_calls = 0
+
+        def acquire_operation_lease(self, **filters):
+            assert filters == {"installation_id": "installation-a"}
+            return super().acquire_operation_lease(**filters)
+
+        async def check_video_status(self, operations):
+            self.poll_calls += 1
+            assert operations == [{"operation": {"name": "operations/provider-a"}}]
+            return {
+                "data": {
+                    "operations": [{"status": "MEDIA_GENERATION_STATUS_ACTIVE"}]
+                }
+            }
+
+    client = _ReconnectClient()
+
+    class _WrongProfileOnlyClient(_LeaseClient):
+        def __init__(self):
+            super().__init__(
+                _owned_harvest(
+                    connection_id="connection-b",
+                    installation_id="installation-b",
+                    extension_session_id="session-b",
+                ),
+                connection_id="connection-b",
+            )
+            self.lease["installation_id"] = "installation-b"
+            self.lease["extension_session_id"] = "session-b"
+            self.poll_calls = 0
+
+        def acquire_operation_lease(self, **filters):
+            self.acquire_filters.append(filters)
+            raise ConnectionError("ERR_EXTENSION_CONNECTION_NOT_FOUND")
+
+        async def check_video_status(self, _operations):
+            self.poll_calls += 1
+            raise AssertionError("wrong-profile provider poll must not run")
+
+    wrong_profile = _WrongProfileOnlyClient()
+    active_client = {"value": wrong_profile}
+
+    async def get_row(actual_job_id):
+        assert actual_job_id == job_id
+        return row
+
+    async def sync(job):
+        snapshot = mv._durable_single_snapshot(job)
+        persisted.append(snapshot)
+        row["status"] = job["status"]
+        row["stage_state_json"] = json.dumps(snapshot)
+        return True
+
+    monkeypatch.setattr(crud, "get_video_production_job", get_row)
+    monkeypatch.setattr(mv, "get_flow_client", lambda: active_client["value"])
+    monkeypatch.setattr(mv, "_sync_durable_single_job", sync)
+
+    async def reconcile_missing_then_reconnected():
+        missing = await mv.reconcile_durable_single_job(job_id)
+        active_client["value"] = client
+        reconnected = await mv.reconcile_durable_single_job(job_id)
+        return missing, reconnected
+
+    missing, reconnected = _run(reconcile_missing_then_reconnected())
+
+    assert missing["status"] == "RECOVERY_REQUIRED"
+    assert missing["provider_reconciliation"]["state"] == "BRIDGE_LEASE_BLOCKED"
+    assert wrong_profile.acquire_filters == [
+        {"installation_id": "installation-a"}
+    ]
+    assert wrong_profile.poll_calls == 0
+    assert client.acquire_filters == [{"installation_id": "installation-a"}]
+    assert client.poll_calls == 1
+    assert reconnected["provider_reconciliation"]["provider_calls"] == 1
+    assert any(
+        snapshot.get("bridge_lease", {}).get("connection_id") == "connection-a2"
+        and snapshot.get("bridge_lease", {}).get("flow_project_id") == "project-a"
+        for snapshot in persisted
+    )
+    assert client.released == ["lease-a"]
+
+
+def test_restart_rejects_cross_project_provider_handle_before_poll(monkeypatch):
+    from agent.db import crud
+
+    job_id = "g_bridge_project_custody"
+    state = {
+        "job_id": job_id,
+        "status": "GENERATED_BUT_UNRETRIEVED",
+        "mode": "F2V",
+        "project_id": "project-a",
+        "direct_media_targets": [
+            {"name": "media-a", "projectId": "project-b"}
+        ],
+        "provider_generation_submit_count": 1,
+        "bridge_lease": {
+            "lease_id": "old-lease",
+            "connection_id": "connection-a1",
+            "connection_epoch": 3,
+            "installation_id": "installation-a",
+            "extension_session_id": "session-a1",
+            "extension_build": "build-a",
+            "flow_tab_id": 17,
+            "flow_url": "https://labs.google/fx/tools/flow/project/project-a",
+            "flow_project_id": "project-a",
+        },
+    }
+    row = {
+        "job_id": job_id,
+        "status": state["status"],
+        "project_id": "project-a",
+        "initial_media_id": "media-a",
+        "stage_state_json": json.dumps(state),
+    }
+
+    class _ProductionRecoveryClient(_ProductionTypedLeaseClient):
+        def __init__(self):
+            super().__init__()
+            self.poll_calls = 0
+
+        async def check_video_status(self, _operations):
+            self.poll_calls += 1
+            raise AssertionError("cross-project provider poll must not run")
+
+    client = _ProductionRecoveryClient()
+
+    async def get_row(actual_job_id):
+        assert actual_job_id == job_id
+        return row
+
+    async def sync(job):
+        snapshot = mv._durable_single_snapshot(job)
+        row["status"] = job["status"]
+        row["stage_state_json"] = json.dumps(snapshot)
+        return True
+
+    monkeypatch.setattr(crud, "get_video_production_job", get_row)
+    monkeypatch.setattr(mv, "_sync_durable_single_job", sync)
+
+    result = _run(
+        mv.reconcile_durable_single_job(job_id, provider_client=client)
+    )
+
+    assert result["status"] == "RECOVERY_REQUIRED"
+    assert result["error"] == "DURABLE_PROVIDER_PROJECT_CUSTODY_MISMATCH"
+    assert result["provider_reconciliation"]["provider_calls"] == 0
+    assert result["provider_reconciliation"]["media_target_projects"] == [
+        "project-b"
+    ]
+    assert client.acquire_filters == []
+    assert client.poll_calls == 0
+
+
+def test_restart_cancellation_releases_lease_without_reclassifying_handle(monkeypatch):
+    from agent.db import crud
+
+    job_id = "g_bridge_cancelled_recovery"
+    original_status = "GENERATED_BUT_UNRETRIEVED"
+    operation_id = "operations/provider-cancelled"
+    state = {
+        "job_id": job_id,
+        "status": original_status,
+        "mode": "T2V",
+        "project_id": "project-a",
+        "provider_operation_ids": [operation_id],
+        "provider_generation_submit_count": 1,
+        "bridge_lease": {
+            "lease_id": "old-process-lease",
+            "connection_id": "connection-a1",
+            "connection_epoch": 3,
+            "installation_id": "installation-a",
+            "extension_session_id": "session-a1",
+            "extension_build": "build-a",
+            "flow_tab_id": 17,
+            "flow_url": "https://labs.google/fx/tools/flow/project/project-a",
+            "flow_project_id": "project-a",
+        },
+    }
+    row = {
+        "job_id": job_id,
+        "status": original_status,
+        "project_id": "project-a",
+        "initial_operation_id": operation_id,
+        "stage_state_json": json.dumps(state),
+    }
+
+    class _CancelledRecoveryClient(_ProductionTypedLeaseClient):
+        async def check_video_status(self, _operations):
+            raise asyncio.CancelledError()
+
+    client = _CancelledRecoveryClient()
+
+    async def get_row(actual_job_id):
+        assert actual_job_id == job_id
+        return row
+
+    async def sync(job):
+        snapshot = mv._durable_single_snapshot(job)
+        row["status"] = job["status"]
+        row["stage_state_json"] = json.dumps(snapshot)
+        return True
+
+    monkeypatch.setattr(crud, "get_video_production_job", get_row)
+    monkeypatch.setattr(mv, "_sync_durable_single_job", sync)
+
+    try:
+        _run(mv.reconcile_durable_single_job(job_id, provider_client=client))
+        assert False, "expected cancellation to propagate"
+    except asyncio.CancelledError:
+        pass
+
+    persisted = json.loads(row["stage_state_json"])
+    assert row["status"] == original_status
+    assert [
+        mv._provider_operation_name(value)
+        for value in persisted["provider_operation_ids"]
+    ] == [operation_id]
+    assert row["initial_operation_id"] == operation_id
+    assert client.released == ["lease-a"]
+
+
+def test_startup_recovery_counts_only_explicit_provider_calls(monkeypatch):
+    from agent.db import crud
+
+    rows = [
+        {
+            "job_id": "g_bridge_blocked_sweep",
+            "status": "RECOVERY_REQUIRED",
+        },
+        {
+            "job_id": "g_bridge_polled_sweep",
+            "status": "RECOVERY_REQUIRED",
+        },
+    ]
+
+    async def list_rows(limit=1000):
+        assert limit == 1000
+        return rows
+
+    async def reconcile(job_id, provider_client=None):
+        assert provider_client is None
+        provider_calls = 1 if job_id.endswith("polled_sweep") else 0
+        return {
+            "job_id": job_id,
+            "status": "RECOVERY_REQUIRED",
+            "provider_reconciliation": {
+                "state": (
+                    "PENDING" if provider_calls else "BRIDGE_LEASE_BLOCKED"
+                ),
+                "provider_calls": provider_calls,
+            },
+        }
+
+    monkeypatch.setattr(crud, "list_video_production_jobs", list_rows)
+    monkeypatch.setattr(mv, "reconcile_durable_single_job", reconcile)
+
+    result = _run(mv.recover_durable_single_jobs())
+
+    assert result["candidates"] == 2
+    assert result["provider_calls"] == 1
 
 
 def test_bind_no_editor_url_raises():

@@ -8,6 +8,8 @@ contract and terminal job bridge.
 
 from pathlib import Path
 
+import pytest
+
 from agent.services.flow_client import FlowClient
 from agent.services import make_video as mv
 
@@ -344,3 +346,141 @@ def test_extension_bridges_generation_mapping_and_bound_media_delivery():
     assert "MEDIA_URL_REDIRECT" in background
     assert "mediaGenerationIds" in background
     assert "handleReloadFlowTab(msg.params?.tab_id)" in background
+
+
+@pytest.mark.parametrize("rotated_field", ["connection_id", "flow_tab_id", "project_id"])
+async def test_bound_retrieval_rejects_connection_tab_or_project_rotation(
+    monkeypatch, rotated_field
+):
+    """A paid attempt may retrieve only through its challenged connection/tab/project."""
+
+    expected_url = "https://labs.google/fx/tools/flow/project/project-a"
+    lease = {
+        "lease_id": "lease-a",
+        "connection_id": "connection-a",
+        "connection_epoch": 1,
+        "installation_id": "installation-a",
+        "extension_session_id": "session-a",
+        "extension_build": "build-a",
+        "flow_tab_id": 41,
+        "flow_url": expected_url,
+        "flow_project_id": "project-a",
+    }
+    observed = {
+        "connection_id": "connection-a",
+        "installation_id": "installation-a",
+        "extension_session_id": "session-a",
+        "flow_tab_id": 41,
+        "project_id": "project-a",
+    }
+    if rotated_field == "connection_id":
+        observed["connection_id"] = "connection-b"
+    elif rotated_field == "flow_tab_id":
+        observed["flow_tab_id"] = 99
+    else:
+        observed["project_id"] = "project-b"
+    observed_url = (
+        "https://labs.google/fx/tools/flow/project/" + observed["project_id"]
+    )
+
+    class _Client:
+        async def create_agent_session(self, project_id):
+            assert project_id == "project-a"
+            return {"data": {"sessionInfo": {"agentSessionId": "session-provider"}}}
+
+        async def harvest_video_urls(self, tab_id=None):
+            return {
+                "result": {
+                    "connection_id": observed["connection_id"],
+                    "installation_id": observed["installation_id"],
+                    "extension_session_id": observed["extension_session_id"],
+                    "flow_tab_found": True,
+                    "flow_tab_id": observed["flow_tab_id"],
+                    "flow_url": observed_url,
+                    "flow_project_id": observed["project_id"],
+                    "handled_flow_tab_id": observed["flow_tab_id"],
+                    "handled_flow_url": observed_url,
+                    "handled_flow_project_id": observed["project_id"],
+                    "envelope_flow_tab_id": observed["flow_tab_id"],
+                    "envelope_flow_url": observed_url,
+                    "diag": {
+                        "projectId": observed["project_id"],
+                        "videoIds": [DELIVERY_MEDIA_ID],
+                    },
+                }
+            }
+
+    async def bind(_client, requested_project_id=None, job=None):
+        assert requested_project_id == "project-a"
+        return {
+            "project_id": "project-a",
+            "flow_tab_id": 41,
+            "flow_project_url": expected_url,
+            "bridge_lease": dict(lease),
+        }
+
+    async def negotiate(*_args, **_kwargs):
+        return {
+            "approved": True,
+            "model_ok": True,
+            "duration_ok": True,
+            "model_used": "veo_3_1_r2v_lite",
+            "duration_used": 8,
+        }
+
+    async def no_known_media():
+        return set()
+
+    async def no_sync(_job):
+        return True
+
+    class _InstantAsyncio:
+        def __init__(self, real):
+            self._real = real
+
+        async def sleep(self, *_args, **_kwargs):
+            return None
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    job_id = "g_bound_retrieval_" + rotated_field
+    mv._JOBS.clear()
+    mv._JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "SUBMITTED",
+        "project_id": "project-a",
+        "bridge_lease": dict(lease),
+        "provider_generation_submit_count": 0,
+    }
+    monkeypatch.setattr(mv, "get_flow_client", lambda: _Client())
+    monkeypatch.setattr(mv, "_bind_with_recovery", bind)
+    monkeypatch.setattr(mv.agent_video, "negotiate_and_generate", negotiate)
+    monkeypatch.setattr(mv, "_durable_media_exclusion", no_known_media)
+    monkeypatch.setattr(mv, "_sync_durable_single_job", no_sync)
+    monkeypatch.setattr(mv, "asyncio", _InstantAsyncio(mv.asyncio))
+
+    try:
+        await mv._run_generate(
+            job_id,
+            "T2V",
+            "prompt",
+            "project-a",
+            None,
+            None,
+            "9:16",
+            None,
+            model="veo_3_1_lite",
+            duration_s=8,
+        )
+        job = mv._JOBS[job_id]
+        assert job["status"] == "GENERATED_BUT_UNRETRIEVED", (
+            job.get("error"),
+            job.get("original_error"),
+            job.get("approved"),
+            job.get("stage"),
+        )
+        assert "BOUND_RETRIEVAL_IDENTITY_MISMATCH" in job["original_error"]
+        assert job["provider_generation_submit_count"] == 1
+    finally:
+        mv._JOBS.clear()
