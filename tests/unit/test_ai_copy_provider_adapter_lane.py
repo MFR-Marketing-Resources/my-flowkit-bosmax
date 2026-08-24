@@ -214,6 +214,86 @@ def test_complete_json_uses_deepseek_json_output_and_records_safe_receipt(
     assert '{"safe": true}' not in serialized_receipt
 
 
+def test_complete_json_budget_is_explicit_and_clamped_at_transport_boundary(
+    state, monkeypatch
+):
+    svc.update_provider_key("deepseek", "synthetic-deepseek-test-key")
+    svc.update_lane_settings(
+        "text_assist",
+        "deepseek",
+        "deepseek-v4-flash",
+        execution_enabled=True,
+    )
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["json"] = json
+        return _FakeResp(
+            {
+                "choices": [
+                    {
+                        "message": {"content": '{"safe": true}'},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"completion_tokens": 5, "total_tokens": 5},
+            }
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    parsed, receipt = adapter.complete_json_with_receipt(
+        "Return one object.",
+        "Use the supplied data.",
+        max_output_tokens=20_000,
+    )
+
+    assert parsed == {"safe": True}
+    assert captured["json"]["max_tokens"] == adapter.OPENAI_COMPATIBLE_JSON_MAX_TOKENS
+    assert receipt["requested_output_tokens"] == 20_000
+    assert receipt["effective_output_tokens"] == adapter.OPENAI_COMPATIBLE_JSON_MAX_TOKENS
+    assert adapter.structured_output_token_limit(
+        "deepseek", "deepseek-v4-flash"
+    ) == adapter.OPENAI_COMPATIBLE_JSON_MAX_TOKENS
+
+
+def test_complete_json_budget_reaches_transport_without_exceeding_request(
+    state, monkeypatch
+):
+    svc.update_provider_key("deepseek", "synthetic-deepseek-test-key")
+    svc.update_lane_settings(
+        "text_assist",
+        "deepseek",
+        "deepseek-v4-flash",
+        execution_enabled=True,
+    )
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["json"] = json
+        return _FakeResp(
+            {
+                "choices": [
+                    {
+                        "message": {"content": '{"safe": true}'},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"completion_tokens": 5, "total_tokens": 5},
+            }
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    adapter.complete_json_with_receipt(
+        "Return one object.",
+        "Use the supplied data.",
+        max_output_tokens=2048,
+    )
+
+    assert captured["json"]["max_tokens"] == 2048
+
+
 def test_complete_json_does_not_apply_json_mode_to_unlisted_provider(
     state, monkeypatch
 ):
