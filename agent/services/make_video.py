@@ -76,6 +76,124 @@ HYBRID_REFERENCE_OMNI_10S_PROVIDER_TOOL = "generate_video_with_references"
 HYBRID_REFERENCE_OMNI_10S_PROVIDER_MODEL_KEY = "abra_r2v_10s"
 HYBRID_REFERENCE_OMNI_10S_PROVIDER_GENERATION_TYPE = "reference_frame_2_video"
 
+# The shared profile chain starts with one exact, reference-aware 8s operation.
+# It is intentionally a separate bootstrap route: the profile is resolved and
+# bound by the shared provider-profile authority, but remains NOT_CERTIFIED until
+# this owner-authorized run produces durable provider/artifact evidence.
+SHARED_REFERENCE_VEO_8S_BOOTSTRAP_ROUTE = (
+    "GOOGLE_FLOW_REFERENCE_8S_CERTIFICATION_BOOTSTRAP"
+)
+SHARED_REFERENCE_VEO_8S_BOOTSTRAP_OPERATION_BUDGET = 3
+SHARED_REFERENCE_VEO_8S_PROVIDER_MODEL_KEY = "veo_3_1_r2v_lite"
+SHARED_REFERENCE_VEO_8S_CONTRACT_VERSION = "veo-8s-reference-v1"
+SHARED_REFERENCE_VEO_8S_PROVIDER_GENERATION_TYPE = "reference_frame_2_video"
+
+
+def _resolve_submitted_provider_profile(provider_profile: dict | None) -> dict | None:
+    """Re-resolve a submitted shared profile and reject forged id/digest pairs."""
+
+    if not isinstance(provider_profile, dict):
+        return None
+    try:
+        resolved = _pep.resolve_provider_execution_profile(provider_profile)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"PROVIDER_PROFILE_INVALID:{exc}") from exc
+    supplied_digest = str(
+        provider_profile.get("provider_profile_digest")
+        or provider_profile.get("profile_digest")
+        or ""
+    ).strip()
+    supplied_id = str(provider_profile.get("profile_id") or "").strip()
+    if supplied_digest and supplied_digest != resolved["provider_profile_digest"]:
+        raise ValueError("PROVIDER_PROFILE_DIGEST_MISMATCH")
+    if supplied_id and supplied_id != resolved["profile_id"]:
+        raise ValueError("PROVIDER_PROFILE_ID_MISMATCH")
+    if not supplied_digest or not supplied_id:
+        raise ValueError("PROVIDER_PROFILE_ID_AND_DIGEST_REQUIRED")
+    return resolved
+
+
+def _resolve_shared_reference_8s_profile(
+    *,
+    mode: str,
+    source_mode: str | None,
+    model: str | None,
+    duration_s: int | None,
+    aspect: str | None,
+    ref_count: int,
+    num_videos: int,
+    provider_profile: dict | None,
+) -> dict | None:
+    """Return the exact shared 8s profile, or ``None`` for another tuple."""
+
+    try:
+        resolved_model = video_models.resolve(model)
+    except (TypeError, ValueError):
+        return None
+    try:
+        normalized_duration = int(duration_s)
+    except (TypeError, ValueError):
+        return None
+    if not (
+        str(mode or "").strip().upper() == "F2V"
+        and str(source_mode or "").strip().upper() == "HYBRID"
+        and resolved_model.get("key") == "veo_3_1_lite"
+        and normalized_duration == 8
+        and str(aspect or "").strip() == "9:16"
+        and int(ref_count) == 1
+        and int(num_videos) == 1
+    ):
+        return None
+    try:
+        expected = _pep.resolve_provider_execution_profile(
+            provider="GOOGLE_FLOW",
+            model="veo_3_1_lite",
+            duration_seconds=8,
+            prompt_block_count=1,
+            aspect_ratio="9:16",
+            output_count=1,
+            reference_topology="ONE_REFERENCE",
+            generation_type=SHARED_REFERENCE_VEO_8S_PROVIDER_GENERATION_TYPE,
+            execution_transport="google_flow_reference",
+            provider_model_key=SHARED_REFERENCE_VEO_8S_PROVIDER_MODEL_KEY,
+            capability_contract_version=SHARED_REFERENCE_VEO_8S_CONTRACT_VERSION,
+        )
+        submitted = _resolve_submitted_provider_profile(provider_profile)
+    except (TypeError, ValueError):
+        return None
+    if not submitted or submitted["profile_id"] != expected["profile_id"]:
+        return None
+    if submitted["provider_profile_digest"] != expected["provider_profile_digest"]:
+        return None
+    return expected
+
+
+def _owner_authorized_shared_reference_8s_bootstrap(
+    *,
+    profile: dict | None,
+    confirm_live_credit_burn: bool,
+    maximum_provider_operations: int | None,
+    max_retry_operations: int,
+) -> bool:
+    """Require an authenticated owner and the exact whole-chain budget."""
+
+    if not profile or profile.get("certification_status") != _pep.PROFILE_NOT_CERTIFIED:
+        return False
+    if confirm_live_credit_burn is not True:
+        return False
+    if int(maximum_provider_operations or 0) != SHARED_REFERENCE_VEO_8S_BOOTSTRAP_OPERATION_BUDGET:
+        return False
+    if int(max_retry_operations or 0) != 0:
+        return False
+    from agent.security.access_control import get_current_auth_context
+
+    context = get_current_auth_context()
+    return bool(
+        context
+        and "OWNER" in {str(role).upper() for role in context.role_codes}
+        and "production.execute" in context.permission_codes
+    )
+
 
 def hybrid_reference_omni10_capture_enabled() -> bool:
     return os.environ.get("HYBRID_REFERENCE_OMNI_10S_CAPTURE_ENABLED", "0").strip().lower() in (
@@ -1481,9 +1599,10 @@ def _build_reference_routing_receipt(
     """Build the provider-free routing proof for the one-door video service.
 
     A reference-bearing request is safe only when the selected route is either
-    the captured direct reference-aware lane or the separately certified
-    Flow-agent Omni 10s contract.  Unsupported reference tuples remain blocked
-    before approval; pure T2V remains on its text-only agent lane.
+    the captured direct reference-aware lane, the separately certified Flow-agent
+    Omni 10s contract, or the explicitly owner-authorized shared 8s bootstrap.
+    Unsupported reference tuples remain blocked before approval; pure T2V remains
+    on its text-only agent lane.
     """
     mode = (mode or "").upper()
     normalized_source_mode = str(source_mode or "").strip().upper() or None
@@ -1499,14 +1618,23 @@ def _build_reference_routing_receipt(
     reference_contract = "valid" if contract_ok else "invalid"
     direct_eligible = bool(plan and plan.get("eligible"))
     certified_agent_route = _is_certified_hybrid_reference_omni10_plan(plan)
+    shared_8s_bootstrap_route = bool(
+        plan
+        and plan.get("execution_route") == SHARED_REFERENCE_VEO_8S_BOOTSTRAP_ROUTE
+    )
     text_only_allowed = not reference_requested
     reference_mode_authorized = (
         not reference_requested
-        or (contract_ok and (direct_eligible or certified_agent_route))
+        or (
+            contract_ok
+            and (direct_eligible or certified_agent_route or shared_8s_bootstrap_route)
+        )
     )
     if reference_requested:
         if certified_agent_route and contract_ok:
             selected_route = HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
+        elif shared_8s_bootstrap_route and contract_ok:
+            selected_route = SHARED_REFERENCE_VEO_8S_BOOTSTRAP_ROUTE
         elif direct_eligible and contract_ok:
             selected_route = "DIRECT_API"
         else:
@@ -1557,6 +1685,11 @@ def _build_reference_routing_receipt(
         "provider_profile_status": (plan or {}).get("provider_profile_status"),
         "provider_profile_evidence_id": (plan or {}).get(
             "provider_profile_evidence_id"
+        ),
+        "provider_certification_bootstrap": (
+            "OWNER_AUTHORIZED_SHARED_8_TO_24_CHAIN"
+            if shared_8s_bootstrap_route
+            else None
         ),
         "pre_provider": {
             "classification": "READY" if reference_mode_authorized else "BLOCKED",
@@ -1964,11 +2097,15 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          asset_fingerprints: list[str] | None = None,
                          execution_identity: dict | None = None,
                          execution_profile_context: dict | None = None,
+                         provider_profile: dict | None = None,
                          product_visual_custody: dict | None = None,
                          request_id: str | None = None,
                          idempotency_key: str | None = None,
                          production_recipe: str | None = None,
                          surface_lane: str | None = None,
+                         confirm_live_credit_burn: bool = False,
+                         maximum_provider_operations: int | None = None,
+                         max_retry_operations: int = 0,
                          capture_class: str | None = None,
                          capture_subject: dict | None = None,
                          capture_confirmed: bool = False) -> dict:
@@ -2062,6 +2199,85 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 "blocker_code": _violation.split(":", 1)[0],
             },
         }
+    _submitted_provider_profile = None
+    if provider_profile is not None:
+        try:
+            _submitted_provider_profile = _resolve_submitted_provider_profile(
+                provider_profile
+            )
+        except ValueError as exc:
+            _code = str(exc).split(":", 1)[0]
+            return {
+                "status": "REJECTED",
+                "error": _code,
+                "detail": str(exc),
+                "pre_provider": {
+                    "classification": "BLOCKED",
+                    "provider_calls": 0,
+                    "credit_spend": False,
+                    "blocker_code": _code,
+                },
+            }
+        provider_profile = _submitted_provider_profile
+    _shared_8s_profile = _resolve_shared_reference_8s_profile(
+        mode=mode,
+        source_mode=source_mode,
+        model=model,
+        duration_s=duration_s,
+        aspect=aspect,
+        ref_count=_ref_count,
+        num_videos=num_videos,
+        provider_profile=provider_profile,
+    )
+    _shared_8s_bootstrap_authorized = _owner_authorized_shared_reference_8s_bootstrap(
+        profile=_shared_8s_profile,
+        confirm_live_credit_burn=confirm_live_credit_burn,
+        maximum_provider_operations=maximum_provider_operations,
+        max_retry_operations=max_retry_operations,
+    )
+    if _shared_8s_profile and not _shared_8s_bootstrap_authorized:
+        return {
+            "status": "REJECTED",
+            "error": "SHARED_8S_BOOTSTRAP_AUTHORIZATION_REQUIRED",
+            "detail": (
+                "Exact shared 8s provider profile requires authenticated OWNER "
+                "authorization, confirm_live_credit_burn=true, a whole-chain "
+                "budget of 3 provider operations, and retry count 0."
+            ),
+            "pre_provider": {
+                "classification": "BLOCKED",
+                "provider_calls": 0,
+                "credit_spend": False,
+                "blocker_code": "SHARED_8S_BOOTSTRAP_AUTHORIZATION_REQUIRED",
+            },
+        }
+    if _shared_8s_profile and not str(manifest_id or "").strip():
+        return {
+            "status": "REJECTED",
+            "error": "SHARED_8S_EXECUTION_MANIFEST_REQUIRED",
+            "detail": "The shared 8s certification bootstrap must dispatch from an approved execution manifest.",
+            "pre_provider": {
+                "classification": "BLOCKED",
+                "provider_calls": 0,
+                "credit_spend": False,
+                "blocker_code": "SHARED_8S_EXECUTION_MANIFEST_REQUIRED",
+            },
+        }
+    if provider_profile is not None and not _shared_8s_profile:
+        return {
+            "status": "REJECTED",
+            "error": "PROVIDER_PROFILE_NOT_AUTHORIZED_FOR_ROUTE",
+            "detail": (
+                "Explicit provider profiles are accepted here only for the exact "
+                "shared 8s bootstrap tuple."
+            ),
+            "pre_provider": {
+                "classification": "BLOCKED",
+                "provider_calls": 0,
+                "credit_spend": False,
+                "blocker_code": "PROVIDER_PROFILE_NOT_AUTHORIZED_FOR_ROUTE",
+            },
+        }
     # A replay must resolve to the existing logical job before the process-local
     # single-flight check.  This is a read-only DB lookup and never resubmits a
     # provider operation, even when the old process-local map has been cleared.
@@ -2118,6 +2334,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 mode, source_mode, model, duration_s, aspect,
                 ref_count=_ref_count, num_videos=num_videos,
                 surface_lane=surface_lane,
+                provider_profile=provider_profile,
+                shared_8s_bootstrap_authorized=_shared_8s_bootstrap_authorized,
             )
             _routing_receipt = _build_reference_routing_receipt(
                 mode, source_mode, image_media_ids, _direct_plan,
@@ -2244,9 +2462,12 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 manifest_id=manifest_id, execution_identity=execution_identity,
                 execution_profile_context=execution_profile_context,
                 provider_profile=(
-                    (_direct_plan or {}).get("provider_profile")
-                    if isinstance(_direct_plan, dict)
-                    else None
+                    provider_profile
+                    or (
+                        (_direct_plan or {}).get("provider_profile")
+                        if isinstance(_direct_plan, dict)
+                        else None
+                    )
                 ),
             )
         except _eas.ExecutionApprovalError as _gate_err:
@@ -2271,8 +2492,32 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                       **_surface_provenance,
                       "transport_mode": _surface_provenance["transport_mode"] or mode,
                       "direct_plan": _direct_plan,
-                     "execution_identity": execution_identity,
-                     "product_visual_custody": product_visual_custody,
+                      "execution_identity": execution_identity,
+                      "provider_profile": provider_profile,
+                      "provider_profile_id": (
+                          provider_profile.get("profile_id")
+                          if isinstance(provider_profile, dict)
+                          else None
+                      ),
+                      "provider_profile_digest": (
+                          provider_profile.get("provider_profile_digest")
+                          if isinstance(provider_profile, dict)
+                          else None
+                      ),
+                      "provider_profile_status": (
+                          provider_profile.get("certification_status")
+                          if isinstance(provider_profile, dict)
+                          else None
+                      ),
+                      "provider_certification_bootstrap": (
+                          "OWNER_AUTHORIZED_SHARED_8_TO_24_CHAIN"
+                          if _shared_8s_bootstrap_authorized
+                          else None
+                      ),
+                      "provider_operation_budget": maximum_provider_operations,
+                      "max_retry_operations": int(max_retry_operations or 0),
+                      "confirm_live_credit_burn": bool(confirm_live_credit_burn),
+                      "product_visual_custody": product_visual_custody,
                      "capture_only": capture_requested,
                      "capture_class": capture_class,
                      "capture_subject": capture_subject,
@@ -2976,7 +3221,9 @@ _DIRECT_FIFE_URL_RE = re.compile(
 
 def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
                       ref_count, num_videos, require_flag=True,
-                      surface_lane: str | None = None) -> dict:
+                      surface_lane: str | None = None,
+                      provider_profile: dict | None = None,
+                      shared_8s_bootstrap_authorized: bool = False) -> dict:
     """Decide whether a job may run on the direct batchAsync lane.
 
     Fail-closed: any setting the direct lane cannot PROVABLY honor returns an
@@ -2993,6 +3240,35 @@ def _direct_lane_plan(mode, source_mode, model, duration_s, aspect,
 
     if mode not in _VIDEO_MODES:
         return _decline("NOT_A_VIDEO_MODE")
+    shared_8s_profile = _resolve_shared_reference_8s_profile(
+        mode=mode,
+        source_mode=source_mode,
+        model=model,
+        duration_s=duration_s,
+        aspect=aspect,
+        ref_count=ref_count,
+        num_videos=num_videos,
+        provider_profile=provider_profile,
+    )
+    if shared_8s_profile and shared_8s_bootstrap_authorized:
+        return {
+            "eligible": False,
+            "reason": SHARED_REFERENCE_VEO_8S_BOOTSTRAP_ROUTE,
+            "execution_route": SHARED_REFERENCE_VEO_8S_BOOTSTRAP_ROUTE,
+            "rpc": "agent_stream_chat",
+            "gen_type": SHARED_REFERENCE_VEO_8S_PROVIDER_GENERATION_TYPE,
+            "provider_generation_type": SHARED_REFERENCE_VEO_8S_PROVIDER_GENERATION_TYPE,
+            "provider_tool": "generate_video_with_references",
+            "provider_model_usage_key": SHARED_REFERENCE_VEO_8S_PROVIDER_MODEL_KEY,
+            "contract_version": SHARED_REFERENCE_VEO_8S_CONTRACT_VERSION,
+            "provider_profile": shared_8s_profile,
+            "provider_profile_id": shared_8s_profile["profile_id"],
+            "provider_profile_digest": shared_8s_profile["provider_profile_digest"],
+            "provider_profile_status": shared_8s_profile["certification_status"],
+            "provider_profile_evidence_id": shared_8s_profile.get(
+                "certification_evidence_id"
+            ),
+        }
     if hybrid_reference_omni10_route_matches(
         mode,
         source_mode,
@@ -4467,6 +4743,32 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         job["identity_captured"] = _identity_captured(job["generation_identity"])
         job["tools_seen"] = list(nres.get("tools_seen") or [])
         job["gen_tool_matched"] = bool(nres.get("gen_tool_matched"))
+        if job.get("provider_certification_bootstrap"):
+            observed_model = str(nres.get("model_used") or "").strip().lower()
+            observed_tools = {str(tool).strip() for tool in (nres.get("tools_seen") or [])}
+            if observed_model != SHARED_REFERENCE_VEO_8S_PROVIDER_MODEL_KEY:
+                raise RuntimeError(
+                    "SHARED_8S_PROVIDER_MODEL_PROVENANCE_UNPROVEN: expected "
+                    f"{SHARED_REFERENCE_VEO_8S_PROVIDER_MODEL_KEY}, got "
+                    f"{nres.get('model_used')}"
+                )
+            if "generate_video_with_references" not in observed_tools:
+                raise RuntimeError(
+                    "SHARED_8S_REFERENCE_TRANSPORT_UNPROVEN: "
+                    "generate_video_with_references was not observed"
+                )
+            if nres.get("duration_used") != 8:
+                raise RuntimeError(
+                    "SHARED_8S_DURATION_PROVENANCE_UNPROVEN: expected 8s, got "
+                    f"{nres.get('duration_used')}"
+                )
+            job["provider_profile_observed"] = {
+                "provider_model_key": observed_model,
+                "provider_generation_type": SHARED_REFERENCE_VEO_8S_PROVIDER_GENERATION_TYPE,
+                "provider_tool": "generate_video_with_references",
+                "duration_seconds": 8,
+                "reference_media_ids": list(refs),
+            }
         certified_route = (
             (job.get("routing_receipt") or {}).get("selected_execution_route")
             == HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE

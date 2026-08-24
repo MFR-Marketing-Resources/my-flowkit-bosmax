@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from agent.services import execution_approval_service as eas
@@ -207,3 +209,105 @@ def test_pr_884_montage_execution_identity_route_remains_green():
     )
     assert plan["execution_route"] == make_video.HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
     assert plan["provider_profile_status"] == PROFILE_CERTIFIED
+
+
+def test_shared_8s_bootstrap_route_binds_exact_profile_without_promoting_certification():
+    profile = resolve_provider_execution_profile(_profile_request())
+    plan = make_video._direct_lane_plan(
+        "F2V",
+        "HYBRID",
+        "veo_3_1_lite",
+        8,
+        "9:16",
+        ref_count=1,
+        num_videos=1,
+        require_flag=False,
+        surface_lane="HYBRID",
+        provider_profile=profile,
+        shared_8s_bootstrap_authorized=True,
+    )
+    assert plan["execution_route"] == make_video.SHARED_REFERENCE_VEO_8S_BOOTSTRAP_ROUTE
+    assert plan["provider_profile_id"] == "pep_481550e19c68a43619559d86"
+    assert plan["provider_profile_status"] == PROFILE_NOT_CERTIFIED
+    receipt = make_video._build_reference_routing_receipt(
+        "F2V", "HYBRID", ["official-reference"], plan
+    )
+    assert receipt["reference_mode_authorized"] is True
+    assert receipt["selected_execution_route"] == (
+        make_video.SHARED_REFERENCE_VEO_8S_BOOTSTRAP_ROUTE
+    )
+    assert receipt["pre_provider"]["provider_calls"] == 0
+    assert receipt["provider_certification_bootstrap"] == (
+        "OWNER_AUTHORIZED_SHARED_8_TO_24_CHAIN"
+    )
+
+
+def test_shared_8s_bootstrap_requires_owner_and_exact_whole_chain_budget(monkeypatch):
+    profile = resolve_provider_execution_profile(_profile_request())
+    owner = SimpleNamespace(
+        role_codes=("OWNER",), permission_codes=frozenset({"production.execute"})
+    )
+    monkeypatch.setattr(
+        "agent.security.access_control.get_current_auth_context", lambda: owner
+    )
+    assert make_video._owner_authorized_shared_reference_8s_bootstrap(
+        profile=profile,
+        confirm_live_credit_burn=True,
+        maximum_provider_operations=3,
+        max_retry_operations=0,
+    ) is True
+    assert make_video._owner_authorized_shared_reference_8s_bootstrap(
+        profile=profile,
+        confirm_live_credit_burn=True,
+        maximum_provider_operations=1,
+        max_retry_operations=0,
+    ) is False
+    assert make_video._owner_authorized_shared_reference_8s_bootstrap(
+        profile=profile,
+        confirm_live_credit_burn=True,
+        maximum_provider_operations=3,
+        max_retry_operations=1,
+    ) is False
+
+
+def test_submitted_provider_profile_id_and_digest_are_revalidated():
+    profile = resolve_provider_execution_profile(_profile_request())
+    assert make_video._resolve_submitted_provider_profile(profile)["profile_id"] == profile[
+        "profile_id"
+    ]
+    forged = {**profile, "provider_profile_digest": "0" * 64}
+    with pytest.raises(ValueError, match="PROVIDER_PROFILE_DIGEST_MISMATCH"):
+        make_video._resolve_submitted_provider_profile(forged)
+
+
+async def test_shared_8s_start_requires_approved_manifest_before_provider(monkeypatch):
+    profile = resolve_provider_execution_profile(_profile_request())
+    owner = SimpleNamespace(
+        staff_id="staff-owner",
+        display_name="Owner",
+        staff_active=True,
+        staff_profile={"staff_id": "staff-owner", "display_name": "Owner"},
+        role_codes=("OWNER",),
+        permission_codes=frozenset({"production.execute"}),
+    )
+    monkeypatch.setattr(
+        "agent.security.access_control.get_current_auth_context", lambda: owner
+    )
+    result = await make_video.start_generate(
+        "F2V",
+        "provider-free bootstrap gate test",
+        project_id="project-1",
+        image_media_ids=["official-reference"],
+        source_mode="HYBRID",
+        surface_lane="HYBRID",
+        model="veo_3_1_lite",
+        duration_s=8,
+        num_videos=1,
+        provider_profile=profile,
+        confirm_live_credit_burn=True,
+        maximum_provider_operations=3,
+        max_retry_operations=0,
+    )
+    assert result["status"] == "REJECTED"
+    assert result["error"] == "SHARED_8S_EXECUTION_MANIFEST_REQUIRED"
+    assert result["pre_provider"]["provider_calls"] == 0
