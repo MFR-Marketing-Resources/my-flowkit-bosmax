@@ -1,6 +1,7 @@
 """Shared pytest fixtures for Flow Kit tests."""
 
 import os
+import sqlite3
 import sys
 
 # The pre-cutover suites exercise historical CopySet APIs and flag-OFF golden
@@ -14,8 +15,40 @@ from agent import config
 from agent.db import schema
 
 
+@pytest.fixture(scope="session")
+async def schema_template(tmp_path_factory):
+    """Build the canonical fresh schema once for this pytest session.
+
+    The application fixture still gives every test its own database file.  The
+    expensive schema/migration bootstrap is immutable after initialization, so
+    cloning that closed template is equivalent to initializing a fresh file
+    while keeping the authoritative test set bounded and deterministic.
+    """
+    await schema.close_db()
+    original_schema_db = schema.DB_PATH
+    template_dir = tmp_path_factory.mktemp("schema-template")
+    template_db = template_dir / "flowkit-pytest-schema-template.db"
+    schema.DB_PATH = template_db
+    try:
+        await schema.init_db()
+        await schema.close_db()
+        assert template_db.is_file(), "pytest schema template was not created"
+        # init_db enables WAL while constructing the template.  The backup API
+        # below copies the complete logical database (including any committed
+        # WAL pages), so a test clone never depends on sidecar-file timing.
+        with sqlite3.connect(str(template_db)) as check_db:
+            assert check_db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='copy_blueprint_v2'"
+            ).fetchone(), "pytest schema template is incomplete"
+        yield template_db
+    finally:
+        await schema.close_db()
+        schema.DB_PATH = original_schema_db
+
+
 @pytest.fixture(autouse=True)
-async def db_setup(tmp_path, monkeypatch):
+async def db_setup(tmp_path, monkeypatch, schema_template):
     """Give every test an independent database and close it before rebinding."""
     await schema.close_db()
 
@@ -37,7 +70,11 @@ async def db_setup(tmp_path, monkeypatch):
             monkeypatch.setattr(module, "DB_PATH", test_db, raising=False)
     monkeypatch.setattr(schema, "DB_PATH", test_db)
 
-    await schema.init_db()
+    # The template is closed before it is copied.  Each test still receives a
+    # physically independent database and the same fresh-schema contents as
+    # the previous init_db path, without repeating all migrations per test.
+    with sqlite3.connect(str(schema_template)) as template_conn, sqlite3.connect(str(test_db)) as test_conn:
+        template_conn.backup(test_conn)
     # Active production API tests use a real registered profile rather than a
     # generic actor fallback. This is test authority, not application seed data.
     db = await schema.get_db()
@@ -54,11 +91,17 @@ async def db_setup(tmp_path, monkeypatch):
         ),
     )
     await db.commit()
-    cursor = await db.execute("SELECT COUNT(*) FROM copy_blueprint_v2")
-    assert (await cursor.fetchone())[0] == 0, (
-        "pytest isolation violation: a fresh test DB contains copy_blueprint_v2 rows"
+    table_cursor = await db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='copy_blueprint_v2'"
     )
-    await cursor.close()
+    has_copy_v2 = await table_cursor.fetchone()
+    await table_cursor.close()
+    if has_copy_v2:
+        cursor = await db.execute("SELECT COUNT(*) FROM copy_blueprint_v2")
+        assert (await cursor.fetchone())[0] == 0, (
+            "pytest isolation violation: a fresh test DB contains copy_blueprint_v2 rows"
+        )
+        await cursor.close()
     try:
         yield
     finally:

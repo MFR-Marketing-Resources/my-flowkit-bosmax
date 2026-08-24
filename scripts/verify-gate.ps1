@@ -115,6 +115,13 @@ $DashboardContractTests = @(
     'src/pages/StoryboardLandbankV3Page.test.tsx'
 )
 
+# The backend smoke set is intentionally unchanged, but a single Python
+# process can be terminated by the local Windows runner before it emits the
+# gate summary.  Keep the authoritative set intact and execute it in bounded
+# shards so every configured suite still runs and the aggregate result remains
+# fail-closed.
+$BackendSmokeShardSize = 10
+
 $results = @()
 
 function Add-Result {
@@ -201,9 +208,40 @@ Invoke-Gate -Name 'SMART_REGISTRATION_VISUAL_CONTRACT' -WorkingDir $DashboardDir
 Invoke-Gate -Name 'PRODUCT_DATA_NETWORK_CONTRACT' -WorkingDir $RepoRoot -Command { & npm run test:product-data-network -- --fixture }
 
 # Gate 4 - Backend pytest smoke (or full with -Full).
-$pytestArgs = if ($Full) { @('-m', 'pytest', '-q') } else { @('-m', 'pytest', '-q') + $SmokeTests }
-$gateName = if ($Full) { 'BACKEND_PYTEST_FULL' } else { "BACKEND_PYTEST_SMOKE ($($SmokeTests.Count) suites)" }
-Invoke-Gate -Name $gateName -WorkingDir $RepoRoot -Command { & python @pytestArgs }
+if ($Full) {
+    Invoke-Gate -Name 'BACKEND_PYTEST_FULL' -WorkingDir $RepoRoot -Command { & python -m pytest -q }
+} else {
+    $backendShardCount = [int][math]::Ceiling($SmokeTests.Count / $BackendSmokeShardSize)
+    $backendSmokeShards = {
+        $failedShards = 0
+        $previousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Stop'
+        try {
+            for ($start = 0; $start -lt $SmokeTests.Count; $start += $BackendSmokeShardSize) {
+                $end = [math]::Min($start + $BackendSmokeShardSize, $SmokeTests.Count)
+                $shardNumber = [int]($start / $BackendSmokeShardSize) + 1
+                $shardTests = @($SmokeTests[$start..($end - 1)])
+                Write-Host ("  BACKEND_PYTEST_SMOKE_SHARD_{0:D2}/{1:D2}: {2} suites" -f $shardNumber, $backendShardCount, $shardTests.Count) -ForegroundColor Cyan
+                & python @(@('-m', 'pytest', '-q') + $shardTests)
+                $shardExit = $LASTEXITCODE
+                if ($shardExit -ne 0) {
+                    $failedShards++
+                    Write-Host ("  BACKEND_PYTEST_SMOKE_SHARD_{0:D2}: FAIL (exit={1})" -f $shardNumber, $shardExit) -ForegroundColor Red
+                } else {
+                    Write-Host ("  BACKEND_PYTEST_SMOKE_SHARD_{0:D2}: PASS" -f $shardNumber) -ForegroundColor Green
+                }
+            }
+        } catch {
+            $failedShards = $backendShardCount
+            Write-Host ("  BACKEND_PYTEST_SMOKE: harness error: {0}" -f $_.Exception.Message) -ForegroundColor Red
+        } finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        Write-Host ("  BACKEND_PYTEST_SMOKE: {0} suites accounted for across {1} shards; failed_shards={2}" -f $SmokeTests.Count, $backendShardCount, $failedShards) -ForegroundColor Cyan
+        & cmd.exe /d /c ("exit {0}" -f $failedShards)
+    }
+    Invoke-Gate -Name ("BACKEND_PYTEST_SMOKE ($($SmokeTests.Count) suites, $backendShardCount shards)") -WorkingDir $RepoRoot -Command $backendSmokeShards
+}
 
 # ---- Summary ----
 Write-Host ''
