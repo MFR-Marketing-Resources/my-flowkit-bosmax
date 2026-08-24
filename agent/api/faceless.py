@@ -8,6 +8,7 @@ compositing, and FRAMES remains an explicit advanced override.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -26,6 +27,7 @@ from agent.services.copy_execution_resolver import (
 from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
 
 router = APIRouter(prefix="/faceless", tags=["faceless"])
+logger = logging.getLogger(__name__)
 
 
 class FacelessPrepareRequest(BaseModel):
@@ -131,6 +133,11 @@ async def faceless_profile_certification(
     never edits the model registry, direct-lane flags, or snapshot table.
     """
 
+    # Establish the correlation id before any profile, authority, or
+    # persistence work.  The previous implementation generated it only after
+    # profile digest construction, so an authority-root failure returned an
+    # unstructured 500 with no traceable request id.
+    correlation_id = body.request_id or ("pcert_" + uuid4().hex)
     owner = _require_profile_certification_owner()
     runtime = _current_runtime_proof()
     from agent.services.flow_client import get_flow_client
@@ -186,17 +193,34 @@ async def faceless_profile_certification(
             },
         )
 
-    prepared = await faceless_prepare(
-        FacelessPrepareRequest(
-            product_id=body.product_id,
-            staff_id=owner.staff_id,
-            model=body.model,
-            generation_mode="SINGLE",
-            duration_seconds=8,
-            aspect_ratio="9:16",
-            copy_v2_context={"lane": "FACELESS"},
+    try:
+        prepared = await faceless_prepare(
+            FacelessPrepareRequest(
+                product_id=body.product_id,
+                staff_id=owner.staff_id,
+                model=body.model,
+                generation_mode="SINGLE",
+                duration_seconds=8,
+                aspect_ratio="9:16",
+                copy_v2_context={"lane": "FACELESS"},
+            )
         )
-    )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — preserve a structured pre-provider boundary
+        logger.exception(
+            "Faceless profile certification preparation failure request_id=%s",
+            correlation_id,
+        )
+        raise HTTPException(
+            500,
+            detail={
+                "error_code": "PROFILE_CERTIFICATION_PREPARATION_FAILED",
+                "message": str(exc),
+                "exception_type": type(exc).__name__,
+                "request_id": correlation_id,
+            },
+        ) from exc
     package = prepared.get("package") if isinstance(prepared, dict) else None
     if not isinstance(package, dict) or not package.get("execution_allowed"):
         raise HTTPException(
@@ -269,22 +293,46 @@ async def faceless_profile_certification(
             },
         )
 
-    profile = _profiles.resolve_duration_model_profile(
-        model="veo_3_1_lite",
-        duration_s=8,
-        aspect_ratio="9:16",
-        logical_mode="T2V",
-        source_mode="T2V",
-        generation_mode="SINGLE",
-        reference_count=0,
-        prompt_block_count=1,
-    )
-    profile_context = _profiles.build_approval_context(
-        profile,
-        lane="FACELESS",
-        product_digest=str(product_digest),
-        copy_digest=copy_digest,
-    )
+    try:
+        profile = _profiles.resolve_duration_model_profile(
+            model="veo_3_1_lite",
+            duration_s=8,
+            aspect_ratio="9:16",
+            logical_mode="T2V",
+            source_mode="T2V",
+            generation_mode="SINGLE",
+            reference_count=0,
+            prompt_block_count=1,
+        )
+        profile_context = _profiles.build_approval_context(
+            profile,
+            lane="FACELESS",
+            product_digest=str(product_digest),
+            copy_digest=copy_digest,
+        )
+        authority_digests = {
+            "sweetwps_digest": _profiles.sweetwps_digest(),
+            "compositor_digest": _profiles.compositor_digest(),
+            "compiler_digest": _profiles.compiler_digest(),
+            "lane_adapter_digest": _profiles.lane_adapter_digest("FACELESS"),
+        }
+    except _profiles.ExecutionProfileError as exc:
+        logger.exception(
+            "Faceless profile certification authority failure request_id=%s code=%s",
+            correlation_id,
+            exc.code,
+        )
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "PROFILE_CERTIFICATION_PROFILE_RESOLUTION_FAILED",
+                "message": str(exc),
+                "exception_type": type(exc).__name__,
+                "source_error_code": exc.code,
+                "request_id": correlation_id,
+                "details": exc.details,
+            },
+        ) from exc
     custody = package.get("product_visual_custody")
     execution_identity = package.get("faceless_execution_identity") or {
         "workspace_execution_package_id": package.get("workspace_execution_package_id"),
@@ -301,19 +349,47 @@ async def faceless_profile_certification(
             detail={"error_code": "PROFILE_CERTIFICATION_PACKAGE_LINEAGE_INCOMPLETE"},
         )
 
-    reservation, created = await _certifications.reserve_capture(
-        profile=profile,
-        representative_lane="FACELESS",
-        product_id=body.product_id,
-        copy_id=copy_id,
-        product_digest=str(product_digest),
-        copy_digest=copy_digest,
-        sweetwps_digest=_profiles.sweetwps_digest(),
-        compositor_digest=_profiles.compositor_digest(),
-        compiler_digest=_profiles.compiler_digest(),
-        lane_adapter_digest=_profiles.lane_adapter_digest("FACELESS"),
-        runtime_sha=str(runtime["runtime_sha"]),
-    )
+    try:
+        reservation, created = await _certifications.reserve_capture(
+            profile=profile,
+            representative_lane="FACELESS",
+            product_id=body.product_id,
+            copy_id=copy_id,
+            product_digest=str(product_digest),
+            copy_digest=copy_digest,
+            **authority_digests,
+            runtime_sha=str(runtime["runtime_sha"]),
+        )
+    except _certifications.ProviderCertificationError as exc:
+        logger.exception(
+            "Faceless profile certification reservation failure request_id=%s code=%s",
+            correlation_id,
+            exc.code,
+        )
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": exc.code,
+                "message": str(exc),
+                "exception_type": type(exc).__name__,
+                "request_id": correlation_id,
+                "details": exc.details,
+            },
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 — preserve a structured boundary
+        logger.exception(
+            "Faceless profile certification persistence failure request_id=%s",
+            correlation_id,
+        )
+        raise HTTPException(
+            500,
+            detail={
+                "error_code": "PROFILE_CERTIFICATION_PERSISTENCE_FAILED",
+                "message": str(exc),
+                "exception_type": type(exc).__name__,
+                "request_id": correlation_id,
+            },
+        ) from exc
     if not created:
         # The unique profile reservation is the no-resubmit guard. A completed
         # proof is reusable; every other state is returned for reconciliation.
@@ -327,7 +403,7 @@ async def faceless_profile_certification(
         }
 
     snapshot = None
-    capture_request_id = body.request_id or ("pcert_" + uuid4().hex)
+    capture_request_id = correlation_id
     try:
         snapshot = await _eas.create_review_snapshot(
             surface="FACELESS",
@@ -393,13 +469,48 @@ async def faceless_profile_certification(
             await _eas.invalidate_snapshot(
                 snapshot["snapshot_id"], reason="PROFILE_CERTIFICATION_DISPATCH_REJECTED"
             )
-        raise HTTPException(409, detail=result or {"error_code": "PROFILE_CERTIFICATION_DISPATCH_REJECTED"})
+        provider_error = (
+            (result or {}).get("error")
+            if isinstance(result, dict)
+            else None
+        ) or "PROFILE_CERTIFICATION_DISPATCH_REJECTED"
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": provider_error,
+                "message": (
+                    (result or {}).get("message")
+                    if isinstance(result, dict)
+                    else None
+                ) or "The provider boundary rejected the certification request.",
+                "request_id": correlation_id,
+                "provider_response": result,
+            },
+        )
 
-    submitted = await _certifications.mark_submitted(
-        reservation["certification_id"],
-        job_id=result["job_id"],
-        snapshot_id=snapshot["snapshot_id"],
-    )
+    try:
+        submitted = await _certifications.mark_submitted(
+            reservation["certification_id"],
+            job_id=result["job_id"],
+            snapshot_id=snapshot["snapshot_id"],
+        )
+    except Exception as exc:  # noqa: BLE001 — provider result must remain auditable
+        logger.exception(
+            "Faceless profile certification post-dispatch persistence failure "
+            "request_id=%s job_id=%s",
+            correlation_id,
+            result.get("job_id"),
+        )
+        raise HTTPException(
+            500,
+            detail={
+                "error_code": "PROFILE_CERTIFICATION_POST_DISPATCH_PERSISTENCE_FAILED",
+                "message": str(exc),
+                "exception_type": type(exc).__name__,
+                "request_id": correlation_id,
+                "job_id": result.get("job_id"),
+            },
+        ) from exc
     return {
         "status": "SUBMITTED",
         "certification": submitted,

@@ -99,6 +99,7 @@ domains:
       # content and execution gates.
       - agent/services/video_execution_profile_service.py
       - tests/unit/test_video_execution_profile_service.py
+      - tests/api/test_faceless_profile_certification.py
       - agent/db/provider_certification_crud.py
       - agent/services/provider_certification_service.py
       - tests/unit/test_provider_certification_service.py

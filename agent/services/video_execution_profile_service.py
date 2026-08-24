@@ -25,7 +25,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from agent.config import BASE_DIR, PROVIDER_CERTIFICATION_PROFILES
+from agent.config import BASE_DIR, PROVIDER_CERTIFICATION_PROFILES, SOURCE_ROOT
 from agent.services import canonical_prompt_compiler as _compiler
 from agent.services import extend_route_planner as _extend
 from agent.services import video_capability_matrix as _capability
@@ -406,7 +406,11 @@ def lane_adapter_digest(lane: str) -> str:
         raise ExecutionProfileError("LANE_ADAPTER_UNKNOWN", key)
     hasher = hashlib.sha256()
     for relative in paths:
-        path = BASE_DIR / relative
+        # BASE_DIR is mutable runtime storage when the canonical launcher is
+        # active.  Authority digests must always read the immutable served
+        # source tree; otherwise a production state root without an ``agent/``
+        # tree fails closed before provider dispatch.
+        path = SOURCE_ROOT / relative
         if not path.is_file():
             raise ExecutionProfileError("LANE_ADAPTER_SOURCE_MISSING", relative)
         hasher.update(relative.encode("utf-8"))
@@ -417,7 +421,10 @@ def lane_adapter_digest(lane: str) -> str:
 def source_digest(relative_path: str) -> str:
     """Digest a repository source authority for approval lineage."""
 
-    path = BASE_DIR / relative_path
+    # Runtime data and source authorities intentionally have different roots.
+    # SOURCE_ROOT is the immutable release/worktree containing the code being
+    # served; BASE_DIR may be the external canonical DB/data root.
+    path = SOURCE_ROOT / relative_path
     if not path.is_file():
         raise ExecutionProfileError("AUTHORITY_SOURCE_MISSING", relative_path)
     return _sha256(path.read_bytes())

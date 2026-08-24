@@ -138,6 +138,26 @@ def test_approval_context_requires_current_authority_digests():
     assert exc.value.code == "EXECUTION_PROFILE_DIGESTS_REQUIRED"
 
 
+def test_authority_digests_use_immutable_source_when_runtime_root_is_relocated(
+    monkeypatch, tmp_path
+):
+    """Canonical state storage must not be treated as the source tree.
+
+    The production launcher sets ``FLOW_AGENT_DIR`` to the external mutable
+    state root.  Authority digests still have to read the immutable release
+    source, otherwise profile certification fails before provider dispatch with
+    ``AUTHORITY_SOURCE_MISSING``.
+    """
+
+    runtime_root = tmp_path / "runtime-state"
+    runtime_root.mkdir()
+    monkeypatch.setattr(profiles, "BASE_DIR", runtime_root)
+
+    assert len(profiles.compositor_digest()) == 64
+    assert len(profiles.compiler_digest()) == 64
+    assert len(profiles.lane_adapter_digest("FACELESS")) == 64
+
+
 def test_profile_context_is_provider_affecting_and_rejects_stale_profile_digest():
     profile = _profile(8)
     context = profiles.build_approval_context(
