@@ -627,6 +627,51 @@ async def invalidate_snapshot(
     )
 
 
+async def reconcile_pre_provider_failure(
+    snapshot_id: str,
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    """Invalidate an approval after an audited provider-free failure.
+
+    A snapshot can be ``DISPATCHED`` when the dispatch-boundary equality check
+    ran, but still have no provider binding.  That narrow state is recoverable:
+    it is invalidated without erasing the dispatched envelope/timestamp, while
+    any snapshot carrying a provider job binding remains immutable.
+    """
+
+    snap = await _require(snapshot_id)
+    state = snap.get("approval_state")
+    if state == ApprovalState.INVALIDATED:
+        return snap
+    if state == ApprovalState.DISPATCHED and _norm(snap.get("provider_job_id")):
+        raise ExecutionApprovalError(
+            "PRE_PROVIDER_SNAPSHOT_HAS_PROVIDER_BINDING",
+            "A dispatched snapshot with a provider binding cannot be reconciled as pre-provider.",
+            details={"snapshot_id": snapshot_id, "provider_job_id": snap.get("provider_job_id")},
+        )
+    if state not in {
+        ApprovalState.REVIEW_REQUIRED,
+        ApprovalState.EDITED,
+        ApprovalState.APPROVED,
+        ApprovalState.DISPATCHED,
+    }:
+        raise ExecutionApprovalError(
+            "PRE_PROVIDER_SNAPSHOT_STATE_UNSUPPORTED",
+            f"Snapshot in state {state} cannot be reconciled.",
+            details={"snapshot_id": snapshot_id, "approval_state": state},
+        )
+    now = _now()
+    return await _crud.update_snapshot(
+        snapshot_id,
+        approval_state=ApprovalState.INVALIDATED,
+        approved_prompt_sha256=None,
+        approved_execution_envelope_sha256=None,
+        invalidation_reason=_norm(reason) or "PRE_PROVIDER_FAILURE",
+        updated_at=now,
+    )
+
+
 async def resolve_manifest_approved_snapshot(
     *,
     manifest_id: str,

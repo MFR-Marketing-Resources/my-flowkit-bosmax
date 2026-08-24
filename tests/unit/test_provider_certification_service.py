@@ -142,6 +142,82 @@ async def test_stale_profile_content_does_not_reuse_digest_record(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_pre_provider_failure_allows_one_new_archived_reservation(monkeypatch):
+    profile = _profile()
+    values = service._reservation_values(
+        profile=profile,
+        representative_lane="FACELESS",
+        product_id="product-1",
+        copy_id="copy-1",
+        product_digest="product-digest",
+        copy_digest="copy-digest",
+        sweetwps_digest="sweetwps-digest",
+        compositor_digest="compositor-digest",
+        compiler_digest="compiler-digest",
+        lane_adapter_digest="adapter-digest",
+        runtime_sha="runtime-sha",
+    )
+    existing = dict(values, status="FAILED", failure_code="FLOW_EDITOR_BINDING_REQUIRED")
+    replacement = dict(values, certification_id="pec_new", status="RESERVED")
+    monkeypatch.setattr(service._crud, "get_by_profile_digest", lambda _digest: _async(existing))
+    monkeypatch.setattr(
+        service._crud,
+        "archive_failed_pre_provider_and_create_reservation",
+        lambda *_args, **_kwargs: _async(replacement),
+    )
+    row, created = await service.reserve_capture(
+        profile=profile,
+        representative_lane="FACELESS",
+        product_id="product-1",
+        copy_id="copy-1",
+        product_digest="product-digest",
+        copy_digest="copy-digest",
+        sweetwps_digest="sweetwps-digest",
+        compositor_digest="compositor-digest",
+        compiler_digest="compiler-digest",
+        lane_adapter_digest="adapter-digest",
+        runtime_sha="runtime-sha",
+    )
+    assert created is True
+    assert row["certification_id"] == "pec_new"
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_is_not_reopened(monkeypatch):
+    profile = _profile()
+    values = service._reservation_values(
+        profile=profile,
+        representative_lane="FACELESS",
+        product_id="product-1",
+        copy_id="copy-1",
+        product_digest="product-digest",
+        copy_digest="copy-digest",
+        sweetwps_digest="sweetwps-digest",
+        compositor_digest="compositor-digest",
+        compiler_digest="compiler-digest",
+        lane_adapter_digest="adapter-digest",
+        runtime_sha="runtime-sha",
+    )
+    existing = dict(values, status="FAILED", failure_code="PROVIDER_REJECTED")
+    monkeypatch.setattr(service._crud, "get_by_profile_digest", lambda _digest: _async(existing))
+    row, created = await service.reserve_capture(
+        profile=profile,
+        representative_lane="FACELESS",
+        product_id="product-1",
+        copy_id="copy-1",
+        product_digest="product-digest",
+        copy_digest="copy-digest",
+        sweetwps_digest="sweetwps-digest",
+        compositor_digest="compositor-digest",
+        compiler_digest="compiler-digest",
+        lane_adapter_digest="adapter-digest",
+        runtime_sha="runtime-sha",
+    )
+    assert created is False
+    assert row["failure_code"] == "PROVIDER_REJECTED"
+
+
+@pytest.mark.asyncio
 async def test_finalize_requires_real_artifact_qc_and_exact_credit_delta(monkeypatch):
     profile = _profile()
     row = {

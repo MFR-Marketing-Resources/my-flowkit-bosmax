@@ -60,6 +60,7 @@ def _install_common(monkeypatch, *, start_result=None, profile_error=None, prepa
         "reservation": None,
         "snapshot": None,
         "start": None,
+        "submitted": [],
         "failed": [],
         "invalidated": [],
     }
@@ -99,7 +100,7 @@ def _install_common(monkeypatch, *, start_result=None, profile_error=None, prepa
         },
     }
     if start_result is None:
-        start_result = {"status": "SUBMITTED", "job_id": "g_provider_stub"}
+        start_result = {"status": "PRE_PROVIDER", "job_id": "g_provider_stub"}
 
     monkeypatch.setattr(api, "_require_profile_certification_owner", lambda: owner)
     monkeypatch.setattr(
@@ -108,6 +109,17 @@ def _install_common(monkeypatch, *, start_result=None, profile_error=None, prepa
         lambda: {"canonical_runtime": True, "runtime_sha": RUNTIME_SHA},
     )
     monkeypatch.setattr(flow_client, "get_flow_client", lambda: _FakeClient())
+    monkeypatch.setattr(
+        make_video,
+        "ensure_editor_binding",
+        _async_value(
+            {
+                "project_id": "flow-project-test",
+                "flow_tab_id": 7,
+                "flow_project_url": "https://labs.google/fx/tools/flow/project/flow-project-test",
+            }
+        ),
+    )
     monkeypatch.setattr(api, "faceless_prepare", _async_value(package))
     monkeypatch.setattr(
         api,
@@ -172,6 +184,7 @@ def _install_common(monkeypatch, *, start_result=None, profile_error=None, prepa
         }, True
 
     async def mark_submitted(certification_id, *, job_id, snapshot_id):
+        calls["submitted"].append((certification_id, job_id, snapshot_id))
         return {
             "certification_id": certification_id,
             "status": "SUBMITTED",
@@ -227,7 +240,8 @@ async def test_success_builds_exact_provider_free_certification_payload(monkeypa
 
     result = await api.faceless_profile_certification(_body())
 
-    assert result["status"] == "SUBMITTED"
+    assert result["status"] == "PRE_PROVIDER"
+    assert calls["submitted"] == []
     assert calls["start"]["mode"] == "T2V"
     assert calls["start"]["kwargs"]["product_id"] == PRODUCT_ID
     assert calls["start"]["kwargs"]["model"] == "veo_3_1_lite"
@@ -239,6 +253,8 @@ async def test_success_builds_exact_provider_free_certification_payload(monkeypa
     assert calls["start"]["kwargs"]["maximum_provider_operations"] == 1
     assert calls["start"]["kwargs"]["max_retry_operations"] == 0
     assert calls["start"]["kwargs"]["execution_profile_context"]["duration_model_profile"] == profile
+    assert calls["start"]["kwargs"]["execution_snapshot_id"] == "snap_test"
+    assert calls["start"]["kwargs"]["profile_certification_id"] == "pec_test"
 
 
 @pytest.mark.asyncio
@@ -250,6 +266,29 @@ async def test_exact_composite_route_is_preserved_to_dispatch(monkeypatch):
     custody = calls["start"]["kwargs"]["product_visual_custody"]
     assert custody["provider_route"] == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
     assert custody["provider_product_reference_forbidden"] is True
+
+
+@pytest.mark.asyncio
+async def test_editor_binding_failure_is_structured_and_has_zero_side_effects(monkeypatch):
+    calls, _profile = _install_common(monkeypatch)
+
+    async def fail_binding(*_args, **_kwargs):
+        raise make_video.FlowEditorBindingError(
+            "NO_OPEN_EDITOR: the Flow tab is not on a project editor",
+            details={"flow_path_state": "ROOT_OR_NON_EDITOR"},
+        )
+
+    monkeypatch.setattr(make_video, "ensure_editor_binding", fail_binding)
+    with pytest.raises(HTTPException) as raised:
+        await api.faceless_profile_certification(_body(request_id="corr-editor"))
+
+    assert raised.value.status_code == 409
+    assert raised.value.detail["error_code"] == "FLOW_EDITOR_BINDING_REQUIRED"
+    assert raised.value.detail["provider_calls"] == 0
+    assert raised.value.detail["credit_spend"] is False
+    assert calls["reservation"] is None
+    assert calls["snapshot"] is None
+    assert calls["start"] is None
 
 
 @pytest.mark.asyncio

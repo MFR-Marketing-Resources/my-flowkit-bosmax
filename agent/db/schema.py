@@ -5815,6 +5815,23 @@ CREATE TABLE IF NOT EXISTS provider_execution_certification (
 CREATE INDEX IF NOT EXISTS idx_provider_execution_certification_status
     ON provider_execution_certification(status, duration_s, model_key);
 
+-- Append-only lineage for terminal provider-free certification attempts.  The
+-- live table keeps one current reservation per immutable profile digest; a
+-- new explicitly requested attempt archives the complete prior row here
+-- before replacing the live reservation through provider_certification_crud.
+CREATE TABLE IF NOT EXISTS provider_execution_certification_history (
+    history_id                  TEXT PRIMARY KEY,
+    certification_id            TEXT NOT NULL,
+    profile_digest              TEXT NOT NULL,
+    row_json                    TEXT NOT NULL,
+    archive_reason              TEXT NOT NULL,
+    archived_at                 TEXT NOT NULL
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_execution_certification_history_profile
+    ON provider_execution_certification_history(profile_digest, archived_at);
+
 -- Approved Generation Manifest: a group of per-item review snapshots (one per
 -- provider operation) that the operator reviews and approves ATOMICALLY before a
 -- multi-item run (Montage / Production Studio / bulk / Extend chain). Each item is

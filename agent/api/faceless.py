@@ -71,6 +71,14 @@ class FacelessProfileCertificationFinalizeRequest(BaseModel):
     frame_qc: dict[str, Any]
 
 
+class FacelessProfileCertificationReconcileRequest(BaseModel):
+    certification_id: str = Field(..., min_length=1)
+    snapshot_id: str = Field(..., min_length=1)
+    error_code: str = Field(..., min_length=1)
+    error_detail: str = Field(..., min_length=1)
+    request_id: str | None = None
+
+
 async def _require_faceless_staff(staff_id: str | None) -> dict[str, Any]:
     from agent.services.staff_identity_service import (
         StaffIdentityError,
@@ -349,6 +357,45 @@ async def faceless_profile_certification(
             detail={"error_code": "PROFILE_CERTIFICATION_PACKAGE_LINEAGE_INCOMPLETE"},
         )
 
+    # Bind the official Flow editor before reserving certification state. This
+    # is provider-free and may use only the extension's supported project-open
+    # route when the tab is still on the Flow root. A failed bind therefore
+    # leaves no certification, snapshot, or generation job to reconcile.
+    try:
+        editor_binding = await _mv.ensure_editor_binding(client, mode="T2V")
+    except _mv.FlowEditorBindingError as exc:
+        logger.exception(
+            "Faceless profile certification editor binding failure request_id=%s",
+            correlation_id,
+        )
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "FLOW_EDITOR_BINDING_REQUIRED",
+                "message": str(exc),
+                "details": exc.details,
+                "request_id": correlation_id,
+                "provider_calls": 0,
+                "credit_spend": False,
+            },
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 — no unstructured pre-provider failure
+        logger.exception(
+            "Faceless profile certification editor binding exception request_id=%s",
+            correlation_id,
+        )
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "FLOW_EDITOR_BINDING_REQUIRED",
+                "message": str(exc),
+                "exception_type": type(exc).__name__,
+                "request_id": correlation_id,
+                "provider_calls": 0,
+                "credit_spend": False,
+            },
+        ) from exc
+
     try:
         reservation, created = await _certifications.reserve_capture(
             profile=profile,
@@ -436,6 +483,9 @@ async def faceless_profile_certification(
             staff_display_name_snapshot=owner.display_name,
             copy_execution_binding=copy_binding,
             execution_identity=execution_identity,
+            execution_snapshot_id=snapshot["snapshot_id"],
+            profile_certification_id=reservation["certification_id"],
+            editor_binding=editor_binding,
             execution_profile_context=profile_context,
             product_visual_custody=custody,
             request_id=capture_request_id,
@@ -453,6 +503,11 @@ async def faceless_profile_certification(
             code="PROFILE_CERTIFICATION_DISPATCH_FAILED",
             detail=str(exc),
         )
+        if snapshot and snapshot.get("approval_state") in {"APPROVED", "DISPATCHED"}:
+            await _eas.reconcile_pre_provider_failure(
+                snapshot["snapshot_id"],
+                reason=f"PROFILE_CERTIFICATION_DISPATCH_FAILED:{exc}"[:1000],
+            )
         raise HTTPException(
             409,
             detail={"error_code": "PROFILE_CERTIFICATION_DISPATCH_FAILED", "message": str(exc)},
@@ -488,38 +543,110 @@ async def faceless_profile_certification(
             },
         )
 
-    try:
-        submitted = await _certifications.mark_submitted(
-            reservation["certification_id"],
-            job_id=result["job_id"],
-            snapshot_id=snapshot["snapshot_id"],
-        )
-    except Exception as exc:  # noqa: BLE001 — provider result must remain auditable
-        logger.exception(
-            "Faceless profile certification post-dispatch persistence failure "
-            "request_id=%s job_id=%s",
-            correlation_id,
-            result.get("job_id"),
-        )
-        raise HTTPException(
-            500,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_POST_DISPATCH_PERSISTENCE_FAILED",
-                "message": str(exc),
-                "exception_type": type(exc).__name__,
-                "request_id": correlation_id,
-                "job_id": result.get("job_id"),
-            },
-        ) from exc
     return {
-        "status": "SUBMITTED",
-        "certification": submitted,
+        "status": result.get("status") or _mv.PROFILE_CERTIFICATION_PRE_PROVIDER_STATUS,
+        "certification": reservation,
         "profile": profile,
         "snapshot": snapshot,
         "job": result,
+        "editor_binding": editor_binding,
         "credit_quote": {"balance_before": balance, "profile_cost_ceiling": 10},
-        "provider_calls": 1,
+        "provider_calls": 0,
         "credit_spend": "PENDING_ARTIFACT_DELTA",
+    }
+
+
+@router.post("/profile-certification/{job_id}/reconcile-pre-provider")
+async def reconcile_faceless_profile_certification(
+    job_id: str,
+    body: FacelessProfileCertificationReconcileRequest,
+) -> dict[str, Any]:
+    """Official idempotent control path for a proven provider-free failure."""
+
+    _require_profile_certification_owner()
+    from agent.db import provider_certification_crud as _cert_crud
+    from agent.services import execution_approval_service as _eas
+    from agent.services import make_video as _mv
+    from agent.services import provider_certification_service as _certifications
+
+    certification = await _cert_crud.get_by_id(body.certification_id)
+    if certification is None:
+        raise HTTPException(404, "PROFILE_CERTIFICATION_NOT_FOUND")
+    if str(certification.get("job_id") or job_id) != str(job_id):
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "CERTIFICATION_JOB_MISMATCH",
+                "certification_job_id": certification.get("job_id"),
+                "job_id": job_id,
+            },
+        )
+    if str(certification.get("snapshot_id") or body.snapshot_id) != str(body.snapshot_id):
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "CERTIFICATION_SNAPSHOT_MISMATCH",
+                "certification_snapshot_id": certification.get("snapshot_id"),
+                "snapshot_id": body.snapshot_id,
+            },
+        )
+    job = _mv.get_job(job_id)
+    if job is None:
+        job = await _mv.get_durable_job(job_id, reconcile=False)
+    if not job:
+        raise HTTPException(404, "PROFILE_CERTIFICATION_JOB_NOT_FOUND")
+    source_error = str(job.get("error") or "")
+    if body.error_code == "FLOW_EDITOR_BINDING_REQUIRED" and "NO_OPEN_EDITOR" not in source_error:
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "PRE_PROVIDER_ERROR_CLASSIFICATION_MISMATCH",
+                "source_error": source_error,
+                "requested_error_code": body.error_code,
+            },
+        )
+    try:
+        durable = await _mv.reconcile_pre_provider_failure(
+            job_id,
+            classification_code=body.error_code,
+            detail=body.error_detail,
+            request_id=body.request_id,
+        )
+        certification = await _certifications.reconcile_pre_provider_failure(
+            body.certification_id,
+            job_id=job_id,
+            code=body.error_code,
+            detail=body.error_detail,
+        )
+        snapshot = await _eas.reconcile_pre_provider_failure(
+            body.snapshot_id,
+            reason=f"{body.error_code}:{body.error_detail}"[:1000],
+        )
+    except Exception as exc:  # noqa: BLE001 — audited route returns structured failure
+        logger.exception(
+            "Faceless profile certification reconciliation failure request_id=%s job_id=%s",
+            body.request_id,
+            job_id,
+        )
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "PROFILE_CERTIFICATION_RECONCILIATION_FAILED",
+                "message": str(exc),
+                "request_id": body.request_id,
+                "job_id": job_id,
+                "provider_calls": 0,
+                "credit_spend": False,
+            },
+        ) from exc
+    return {
+        "status": "RECONCILED_PRE_PROVIDER",
+        "job": durable,
+        "certification": certification,
+        "snapshot": snapshot,
+        "provider_calls": 0,
+        "credit_spend": 0,
+        "request_id": body.request_id,
     }
 
 

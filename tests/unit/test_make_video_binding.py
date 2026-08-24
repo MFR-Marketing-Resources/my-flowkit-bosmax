@@ -4,6 +4,7 @@ Pure logic — no network, no credits. Exercises _bind_editor_session fail-close
 and the single-flight video lane in start_generate via a fake client.
 """
 import asyncio
+import json
 
 import agent.services.make_video as mv
 
@@ -105,6 +106,225 @@ def test_bind_content_build_mismatch_raises():
         assert False, "expected CONTENT_BUILD_MISMATCH"
     except RuntimeError as e:
         assert "CONTENT_BUILD_MISMATCH" in str(e)
+
+
+def test_bind_missing_content_script_fails_closed():
+    url = "https://labs.google/fx/tools/flow/project/abc-123"
+    client = _FakeClient(
+        _harvest("abc-123", url, 42),
+        page_diag={"content_script_loaded": False, "build_match": True},
+    )
+    try:
+        _run(mv._bind_editor_session(client))
+        assert False, "expected CONTENT_SCRIPT_NOT_READY"
+    except RuntimeError as e:
+        assert "CONTENT_SCRIPT_NOT_READY" in str(e)
+
+
+def test_bind_with_recovery_opens_official_new_project_from_root():
+    url = "https://labs.google/fx/tools/flow/project/new-1"
+    state = {"opened": False}
+
+    class _NewProjectClient:
+        connected = True
+
+        async def harvest_video_urls(self, tab_id=None):
+            if state["opened"]:
+                return _harvest("new-1", url, 11)
+            return _harvest(None, "https://labs.google/fx/tools/flow", 11)
+
+        async def flow_page_state_diagnostic(self, mode=None):
+            return {"visible_error_markers": [], "build_match": True}
+
+        async def open_flow_new_project(self, mode=None):
+            assert mode == "T2V"
+            state["opened"] = True
+            return {"ok": True, "editor_ready": True, "flow_url": url}
+
+    b = _run(mv._bind_with_recovery(_NewProjectClient()))
+    assert b["project_id"] == "new-1"
+    assert b["recovered_officially"] is True
+    assert state["opened"] is True
+
+
+def test_pre_provider_reconciliation_preserves_source_error_and_side_effect_proof(monkeypatch):
+    from agent.db import crud
+
+    row = {
+        "job_id": "g_reconcile",
+        "status": "FAILED",
+        "error_code": "NO_OPEN_EDITOR: the Flow tab is not on a project editor",
+        "logical_job_key": "ljk-reconcile",
+        "initial_operation_id": None,
+        "initial_media_id": None,
+        "final_media_id": None,
+        "stage_state_json": json.dumps(
+            {
+                "job_id": "g_reconcile",
+                "status": "FAILED",
+                "stage": "failed",
+                "request_id": "request-reconcile",
+                "provider_generation_submit_count": 0,
+                "provider_operation_ids": [],
+                "artifacts": [],
+                "credit_state": "NOT_SPENT",
+            }
+        ),
+    }
+    updates = []
+    released = []
+
+    async def get_job(job_id):
+        assert job_id == "g_reconcile"
+        return row
+
+    async def update_job(job_id, **fields):
+        updates.append((job_id, fields))
+
+    async def release(job_id):
+        released.append(job_id)
+
+    monkeypatch.setattr(crud, "get_video_production_job", get_job)
+    monkeypatch.setattr(crud, "update_video_production_job_full", update_job)
+    monkeypatch.setattr(crud, "release_video_generation_lane_lease", release)
+
+    result = _run(
+        mv.reconcile_pre_provider_failure(
+            "g_reconcile",
+            classification_code="FLOW_EDITOR_BINDING_REQUIRED",
+            detail="NO_OPEN_EDITOR: the Flow tab is not on a project editor",
+            request_id="request-reconcile",
+        )
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["pre_provider_failure"]["provider_dispatch_reached"] is False
+    assert result["provider_evidence"]["credit_state"] == "NOT_SPENT"
+    assert released == ["g_reconcile"]
+    assert updates[0][1]["status"] == "FAILED"
+    persisted = json.loads(updates[0][1]["stage_state_json"])
+    assert persisted["pre_provider_failure"]["error_code"] == "FLOW_EDITOR_BINDING_REQUIRED"
+    assert persisted["pre_provider_failure"]["original_error_code"].startswith("NO_OPEN_EDITOR")
+
+
+def test_profile_certification_marks_submitted_only_after_provider_acceptance(monkeypatch):
+    events = []
+
+    class _C:
+        async def harvest_video_urls(self, tab_id=None):
+            return {"result": {"flow_tab_found": True, "flow_tab_id": 1,
+                               "diag": {"projectId": "p1", "videoIds": ["vid-1"]}}}
+
+        async def create_agent_session(self, *a):
+            return {"data": {"sessionInfo": {"agentSessionId": "s1"}}}
+
+        async def reload_flow_tab(self, tab_id=None):
+            return {"ok": True}
+
+    async def fake_bind(client, requested_project_id=None, job=None):
+        events.append("binding")
+        return {"project_id": "p1", "flow_tab_id": 1,
+                "flow_project_url": "https://labs.google/fx/tools/flow/project/p1"}
+
+    async def fake_approval(**kwargs):
+        events.append("approval")
+        assert kwargs["snapshot_id"] == "snap-profile"
+        return {"pass": True, "reason": "APPROVED_ENVELOPE_MATCH"}
+
+    async def fake_negotiate(*a, **k):
+        events.append("provider")
+        return {
+            "approved": True,
+            "model_used": "veo_3_1_lite",
+            "model_ok": True,
+            "duration_used": 8,
+            "duration_ok": True,
+            "gen_prompt": "prompt",
+            "tool_call_id": "tool-1",
+            "response_id": "response-1",
+            "gen_seed": 1,
+            "tools_seen": [],
+            "gen_tool_matched": True,
+        }
+
+    async def fake_accept(*a, **k):
+        return ("vid-1", "/tmp/vid-1.mp4", 1.0, {"media_id": "vid-1"})
+
+    async def fake_record(*a, **k):
+        return None
+
+    async def fake_exclusion():
+        return set()
+
+    async def fake_submit(certification_id, *, job_id, snapshot_id):
+        events.append("certification_submitted")
+        assert certification_id == "pec-profile"
+        assert snapshot_id == "snap-profile"
+        return {"certification_id": certification_id, "status": "SUBMITTED"}
+
+    original = (
+        mv.get_flow_client,
+        mv._bind_with_recovery,
+        mv._verify_generation_approval,
+        mv.agent_video.negotiate_and_generate,
+        mv._accept_correlated_output,
+        mv._record_artifacts,
+        mv._durable_media_exclusion,
+        mv._sync_durable_single_job,
+        mv.asyncio,
+    )
+    from agent.services import provider_certification_service as certifications
+    original_submit = certifications.mark_submitted
+    mv.get_flow_client = lambda: _C()
+    mv._bind_with_recovery = fake_bind
+    mv._verify_generation_approval = fake_approval
+    mv.agent_video.negotiate_and_generate = fake_negotiate
+    mv._accept_correlated_output = fake_accept
+    mv._record_artifacts = fake_record
+    mv._durable_media_exclusion = fake_exclusion
+    mv._sync_durable_single_job = fake_record
+    mv.asyncio = _ShimAsyncio(mv.asyncio)
+    certifications.mark_submitted = fake_submit
+    mv._JOBS.clear()
+    mv._JOBS["g_profile"] = {
+        "job_id": "g_profile",
+        "status": mv.PROFILE_CERTIFICATION_PRE_PROVIDER_STATUS,
+        "profile_certification_capture": True,
+        "profile_certification_id": "pec-profile",
+        "execution_snapshot_id": "snap-profile",
+        "profile_certification_context": {},
+        "execution_identity": {},
+        "provider_profile": None,
+        "provider_operation_ids": [],
+        "artifacts": [],
+        "provider_generation_submit_count": 0,
+        "num_videos": 1,
+    }
+    try:
+        _run(
+            mv._run_generate(
+                "g_profile", "T2V", "prompt", None, None, None,
+                "9:16", None, model="veo_3_1_lite", duration_s=8,
+            )
+        )
+        assert events.index("binding") < events.index("approval") < events.index("provider")
+        assert events.index("provider") < events.index("certification_submitted")
+        assert mv._JOBS["g_profile"]["provider_generation_submit_count"] == 1
+        assert mv._JOBS["g_profile"]["status"] == "DONE"
+    finally:
+        (
+            mv.get_flow_client,
+            mv._bind_with_recovery,
+            mv._verify_generation_approval,
+            mv.agent_video.negotiate_and_generate,
+            mv._accept_correlated_output,
+            mv._record_artifacts,
+            mv._durable_media_exclusion,
+            mv._sync_durable_single_job,
+            mv.asyncio,
+        ) = original
+        certifications.mark_submitted = original_submit
+        mv._JOBS.clear()
 
 
 def test_bind_with_recovery_reopens_stored_project_on_drift():
