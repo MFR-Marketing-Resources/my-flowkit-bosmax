@@ -410,3 +410,91 @@ async def test_unexpected_preprovider_exception_never_returns_unstructured_error
     assert raised.value.detail["request_id"] == "corr-prepare"
     assert calls["reservation"] is None
     assert calls["start"] is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_route_carries_snapshot_linkage_into_certification(monkeypatch):
+    owner = SimpleNamespace(
+        staff_id="staff_test_owner",
+        display_name="Test Owner",
+        role_codes=("OWNER",),
+        permission_codes=("production.execute",),
+    )
+    observed = {}
+
+    monkeypatch.setattr(api, "_require_profile_certification_owner", lambda: owner)
+    certification_crud = __import__(
+        "agent.db.provider_certification_crud", fromlist=["unused"]
+    )
+    monkeypatch.setattr(
+        certification_crud,
+        "get_by_id",
+        _async_value(
+            {
+                "certification_id": "pec_old",
+                "job_id": "g_old",
+                "snapshot_id": None,
+                "status": "FAILED",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        make_video,
+        "get_job",
+        lambda _job_id: {
+            "job_id": "g_old",
+            "status": "FAILED",
+            "error": "agent did not approve a video: PRE_APPROVAL_SETTINGS_ACK_REQUIRED",
+        },
+    )
+    monkeypatch.setattr(
+        make_video,
+        "reconcile_pre_provider_failure",
+        _async_capture(observed, "job", {"job_id": "g_old", "status": "FAILED"}),
+    )
+    monkeypatch.setattr(
+        certifications,
+        "reconcile_pre_provider_failure",
+        _async_capture(
+            observed,
+            "certification",
+            {
+                "certification_id": "pec_old",
+                "status": "FAILED",
+                "snapshot_id": "eas_old",
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        eas,
+        "reconcile_pre_provider_failure",
+        _async_capture(
+            observed,
+            "snapshot",
+            {"snapshot_id": "eas_old", "approval_state": "INVALIDATED"},
+        ),
+    )
+
+    result = await api.reconcile_faceless_profile_certification(
+        "g_old",
+        api.FacelessProfileCertificationReconcileRequest(
+            certification_id="pec_old",
+            snapshot_id="eas_old",
+            error_code="PRE_APPROVAL_SETTINGS_ACK_REQUIRED",
+            error_detail="agent did not approve a video: PRE_APPROVAL_SETTINGS_ACK_REQUIRED",
+            request_id="reconcile-test",
+        ),
+    )
+
+    assert observed["job"]["args"] == ("g_old",)
+    assert observed["certification"]["kwargs"]["snapshot_id"] == "eas_old"
+    assert observed["snapshot"]["args"][0] == "eas_old"
+    assert result["certification"]["snapshot_id"] == "eas_old"
+
+
+def _async_capture(observed, key, result):
+    async def capture(*args, **kwargs):
+        observed[key] = {"args": args, "kwargs": kwargs}
+        return result
+
+    return capture

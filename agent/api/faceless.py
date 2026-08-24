@@ -707,6 +707,7 @@ async def reconcile_faceless_profile_certification(
             job_id=job_id,
             code=body.error_code,
             detail=body.error_detail,
+            snapshot_id=body.snapshot_id,
         )
         snapshot = await _eas.reconcile_pre_provider_failure(
             body.snapshot_id,
