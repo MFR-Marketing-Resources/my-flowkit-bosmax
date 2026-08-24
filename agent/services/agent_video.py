@@ -13,6 +13,7 @@ generating (e.g. "generating", "in the queue"). Every turn's raw agent reply is 
 import json
 import hashlib
 import re
+from collections.abc import Mapping
 
 from agent.services import video_models
 
@@ -122,8 +123,16 @@ def _target_settings_acknowledged(text, target_model=None, target_duration_s=Non
     """Conservatively recognize an explicit model + duration acknowledgement."""
     spec = video_models.resolve(target_model)
     low = str(text or "").lower()
-    labels = {str(spec["agent_label"]).lower(), str(spec["ui_label"]).lower()}
-    if not any(label and label in low for label in labels):
+    compact = re.sub(r"[^a-z0-9]+", "", low)
+    labels = {
+        str(spec["key"]).lower(),
+        str(spec["agent_label"]).lower(),
+        str(spec["ui_label"]).lower(),
+    }
+    if not any(
+        label and (label in low or re.sub(r"[^a-z0-9]+", "", label) in compact)
+        for label in labels
+    ):
         return False
     duration = _duration_label(
         target_duration_s if target_duration_s is not None
@@ -597,7 +606,9 @@ def decide(permission, target_model=None, target_duration_s=None, desired_num=1,
 
 async def negotiate_and_generate(client, project_id, session_id, prompt, media_ids,
                                  target_model=None, target_duration_s=None,
-                                 desired_num=1, max_turns=16, approve=True) -> dict:
+                                 desired_num=1, max_turns=16, approve=True,
+                                 target_authorization: Mapping | None = None,
+                                 on_target_acknowledged=None) -> dict:
     """Drive the agent until generation STARTS (verified by its own reply) or it fails.
 
     approve=False stops just before sending the first APPROVE (no credits) and reports
@@ -614,6 +625,9 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
     permission_after_target_steer = False
     target_settings_acknowledged = False
     target_steer_turn = None
+    target_acknowledgement = None
+    target_acknowledgement_persisted = False
+    target_acknowledgement_error = None
 
     def _negotiation_state() -> dict:
         return {
@@ -621,6 +635,9 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
             "target_settings_resteered": target_settings_resteered,
             "permission_after_target_steer": permission_after_target_steer,
             "target_settings_acknowledged": target_settings_acknowledged,
+            "target_acknowledgement": target_acknowledgement,
+            "target_acknowledgement_persisted": target_acknowledgement_persisted,
+            "target_acknowledgement_error": target_acknowledgement_error,
             "target_model_key": target_spec["key"],
             "target_model_label": target_spec["ui_label"],
             "target_agent_label": target_spec["agent_label"],
@@ -640,6 +657,8 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
         nonlocal turn, target_settings_resteered
         nonlocal permission_after_target_steer, target_settings_acknowledged
         nonlocal target_steer_turn
+        nonlocal target_acknowledgement, target_acknowledgement_persisted
+        nonlocal target_acknowledgement_error
         if target_steer:
             target_settings_resteered = True
             permission_after_target_steer = False
@@ -658,6 +677,24 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
         if target_settings_resteered and _target_settings_acknowledged(
                 st.get("text"), target_model, target_duration):
             target_settings_acknowledged = True
+            if target_authorization is not None and not target_acknowledgement_persisted:
+                try:
+                    from agent.services import execution_approval_service as _eas
+
+                    target_acknowledgement = _eas.build_provider_target_acknowledgement(
+                        target_authorization,
+                        provider_text=st.get("text") or "",
+                        model_duration_acknowledged=True,
+                    )
+                    if not callable(on_target_acknowledged):
+                        raise _eas.ExecutionApprovalError(
+                            "PROVIDER_TARGET_ACK_PERSISTENCE_REQUIRED",
+                            "The official target-acknowledgement persistence callback is required.",
+                        )
+                    await on_target_acknowledged(target_acknowledgement)
+                    target_acknowledgement_persisted = True
+                except Exception as exc:  # noqa: BLE001 — fail closed before approval
+                    target_acknowledgement_error = str(exc)
         transcript.append({"turn": turn, "sent": text[:50], "perm_sent": perm,
                            "sent_text_sha256": hashlib.sha256(
                                str(text).encode("utf-8")).hexdigest(),
@@ -718,6 +755,15 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
     state = await send(initial_text, media=refs)
     target_settings_communicated = True
     while turn < max_turns:
+        if target_acknowledgement_error:
+            return _finish({
+                "ok": False,
+                "stage": "target_acknowledgement_persistence",
+                "error": "PROVIDER_TARGET_ACK_PERSISTENCE_FAILED",
+                "detail": target_acknowledgement_error,
+                "provider_submit": False,
+                "credit_spend": False,
+            })
         if state["error"]:
             return _finish({"ok": False, "stage": "error",
                             "error_class": classify_provider_error(state["error"]),
@@ -735,7 +781,13 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
         # Cost is only a cap and can never stand in for either setting.
         if (state["permission"] is not None
                 and permission_after_target_steer
-                and not target_settings_acknowledged):
+                and (
+                    not target_settings_acknowledged
+                    or (
+                        target_authorization is not None
+                        and not target_acknowledgement_persisted
+                    )
+                )):
             return _finish({
                 "ok": False,
                 "stage": "pre_approval_acknowledgement",
@@ -743,7 +795,13 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
                 "detail": (
                     "Provider returned a permission proposal without acknowledging "
                     f"{target_spec['ui_label']} at {_duration_label(target_duration)} "
-                    "seconds after the exact target steer; approval was not sent."
+                    "seconds after the exact target steer and canonical target "
+                    "receipt; approval was not sent."
+                ),
+                "target_digest": (
+                    target_authorization.get("target_digest")
+                    if isinstance(target_authorization, Mapping)
+                    else None
                 ),
                 "provider_submit": False,
                 "credit_spend": False,

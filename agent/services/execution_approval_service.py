@@ -172,6 +172,183 @@ def _norm(value: Any) -> str:
     return str(value).strip() if value is not None else ""
 
 
+PROVIDER_TARGET_ACK_VERSION = "FLOW_PROVIDER_TARGET_ACK_V1"
+
+
+def build_provider_target_authorization(
+    *,
+    lane: str,
+    route: str,
+    model: str,
+    duration_s: int,
+    aspect_ratio: str,
+    product_id: str,
+    copy_id: str,
+    profile_digest: str,
+    sweetwps_digest: str,
+    compositor_digest: str,
+    compiler_digest: str,
+    owner_credit_ceiling: int | float,
+) -> dict[str, Any]:
+    """Build the immutable target used by the Flow permission handshake.
+
+    The provider may only be approved after its post-steer response proves the
+    model and duration. All other fields are already bound by the current
+    product/copy/profile/snapshot authority. Folding them into one digest keeps
+    that proof from being reused for a different lane, route, product, or budget.
+    """
+    try:
+        duration = int(duration_s)
+    except (TypeError, ValueError) as exc:
+        raise ExecutionApprovalError(
+            "PROVIDER_TARGET_DURATION_INVALID",
+            "The provider target duration must be an integer number of seconds.",
+        ) from exc
+    if duration <= 0:
+        raise ExecutionApprovalError(
+            "PROVIDER_TARGET_DURATION_INVALID",
+            "The provider target duration must be positive.",
+        )
+    try:
+        ceiling = float(owner_credit_ceiling)
+    except (TypeError, ValueError) as exc:
+        raise ExecutionApprovalError(
+            "PROVIDER_TARGET_CREDIT_CEILING_INVALID",
+            "The owner credit ceiling must be numeric.",
+        ) from exc
+    if ceiling <= 0:
+        raise ExecutionApprovalError(
+            "PROVIDER_TARGET_CREDIT_CEILING_INVALID",
+            "The owner credit ceiling must be positive.",
+        )
+    if ceiling.is_integer():
+        ceiling = int(ceiling)
+    target = {
+        "lane": _norm(lane).upper().replace("-", "_"),
+        "route": _norm(route).upper(),
+        "model": _norm(model).lower(),
+        "duration_s": duration,
+        "aspect_ratio": _norm(aspect_ratio),
+        "product_id": _norm(product_id),
+        "copy_id": _norm(copy_id),
+        "profile_digest": _norm(profile_digest),
+        "sweetwps_digest": _norm(sweetwps_digest),
+        "compositor_digest": _norm(compositor_digest),
+        "compiler_digest": _norm(compiler_digest),
+        "owner_credit_ceiling": ceiling,
+    }
+    missing = [key for key, value in target.items() if value in (None, "")]
+    if missing:
+        raise ExecutionApprovalError(
+            "PROVIDER_TARGET_AUTHORIZATION_INCOMPLETE",
+            "Every canonical provider target field is required.",
+            details={"missing": missing},
+        )
+    return {
+        "version": PROVIDER_TARGET_ACK_VERSION,
+        "target": target,
+        "target_digest": _sha256_text(_stable_json(target)),
+    }
+
+
+def build_provider_target_acknowledgement(
+    target_authorization: Mapping[str, Any],
+    *,
+    provider_text: str,
+    model_duration_acknowledged: bool,
+) -> dict[str, Any]:
+    """Create a safe, provider-text-backed target acknowledgement receipt."""
+    if not isinstance(target_authorization, Mapping):
+        raise ExecutionApprovalError(
+            "PROVIDER_TARGET_AUTHORIZATION_REQUIRED",
+            "The canonical target authorization is required before approval.",
+        )
+    target = target_authorization.get("target")
+    target_digest = _norm(target_authorization.get("target_digest"))
+    if not isinstance(target, Mapping) or not target_digest:
+        raise ExecutionApprovalError(
+            "PROVIDER_TARGET_AUTHORIZATION_INVALID",
+            "The canonical target authorization is malformed.",
+        )
+    proposed_digest = _sha256_text(_stable_json(dict(target)))
+    if proposed_digest != target_digest:
+        raise ExecutionApprovalError(
+            "PROVIDER_TARGET_DIGEST_MISMATCH",
+            "The proposed target does not equal the canonical authorized target.",
+            details={
+                "canonical_target_digest": target_digest,
+                "proposed_target_digest": proposed_digest,
+            },
+        )
+    if not model_duration_acknowledged:
+        raise ExecutionApprovalError(
+            "PRE_APPROVAL_SETTINGS_ACK_REQUIRED",
+            "The provider did not acknowledge the canonical model and duration.",
+            details={"target_digest": target_digest},
+        )
+    return {
+        "version": PROVIDER_TARGET_ACK_VERSION,
+        "target_digest": target_digest,
+        "proposed_target_digest": proposed_digest,
+        "provider_text_sha256": _sha256_text(str(provider_text or "")),
+        "model_duration_acknowledged": True,
+        "source": "FLOW_PERMISSION_PROPOSAL_AFTER_TARGET_STEER",
+    }
+
+
+async def record_provider_target_acknowledgement(
+    snapshot_id: str,
+    *,
+    target_authorization: Mapping[str, Any],
+    acknowledgement: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Persist one exact target acknowledgement on the official snapshot."""
+    if not isinstance(target_authorization, Mapping) or not isinstance(acknowledgement, Mapping):
+        raise ExecutionApprovalError(
+            "PROVIDER_TARGET_ACK_INVALID",
+            "The canonical target and acknowledgement receipt are required.",
+        )
+    snap = await _require(snapshot_id)
+    if snap.get("approval_state") not in {
+        ApprovalState.APPROVED,
+        ApprovalState.DISPATCHED,
+    }:
+        raise ExecutionApprovalError(
+            "PROVIDER_TARGET_ACK_SNAPSHOT_NOT_ACTIVE",
+            "Target acknowledgement requires the current approved snapshot.",
+            details={"snapshot_id": snapshot_id, "approval_state": snap.get("approval_state")},
+        )
+    canonical_digest = _norm(target_authorization.get("target_digest"))
+    acknowledged_digest = _norm(acknowledgement.get("target_digest"))
+    proposed_digest = _norm(acknowledgement.get("proposed_target_digest"))
+    if not canonical_digest or canonical_digest != acknowledged_digest or canonical_digest != proposed_digest:
+        raise ExecutionApprovalError(
+            "PROVIDER_TARGET_DIGEST_MISMATCH",
+            "The provider acknowledgement does not match the canonical target.",
+            details={
+                "canonical_target_digest": canonical_digest,
+                "acknowledged_target_digest": acknowledged_digest,
+                "proposed_target_digest": proposed_digest,
+            },
+        )
+    if snap.get("provider_target_digest") and snap.get("provider_target_digest") != canonical_digest:
+        raise ExecutionApprovalError(
+            "STALE_PROVIDER_TARGET_ACKNOWLEDGEMENT",
+            "A different target acknowledgement is already bound to this snapshot.",
+            details={"snapshot_id": snapshot_id},
+        )
+    now = _now()
+    safe_ack = dict(acknowledgement)
+    return await _crud.update_snapshot(
+        snapshot_id,
+        provider_target_digest=canonical_digest,
+        provider_target_ack_json=_stable_json(safe_ack),
+        provider_target_acknowledged_at=now,
+        provider_target_ack_source=_norm(safe_ack.get("source")) or "FLOW_PERMISSION_PROPOSAL",
+        updated_at=now,
+    )
+
+
 def _provider_profile_binding(
     provider_profile: Mapping[str, Any] | None,
     provider_profile_digest: str | None,
@@ -567,6 +744,10 @@ async def apply_edit(
         approved_at=None,
         approved_prompt_sha256=None,
         approved_execution_envelope_sha256=None,
+        provider_target_digest=None,
+        provider_target_ack_json=None,
+        provider_target_acknowledged_at=None,
+        provider_target_ack_source=None,
         invalidation_reason=None,
         updated_at=_now(),
     )
