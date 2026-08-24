@@ -17,9 +17,9 @@ from agent.models.product_intelligence import (
 from agent.services import vision_provider_adapter
 from agent.services.ai_provider_settings_service import (
     get_lane_api_key,
+    get_lane_api_key_for_execution,
     get_lane_model,
     get_lane_provider,
-    get_provider_api_key,
     is_lane_execution_enabled,
 )
 
@@ -101,7 +101,7 @@ def _resolve_vision_model() -> str | None:
     hidden fallback: an unconfigured or catalog-invalidated lane model resolves to
     None so the runtime fails closed before any provider call."""
     try:
-        return get_lane_model("vision")
+        return get_lane_model("image")
     except Exception:
         return None
 
@@ -242,7 +242,7 @@ def _analyze_with_anthropic(
             return None
         local_path = _coerce_local_path(_normalize_text(payload.get("local_image_path")))
         image_url = _normalize_text(payload.get("image_url"))
-        client = anthropic.Anthropic(api_key=get_lane_api_key("vision"))
+        client = anthropic.Anthropic(api_key=get_lane_api_key_for_execution("image"))
         content = _build_anthropic_content(
             payload,
             local_path=local_path,
@@ -272,7 +272,7 @@ def _analyze_with_openai_compatible_vision(
     _ = metadata
     try:
         model = _resolve_vision_model()
-        api_key = get_lane_api_key("vision")
+        api_key = get_lane_api_key_for_execution("image")
         if not api_key or not model:
             return None
 
@@ -310,9 +310,13 @@ def _configured_vision_runtime() -> tuple[str, str] | None:
     key. Any missing piece → None (fail closed, no hidden default). Execution-
     enabled is gated separately downstream so the caller can distinguish
     NOT_CONFIGURED from ANALYSIS_SKIPPED."""
-    provider = get_lane_provider("vision")
+    provider = get_lane_provider("image")
     model = _resolve_vision_model()
-    key = get_lane_api_key("vision")
+    # Configuration status is deliberately independent from the execution gate:
+    # a complete operator-selected lane with execution disabled must surface as
+    # ANALYSIS_SKIPPED, not be mistaken for an absent lane.  The actual provider
+    # adapters below use the execution-gated key immediately before a call.
+    key = get_lane_api_key("image")
     if provider and model and key:
         return provider, model
     return None
@@ -493,7 +497,7 @@ def analyze_product_image_payload(
             metadata=metadata,
         ).model_dump()
 
-    if not is_lane_execution_enabled("vision"):
+    if not is_lane_execution_enabled("image"):
         warnings.extend(
             warning
             for warning in [

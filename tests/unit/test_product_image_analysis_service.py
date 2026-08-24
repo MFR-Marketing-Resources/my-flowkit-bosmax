@@ -220,6 +220,10 @@ def _set_vision_lane_state(
         lambda lane: key,
     )
     monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.get_lane_api_key_for_execution",
+        lambda lane: key if execution else None,
+    )
+    monkeypatch.setattr(
         "agent.services.product_image_analysis_service.is_lane_execution_enabled",
         lambda lane: execution,
     )
@@ -275,6 +279,10 @@ def _enable_vision(monkeypatch, provider: str, model: str = "some-vision-model")
     )
     monkeypatch.setattr(
         "agent.services.product_image_analysis_service.get_lane_api_key",
+        lambda lane: "sk-vision-live-key",
+    )
+    monkeypatch.setattr(
+        "agent.services.product_image_analysis_service.get_lane_api_key_for_execution",
         lambda lane: "sk-vision-live-key",
     )
     monkeypatch.setattr(

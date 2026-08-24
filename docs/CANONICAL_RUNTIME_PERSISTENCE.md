@@ -47,12 +47,15 @@ verified directory into place. An absolute path outside the source checkout
 fails closed.
 
 Provider settings are copied byte-for-byte only when the source file exists. The
-provider migration verifies source/destination file hashes, provider key
-presence/length/fingerprints, active provider, and lane metadata in memory. It
-never prints key values or writes them to the migration receipt. The source
-settings file is retained. A destination that already contains provider keys or
-conflicting provider/lane state fails closed; a missing source provider file does
-not block DB/data migration.
+runtime settings service then idempotently upgrades V1/V2/V3 provider state to
+the canonical V4 lane set (`text`, `structure`, `image`, `video`) while
+preserving keys, timestamps, active-provider metadata, default models, and
+operator intent. The provider migration verifies source/destination file
+hashes, provider key presence/length/fingerprints, active provider, and lane
+metadata in memory. It never prints key values or writes them to the migration
+receipt. The source settings file is retained. A destination that already
+contains provider keys or conflicting provider/lane state fails closed; a
+missing source provider file does not block DB/data migration.
 The source checkout is never deleted. Existing missing bytes are reported and
 preserved as evidence; the Product Truth tombstone path handles genuinely
 unrecoverable history during a later replacement.

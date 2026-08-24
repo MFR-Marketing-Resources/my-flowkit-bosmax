@@ -95,7 +95,7 @@ def test_text_assist_call_receipt_is_read_only_and_secret_free(monkeypatch):
             "request_count_since_process_start": 1,
             "last_call": {
                 "call_id": 1,
-                "lane": "text_assist",
+                "lane": "text",
                 "provider_id": "deepseek",
                 "model_id": "deepseek-v4-pro",
                 "transport": "openai_compatible_chat",

@@ -49,14 +49,14 @@ async def _product(title: str, **cols) -> dict:
 
 def _stub_extraction(monkeypatch, *, html: str = LISTING_HTML, candidates=None):
     """Drive the REAL extractor over fixed HTML: no network, real parsing/normalization."""
-    def fake_complete_json(system, user):
+    def fake_complete_json(system, user, **kwargs):
         return candidates if candidates is not None else {}
 
     from agent.services import ai_copy_provider_adapter as adapter
 
     monkeypatch.setattr(adapter, "complete_json", fake_complete_json)
     monkeypatch.setattr(adapter, "provider_status",
-                        lambda: {"provider_id": "deepseek", "model_id": "deepseek-chat"})
+                        lambda lane="structure": {"provider_id": "deepseek", "model_id": "deepseek-chat"})
     monkeypatch.setattr(
         tiktok, "extract_product",
         lambda url, **kw: _REAL_EXTRACT(url, page_text=html, **kw))

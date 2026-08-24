@@ -24,7 +24,7 @@ from agent.services.ai_provider_settings_service import (
 )
 
 ProviderId = Literal["qwen", "anthropic", "openai", "gemini", "deepseek"]
-LaneId = Literal["text_assist", "vision"]
+LaneId = Literal["text", "structure", "image", "video"]
 
 
 class ModelCatalogModel(BaseModel):
@@ -81,6 +81,13 @@ class AIProviderLaneSetting(BaseModel):
     model_valid: bool = False
     status: str = "NOT_CONFIGURED"
     configured: bool = False
+    fallback_provider_id: ProviderId | None = None
+    fallback_model_id: str | None = None
+    fallback_enabled: bool = False
+    fallback_key_present: bool = False
+    fallback_model_valid: bool = False
+    fallback_status: str | None = None
+    engine_id: str | None = None
 
 
 class AIProviderRegistryResponse(BaseModel):
@@ -113,6 +120,10 @@ class AIProviderLaneUpdateRequest(BaseModel):
     provider_id: ProviderId
     model_id: str
     execution_enabled: bool | None = None
+    fallback_provider_id: ProviderId | None = None
+    fallback_model_id: str | None = None
+    fallback_enabled: bool | None = None
+    engine_id: str | None = None
 
 
 class ModelUpsertRequest(BaseModel):
@@ -217,12 +228,21 @@ async def post_reset_seed_model_catalog():
 @router.put("/lanes/{lane}", response_model=AIProviderRegistryResponse)
 async def put_ai_provider_lane(lane: LaneId, body: AIProviderLaneUpdateRequest):
     try:
+        fields_set = getattr(body, "model_fields_set", None)
+        if fields_set is None:  # Pydantic v1 compatibility
+            fields_set = getattr(body, "__fields_set__", set())
+        optional_lane_fields = {
+            field: getattr(body, field)
+            for field in ("fallback_provider_id", "fallback_model_id", "fallback_enabled", "engine_id")
+            if field in fields_set
+        }
         return AIProviderRegistryResponse(
             **update_lane_settings(
                 lane,
                 body.provider_id,
                 body.model_id,
                 execution_enabled=body.execution_enabled,
+                **optional_lane_fields,
             )
         )
     except ValueError as exc:

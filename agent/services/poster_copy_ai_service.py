@@ -307,7 +307,7 @@ async def recommend_objectives(
     await _assert_poster_copy_eligible(product_id)
     base = _deterministic_objective_ranking(dict(product))
     warnings: list[str] = []
-    if refresh_ai and ai_provider.is_configured():
+    if refresh_ai and ai_provider.is_configured("text"):
         try:
             grounding = await resolve_copy_grounding(dict(product))
             user = (
@@ -317,7 +317,7 @@ async def recommend_objectives(
                 + ", ".join(x["archetype"] for x in base)
                 + '. Return JSON {"recommendations": [{"archetype": str, "reason": str}]}.'
             )
-            raw = ai_provider.complete_json(_SYSTEM_PROMPT, user)
+            raw = ai_provider.complete_json(_SYSTEM_PROMPT, user, lane="text")
             ai_items = raw.get("recommendations") or []
             ai_order = [
                 _norm(x.get("archetype")).upper()
@@ -367,7 +367,7 @@ async def recommend_angles(
     ]
     warnings: list[str] = []
     rejected_candidates: list[dict[str, Any]] = []
-    if refresh_ai and ai_provider.is_configured():
+    if refresh_ai and ai_provider.is_configured("text"):
         try:
             grounding = await resolve_copy_grounding(dict(product))
             user = (
@@ -378,7 +378,7 @@ async def recommend_angles(
                 'wording, no prices). Return JSON {"angles": [{"angle": str, '
                 '"rationale": str}]}.'
             )
-            raw = ai_provider.complete_json(_SYSTEM_PROMPT, user)
+            raw = ai_provider.complete_json(_SYSTEM_PROMPT, user, lane="text")
             seen = {a["angle"].lower() for a in angles}
             for item in raw.get("angles") or []:
                 if not isinstance(item, dict):
@@ -562,7 +562,7 @@ async def generate_directions(
     copy_rejections: list[dict[str, Any]] = []
     ai_directions_unavailable = False
 
-    if ai_provider.is_configured():
+    if ai_provider.is_configured("text"):
         try:
             grounding = await resolve_copy_grounding(dict(product))
             offer_rule = (
@@ -582,7 +582,7 @@ async def generate_directions(
                 '{"directions": [{"primary_message": str, "support_message": str, '
                 '"proof_points": [str], "cta": str, "disclaimer": str, "tone": str}]}.'
             )
-            raw = ai_provider.complete_json(_SYSTEM_PROMPT, user)
+            raw = ai_provider.complete_json(_SYSTEM_PROMPT, user, lane="text")
             for i, item in enumerate((raw.get("directions") or [])[: count + 2]):
                 if not isinstance(item, dict):
                     continue
@@ -748,7 +748,7 @@ async def regenerate_field(
             f"field must be one of {AI_COPY_FIELDS}",
         )
     await _assert_poster_copy_eligible(product_id)
-    if not ai_provider.is_configured():
+    if not ai_provider.is_configured("text"):
         raise PosterCopyAIError(
             "POSTER_AI_NOT_CONFIGURED",
             "Configure the text-assist provider lane to regenerate fields.",
@@ -780,7 +780,7 @@ async def regenerate_field(
         + f"\nTASK: Rewrite ONLY the field `{field_name}`. Return JSON {shape}."
     )
     try:
-        raw = ai_provider.complete_json(_SYSTEM_PROMPT, user)
+        raw = ai_provider.complete_json(_SYSTEM_PROMPT, user, lane="text")
     except ai_provider.AICopyProviderError as exc:
         raise PosterCopyAIError(
             "POSTER_FIELD_REGEN_FAILED", str(exc.code or exc), status_code=502

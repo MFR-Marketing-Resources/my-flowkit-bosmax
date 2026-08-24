@@ -17,8 +17,8 @@ def _disable_live_providers(monkeypatch):
     """No unit test may cross the configured text_assist provider boundary."""
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
-        lambda: {
-            "lane": "text_assist",
+        lambda lane: {
+            "lane": "structure",
             "configured": False,
             "provider_id": "deepseek",
             "model_id": "deepseek-v4-pro",
@@ -54,8 +54,8 @@ def _valid_text_assist_payload():
 def _enable_mock_deepseek(monkeypatch, completion):
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
-        lambda: {
-            "lane": "text_assist",
+        lambda lane: {
+            "lane": "structure",
             "configured": True,
             "provider_id": "deepseek",
             "model_id": "deepseek-v4-pro",
@@ -287,8 +287,8 @@ def test_complete_product_knowledge_uses_configured_deepseek_text_assist(monkeyp
     calls = []
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
-        lambda: {
-            "lane": "text_assist",
+        lambda lane: {
+            "lane": "structure",
             "configured": True,
             "provider_id": "deepseek",
             "model_id": "deepseek-v4-pro",
@@ -297,7 +297,7 @@ def test_complete_product_knowledge_uses_configured_deepseek_text_assist(monkeyp
     )
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.ai_copy_provider_adapter.complete_json",
-        lambda system, user: calls.append((system, user))
+        lambda system, user, **kwargs: calls.append((system, user))
         or {
             "product_knowledge_summary": "Serbuk perasa untuk masakan harian.",
             "benefits": ["Membantu melengkapkan rasa masakan"],
@@ -509,8 +509,8 @@ def test_complete_product_knowledge_disabled_text_assist_uses_safe_fallback(monk
 def test_complete_product_knowledge_invalid_text_assist_json_fails_closed(monkeypatch):
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
-        lambda: {
-            "lane": "text_assist",
+        lambda lane: {
+            "lane": "structure",
             "configured": True,
             "provider_id": "deepseek",
             "model_id": "deepseek-v4-pro",
@@ -647,8 +647,8 @@ def test_adapter_diagnostic_is_exposed_without_provider_content(monkeypatch):
 def test_complete_product_knowledge_provider_failure_fails_closed(monkeypatch):
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
-        lambda: {
-            "lane": "text_assist",
+        lambda lane: {
+            "lane": "structure",
             "configured": True,
             "provider_id": "deepseek",
             "model_id": "deepseek-v4-pro",
@@ -677,8 +677,8 @@ def test_complete_product_knowledge_provider_failure_fails_closed(monkeypatch):
 def test_complete_product_knowledge_discards_unsafe_ai_claims(monkeypatch):
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
-        lambda: {
-            "lane": "text_assist",
+        lambda lane: {
+            "lane": "structure",
             "configured": True,
             "provider_id": "deepseek",
             "model_id": "deepseek-v4-pro",
@@ -720,8 +720,8 @@ def test_complete_product_knowledge_discards_unsafe_ai_claims(monkeypatch):
 def test_complete_product_knowledge_does_not_override_declared_evidence(monkeypatch):
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
-        lambda: {
-            "lane": "text_assist",
+        lambda lane: {
+            "lane": "structure",
             "configured": True,
             "provider_id": "deepseek",
             "model_id": "deepseek-v4-pro",
@@ -769,8 +769,8 @@ def test_complete_product_knowledge_does_not_override_declared_evidence(monkeypa
 def test_direct_completion_is_credit_free_without_explicit_text_assist(monkeypatch):
     monkeypatch.setattr(
         "agent.services.product_knowledge_service.ai_copy_provider_adapter.provider_status",
-        lambda: {
-            "lane": "text_assist",
+        lambda lane: {
+            "lane": "structure",
             "configured": True,
             "provider_id": "deepseek",
             "model_id": "deepseek-v4-pro",

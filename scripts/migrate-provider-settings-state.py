@@ -18,7 +18,8 @@ from typing import Any
 
 
 PROVIDER_IDS = ("qwen", "anthropic", "openai", "gemini", "deepseek")
-LANE_IDS = ("text_assist", "vision")
+LANE_IDS = ("text", "structure", "image", "video")
+LEGACY_LANE_ALIASES = {"text_assist": "text", "vision": "image"}
 
 
 class ProviderSettingsMigrationError(RuntimeError):
@@ -37,17 +38,57 @@ def _key_fingerprint(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
-def _safe_lane(entry: Any) -> dict[str, Any]:
+def _safe_lane(entry: Any, lane: str) -> dict[str, Any]:
     if not isinstance(entry, dict):
         entry = {}
     provider_id = str(entry.get("provider_id") or "").strip().lower() or None
     model_id = str(entry.get("model_id") or "").strip() or None
-    return {
+    result = {
         "provider_id": provider_id,
         "model_id": model_id,
         "execution_enabled": bool(entry.get("execution_enabled")),
         "configured_by_user": bool(entry.get("configured_by_user")),
     }
+    if lane == "structure":
+        fallback_provider = str(entry.get("fallback_provider_id") or "").strip().lower() or None
+        fallback_model = str(entry.get("fallback_model_id") or "").strip() or None
+        result.update({
+            "fallback_provider_id": fallback_provider,
+            "fallback_model_id": fallback_model,
+            "fallback_enabled": bool(entry.get("fallback_enabled")),
+        })
+    if lane == "video":
+        result["engine_id"] = str(entry.get("engine_id") or "").strip() or None
+    return result
+
+
+def _safe_lanes(raw: dict[str, Any], version: int) -> dict[str, dict[str, Any]]:
+    """Project V1/V2/V3 aliases into the canonical V4 lane summary."""
+
+    raw_lanes = raw.get("lanes") if isinstance(raw.get("lanes"), dict) else {}
+    lanes = {lane: _safe_lane(raw_lanes.get(lane), lane) for lane in LANE_IDS}
+    old_text = raw_lanes.get("text_assist")
+    old_image = raw_lanes.get("vision")
+    if version < 4 and isinstance(old_text, dict):
+        # V3 text_assist was intentionally copied only when the operator had
+        # explicitly configured it.  V2 non-default entries retain intent here;
+        # the runtime service applies the stricter V2 seed-default downgrade.
+        if version >= 3 and old_text.get("configured_by_user"):
+            lanes["text"] = _safe_lane(old_text, "text")
+            lanes["structure"] = _safe_lane(old_text, "structure")
+        elif version == 2:
+            lanes["text"] = _safe_lane(old_text, "text")
+            lanes["structure"] = _safe_lane(old_text, "structure")
+    if version < 4 and isinstance(old_image, dict):
+        lanes["image"] = _safe_lane(old_image, "image")
+    if version >= 4:
+        if not lanes["text"]["provider_id"] and isinstance(old_text, dict) and old_text.get("configured_by_user"):
+            lanes["text"] = _safe_lane(old_text, "text")
+            if not lanes["structure"]["provider_id"]:
+                lanes["structure"] = _safe_lane(old_text, "structure")
+        if not lanes["image"]["provider_id"] and isinstance(old_image, dict):
+            lanes["image"] = _safe_lane(old_image, "image")
+    return lanes
 
 
 def inspect_settings(path: Path) -> dict[str, Any]:
@@ -84,10 +125,11 @@ def inspect_settings(path: Path) -> dict[str, Any]:
             "default_model": entry.get("default_model"),
         }
 
-    raw_lanes = raw.get("lanes")
-    if not isinstance(raw_lanes, dict):
-        raw_lanes = {}
-    lanes = {lane: _safe_lane(raw_lanes.get(lane)) for lane in LANE_IDS}
+    try:
+        version = int(raw.get("version") or 0)
+    except (TypeError, ValueError):
+        version = 0
+    lanes = _safe_lanes(raw, version)
     active_provider = str(raw.get("active_provider") or "").strip().lower() or None
 
     state_is_empty = (

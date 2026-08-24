@@ -62,7 +62,7 @@ def test_review_batch_uses_configured_adapter_and_returns_safe_ledger(
     )
     captured: dict[str, str] = {}
 
-    def fake_complete_json(system: str, user: str) -> dict:
+    def fake_complete_json(system: str, user: str, **kwargs) -> dict:
         captured["system"] = system
         captured["user"] = user
         return _provider_payload(items)
@@ -119,7 +119,7 @@ def test_review_batch_rejects_provider_signature_drift(
     monkeypatch.setattr(
         service.ai_copy_provider_adapter,
         "complete_json",
-        lambda _system, _user: payload,
+        lambda _system, _user, **kwargs: payload,
     )
 
     with pytest.raises(ValueError, match="P58_PROVIDER_SIGNATURE_SET_MISMATCH"):

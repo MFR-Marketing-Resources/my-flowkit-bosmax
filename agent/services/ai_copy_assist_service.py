@@ -363,7 +363,9 @@ async def _generate_one(
 ) -> dict[str, Any]:
     if grounding is None:
         grounding = await resolve_copy_grounding(product)
-    ai = provider.generate_candidate(_build_brief(req, product, grounding, target_angle))
+    ai = provider.generate_candidate(
+        _build_brief(req, product, grounding, target_angle), lane="text"
+    )
     if not isinstance(ai, dict):
         raise provider.AICopyProviderError(provider.ERR_RESPONSE_INVALID)
 

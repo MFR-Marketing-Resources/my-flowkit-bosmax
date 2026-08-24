@@ -8,14 +8,14 @@ _URL = "/api/products/p1/intelligence/review-drafts/prepare"
 
 
 def test_prepare_router_503_when_unconfigured(monkeypatch):
-    monkeypatch.setattr(provider, "is_configured", lambda: False)
+    monkeypatch.setattr(provider, "is_configured", lambda lane="structure": False)
     resp = TestClient(app).post(_URL)
     assert resp.status_code == 503
     assert resp.json()["detail"] == "TEXT_ASSIST_NOT_CONFIGURED"
 
 
 def test_prepare_router_happy_path(monkeypatch):
-    monkeypatch.setattr(provider, "is_configured", lambda: True)
+    monkeypatch.setattr(provider, "is_configured", lambda lane="structure": True)
 
     async def fake_prepare(product_id: str):
         return {
@@ -36,7 +36,7 @@ def test_prepare_router_happy_path(monkeypatch):
 
 
 def test_prepare_router_502_on_invalid_ai(monkeypatch):
-    monkeypatch.setattr(provider, "is_configured", lambda: True)
+    monkeypatch.setattr(provider, "is_configured", lambda lane="structure": True)
 
     async def fake_prepare(product_id: str):
         raise provider.AICopyProviderError(provider.ERR_RESPONSE_INVALID, detail="bad json")

@@ -56,7 +56,7 @@ def _stub_grounding(monkeypatch):
 
 
 def _stub_provider(monkeypatch, payload):
-    monkeypatch.setattr(svc.provider, "complete_json", lambda system, user: payload)
+    monkeypatch.setattr(svc.provider, "complete_json", lambda system, user, **kwargs: payload)
 
 
 @pytest.mark.asyncio
@@ -129,7 +129,7 @@ async def test_suggest_missing_product_raises(monkeypatch):
 async def test_suggest_propagates_not_configured(monkeypatch):
     pid = await _product_with_snapshot("Suggest Unconf", ["pain a"])
 
-    def _boom(system, user):
+    def _boom(system, user, **kwargs):
         raise svc.provider.AICopyProviderNotConfigured(svc.provider.ERR_NOT_CONFIGURED)
 
     monkeypatch.setattr(svc.provider, "complete_json", _boom)

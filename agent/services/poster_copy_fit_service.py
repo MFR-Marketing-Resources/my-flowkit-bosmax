@@ -120,7 +120,7 @@ def fit_poster_copy(
     if not over_keys:
         return PosterCopyFitResponse(
             applied=False,
-            provider_configured=ai_provider.is_configured(),
+            provider_configured=ai_provider.is_configured("text"),
             fields=PosterCopyFitFields(**fields),
             warnings=[
                 "Semua ayat copy sudah muat had poster — tiada apa untuk dipendekkan."
@@ -129,7 +129,7 @@ def fit_poster_copy(
 
     # Fail-closed when the AI lane is unconfigured (default). The operator keeps
     # their copy and a clear reason; no silent no-op.
-    if not ai_provider.is_configured():
+    if not ai_provider.is_configured("text"):
         return PosterCopyFitResponse(
             applied=False,
             provider_configured=False,
@@ -145,7 +145,7 @@ def fit_poster_copy(
     language = _norm(req.language) or "ms"
     system, user = _build_condense_prompt(fields, over_keys, language)
     try:
-        raw = ai_provider.complete_json(system, user)
+        raw = ai_provider.complete_json(system, user, lane="text")
     except ai_provider.AICopyProviderNotConfigured:
         return PosterCopyFitResponse(
             applied=False,

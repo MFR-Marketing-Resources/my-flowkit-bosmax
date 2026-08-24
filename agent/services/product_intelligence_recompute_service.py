@@ -109,7 +109,7 @@ async def _persist_candidates(draft_id: str, product_id: str,
 
     provider_id = model_id = None
     try:
-        status = provider.provider_status()
+        status = provider.provider_status("structure")
         provider_id, model_id = status.get("provider_id"), status.get("model_id")
     except Exception:  # noqa: BLE001 - receipt metadata only
         pass

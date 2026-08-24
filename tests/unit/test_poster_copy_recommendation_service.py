@@ -71,7 +71,7 @@ async def test_ready_product_fallback_recommendations(monkeypatch):
     )
     monkeypatch.setattr(
         "agent.services.poster_copy_recommendation_service.ai_provider.is_configured",
-        lambda: False,
+        lambda lane="text": False,
     )
 
     result = await PosterCopyRecommendationService.recommend(
@@ -161,7 +161,7 @@ async def test_unsafe_copy_set_filtered(monkeypatch):
     )
     monkeypatch.setattr(
         "agent.services.poster_copy_recommendation_service.ai_provider.is_configured",
-        lambda: False,
+        lambda lane="text": False,
     )
 
     result = await PosterCopyRecommendationService.recommend(
@@ -183,7 +183,7 @@ async def test_ai_provider_failure_uses_fallback(monkeypatch):
     async def fake_eval(_product, enrich=False):
         return _readiness()
 
-    def boom(_brief):
+    def boom(_brief, **kwargs):
         from agent.services.ai_copy_provider_adapter import AICopyProviderError
 
         raise AICopyProviderError("ERR_RESPONSE_INVALID")
@@ -202,7 +202,7 @@ async def test_ai_provider_failure_uses_fallback(monkeypatch):
     )
     monkeypatch.setattr(
         "agent.services.poster_copy_recommendation_service.ai_provider.is_configured",
-        lambda: True,
+        lambda lane="text": True,
     )
     monkeypatch.setattr(
         "agent.services.poster_copy_recommendation_service.ai_provider.generate_candidate",
@@ -261,7 +261,7 @@ def _no_copy_set_env(monkeypatch, product, spy):
     )
     monkeypatch.setattr(
         "agent.services.poster_copy_recommendation_service.ai_provider.is_configured",
-        lambda: True,
+        lambda lane="text": True,
     )
     monkeypatch.setattr(
         "agent.services.poster_copy_recommendation_service.ai_provider.generate_candidate",
@@ -277,7 +277,7 @@ async def test_refresh_ai_false_never_calls_ai_provider(monkeypatch):
     product = _ready_base()
     calls: list = []
 
-    def spy(brief):
+    def spy(brief, **kwargs):
         calls.append(brief)
         return {
             "angle": "x",
@@ -305,7 +305,7 @@ async def test_refresh_ai_true_calls_ai_provider(monkeypatch):
     product = _ready_base()
     calls: list = []
 
-    def spy(brief):
+    def spy(brief, **kwargs):
         calls.append(brief)
         return {
             "angle": "Fresh",

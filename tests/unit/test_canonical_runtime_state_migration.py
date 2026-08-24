@@ -152,7 +152,10 @@ def test_db_data_and_provider_state_migrate_byte_for_byte(tmp_path: Path):
     summary = helper.inspect_settings(destination_settings)
     assert all(item["has_key"] for item in summary["providers"].values())
     assert summary["active_provider"] == "deepseek"
-    assert summary["lanes"]["text_assist"]["model_id"] == "deepseek-v4-flash"
+    assert summary["lanes"]["text"]["model_id"] == "deepseek-v4-flash"
+    assert summary["lanes"]["structure"]["model_id"] == "deepseek-v4-flash"
+    assert summary["lanes"]["image"]["model_id"] == "claude-haiku-4-5-20251001"
+    assert summary["lanes"]["video"]["provider_id"] is None
 
 
 def test_missing_provider_source_does_not_block_db_data_migration(tmp_path: Path):

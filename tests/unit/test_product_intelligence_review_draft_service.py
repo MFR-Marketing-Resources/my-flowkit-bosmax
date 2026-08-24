@@ -462,13 +462,13 @@ def _fake_fields_payload():
 
 def _mock_provider(monkeypatch, *, configured=True, payload=None, capture=None):
     from agent.services import ai_copy_provider_adapter as prov
-    monkeypatch.setattr(prov, "is_configured", lambda: configured)
-    monkeypatch.setattr(prov, "provider_status", lambda: {
-        "lane": "text_assist", "configured": configured,
+    monkeypatch.setattr(prov, "is_configured", lambda lane="structure": configured)
+    monkeypatch.setattr(prov, "provider_status", lambda lane="structure": {
+        "lane": "structure", "configured": configured,
         "provider_id": "deepseek", "model_id": "deepseek-chat", "execution_enabled": configured,
     })
 
-    def fake_complete_json(system, user):
+    def fake_complete_json(system, user, **kwargs):
         if capture is not None:
             capture["system"] = system
             capture["user"] = user

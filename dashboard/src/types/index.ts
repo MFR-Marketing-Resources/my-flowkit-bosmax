@@ -2209,7 +2209,7 @@ export type AIProviderId =
 	| "gemini"
 	| "deepseek";
 
-export type AIProviderLaneId = "text_assist" | "vision";
+export type AIProviderLaneId = "text" | "structure" | "image" | "video";
 
 export type AIProviderLaneStatus =
 	| "NOT_CONFIGURED"
@@ -2217,6 +2217,7 @@ export type AIProviderLaneStatus =
 	| "MODEL_DISABLED"
 	| "KEY_MISSING"
 	| "EXECUTION_DISABLED"
+	| "FALLBACK_INVALID"
 	| "READY";
 
 export interface AIProviderModelOption {
@@ -2262,6 +2263,13 @@ export interface AIProviderLaneSetting {
 	model_valid: boolean;
 	status: AIProviderLaneStatus;
 	configured: boolean;
+	fallback_provider_id?: AIProviderId | null;
+	fallback_model_id?: string | null;
+	fallback_enabled?: boolean;
+	fallback_key_present?: boolean;
+	fallback_model_valid?: boolean;
+	fallback_status?: AIProviderLaneStatus | null;
+	engine_id?: string | null;
 }
 
 export interface AIProviderRegistry {

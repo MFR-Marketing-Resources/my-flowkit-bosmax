@@ -2,12 +2,12 @@
 
 Thin, disabled-by-default boundary between the AI Copy Assist service and a text
 LLM provider. It REUSES the existing on-main lane provider abstraction
-(`ai_provider_settings_service`, the "text_assist" lane) for enablement + key +
+(`ai_provider_settings_service`, the canonical TEXT lane) for enablement + key +
 provider selection — no new secrets, no new settings UI.
 
 Hard rules:
-- Disabled by default: with no configured/enabled text_assist lane key, every
-  call fails closed with `AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED`.
+- Disabled by default: with no configured/enabled TEXT lane key, every call fails
+  closed with `AI_COPY_ASSIST_PROVIDER_NOT_CONFIGURED`.
 - This adapter ONLY produces candidate copy JSON. It never generates final
   engine-facing prompts and is never on the deterministic compiler path.
 - No hardcoded keys. The key is read from the existing provider settings store.
@@ -25,23 +25,33 @@ from typing import Any
 from agent.services.ai_provider_model_catalog import (
     TRANSPORT_ANTHROPIC_MESSAGES,
     TRANSPORT_OPENAI_COMPATIBLE,
+    canonical_lane_id,
     get_provider_transport,
+    model_supports_lane,
 )
 from agent.services.ai_provider_settings_service import (
-    get_lane_api_key,
+    get_provider_api_key,
+    get_lane_api_key_for_execution,
     get_lane_model,
     get_lane_provider,
+    get_structure_fallback,
     is_lane_execution_enabled,
 )
 
-LANE = "text_assist"
+LANE = "text"
 
 # The operator's UI-selected lane model is the ONLY model source (with an optional
 # deployment env override). There is NO hardcoded model fallback — an unconfigured
 # lane resolves to None and the call fails closed. Base URLs below are transport
 # endpoints (not model choices) and may be overridden per deployment.
-_BASE_URL_ENV = "PRODUCT_TEXT_ASSIST_BASE_URL"
-_MODEL_ENV = "PRODUCT_TEXT_ASSIST_MODEL"
+_LANE_BASE_URL_ENVS: dict[str, tuple[str, ...]] = {
+    "text": ("PRODUCT_TEXT_BASE_URL", "PRODUCT_TEXT_ASSIST_BASE_URL"),
+    "structure": ("PRODUCT_STRUCTURE_BASE_URL",),
+}
+_LANE_MODEL_ENVS: dict[str, tuple[str, ...]] = {
+    "text": ("PRODUCT_TEXT_MODEL", "PRODUCT_TEXT_ASSIST_MODEL"),
+    "structure": ("PRODUCT_STRUCTURE_MODEL",),
+}
 # A completion of ~1.3k tokens does not reliably finish inside 30s. Measured on the live
 # DeepSeek text_assist lane (2026-07-31): one call landed at ~29s and succeeded, then every
 # subsequent call exceeded 30s and failed `AI_COPY_ASSIST_CALL_FAILED: The read operation
@@ -91,7 +101,7 @@ _last_provider_call_receipt: dict[str, Any] | None = None
 
 
 class AICopyProviderNotConfigured(Exception):
-    """Raised when the text_assist lane is not configured/enabled (default)."""
+    """Raised when a requested text/structure lane is not configured/enabled."""
 
     code = ERR_NOT_CONFIGURED
 
@@ -144,6 +154,7 @@ def provider_call_receipt() -> dict[str, Any]:
 
 def _begin_provider_call(
     *,
+    lane: str,
     provider_id: str,
     model: str,
     transport: str,
@@ -158,7 +169,7 @@ def _begin_provider_call(
         call_id = _provider_call_count
         receipt = {
             "call_id": call_id,
-            "lane": LANE,
+            "lane": lane,
             "provider_id": provider_id,
             "model_id": model,
             "transport": transport,
@@ -312,62 +323,79 @@ def _safe_usage(payload: object) -> dict[str, int | float]:
     return normalize_usage(payload)
 
 
-def is_configured() -> bool:
-    """True only when the text_assist lane has a configured provider+model, a key,
-    AND execution is enabled. Fail closed everywhere else (no hidden default)."""
+def _canonical_text_structure_lane(lane: str | None) -> str:
+    canonical = canonical_lane_id(lane or LANE)
+    if canonical not in {"text", "structure"}:
+        raise ValueError(f"UNSUPPORTED_TEXT_PROVIDER_LANE:{lane}")
+    return canonical
+
+
+def is_configured(lane: str = LANE) -> bool:
+    """True only when a TEXT or STRUCTURE lane has provider, model, key and gate."""
+    try:
+        canonical = _canonical_text_structure_lane(lane)
+    except ValueError:
+        return False
     try:
         return (
-            bool(get_lane_api_key(LANE))
-            and bool(get_lane_model(LANE))
-            and bool(is_lane_execution_enabled(LANE))
+            bool(get_lane_api_key_for_execution(canonical))
+            and bool(get_lane_model(canonical))
+            and bool(is_lane_execution_enabled(canonical))
         )
     except Exception:
         return False
 
 
-def provider_status() -> dict[str, Any]:
+def provider_status(lane: str = LANE) -> dict[str, Any]:
+    canonical = _canonical_text_structure_lane(lane)
     provider_id = None
     model_id = None
     execution_enabled = False
     try:
-        provider_id = get_lane_provider(LANE)
+        provider_id = get_lane_provider(canonical)
     except Exception:
         provider_id = None
     try:
-        model_id = _resolve_model(provider_id)
+        model_id = _resolve_model(provider_id, canonical)
     except Exception:
         model_id = None
     try:
-        execution_enabled = bool(is_lane_execution_enabled(LANE))
+        execution_enabled = bool(is_lane_execution_enabled(canonical))
     except Exception:
         execution_enabled = False
     return {
-        "lane": LANE,
-        "configured": is_configured(),
+        "lane": canonical,
+        "configured": is_configured(canonical),
         "provider_id": provider_id,
         "model_id": model_id,
         "execution_enabled": execution_enabled,
     }
 
 
-def _resolve_base_url(provider_id: str | None) -> str | None:
-    env = str(os.environ.get(_BASE_URL_ENV, "")).strip().rstrip("/")
-    if env:
-        return env
+def _resolve_base_url(provider_id: str | None, lane: str = LANE) -> str | None:
+    canonical = _canonical_text_structure_lane(lane)
+    for env_name in _LANE_BASE_URL_ENVS[canonical]:
+        env = str(os.environ.get(env_name, "")).strip().rstrip("/")
+        if env:
+            return env
     return _DEFAULT_BASE_URLS.get(str(provider_id or "").lower())
 
 
-def _resolve_model(provider_id: str | None) -> str | None:
+def _resolve_model(provider_id: str | None, lane: str = LANE) -> str | None:
     # UI-selected lane model is the ONLY source (optional env override). No
     # hardcoded per-provider default — unconfigured resolves to None (fail closed).
+    canonical = _canonical_text_structure_lane(lane)
     try:
-        lane_model = get_lane_model(LANE)
+        lane_model = get_lane_model(canonical)
     except Exception:
         lane_model = None
     if lane_model:
         return lane_model
-    env = str(os.environ.get(_MODEL_ENV, "")).strip()
-    return env or None
+    for env_name in _LANE_MODEL_ENVS[canonical]:
+        env = str(os.environ.get(env_name, "")).strip()
+        if env:
+            return env
+    return None
 
 
 def structured_output_token_limit(
@@ -655,20 +683,31 @@ def _complete_openai_compatible(
 def _complete(
     messages: list[dict[str, str]],
     *,
+    lane: str = LANE,
     structured_output: bool = False,
     max_output_tokens: int | None = None,
+    provider_override: str | None = None,
+    model_override: str | None = None,
+    api_key_override: str | None = None,
 ) -> tuple[str, str | None, int]:
-    """Execute a chat completion via the configured text_assist lane. Anthropic
-    speaks its native /v1/messages shape; every other provider is OpenAI-compatible.
-    Never reached in tests (disabled by default)."""
-    api_key = get_lane_api_key(LANE)
-    provider_id = str(get_lane_provider(LANE) or "").lower()
-    base_url = _resolve_base_url(provider_id)
-    model = _resolve_model(provider_id)
+    """Execute one provider call for TEXT or STRUCTURE.
+
+    ``provider_override`` is used only by the single STRUCTURE fallback attempt;
+    it never changes persisted lane ownership or consults ``active_provider``.
+    """
+    canonical = _canonical_text_structure_lane(lane)
+    if provider_override:
+        provider_id = str(provider_override).strip().lower()
+        api_key = api_key_override or get_provider_api_key(provider_id)
+    else:
+        provider_id = str(get_lane_provider(canonical) or "").lower()
+        api_key = get_lane_api_key_for_execution(canonical)
+    base_url = _resolve_base_url(provider_id, canonical)
+    model = model_override or _resolve_model(provider_id, canonical)
     transport = get_provider_transport(provider_id)
     if not api_key or not base_url or not model:
         raise AICopyProviderError(
-            ERR_CALL_FAILED, detail="text_assist key/base_url/model unresolved"
+            ERR_CALL_FAILED, detail=f"{canonical} key/base_url/model unresolved"
         )
     if transport not in {
         TRANSPORT_ANTHROPIC_MESSAGES,
@@ -692,6 +731,7 @@ def _complete(
         else None
     )
     call_id = _begin_provider_call(
+        lane=canonical,
         provider_id=provider_id,
         model=model,
         transport=transport,
@@ -793,12 +833,19 @@ def _pop_provider_call_receipt(call_id: int) -> dict[str, Any]:
         return receipt
 
 
-def generate_candidate(brief: str) -> dict[str, Any]:
-    """Single mockable seam. Fail closed when unconfigured; otherwise call the
-    provider and return the parsed candidate JSON dict (with reliable __usage__)."""
-    if not is_configured():
+def generate_candidate(brief: str, *, lane: str = "text") -> dict[str, Any]:
+    """Single mockable natural-language candidate seam.
+
+    Candidate generation is TEXT by contract; the explicit lane parameter keeps
+    the routing boundary visible to callers while rejecting STRUCTURE/IMAGE/
+    VIDEO misuse at the adapter boundary.
+    """
+    canonical = _canonical_text_structure_lane(lane)
+    if not is_configured(canonical):
         raise AICopyProviderNotConfigured(ERR_NOT_CONFIGURED)
-    message_text, finish_reason, call_id = _complete(build_messages(brief))
+    message_text, finish_reason, call_id = _complete(
+        build_messages(brief), lane=canonical
+    )
     try:
         obj = _extract_json_object(message_text, finish_reason=finish_reason)
     except Exception:
@@ -812,40 +859,46 @@ def generate_candidate(brief: str) -> dict[str, Any]:
     return obj
 
 
-def complete_json_with_receipt(
-    system: str,
-    user: str,
-    *,
-    max_output_tokens: int | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return parsed JSON plus provenance for the exact call that produced it.
+def _fallback_is_eligible(error: AICopyProviderError) -> bool:
+    """Allow fallback only for provider capability/nonconformance failures."""
 
-    The process-global latest-call receipt remains available for diagnostics, but
-    production lineage must use this per-call return value so concurrent requests
-    cannot be associated with one another.
-    """
+    if error.code == ERR_RESPONSE_INVALID:
+        return True
+    return error.code == ERR_CALL_FAILED and error.http_status in {400, 404, 415, 422}
 
-    if not is_configured():
-        raise AICopyProviderNotConfigured(ERR_NOT_CONFIGURED)
+
+def _structure_fallback_target() -> tuple[str, str, str] | None:
+    """Resolve one secret-free fallback target, or return ``None`` fail-closed."""
+
+    if not is_lane_execution_enabled("structure"):
+        return None
+    primary_provider = str(get_lane_provider("structure") or "").strip().lower()
+    primary_model = str(get_lane_model("structure") or "").strip()
+    configured = get_structure_fallback()
+    provider_id = str(configured.get("provider_id") or "").strip().lower()
+    model_id = str(configured.get("model_id") or "").strip()
+    if not configured.get("enabled") or not provider_id or not model_id:
+        return None
+    if provider_id == primary_provider and model_id == primary_model:
+        return None
+    if not model_supports_lane(provider_id, model_id, "structure"):
+        return None
     try:
-        text, finish_reason, call_id = _complete(
-            [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            structured_output=True,
-            max_output_tokens=max_output_tokens,
-        )
-    except AICopyProviderError as exc:
-        # _complete has already finished the exact call.  Drain its usage and
-        # receipt here so provider transport failures are observable without
-        # relying on the process-global "last call" under concurrency.
-        call_id = getattr(exc, "call_id", None)
-        if call_id is not None:
-            receipt = _pop_provider_call_receipt(call_id)
-            usage = _pop_usage(call_id)
-            if usage:
-                receipt["usage"] = usage
-                exc.usage = dict(usage)
-            exc.provider_receipt = receipt
-        raise
+        api_key = get_provider_api_key(provider_id)
+    except Exception:
+        return None
+    if not api_key:
+        return None
+    return provider_id, model_id, api_key
+
+
+def _finish_json_attempt(
+    text: str,
+    finish_reason: str | None,
+    call_id: int,
+) -> tuple[dict[str, Any] | None, dict[str, Any], AICopyProviderError | None]:
+    """Parse and drain exactly one call into a secret-free receipt."""
+
     try:
         parsed = _extract_json_object(text, finish_reason=finish_reason)
     except AICopyProviderError as exc:
@@ -862,12 +915,150 @@ def complete_json_with_receipt(
             exc.usage = dict(usage)
         exc.call_id = call_id
         exc.provider_receipt = receipt
-        raise
+        return None, receipt, exc
     _record_json_parse_result(call_id, status="VALID")
     usage = _pop_usage(call_id)
     receipt = _pop_provider_call_receipt(call_id)
     receipt["usage"] = usage
-    return parsed, receipt
+    return parsed, receipt, None
+
+
+def _attach_fallback_receipts(
+    selected_receipt: dict[str, Any],
+    primary_receipt: dict[str, Any],
+) -> dict[str, Any]:
+    """Make the primary/fallback relationship explicit without duplicating secrets."""
+
+    result = dict(selected_receipt)
+    result["fallback_used"] = True
+    result["primary_receipt"] = dict(primary_receipt)
+    result["fallback_receipt"] = dict(selected_receipt)
+    return result
+
+
+def complete_json_with_receipt(
+    system: str,
+    user: str,
+    *,
+    max_output_tokens: int | None = None,
+    lane: str = LANE,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return parsed JSON plus provenance for the exact call that produced it.
+
+    The process-global latest-call receipt remains available for diagnostics, but
+    production lineage must use this per-call return value so concurrent requests
+    cannot be associated with one another.
+    """
+
+    canonical = _canonical_text_structure_lane(lane)
+    if not is_configured(canonical):
+        raise AICopyProviderNotConfigured(ERR_NOT_CONFIGURED)
+    primary_receipt: dict[str, Any] = {}
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    try:
+        text, finish_reason, call_id = _complete(
+            messages,
+            lane=canonical,
+            structured_output=True,
+            max_output_tokens=max_output_tokens,
+        )
+    except AICopyProviderError as exc:
+        # _complete has already finished the exact call.  Drain its usage and
+        # receipt here so provider transport failures are observable without
+        # relying on the process-global "last call" under concurrency.
+        call_id = getattr(exc, "call_id", None)
+        if call_id is not None:
+            primary_receipt = _pop_provider_call_receipt(call_id)
+            usage = _pop_usage(call_id)
+            if usage:
+                primary_receipt["usage"] = usage
+                exc.usage = dict(usage)
+            exc.provider_receipt = primary_receipt
+        if canonical == "structure" and _fallback_is_eligible(exc):
+            target = _structure_fallback_target()
+            if target:
+                provider_id, model_id, api_key = target
+                try:
+                    fallback_text, fallback_finish, fallback_call_id = _complete(
+                        messages,
+                        lane=canonical,
+                        structured_output=True,
+                        max_output_tokens=max_output_tokens,
+                        provider_override=provider_id,
+                        model_override=model_id,
+                        api_key_override=api_key,
+                    )
+                except AICopyProviderError as fallback_error:
+                    fallback_receipt = getattr(fallback_error, "provider_receipt", {})
+                    fallback_call_id = getattr(fallback_error, "call_id", None)
+                    if fallback_call_id is not None:
+                        fallback_receipt = _pop_provider_call_receipt(fallback_call_id)
+                        usage = _pop_usage(fallback_call_id)
+                        if usage:
+                            fallback_receipt["usage"] = usage
+                            fallback_error.usage = dict(usage)
+                    fallback_error.provider_receipt = {
+                        "primary_receipt": primary_receipt,
+                        "fallback_receipt": fallback_receipt,
+                    }
+                    raise fallback_error
+                parsed, fallback_receipt, fallback_error = _finish_json_attempt(
+                    fallback_text, fallback_finish, fallback_call_id
+                )
+                if fallback_error is not None:
+                    fallback_error.provider_receipt = {
+                        "primary_receipt": primary_receipt,
+                        "fallback_receipt": fallback_receipt,
+                    }
+                    raise fallback_error
+                return parsed or {}, _attach_fallback_receipts(fallback_receipt, primary_receipt)
+        raise
+    parsed, primary_receipt, parse_error = _finish_json_attempt(
+        text, finish_reason, call_id
+    )
+    if parse_error is not None:
+        if canonical == "structure" and _fallback_is_eligible(parse_error):
+            target = _structure_fallback_target()
+            if target:
+                provider_id, model_id, api_key = target
+                try:
+                    fallback_text, fallback_finish, fallback_call_id = _complete(
+                        messages,
+                        lane=canonical,
+                        structured_output=True,
+                        max_output_tokens=max_output_tokens,
+                        provider_override=provider_id,
+                        model_override=model_id,
+                        api_key_override=api_key,
+                    )
+                except AICopyProviderError as fallback_error:
+                    fallback_receipt = getattr(fallback_error, "provider_receipt", {})
+                    fallback_call_id = getattr(fallback_error, "call_id", None)
+                    if fallback_call_id is not None:
+                        fallback_receipt = _pop_provider_call_receipt(fallback_call_id)
+                        usage = _pop_usage(fallback_call_id)
+                        if usage:
+                            fallback_receipt["usage"] = usage
+                            fallback_error.usage = dict(usage)
+                    fallback_error.provider_receipt = {
+                        "primary_receipt": primary_receipt,
+                        "fallback_receipt": fallback_receipt,
+                    }
+                    raise fallback_error
+                parsed_fallback, fallback_receipt, fallback_error = _finish_json_attempt(
+                    fallback_text, fallback_finish, fallback_call_id
+                )
+                if fallback_error is not None:
+                    fallback_error.provider_receipt = {
+                        "primary_receipt": primary_receipt,
+                        "fallback_receipt": fallback_receipt,
+                    }
+                    raise fallback_error
+                return parsed_fallback or {}, _attach_fallback_receipts(
+                    fallback_receipt, primary_receipt
+                )
+        raise parse_error
+    return parsed or {}, primary_receipt
 
 
 def complete_json(
@@ -875,13 +1066,15 @@ def complete_json(
     user: str,
     *,
     max_output_tokens: int | None = None,
+    lane: str = LANE,
 ) -> dict[str, Any]:
-    """Generic structured-JSON call via the configured text_assist lane. Fail-closed
+    """Generic structured-JSON call via the configured TEXT/STRUCTURE lane. Fail-closed
     when the lane is unconfigured (raises AICopyProviderNotConfigured). Reuses the
     SAME provider/key/model/transport as copy — no new secrets, no hardcoded model."""
     parsed, _receipt = complete_json_with_receipt(
         system,
         user,
         max_output_tokens=max_output_tokens,
+        lane=lane,
     )
     return parsed

@@ -1788,12 +1788,12 @@ async def ai_fill_missing_review_draft(
     provider_id = None
     model_id = None
     try:
-        status = _prov.provider_status()
+        status = _prov.provider_status("structure")
         provider_id = status.get("provider_id")
         model_id = status.get("model_id")
     except Exception:
         pass
-    if not _prov.is_configured():
+    if not _prov.is_configured("structure"):
         raise _prov.AICopyProviderNotConfigured(_prov.ERR_NOT_CONFIGURED)
 
     selected = {f for f in (selected_fields or []) if f in AI_FILL_TARGET_FIELDS}
@@ -1815,7 +1815,9 @@ async def ai_fill_missing_review_draft(
         target_product_id=draft.product_id, limit=20
     )
     user_prompt = _build_ai_fill_user_prompt(product, draft, approved_ci, targets)
-    raw = _prov.complete_json(_AI_FILL_SYSTEM, user_prompt)  # DeepSeek structured JSON
+    raw = _prov.complete_json(
+        _AI_FILL_SYSTEM, user_prompt, lane="structure"
+    )  # DeepSeek structured JSON
     fields_out = raw.get("fields") if isinstance(raw.get("fields"), dict) else raw
 
     generated_at = _now_iso()

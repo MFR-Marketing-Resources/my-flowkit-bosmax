@@ -51,7 +51,7 @@ def test_copy_quality_gate_rejects_incomplete_tail():
 
 @pytest.mark.asyncio
 async def test_objective_ranking_is_deterministic_and_signal_aware(monkeypatch):
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": False)
     pid = await _seed_product(title="Minyak Warisan Herba Tradisional 5ml roll-on")
     out = await svc.recommend_objectives(pid, refresh_ai=False)
     recs = out["recommendations"]
@@ -65,7 +65,7 @@ async def test_objective_ranking_is_deterministic_and_signal_aware(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_high_claim_risk_prioritizes_problem_aware_safe(monkeypatch):
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": False)
     # Seed eligible first (approve is claim-safe), then stamp product-level HIGH risk
     # which the objective ranker reads without reopening the PI gate.
     pid = await _seed_product()
@@ -76,7 +76,7 @@ async def test_high_claim_risk_prioritizes_problem_aware_safe(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_angles_come_from_recipe_without_ai(monkeypatch):
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": False)
     pid = await _seed_product()
     out = await svc.recommend_angles(pid, "PRODUCT_HERO", refresh_ai=True)
     assert [a["source"] for a in out["angles"]] == ["RECIPE"] * len(out["angles"])
@@ -86,7 +86,7 @@ async def test_angles_come_from_recipe_without_ai(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_directions_fallback_is_safe_and_poster_native(monkeypatch):
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": False)
     pid = await _seed_product()
     out = await svc.generate_directions(pid, "PRODUCT_HERO", "Premium hero")
     assert len(out["directions"]) == 3
@@ -102,7 +102,7 @@ async def test_directions_fallback_is_safe_and_poster_native(monkeypatch):
 async def test_provider_failure_uses_neutral_fallback_without_optional_grounding(monkeypatch):
     """An unavailable AI provider cannot strand the browser copy step."""
     pid = await _seed_product()
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": True)
 
     def failed_provider(*_args, **_kwargs):
         raise svc.ai_provider.AICopyProviderError("AI_COPY_ASSIST_CALL_FAILED")
@@ -130,7 +130,7 @@ async def test_provider_failure_uses_neutral_fallback_without_optional_grounding
 async def test_unsafe_grounding_cannot_strand_neutral_fallback(monkeypatch):
     """Rejected provider copy plus unsafe stored grounding still leaves a safe choice."""
     pid = await _seed_product(title="Minyak Warisan Cap Burung 25ml", display="Minyak Warisan Cap Burung 25ml")
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": True)
     monkeypatch.setattr(
         svc.ai_provider,
         "complete_json",
@@ -156,6 +156,7 @@ async def test_unsafe_grounding_cannot_strand_neutral_fallback(monkeypatch):
     class _Persona:
         audience = ""
         desires = []
+        tone = ""
 
     class _Guard:
         blocked_claims = []
@@ -163,9 +164,14 @@ async def test_unsafe_grounding_cannot_strand_neutral_fallback(monkeypatch):
 
     class _Grounding:
         source = "TEST"
+        family = ""
+        copy_formula = ""
+        metaphor_silos = []
+        angle_strategies = []
         product_knowledge = _PK()
         buyer_persona = _Persona()
         claim_guardrails = _Guard()
+        field_provenance = {}
 
     async def unsafe_grounding(_product):
         return _Grounding()
@@ -174,7 +180,7 @@ async def test_unsafe_grounding_cannot_strand_neutral_fallback(monkeypatch):
     out = await svc.generate_directions(pid, "PRODUCT_HERO", "Product quality")
 
     assert len(out["directions"]) == 3
-    assert "Grounded fallback unavailable" in " ".join(out["warnings"])
+    assert any("AI direction" in warning for warning in out["warnings"])
     assert all(d["field_provenance"]["cta"] == "FALLBACK_TEMPLATE" for d in out["directions"])
     assert all("Rawat" not in d["primary_message"] for d in out["directions"])
 
@@ -182,14 +188,14 @@ async def test_unsafe_grounding_cannot_strand_neutral_fallback(monkeypatch):
 @pytest.mark.asyncio
 async def test_ai_directions_are_parsed_gated_and_stamped(monkeypatch):
     pid = await _seed_product()
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": True)
     monkeypatch.setattr(
         svc.ai_provider, "provider_status",
         lambda: {"provider_id": "deepseek", "model_id": "chat-x",
-                 "configured": True, "lane": "text_assist", "execution_enabled": True},
+                 "configured": True, "lane": "text", "execution_enabled": True},
     )
 
-    def fake_complete_json(system, user):
+    def fake_complete_json(system, user, **kwargs):
         assert "STRICT JSON" in system
         # Video concepts must NOT be in the poster brief.
         for banned in ("WPS", "duration", "story beat", "shot sequence", "dialogue"):
@@ -240,10 +246,10 @@ async def test_ai_directions_are_parsed_gated_and_stamped(monkeypatch):
 @pytest.mark.asyncio
 async def test_offer_directions_reject_price_claims(monkeypatch):
     pid = await _seed_product()
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": True)
     monkeypatch.setattr(
         svc.ai_provider, "complete_json",
-        lambda s, u: {
+            lambda s, u, **kwargs: {
             "directions": [
                 {"primary_message": "Jimat RM10 hari ini", "support_message": "",
                  "proof_points": [], "cta": "Beli", "disclaimer": "", "tone": ""},
@@ -259,15 +265,15 @@ async def test_offer_directions_reject_price_claims(monkeypatch):
 @pytest.mark.asyncio
 async def test_regenerate_field_locks_other_fields(monkeypatch):
     pid = await _seed_product()
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": True)
     monkeypatch.setattr(
         svc.ai_provider, "provider_status",
         lambda: {"provider_id": "p", "model_id": "m", "configured": True,
-                 "lane": "text_assist", "execution_enabled": True},
+                 "lane": "text", "execution_enabled": True},
     )
     captured = {}
 
-    def fake_complete_json(system, user):
+    def fake_complete_json(system, user, **kwargs):
         captured["user"] = user
         return {"cta": "Dapatkan hari ini"}
 
@@ -289,7 +295,7 @@ async def test_regenerate_field_locks_other_fields(monkeypatch):
 @pytest.mark.asyncio
 async def test_regenerate_field_fails_closed_when_unconfigured(monkeypatch):
     pid = await _seed_product()
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": False)
     with pytest.raises(svc.PosterCopyAIError) as exc:
         await svc.regenerate_field(pid, "PRODUCT_HERO", "Hero", {}, "cta")
     assert exc.value.code == "POSTER_AI_NOT_CONFIGURED"
@@ -298,9 +304,9 @@ async def test_regenerate_field_fails_closed_when_unconfigured(monkeypatch):
 @pytest.mark.asyncio
 async def test_regenerated_unsafe_value_is_rejected(monkeypatch):
     pid = await _seed_product()
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: True)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": True)
     monkeypatch.setattr(
-        svc.ai_provider, "complete_json", lambda s, u: {"cta": "Rawat sakit anda"}
+        svc.ai_provider, "complete_json", lambda s, u, **kwargs: {"cta": "Rawat sakit anda"}
     )
     fields = {"primary_message": "Warisan", "cta": "Beli"}
     with pytest.raises(svc.PosterCopyAIError) as exc:
@@ -325,7 +331,7 @@ _BANNED_FALLBACK_FRAGMENTS = (
 async def test_fallback_makes_no_unsupported_claims_without_intelligence(monkeypatch):
     """PI-FINAL-B04: no accepted intelligence => poster copy AI is COPY_INELIGIBLE.
     Blind fallback generation is no longer reachable without an eligible product."""
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": False)
     pid = await _seed_bare_product(title="Produk Baru XYZ", display="Produk Baru XYZ")
     with pytest.raises(svc.PosterCopyAIError) as exc:
         await svc.generate_directions(pid, "PRODUCT_HERO", "")
@@ -335,7 +341,7 @@ async def test_fallback_makes_no_unsupported_claims_without_intelligence(monkeyp
 @pytest.mark.asyncio
 async def test_fallback_chips_come_only_from_approved_grounding(monkeypatch):
     """When approved benefits exist, fallback chips may state ONLY those."""
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": False)
     pid = await _seed_product(title="Produk Grounded ABC", display="Produk Grounded ABC")
 
     class _PK:
@@ -362,7 +368,7 @@ async def test_fallback_chips_come_only_from_approved_grounding(monkeypatch):
 @pytest.mark.asyncio
 async def test_fallback_drops_grounded_chips_that_fail_poster_safety(monkeypatch):
     """A legacy grounded claim must not block neutral fallback directions."""
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": False)
     pid = await _seed_product(title="Produk Legacy Claim", display="Produk Legacy Claim")
 
     class _PK:
@@ -396,7 +402,7 @@ _ROUTINE_USAGE_FRAGMENTS = (
 @pytest.mark.asyncio
 async def test_fallback_implies_no_routine_or_usage_context(monkeypatch):
     """No-intelligence fallback must not imply routine/usage suitability."""
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": False)
     pid = await _seed_product(title="Produk Neutral D1", display="Produk Neutral D1")
     out = await svc.generate_directions(pid, "PRODUCT_HERO", "")
     assert out["directions"]
@@ -413,7 +419,7 @@ async def test_fallback_implies_no_routine_or_usage_context(monkeypatch):
 @pytest.mark.asyncio
 async def test_fallback_does_not_inject_operator_angle_verbatim(monkeypatch):
     """A malicious/claim-laden operator angle must NOT reach fallback copy."""
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": False)
     pid = await _seed_product(title="Produk Angle D2", display="Produk Angle D2")
     malicious = "Terbukti no.1 dipercayai ramai keluarga stok terhad"
     out = await svc.generate_directions(pid, "PRODUCT_HERO", malicious)
@@ -431,7 +437,7 @@ async def test_fallback_does_not_inject_operator_angle_verbatim(monkeypatch):
 @pytest.mark.asyncio
 async def test_fallback_uses_only_product_discovery_ctas(monkeypatch):
     """Every fallback CTA is a neutral product-discovery invitation."""
-    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda: False)
+    monkeypatch.setattr(svc.ai_provider, "is_configured", lambda lane="text": False)
     pid = await _seed_product(title="Produk Discover D3", display="Produk Discover D3")
     out = await svc.generate_directions(pid, "PRODUCT_HERO", "")
     allowed_ctas = {"Ketahui lebih lanjut", "Lihat produk", "Terokai pilihan"}

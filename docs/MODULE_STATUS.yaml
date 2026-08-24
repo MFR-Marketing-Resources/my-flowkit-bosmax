@@ -1871,3 +1871,10 @@ domains:
       - dashboard/src/pages/ProductionOutputReportingPage.test.tsx
       - tests/api/test_production_output_reporting_api.py
       - tests/unit/test_production_output_reporting.py
+      # AI Provider Lane V4: independent Text / Structure / Image / Video
+      # settings, migration, routing, and contract coverage.
+      - agent/services/product_intelligence_prepare_service.py
+      - tests/api/test_product_intelligence_prepare_api.py
+      - tests/unit/test_product_intelligence_prepare_service.py
+      - docs/AI_PROVIDER_FOUR_LANE_V4.md
+      - tests/unit/test_ai_provider_four_lane_v4.py

@@ -1,6 +1,6 @@
 """Vision Lane provider adapter — OpenAI-compatible multimodal transport.
 
-Executes an image-understanding request for the operator-configured `vision`
+Executes an image-understanding request for the operator-configured `image`
 lane when the provider speaks the OpenAI-compatible `/chat/completions` transport.
 That one transport reaches THREE real multimodal providers:
 
@@ -33,13 +33,13 @@ from agent.services.ai_provider_model_catalog import (
     get_provider_transport,
 )
 from agent.services.ai_provider_settings_service import (
-    get_lane_api_key,
+    get_lane_api_key_for_execution,
     get_lane_model,
     get_lane_provider,
     is_lane_execution_enabled,
 )
 
-LANE = "vision"
+LANE = "image"
 
 # Transport endpoints (NOT model choices); overridable per deployment. Mirrors the
 # text_assist adapter's map so both lanes resolve providers identically.
@@ -75,13 +75,13 @@ class VisionProviderError(Exception):
 
 
 def is_configured() -> bool:
-    """True only when the vision lane has provider+model+key AND execution is on.
+    """True only when the image lane has provider+model+key AND execution is on.
     Fail closed everywhere else (no hidden default)."""
     try:
         return (
             bool(get_lane_provider(LANE))
             and bool(get_lane_model(LANE))
-            and bool(get_lane_api_key(LANE))
+            and bool(get_lane_api_key_for_execution(LANE))
             and bool(is_lane_execution_enabled(LANE))
         )
     except Exception:

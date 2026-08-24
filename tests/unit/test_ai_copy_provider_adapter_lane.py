@@ -1,4 +1,4 @@
-"""Adapter tests: AI Copy Assist honors the UI-selected text_assist lane.
+"""Adapter tests: AI Copy Assist honors the UI-selected text lane.
 
 Proves provider_status surfaces the selected model + execution flag, that the
 OpenAI-compatible transport sends the lane-selected model, and that the native
@@ -130,7 +130,7 @@ def test_openai_compatible_transport_uses_lane_model(state, monkeypatch):
     assert receipt["request_count_since_process_start"] == count_before + 1
     assert receipt["last_call"] == {
         "call_id": count_before + 1,
-        "lane": "text_assist",
+        "lane": "text",
         "provider_id": "qwen",
         "model_id": "qwen-max",
         "transport": cat.TRANSPORT_OPENAI_COMPATIBLE,
@@ -148,6 +148,8 @@ def test_openai_compatible_transport_uses_lane_model(state, monkeypatch):
             "prompt_tokens": 41,
             "completion_tokens": 23,
             "total_tokens": 64,
+            "input_tokens": 41,
+            "output_tokens": 23,
         },
     }
     serialized_receipt = json.dumps(receipt)
