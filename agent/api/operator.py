@@ -151,6 +151,7 @@ class FlowProviderReadinessRequest(BaseModel):
     provider_execution_route: str = "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
     scene_scaffold_route: str = "AGENT_T2V"
     flow_tab_id: int | None = None
+    flow_project_id: str | None = None
     mode: str = "T2V"
 
 
@@ -840,7 +841,7 @@ async def flow_provider_readiness(body: FlowProviderReadinessRequest):
         "flow_tab_found": False,
         "flow_tab_id": None,
         "flow_project_url": None,
-        "flow_project_id": None,
+        "flow_project_id": body.flow_project_id,
         "content_script_loaded": False,
         "content_script_alive": False,
         "session_challenge_verified": False,
@@ -851,6 +852,7 @@ async def flow_provider_readiness(body: FlowProviderReadinessRequest):
         "extension_version": None,
         "extension_build": None,
         "extension_build_match": False,
+        "bridge_diagnostics": {},
         "video_job_in_flight": False,
     }
     if authority_mode not in supported_modes:
@@ -861,6 +863,7 @@ async def flow_provider_readiness(body: FlowProviderReadinessRequest):
         }
 
     client = get_flow_client()
+    base["bridge_diagnostics"] = getattr(client, "extension_diagnostics", {})
     status = await client.get_status(timeout=5)
     extension_connected = client.connected and status.get("connected") is True
     base.update({
@@ -873,7 +876,14 @@ async def flow_provider_readiness(body: FlowProviderReadinessRequest):
 
     challenge: dict[str, Any] = {}
     if extension_connected:
-        challenge = await client.verify_provider_session_challenge(body.flow_tab_id)
+        bind_flow_session = getattr(client, "bind_flow_session", None)
+        if callable(bind_flow_session):
+            challenge = await bind_flow_session(
+                project_id=body.flow_project_id,
+                flow_tab_id=body.flow_tab_id,
+            )
+        else:
+            challenge = await client.verify_provider_session_challenge(body.flow_tab_id)
         base.update({
             "extension_session_id": challenge.get("extension_session_id")
             or status.get("extension_session_id"),
@@ -895,6 +905,9 @@ async def flow_provider_readiness(body: FlowProviderReadinessRequest):
             "same_flow_tab": challenge.get("same_flow_tab") is True,
             "flow_transport_bound_to_provider_browser": challenge.get("session_challenge_verified") is True,
         })
+        base["bridge_diagnostics"] = challenge.get("bridge_diagnostics") or getattr(
+            client, "extension_diagnostics", {}
+        )
 
     credit_payload: Any = None
     if extension_connected:
@@ -904,7 +917,10 @@ async def flow_provider_readiness(body: FlowProviderReadinessRequest):
     base["numeric_credit_balance"] = credit_balance
 
     flow_key_present = bool(
-        status.get("flowKeyPresent") or status.get("flow_key_present")
+        status.get("flowKeyPresent")
+        or status.get("flow_key_present")
+        or challenge.get("flowKeyPresent")
+        or challenge.get("flow_key_present")
     )
     authenticated = bool(
         extension_connected
@@ -942,11 +958,14 @@ async def flow_provider_readiness(body: FlowProviderReadinessRequest):
     base["composer_runtime_ready"] = composer.get("runtime_ready") is True
     base["composer"] = composer
 
+    challenge_blocker = str(challenge.get("primary_blocker") or "").strip()
     blocker = None
     if not base["runtime_current_main"]:
         blocker = "RUNTIME_NOT_CURRENT_MAIN"
     elif not extension_connected:
         blocker = "EXTENSION_BRIDGE_NOT_CONNECTED"
+    elif challenge_blocker and challenge_blocker != "FLOW_PROVIDER_UAT_READY":
+        blocker = challenge_blocker
     elif not base["same_extension_session"]:
         blocker = "EXTENSION_SESSION_MISMATCH"
     elif not base["session_challenge_verified"]:
