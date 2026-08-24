@@ -321,6 +321,8 @@ async def _run_schema_failure_case(product_id: str, mutate):
         "prompt_tokens": 3227,
         "completion_tokens": 1223,
         "total_tokens": 4450,
+        "input_tokens": 3227,
+        "output_tokens": 1223,
     }
     assert row["output_digest"] and len(row["output_digest"]) == 64
 
@@ -455,7 +457,7 @@ async def test_round2_observed_legacy_deepseek_shape_is_rejected_without_normali
         for error in failure["failure_evidence"]["validation_errors"]
     }
     assert ("angle_proposal", "definition") in locations
-    assert ("proposals", 0, "proposal_id") in locations
+    assert ("proposals", 0, "component_id") in locations
 
 
 @pytest.mark.asyncio
@@ -477,7 +479,6 @@ async def test_round2_prompt_contract_is_exact_and_mode_aware():
         "definition",
         "storyline_family_proposal",
         "reviewed_definition",
-        "proposal_id",
         "semantic_class",
         "segments",
         "formula_stage_key",
@@ -603,7 +604,7 @@ async def test_round2_mwcb_provider_free_precheck_derives_route_key_and_does_not
         actor_id="round2-route-owned-precheck",
         request_id=f"{product_id}:setup",
     )
-    recipe = setup["recipe"]
+    recipe = await factory.repository.get("COPY_RECIPE", setup["recipe_id"])
     production_tables = (
         "angle_v3",
         "storyline_family_v3",
@@ -648,7 +649,10 @@ async def test_round2_mwcb_provider_free_precheck_derives_route_key_and_does_not
     assert proposal is not None
     assert "route_key" not in V3StorylineFamilyProposal.model_fields
     assert "route_key" not in V3StorylineNarrativeRouteProposal.model_fields
-    canonical_route = service._system_derived_storyline_route(proposal)
+    canonical_route = service._system_derived_storyline_route(
+        proposal,
+        required_formula_stage_keys(recipe.formula.formula_id),
+    )
     assert canonical_route["route_key"] == route_key_for_fact_ids(list(proposal.route_anchor_fact_ids))
     assert canonical_route["route_anchor_fact_ids"] == list(proposal.route_anchor_fact_ids)
 
@@ -983,6 +987,8 @@ async def test_round2_truncated_response_is_diagnosed_without_v3_supply_or_retry
         "prompt_tokens": 10189,
         "completion_tokens": 4096,
         "total_tokens": 14285,
+        "input_tokens": 10189,
+        "output_tokens": 4096,
     }
     receipt = json.loads(row["provider_receipt_json"])
     assert receipt["finish_reason"] == "length"
@@ -1392,7 +1398,7 @@ async def test_round2_provider_output_budget_stops_before_v3_mutation(monkeypatc
                 "model_id": "budget-test",
                 "response_status": "SUCCEEDED",
                 "json_parse_status": "VALID",
-                "usage": {"total_tokens": 999},
+                "usage": {"prompt_tokens": 200, "completion_tokens": 999, "total_tokens": 1199},
             }
 
     provider = OverBudgetProvider()
