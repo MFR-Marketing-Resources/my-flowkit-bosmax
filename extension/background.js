@@ -78,6 +78,7 @@ const _API_KEY = "AIzaSyBtrm0o5ab1c-Ec8ZuLcGt3oJAA5VWt3pY";
 const EXTENSION_PROTOCOL_VERSION = "FLOWKIT_EXTENSION_V1";
 const FLOW_DOM_PROTOCOL_VERSION = "FLOWKIT_DOM_V1";
 const FLOW_PROJECT_URL_STORAGE_KEY = "flow_project_url";
+const EXTENSION_INSTALLATION_ID_STORAGE_KEY = "extension_installation_id";
 const EXTENSION_SESSION_ID = (() => {
 	try {
 		if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
@@ -87,6 +88,52 @@ const EXTENSION_SESSION_ID = (() => {
 	return `flowkit-sw-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 })();
 
+let extensionInstallationId = null;
+let extensionInstallationIdPromise = null;
+
+async function loadOrCreateInstallationId() {
+	if (extensionInstallationId) return extensionInstallationId;
+	if (!extensionInstallationIdPromise) {
+		extensionInstallationIdPromise = (async () => {
+			const stored = await chrome.storage.local.get([
+				EXTENSION_INSTALLATION_ID_STORAGE_KEY,
+			]);
+			const existing = String(
+				stored?.[EXTENSION_INSTALLATION_ID_STORAGE_KEY] || "",
+			).trim();
+			if (existing) {
+				extensionInstallationId = existing;
+				return extensionInstallationId;
+			}
+
+			let installationId;
+			try {
+				installationId = globalThis.crypto?.randomUUID
+					? globalThis.crypto.randomUUID()
+					: null;
+			} catch (_err) {
+				installationId = null;
+			}
+			if (!installationId) {
+				installationId = `flowkit-install-${Date.now()}-${Math.random()
+					.toString(16)
+					.slice(2)}`;
+			}
+			await chrome.storage.local.set({
+				[EXTENSION_INSTALLATION_ID_STORAGE_KEY]: installationId,
+			});
+			extensionInstallationId = installationId;
+			return extensionInstallationId;
+		})();
+	}
+
+	try {
+		return await extensionInstallationIdPromise;
+	} finally {
+		extensionInstallationIdPromise = null;
+	}
+}
+
 let ws = null;
 let flowKey = null;
 // Flow's current project payload distinguishes a delivery-tile mediaId from
@@ -95,6 +142,8 @@ let flowKey = null;
 // harvest without persisting the raw project payload or signed URLs.
 const flowMediaGenerationIds = Object.create(null);
 let _callbackSecret = null; // Auth secret for HTTP callback, received from server on WS connect
+let activeConnectionId = null;
+const callbackTransportsByRequestId = new Map();
 let state = "off"; // off | idle | running
 let manualDisconnect = false;
 const metrics = {
@@ -403,7 +452,14 @@ async function handleHarvestVideoUrls(targetTabId) {
 			tab = null;
 		}
 		if (!tab || !/labs\.google\/fx\/.*tools\/flow/.test(tab.url || "")) {
-			return { ok: false, urls: [], error: "BOUND_TAB_GONE" };
+			return {
+				ok: false,
+				urls: [],
+				error: "BOUND_TAB_GONE",
+				handled_flow_tab_id: null,
+				handled_flow_url: null,
+				handled_flow_project_id: null,
+			};
 		}
 	} else {
 		const tabs = await chrome.tabs.query({
@@ -412,7 +468,16 @@ async function handleHarvestVideoUrls(targetTabId) {
 				"https://labs.google/fx/*/tools/flow*",
 			],
 		});
-		if (!tabs.length) return { ok: false, urls: [], error: "NO_FLOW_TAB" };
+		if (!tabs.length) {
+			return {
+				ok: false,
+				urls: [],
+				error: "NO_FLOW_TAB",
+				handled_flow_tab_id: null,
+				handled_flow_url: null,
+				handled_flow_project_id: null,
+			};
+		}
 		// Prefer the active project-editor tab (reusing the existing editor-aware selector)
 		// instead of a blind tabs[0] — otherwise a second Flow tab on the home/shell can make
 		// the unbound harvest read the wrong tab and report a false NO_OPEN_EDITOR.
@@ -461,6 +526,7 @@ async function handleHarvestVideoUrls(targetTabId) {
 					imageIds: Array.from(imageIds),
 					mediaIds: Array.from(videoIds), // back-compat
 					projectId: pm ? pm[1] : null,
+					flowUrl: location.href,
 					videoCount: document.querySelectorAll("video").length,
 					imgCount: document.querySelectorAll("img").length,
 				};
@@ -502,9 +568,31 @@ async function handleHarvestVideoUrls(targetTabId) {
 			if (generationId) mediaGenerationIds[String(mediaId)] = generationId;
 		}
 		out.mediaGenerationIds = mediaGenerationIds;
-		return { ok: true, urls: out.urls || [], diag: out };
+		const handledFlowUrl = String(out.flowUrl || tab.url || "").trim() || null;
+		const handledProjectId =
+			out.projectId || extractFlowProjectId(handledFlowUrl) || null;
+		out.flowTabId = tab.id;
+		out.flowUrl = handledFlowUrl;
+		out.projectId = handledProjectId;
+		return {
+			ok: true,
+			urls: out.urls || [],
+			diag: out,
+			handled_flow_tab_id: tab.id,
+			handled_flow_url: handledFlowUrl,
+			handled_flow_project_id: handledProjectId,
+		};
 	} catch (e) {
-		return { ok: false, urls: [], error: String(e?.message || e) };
+		const handledFlowUrl = String(tab?.url || "").trim() || null;
+		return {
+			ok: false,
+			urls: [],
+			error: String(e?.message || e),
+			handled_flow_tab_id: tab?.id ?? null,
+			handled_flow_url: handledFlowUrl,
+			handled_flow_project_id:
+				extractFlowProjectId(handledFlowUrl) || null,
+		};
 	}
 }
 
@@ -1708,12 +1796,34 @@ function normalizeMethodPayload(result) {
 
 function finalizeMethodPayload(method, result, flowTab) {
 	const payload = normalizeMethodPayload(result);
+	const envelopeFlowTab = buildFlowTabSnapshot(flowTab);
 	const reply = {
 		method,
 		timestamp: new Date().toISOString(),
-		...buildFlowTabSnapshot(flowTab),
+		...envelopeFlowTab,
 		...payload,
 	};
+	const hasHandledFlowIdentity = [
+		"handled_flow_tab_id",
+		"handled_flow_url",
+		"handled_flow_project_id",
+	].every((field) => Object.prototype.hasOwnProperty.call(payload, field));
+	if (hasHandledFlowIdentity) {
+		reply.envelope_flow_tab_found = envelopeFlowTab.flow_tab_found;
+		reply.envelope_flow_tab_id = envelopeFlowTab.flow_tab_id;
+		reply.envelope_flow_url = envelopeFlowTab.flow_url;
+		reply.flow_tab_found = payload.handled_flow_tab_id != null;
+		reply.flow_tab_id = payload.handled_flow_tab_id;
+		reply.flow_url = payload.handled_flow_url;
+		reply.flow_project_url = payload.handled_flow_url;
+		reply.flow_project_id = payload.handled_flow_project_id;
+	}
+
+	// These values are bridge-owned. A method handler cannot override the
+	// connection tuple by returning look-alike payload fields.
+	reply.connection_id = activeConnectionId;
+	reply.installation_id = extensionInstallationId;
+	reply.extension_session_id = EXTENSION_SESSION_ID;
 
 	const receivedField = getMethodStageField(method, "received");
 	if (receivedField) {
@@ -4054,7 +4164,9 @@ async function handleFlowProviderSessionChallenge(params = {}) {
 	}
 	const manifest = chrome.runtime.getManifest();
 	const identity = {
+		installation_id: extensionInstallationId,
 		extension_session_id: EXTENSION_SESSION_ID,
+		connection_id: activeConnectionId,
 		extension_id: chrome.runtime.id,
 		extension_version: manifest.version || null,
 		extension_build: BUILD_ID,
@@ -5724,14 +5836,13 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 });
 
 async function init() {
-	const data = await chrome.storage.local.get([
-		"flowKey",
-		"metrics",
-		"callbackSecret",
-	]);
+	const data = await chrome.storage.local.get(["flowKey", "metrics"]);
 	if (data.flowKey) flowKey = data.flowKey;
 	if (data.metrics) Object.assign(metrics, data.metrics);
-	if (data.callbackSecret) _callbackSecret = data.callbackSecret;
+	await loadOrCreateInstallationId();
+	// Callback credentials are server-owned and connection-scoped. Remove the
+	// legacy persisted value so a restarted worker can never reuse stale authority.
+	await chrome.storage.local.remove("callbackSecret");
 	try {
 		await chrome.sidePanel.setOptions({
 			path: "side_panel.html",
@@ -5842,18 +5953,52 @@ function connectToAgent() {
 	if (manualDisconnect) return;
 	if (ws?.readyState === WebSocket.CONNECTING) return;
 	if (ws?.readyState === WebSocket.OPEN) return;
+	if (ws?.readyState === WebSocket.CLOSING) {
+		scheduleReconnect();
+		return;
+	}
+	if (!extensionInstallationId) {
+		loadOrCreateInstallationId()
+			.then(() => connectToAgent())
+			.catch((error) => {
+				console.error("[FlowAgent] Installation identity load failed:", error);
+				scheduleReconnect();
+			});
+		return;
+	}
 
+	let connectionSocket;
 	try {
-		ws = new WebSocket(AGENT_WS_URL);
+		connectionSocket = new WebSocket(AGENT_WS_URL);
+		ws = connectionSocket;
 	} catch (e) {
 		console.error("[FlowAgent] WS connect error:", e);
 		scheduleReconnect();
 		return;
 	}
+	let connectionCallbackSecret = null;
+	let connectionId = null;
+	_callbackSecret = null;
+	activeConnectionId = null;
+
+	const connectionTransport = () => ({
+		callbackSecret: connectionCallbackSecret,
+		connectionId,
+		websocket: connectionSocket,
+	});
 
 	const replyToAgent = (msg, result) => {
 		if (!msg?.id) return;
-		sendToAgent({ id: msg.id, result: result || { ok: true } });
+		const ownedResult = {
+			...(result && typeof result === "object" ? result : { ok: true }),
+			connection_id: connectionId,
+			installation_id: extensionInstallationId,
+			extension_session_id: EXTENSION_SESSION_ID,
+		};
+		sendToAgent(
+			{ id: msg.id, result: ownedResult },
+			connectionTransport(),
+		);
 	};
 
 	const replyAgentError = (msg, error) => {
@@ -5864,7 +6009,7 @@ function connectToAgent() {
 		});
 	};
 
-	ws.onopen = () => {
+	connectionSocket.onopen = () => {
 		console.log("[FlowAgent] Connected to agent");
 		chrome.alarms.clear("reconnect");
 		setState("idle");
@@ -5880,26 +6025,20 @@ function connectToAgent() {
 		// Token refresh alarm — 45 min gives buffer before ~60 min expiry
 		chrome.alarms.create("token-refresh", { periodInMinutes: 45 });
 
-		// Send current state + resend token if we have one
-		ws.send(
-			JSON.stringify({
-				type: "extension_ready",
-				flowKeyPresent: !!flowKey,
-				tokenAge:
-					flowKey && metrics.tokenCapturedAt
-						? Date.now() - metrics.tokenCapturedAt
-						: null,
-			}),
-		);
-		if (flowKey) {
-			ws.send(JSON.stringify({ type: "token_captured", flowKey }));
-		}
+		// The server sends callback_secret first. extension_ready is deferred until
+		// that packet establishes the server-owned connection identity.
 	};
 
-	ws.onmessage = async ({ data }) => {
+	connectionSocket.onmessage = async ({ data }) => {
 		let msg = null;
 		try {
 			msg = JSON.parse(data);
+			if (msg?.id) {
+				callbackTransportsByRequestId.set(
+					String(msg.id),
+					connectionTransport(),
+				);
+			}
 
 			if (msg.method === "api_request") {
 				await handleApiRequest(msg);
@@ -5940,9 +6079,60 @@ function connectToAgent() {
 				);
 				replyToAgent(msg, result);
 			} else if (msg.type === "callback_secret") {
-				_callbackSecret = msg.secret;
-				chrome.storage.local.set({ callbackSecret: msg.secret });
-				console.log("[FlowAgent] Received callback secret");
+				const nextCallbackSecret = String(msg.secret || "");
+				const nextConnectionId = String(msg.connection_id || "");
+				if (!nextCallbackSecret || !nextConnectionId) {
+					console.error(
+						"[FlowAgent] Rejected callback credential without connection identity",
+					);
+					connectionSocket.close(1008, "invalid callback credential");
+					return;
+				}
+				if (
+					(connectionCallbackSecret &&
+						connectionCallbackSecret !== nextCallbackSecret) ||
+					(connectionId && connectionId !== nextConnectionId)
+				) {
+					console.error(
+						"[FlowAgent] Rejected callback credential rotation on a live connection",
+					);
+					connectionSocket.close(1008, "callback credential rotation");
+					return;
+				}
+				if (ws !== connectionSocket) {
+					connectionSocket.close(1008, "superseded connection");
+					return;
+				}
+				connectionCallbackSecret = nextCallbackSecret;
+				connectionId = nextConnectionId;
+				_callbackSecret = connectionCallbackSecret;
+				activeConnectionId = connectionId;
+				const manifest = chrome.runtime.getManifest();
+				connectionSocket.send(
+					JSON.stringify({
+						type: "extension_ready",
+						installation_id: extensionInstallationId,
+						extension_session_id: EXTENSION_SESSION_ID,
+						connection_id: connectionId,
+						extension_id: chrome.runtime.id,
+						extension_version: manifest.version || null,
+						extension_build: BUILD_ID,
+						build_sha: BOSMAX_BUILD_PROOF.sha ?? null,
+						flowKeyPresent: !!flowKey,
+						tokenAge:
+							flowKey && metrics.tokenCapturedAt
+								? Date.now() - metrics.tokenCapturedAt
+								: null,
+					}),
+				);
+				if (flowKey) {
+					connectionSocket.send(
+						JSON.stringify({ type: "token_captured", flowKey }),
+					);
+				}
+				console.log(
+					`[FlowAgent] Received callback credential for ${connectionId}`,
+				);
 			} else if (msg.method === "CHECK_FLOW_COMPOSER_READY") {
 				const result = await executeWsMethodAndReply(msg, () =>
 					handleCheckFlowComposerReady(msg.params?.mode),
@@ -6088,7 +6278,13 @@ function connectToAgent() {
 		}
 	};
 
-	ws.onclose = () => {
+	connectionSocket.onclose = () => {
+		connectionCallbackSecret = null;
+		connectionId = null;
+		if (ws !== connectionSocket) return;
+		ws = null;
+		_callbackSecret = null;
+		activeConnectionId = null;
 		setState("off");
 		chrome.alarms.clear("token-refresh");
 		updateRuntimeDiagnostics({
@@ -6101,7 +6297,8 @@ function connectToAgent() {
 		if (!manualDisconnect) scheduleReconnect();
 	};
 
-	ws.onerror = (e) => {
+	connectionSocket.onerror = (e) => {
+		if (ws !== connectionSocket) return;
 		console.error("[FlowAgent] WS error:", e);
 		metrics.lastError = "WS_ERROR";
 		updateRuntimeDiagnostics({
@@ -6134,26 +6331,65 @@ function keepAlive() {
 	}
 }
 
-function sendToAgent(msg) {
-	// API responses (with msg.id) go via HTTP — immune to WS disconnect
-	if (msg.id) {
+function sendToAgent(msg, transportContext = {}) {
+	const requestKey = msg?.id != null ? String(msg.id) : null;
+	const mappedTransport = requestKey
+		? callbackTransportsByRequestId.get(requestKey)
+		: null;
+	const hasExplicitTransport = [
+		"callbackSecret",
+		"connectionId",
+		"websocket",
+	].some((field) =>
+		Object.prototype.hasOwnProperty.call(transportContext, field),
+	);
+	const transport = hasExplicitTransport
+		? {
+				callbackSecret: transportContext.callbackSecret,
+				connectionId: transportContext.connectionId,
+				websocket: transportContext.websocket,
+			}
+		: mappedTransport || {
+				callbackSecret: _callbackSecret,
+				connectionId: activeConnectionId,
+				websocket: ws,
+			};
+	const callbackSecret = String(transport.callbackSecret || "");
+	const connectionId = String(transport.connectionId || "");
+	const targetWebsocket = transport.websocket || null;
+	const clearMappedTransport = () => {
+		if (requestKey) callbackTransportsByRequestId.delete(requestKey);
+	};
+	const sendOverOwningWebsocket = () => {
+		if (targetWebsocket?.readyState === WebSocket.OPEN) {
+			targetWebsocket.send(JSON.stringify(msg));
+		}
+	};
+
+	// API responses go via authenticated HTTP only after the server has issued a
+	// complete connection credential. Otherwise retain the owning WS lane.
+	if (requestKey && callbackSecret && connectionId) {
 		fetch("http://127.0.0.1:8100/api/ext/callback", {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
-				"X-Callback-Secret": _callbackSecret || "",
+				"X-Callback-Secret": callbackSecret || "",
+				"X-Extension-Connection-Id": connectionId,
 			},
 			body: JSON.stringify(msg),
-		}).catch(() => {
-			// HTTP failed — fallback to WS
-			if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
-		});
+		})
+			.then((response) => {
+				if (!response.ok) throw new Error(`CALLBACK_HTTP_${response.status}`);
+			})
+			.catch(() => {
+				// HTTP failed — fallback only to the socket that owned this request.
+				sendOverOwningWebsocket();
+			})
+			.finally(clearMappedTransport);
 		return;
 	}
-	// Non-response messages (ping, status) or no secret yet — use WS
-	if (ws?.readyState === WebSocket.OPEN) {
-		ws.send(JSON.stringify(msg));
-	}
+	sendOverOwningWebsocket();
+	clearMappedTransport();
 }
 
 // ─── reCAPTCHA Solving ──────────────────────────────────────
@@ -6667,7 +6903,9 @@ function buildBackgroundStatusResponse() {
 		extension_id: chrome.runtime.id,
 		extension_name: manifest.name || null,
 		extension_version: manifest.version || null,
+		installation_id: extensionInstallationId,
 		extension_session_id: EXTENSION_SESSION_ID,
+		connection_id: activeConnectionId,
 		extension_build: buildId,
 		extension_root_url: chrome.runtime.getURL(""),
 		runtimeReady,
