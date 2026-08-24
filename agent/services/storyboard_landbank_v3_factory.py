@@ -2831,7 +2831,13 @@ class V3CopyFactoryService:
             if compile:
                 for duration in requested_durations:
                     projection, issue_codes, issue_details = compile_duration_projection(
-                        result.master, duration_seconds=duration, evidence_registry=bundle.registry, created_by="round1-enumerator", source=ROUND1_SOURCE
+                        result.master,
+                        duration_seconds=duration,
+                        evidence_registry=bundle.registry,
+                        language_profile=str((recipe.campaign_scope or {}).get("language_profile") or "Malay"),
+                        wps_mode=recipe.wps_mode,
+                        created_by="round1-enumerator",
+                        source=ROUND1_SOURCE,
                     )
                     if projection is None:
                         projection_issue = issue_codes or ("WPS_DURATION_FIT_SHORTFALL",)

@@ -202,7 +202,8 @@ def _finish_provider_call(
     with _provider_call_lock:
         # Always record usage keyed by call_id (concurrency-safe), independent of
         # whether this is still the process-global "last call".
-        _usage_by_call_id[call_id] = dict(usage or {})
+        normalized_usage = normalize_usage(usage)
+        _usage_by_call_id[call_id] = dict(normalized_usage)
         # B3 backstop: bound the map so provider-exception paths that never drain
         # cannot grow it without limit in a long-running process.
         while len(_usage_by_call_id) > 512:
@@ -219,7 +220,7 @@ def _finish_provider_call(
                 "response_status": response_status,
                 "http_status": http_status,
                 "finish_reason": finish_reason,
-                "usage": dict(usage or {}),
+                "usage": dict(normalized_usage),
             }
         if (
             _last_provider_call_receipt is None
@@ -232,7 +233,7 @@ def _finish_provider_call(
             "response_status": response_status,
             "http_status": http_status,
             "finish_reason": finish_reason,
-            "usage": dict(usage or {}),
+            "usage": dict(normalized_usage),
         }
 
 
@@ -266,14 +267,49 @@ def _record_json_parse_result(
         }
 
 
-def _safe_usage(payload: object) -> dict[str, int | float]:
+def normalize_usage(payload: object) -> dict[str, int | float]:
+    """Return canonical token telemetry while retaining provider raw fields.
+
+    Provider APIs use different names for the same token dimensions.  The
+    canonical fields are deliberately explicit: ``total_tokens`` is never
+    treated as ``output_tokens`` because it includes the prompt on providers
+    that report a combined total.
+    """
+
     if not isinstance(payload, dict):
         return {}
-    return {
+    raw = {
         str(key): value
         for key, value in payload.items()
         if isinstance(value, (int, float)) and not isinstance(value, bool)
     }
+    normalized = dict(raw)
+
+    def first_value(*keys: str) -> int | float | None:
+        for key in keys:
+            value = raw.get(key)
+            if value is not None:
+                return value
+        return None
+
+    input_tokens = first_value("input_tokens", "prompt_tokens")
+    output_tokens = first_value("output_tokens", "completion_tokens")
+    total_tokens = first_value("total_tokens")
+    if input_tokens is not None:
+        normalized["input_tokens"] = input_tokens
+    if output_tokens is not None:
+        normalized["output_tokens"] = output_tokens
+    if total_tokens is not None:
+        normalized["total_tokens"] = total_tokens
+    elif input_tokens is not None and output_tokens is not None:
+        normalized["total_tokens"] = input_tokens + output_tokens
+    return normalized
+
+
+def _safe_usage(payload: object) -> dict[str, int | float]:
+    """Bounded provider telemetry with canonical token dimensions."""
+
+    return normalize_usage(payload)
 
 
 def is_configured() -> bool:

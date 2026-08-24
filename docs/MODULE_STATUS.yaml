@@ -1827,6 +1827,7 @@ domains:
       - tests/unit/test_storyboard_landbank_v3_migration.py
       - tests/unit/test_storyboard_landbank_v3_round1_factory.py
       - tests/unit/test_storyboard_landbank_v3_round2_copy_register.py
+      - tests/unit/test_v3_provider_contract_final_closure.py
       - tests/unit/test_storyboard_landbank_v3_validators.py
       # Additive Reporting/database maintenance console over the same canonical
       # V3 Master Storyboard tables; no generation or production authority change.
