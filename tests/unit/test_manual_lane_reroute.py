@@ -528,6 +528,8 @@ def test_manual_lane_rejects_client_source_mode_contradicting_package(monkeypatc
 # dispatch), so the DOM lane can never run a canonical production job.
 
 def _guard_wire(monkeypatch, calls):
+    from agent.security import access_control
+
     class _C:
         connected = True
 
@@ -544,7 +546,15 @@ def _guard_wire(monkeypatch, calls):
     async def fake_upsert(request_id, **kw):
         calls.setdefault("telemetry", []).append(kw.get("status"))
 
+    async def fake_resolve_staff(_staff_id):
+        return {"staff_id": "staff-route-guard", "display_name": "Route Guard"}
+
+    async def fake_require_product(_product_id, *, lane):
+        calls.setdefault("product_lanes", []).append(lane)
+
     monkeypatch.setattr(flow_api, "get_flow_client", lambda: _C())
+    monkeypatch.setattr(access_control, "resolve_request_staff", fake_resolve_staff)
+    monkeypatch.setattr(flow_api, "_require_flow_product", fake_require_product)
     monkeypatch.setattr(flow_api.crud, "get_request", fake_get_request)
     monkeypatch.setattr(flow_api.crud, "add_stage_event", fake_stage)
     monkeypatch.setattr(flow_api.crud, "upsert_request_telemetry", fake_upsert)

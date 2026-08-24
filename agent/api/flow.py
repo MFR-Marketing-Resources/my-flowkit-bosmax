@@ -5079,7 +5079,6 @@ async def execute_flow_job(body: dict):
         await _require_flow_product(
             body.get("product_id"), lane=_raw_recipe or "FLOW_EXECUTE"
         )
-    await _require_flow_product(body.product_id, lane="FLOW_GENERATE_IMAGE_ONESHOT")
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "Extension not connected")
