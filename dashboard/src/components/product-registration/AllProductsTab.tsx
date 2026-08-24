@@ -7,6 +7,7 @@ import {
 	type ImportSoftReconciliationPreview,
 } from "../../api/products";
 import type { Product, ProductCatalogResponse } from "../../types";
+import type { VisualReviewCohort } from "../../api/productVisualOnboarding";
 import { resolveProductPreviewUrl } from "../../utils/productVisualPresentation";
 import ProductVisualReviewQueue from "./ProductVisualReviewQueue";
 
@@ -263,7 +264,12 @@ interface Props {
 	) => void;
 }
 
+type AllProductsWorkspace = "CATALOG" | "VISUAL_REVIEW";
+type VisualReviewCounts = Record<VisualReviewCohort, number>;
+
 export default function AllProductsTab({ onOpenProduct }: Props) {
+	const [workspace, setWorkspace] = useState<AllProductsWorkspace>("CATALOG");
+	const [visualReviewCounts, setVisualReviewCounts] = useState<VisualReviewCounts | null>(null);
 	const [search, setSearch] = useState("");
 	const [debouncedSearch, setDebouncedSearch] = useState("");
 	const [status, setStatus] = useState("ACTIVE");
@@ -324,6 +330,10 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	}, []);
 
 	const productTypeOptions = cluster ? (clusterToTypes[cluster] ?? []) : [];
+
+	const handleVisualReviewCounts = useCallback((counts: VisualReviewCounts) => {
+		setVisualReviewCounts(counts);
+	}, []);
 
 	const activeFilterCount =
 		(status !== "ACTIVE" ? 1 : 0) +
@@ -470,11 +480,39 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 
 
 return (
-		<div className="min-w-0 space-y-5">
-			<ProductVisualReviewQueue onOpenProduct={onOpenProduct} />
+		<div className="w-full min-w-0 max-w-full space-y-5" data-testid="all-products-workspace">
+			<div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-3" data-testid="all-products-workspace-switch" role="tablist" aria-label="Smart Registration workspace">
+				<div className="grid min-w-0 w-full max-w-xl grid-cols-2 rounded-xl border border-slate-800 bg-slate-950/60 p-1 sm:w-auto">
+					<button
+						type="button"
+						role="tab"
+						aria-selected={workspace === "CATALOG"}
+						onClick={() => setWorkspace("CATALOG")}
+						className={`min-w-0 rounded-lg px-3 py-2 text-[9px] font-bold uppercase tracking-widest transition-colors ${workspace === "CATALOG" ? "bg-slate-800 text-white" : "text-slate-500 hover:text-white"}`}
+						data-testid="workspace-product-catalog"
+					>
+						Product Catalog
+					</button>
+					<button
+						type="button"
+						role="tab"
+						aria-selected={workspace === "VISUAL_REVIEW"}
+						onClick={() => setWorkspace("VISUAL_REVIEW")}
+						className={`min-w-0 rounded-lg px-3 py-2 text-[9px] font-bold uppercase tracking-widest transition-colors ${workspace === "VISUAL_REVIEW" ? "bg-amber-500/15 text-amber-200" : "text-slate-500 hover:text-white"}`}
+						data-testid="workspace-visual-review"
+					>
+						Visual Review ({visualReviewCounts?.PENDING_VISUAL_REVIEW ?? "—"})
+					</button>
+				</div>
+			</div>
+
+			{workspace === "VISUAL_REVIEW" ? (
+				<ProductVisualReviewQueue onOpenProduct={onOpenProduct} onCohortCountsChange={handleVisualReviewCounts} />
+			) : (
+				<>
 			{/* Header */}
-			<div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-				<div className="flex flex-wrap items-center justify-between gap-2">
+			<div className="w-full min-w-0 max-w-full rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+				<div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-2">
 					<div>
 						<h3 className="text-sm font-bold text-white">All Products</h3>
 						<p className="text-[11px] text-slate-400 mt-0.5">
@@ -1120,6 +1158,8 @@ return (
 						</button>
 					</div>
 				</div>
+			)}
+				</>
 			)}
 		</div>
 	);

@@ -111,6 +111,20 @@ describe("ProductVisualReviewQueue", () => {
 		expect(screen.getByRole("checkbox", { name: "Select Recovered Product One" })).not.toBeChecked();
 	});
 
+	it("keeps technical evidence collapsed while preserving safe responsive wrapping", async () => {
+		render(<ProductVisualReviewQueue />);
+
+		const details = await screen.findByTestId("visual-review-technical-pending-1");
+		expect(details).not.toHaveAttribute("open");
+		expect(details).toHaveClass("min-w-0", "max-w-full");
+		expect(screen.getByTestId("visual-review-previews-pending-1")).toHaveClass("min-w-0", "grid-cols-1", "xl:grid-cols-2");
+		expect(details).toHaveTextContent("a".repeat(64));
+
+		fireEvent.click(screen.getByText("Technical evidence"));
+		expect(details).toHaveAttribute("open");
+		expect(details).toHaveTextContent("cutout-media-1");
+	});
+
 	it("approves only explicitly selected rows after exact confirmation", async () => {
 		render(<ProductVisualReviewQueue />);
 		const checkbox = await screen.findByRole("checkbox", { name: "Select Recovered Product One" });
