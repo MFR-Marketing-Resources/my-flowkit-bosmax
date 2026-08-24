@@ -5762,6 +5762,59 @@ CREATE TABLE IF NOT EXISTS execution_approval_snapshot (
 CREATE INDEX IF NOT EXISTS idx_execution_approval_envelope
     ON execution_approval_snapshot(approved_execution_envelope_sha256, approval_state);
 
+-- Shared provider certification evidence.  The immutable profile digest is the
+-- identity: lanes are only represented as the active representative used to
+-- obtain the proof and never become part of the provider-certification key.
+-- Rows are created/updated through provider_certification_crud and are only
+-- promoted to CERTIFIED after a real provider artifact and explicit frame-QC
+-- receipt have been recorded.
+CREATE TABLE IF NOT EXISTS provider_execution_certification (
+    certification_id              TEXT PRIMARY KEY,
+    profile_digest                TEXT NOT NULL UNIQUE,
+    profile_json                  TEXT NOT NULL DEFAULT '{}',
+    status                        TEXT NOT NULL DEFAULT 'RESERVED'
+                                  CHECK(status IN (
+                                      'RESERVED','SUBMITTED','ARTIFACT_PENDING',
+                                      'CERTIFIED','FAILED'
+                                  )),
+    representative_lane           TEXT NOT NULL,
+    provider                      TEXT NOT NULL,
+    model_key                     TEXT NOT NULL,
+    duration_s                    INTEGER NOT NULL CHECK(duration_s > 0),
+    prompt_block_durations_json   TEXT NOT NULL DEFAULT '[]',
+    aspect_ratio                  TEXT NOT NULL,
+    audio_dialogue_route          TEXT NOT NULL,
+    transport_key_provenance      TEXT NOT NULL,
+    capability_matrix_version     TEXT NOT NULL,
+    execution_transport           TEXT NOT NULL,
+    generation_mode               TEXT NOT NULL,
+    execution_route               TEXT NOT NULL,
+    product_id                    TEXT NOT NULL,
+    copy_id                       TEXT NOT NULL,
+    product_digest                TEXT NOT NULL,
+    copy_digest                   TEXT NOT NULL,
+    sweetwps_digest               TEXT NOT NULL,
+    compositor_digest             TEXT NOT NULL,
+    compiler_digest               TEXT NOT NULL,
+    lane_adapter_digest           TEXT NOT NULL,
+    provider_operation_id         TEXT,
+    job_id                        TEXT,
+    snapshot_id                   TEXT,
+    artifact_media_id             TEXT,
+    source_sha256                 TEXT,
+    output_sha256                 TEXT,
+    credit_delta                  REAL,
+    runtime_sha                   TEXT NOT NULL,
+    frame_qc_json                 TEXT NOT NULL DEFAULT '{}',
+    failure_code                  TEXT,
+    failure_detail                TEXT,
+    created_at                    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at                    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_execution_certification_status
+    ON provider_execution_certification(status, duration_s, model_key);
+
 -- Approved Generation Manifest: a group of per-item review snapshots (one per
 -- provider operation) that the operator reviews and approves ATOMICALLY before a
 -- multi-item run (Montage / Production Studio / bulk / Extend chain). Each item is

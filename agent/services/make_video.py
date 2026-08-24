@@ -1401,6 +1401,104 @@ async def _run_reference_contract_capture(
     await _sync_durable_single_job(job)
 
 
+async def _run_profile_certification_capture(
+    job_id, mode, prompt, project_id, image_media_ids,
+    image_prompt, aspect, tier, model=None, duration_s=None,
+    num_videos=1, image_model=None, max_image_attempts=8,
+    collect_image_variants=False, product_id=None, copy_execution_binding=None,
+):
+    """Run the active Faceless T2V/compositor route with one credit boundary.
+
+    This wrapper adds only before/after credit accounting and never changes the
+    provider route.  Retrieval and deterministic finalization remain owned by
+    the normal active ``_run_generate`` path.
+    """
+
+    job = _JOBS.get(job_id)
+    if not job:
+        return
+    client = get_flow_client()
+    try:
+        before = _capture_credit_balance(await client.get_credits())
+    except Exception as exc:  # noqa: BLE001 — no provider call without a quote
+        job.update(
+            status="FAILED",
+            stage="certification_credit_precheck",
+            error=f"CERTIFICATION_CREDITS_PRECHECK_FAILED:{exc}",
+        )
+        job["credit_accounting"] = {
+            "balance_before": None,
+            "balance_after": None,
+            "delta": None,
+            "actual_cost_observed": False,
+        }
+        return
+    if before is None:
+        job.update(
+            status="FAILED",
+            stage="certification_credit_precheck",
+            error="CERTIFICATION_CREDITS_QUOTE_UNPROVEN",
+        )
+        job["credit_accounting"] = {
+            "balance_before": None,
+            "balance_after": None,
+            "delta": None,
+            "actual_cost_observed": False,
+        }
+        return
+    job["credit_balance_before"] = before
+    await _run_generate(
+        job_id, mode, prompt, project_id, image_media_ids, image_prompt,
+        aspect, tier, model, duration_s, num_videos, image_model,
+        max_image_attempts, collect_image_variants, product_id,
+        copy_execution_binding,
+    )
+    # The active conversational Flow route exposes the provider generation
+    # identity through the authenticated extension's mediaGenerationIds map.
+    # Carry that observed identity across the deterministic compositor boundary
+    # so certification can report the real provider operation, never a local
+    # job/media id guessed after the fact.
+    observed_operations = []
+    for artifact in job.get("artifacts") or []:
+        if not isinstance(artifact, dict):
+            continue
+        correlation = artifact.get("correlation") or {}
+        operation_id = (
+            correlation.get("provider_operation_id")
+            or correlation.get("media_generation_id")
+        )
+        if operation_id:
+            observed_operations.append({
+                "provider_operation_id": str(operation_id),
+                "operation_id_source": (
+                    correlation.get("provider_operation_id_source")
+                    or "GOOGLE_FLOW_MEDIA_GENERATION_ID"
+                ),
+            })
+    if observed_operations:
+        job["provider_operation_ids"] = observed_operations
+        job["provider_operation_id_source"] = observed_operations[0].get(
+            "operation_id_source"
+        )
+    try:
+        after = _capture_credit_balance(await client.get_credits())
+    except Exception as exc:  # noqa: BLE001 — accounting stays explicit/unknown
+        after = None
+        job["credit_balance_after_error"] = str(exc)[:240]
+    delta = before - after if isinstance(after, (int, float)) else None
+    job["credit_balance_after"] = after
+    job["credit_accounting"] = {
+        "balance_before": before,
+        "balance_after": after,
+        "delta": delta,
+        "generation_submit_count": int(job.get("provider_generation_submit_count") or 0),
+        "actual_cost_observed": delta is not None,
+    }
+    if delta is None:
+        job["credit_accounting"]["error"] = "CREDIT_DELTA_UNPROVEN"
+    await _sync_durable_single_job(job)
+
+
 async def retry_artifact_delivery(job_id: str) -> dict:
     """Retry only local artifact registration; never re-submit a provider job."""
     job = _JOBS.get(job_id)
@@ -2029,18 +2127,19 @@ async def _verify_generation_approval(
     *, mode, prompt, source_mode, model, aspect, duration_s, num_videos,
     image_model, asset_fingerprints, image_media_ids, product_id,
     manifest_id, execution_identity, execution_profile_context=None,
-    provider_profile=None,
+    provider_profile=None, allow_uncertified_profile_capture=False,
 ):
     """Run the normal WYSIWYG approval gate for non-capture dispatches."""
     from agent.services import execution_approval_service as _eas
     from agent.services import video_execution_profile_service as _profiles
+    from agent.services import provider_certification_service as _certifications
 
     if execution_profile_context is not None:
         try:
             _canonical_context = _profiles.normalize_approval_context(
                 execution_profile_context
             )
-            _certification = _profiles.provider_certification_status(
+            _certification = await _certifications.provider_certification_status(
                 _canonical_context["duration_model_profile"]
             )
         except _profiles.ExecutionProfileError as exc:
@@ -2049,7 +2148,7 @@ async def _verify_generation_approval(
                 str(exc),
                 details={"code": exc.code, "details": exc.details},
             ) from exc
-        if not _certification.get("certified"):
+        if not _certification.get("certified") and not allow_uncertified_profile_capture:
             raise _eas.ExecutionApprovalError(
                 "DURATION_PROFILE_NOT_CERTIFIED",
                 "Provider proof is missing for this exact duration/model profile.",
@@ -2108,7 +2207,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          max_retry_operations: int = 0,
                          capture_class: str | None = None,
                          capture_subject: dict | None = None,
-                         capture_confirmed: bool = False) -> dict:
+                         capture_confirmed: bool = False,
+                         profile_certification_capture: bool = False) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all.
@@ -2124,6 +2224,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     _gc_jobs()
     mode = (mode or "").upper()
     capture_requested = bool(capture_class)
+    profile_certification_capture_requested = bool(profile_certification_capture)
     if capture_requested:
         if capture_class != HYBRID_REFERENCE_OMNI_10S_CAPTURE_CLASS:
             return _capture_contract_reject("CAPTURE_CLASS_UNSUPPORTED")
@@ -2155,6 +2256,41 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
             return _capture_contract_reject("CAPTURE_PRODUCT_NOT_AUTHORIZED")
     production_recipe = str(production_recipe or "").strip().upper() or None
     from agent.security.access_control import get_current_auth_context, resolve_request_staff
+    if profile_certification_capture_requested:
+        from agent.services import provider_certification_service as _certifications
+
+        try:
+            execution_profile_context = _certifications.validate_capture_contract(
+                profile_context=execution_profile_context,
+                mode=mode,
+                source_mode=source_mode,
+                model=model,
+                duration_s=duration_s,
+                aspect=aspect,
+                num_videos=num_videos,
+                image_media_ids=image_media_ids,
+                product_id=product_id,
+                production_recipe=production_recipe,
+                surface_lane=surface_lane,
+                product_visual_custody=product_visual_custody,
+                confirm_live_credit_burn=confirm_live_credit_burn,
+                maximum_provider_operations=maximum_provider_operations,
+                max_retry_operations=max_retry_operations,
+                auth_context=get_current_auth_context(),
+            )
+        except _certifications.ProviderCertificationError as exc:
+            return {
+                "status": "REJECTED",
+                "error": exc.code,
+                "detail": str(exc),
+                "details": exc.details,
+                "pre_provider": {
+                    "classification": "BLOCKED",
+                    "provider_calls": 0,
+                    "credit_spend": False,
+                    "blocker_code": exc.code,
+                },
+            }
     if production_recipe or get_current_auth_context() is not None:
         if production_recipe not in {"HYBRID", "FACELESS", "MONTAGE", "POSTER_BUILDER"}:
             if production_recipe:
@@ -2469,6 +2605,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                         else None
                     )
                 ),
+                allow_uncertified_profile_capture=profile_certification_capture_requested,
             )
         except _eas.ExecutionApprovalError as _gate_err:
             return {"status": "REJECTED", "error": _gate_err.code,
@@ -2521,6 +2658,19 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                      "capture_only": capture_requested,
                      "capture_class": capture_class,
                      "capture_subject": capture_subject,
+                     "profile_certification_capture": profile_certification_capture_requested,
+                     "profile_certification_profile_digest": (
+                         (execution_profile_context or {})
+                         .get("duration_model_profile", {})
+                         .get("profile_digest")
+                         if profile_certification_capture_requested
+                         else None
+                     ),
+                     "profile_certification_context": (
+                         execution_profile_context
+                         if profile_certification_capture_requested
+                         else None
+                     ),
                      "provider_generation_submit_count": 0,
                      "provider_resubmission": False,
                      "resubmission_allowed": False,
@@ -2621,6 +2771,32 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 "lane": lane, "capture_class": capture_class,
                 "routing_receipt": _routing_receipt,
                 "request_id": request_id, "durable": bool(_durable_row),
+            }
+        if profile_certification_capture_requested:
+            lane = "PROFILE_CERTIFICATION_AGENT"
+            _JOBS[job_id]["lane"] = lane
+            _JOBS[job_id]["provider_route"] = "GOOGLE_FLOW_CREATION_AGENT"
+            _JOBS[job_id]["provider_generation_type"] = "scene_video_scaffold_then_deterministic_composite"
+            _JOBS[job_id]["_task"] = asyncio.create_task(
+                _run_generate_task(
+                    job_id, _run_profile_certification_capture, mode, prompt,
+                    project_id, image_media_ids, image_prompt, aspect, tier,
+                    model, duration_s, num_videos, image_model,
+                    max_image_attempts, collect_image_variants, product_id,
+                    copy_execution_binding,
+                )
+            )
+            return {
+                "job_id": job_id,
+                "status": "SUBMITTED",
+                "mode": mode,
+                "lane": lane,
+                "provider_route": _JOBS[job_id]["provider_route"],
+                "profile_digest": _JOBS[job_id].get(
+                    "profile_certification_profile_digest"
+                ),
+                "request_id": request_id,
+                "durable": bool(_durable_row),
             }
         if plan["eligible"]:
             lane = "DIRECT_API"
@@ -2978,6 +3154,18 @@ async def _accept_correlated_output(client, candidates, exclude, correlation,
                                 else "get_media"),
             "retrieval_source": retrieval_source,
         }
+        # The extension's authenticated harvest is the source of truth for the
+        # provider generation resource. Do not substitute the delivery tile
+        # UUID when the provider identity is absent.
+        provider_operation_id = (
+            getattr(client, "_media_generation_ids", {}) or {}
+        ).get(str(mid))
+        if provider_operation_id:
+            evidence["provider_operation_id"] = str(provider_operation_id)
+            evidence["media_generation_id"] = str(provider_operation_id)
+            evidence["provider_operation_id_source"] = (
+                "GOOGLE_FLOW_MEDIA_GENERATION_ID"
+            )
         return mid, str(path), round(len(vbytes) / 1024 / 1024, 2), evidence
     return None, None, None, None
 

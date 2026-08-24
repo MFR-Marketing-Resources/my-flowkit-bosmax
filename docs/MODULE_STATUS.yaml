@@ -99,6 +99,9 @@ domains:
       # content and execution gates.
       - agent/services/video_execution_profile_service.py
       - tests/unit/test_video_execution_profile_service.py
+      - agent/db/provider_certification_crud.py
+      - agent/services/provider_certification_service.py
+      - tests/unit/test_provider_certification_service.py
       - .ai/audits/DURATION_PROFILE_CERTIFICATION_REFACTOR_2026-08-24.md
       # Shared provider-free video continuity, SweetWPS timing, mascot identity,
       # and deterministic exact-product compositor authority.

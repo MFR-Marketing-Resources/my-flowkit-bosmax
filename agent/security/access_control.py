@@ -173,6 +173,8 @@ def required_permission(path: str, method: str) -> str:
     # inherit products.create/update from the generic /api/product-* mapper.
     if _path_has_prefix(normalized, "/api/product-release"):
         return "products.release"
+    if _path_has_prefix(normalized, "/api/faceless/profile-certification"):
+        return "production.execute"
     if _path_has_prefix(normalized, "/api/system/staff-access"):
         if "/roles" in normalized:
             return "roles.read" if upper_method == "GET" else "roles.manage"
