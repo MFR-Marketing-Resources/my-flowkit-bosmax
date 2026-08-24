@@ -148,16 +148,63 @@ class V3AngleProposal(BaseModel):
     rationale: str = Field(default="", max_length=800)
 
 
+class V3StorylineNarrativeRouteProposal(BaseModel):
+    """Semantic route description supplied by the provider.
+
+    Route identity is deliberately absent. The provider may describe the
+    ordered formula route, but BOSMAX derives the canonical route key from
+    the separately validated evidence anchors.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    stage_keys: tuple[str, ...] = Field(default_factory=tuple, max_length=24)
+    order_locked: bool = True
+
+    @field_validator("stage_keys", mode="before")
+    @classmethod
+    def _normalize_stage_keys(cls, value: Any) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            values = (value,)
+        elif isinstance(value, (list, tuple)):
+            values = tuple(value)
+        else:
+            raise ValueError("NARRATIVE_ROUTE_STAGE_KEYS_INVALID")
+        normalized = tuple(normalized_text(item) for item in values if isinstance(item, str))
+        if len(normalized) != len(values) or any(not item for item in normalized):
+            raise ValueError("NARRATIVE_ROUTE_STAGE_KEYS_INVALID")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("NARRATIVE_ROUTE_STAGE_KEYS_DUPLICATE")
+        return normalized
+
+
 class V3StorylineFamilyProposal(BaseModel):
     """Distinct Storyline Family DRAFT proposal for zero-supply CREATE bootstrap."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     reviewed_definition: str = Field(min_length=8, max_length=500)
-    narrative_route: dict[str, Any] = Field(default_factory=dict)
-    route_key: str = Field(min_length=1, max_length=120)
+    narrative_route: V3StorylineNarrativeRouteProposal = Field(default_factory=V3StorylineNarrativeRouteProposal)
     route_anchor_fact_ids: tuple[str, ...] = Field(min_length=1, max_length=24)
     rationale: str = Field(default="", max_length=800)
+
+    @field_validator("route_anchor_fact_ids", mode="before")
+    @classmethod
+    def _normalize_route_anchor_fact_ids(cls, value: Any) -> tuple[str, ...]:
+        if isinstance(value, str):
+            values = (value,)
+        elif isinstance(value, (list, tuple)):
+            values = tuple(value)
+        else:
+            raise ValueError("ROUTE_ANCHOR_FACT_IDS_INVALID")
+        normalized = tuple(normalized_text(item) for item in values if isinstance(item, str))
+        if len(normalized) != len(values) or any(not item for item in normalized):
+            raise ValueError("ROUTE_ANCHOR_FACT_IDS_INVALID")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("ROUTE_ANCHOR_FACT_IDS_DUPLICATE")
+        return normalized
 
 
 class V3AIProviderEnvelope(BaseModel):
@@ -372,6 +419,7 @@ __all__ = [
     "V3AICopySegment",
     "V3AICopyProposal",
     "V3AngleProposal",
+    "V3StorylineNarrativeRouteProposal",
     "V3StorylineFamilyProposal",
     "V3AIProviderEnvelope",
     "V3AIProviderReceipt",

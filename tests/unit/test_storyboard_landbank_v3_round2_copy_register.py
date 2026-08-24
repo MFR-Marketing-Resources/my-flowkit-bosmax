@@ -10,12 +10,13 @@ import pytest
 from agent.authority.copy_blueprint_v2_authority import required_formula_stage_keys
 from agent.db.schema import get_db
 from agent.models.copy_blueprint_v2 import digest_evidence_text
-from agent.models.storyboard_landbank_v3 import digest_text, master_content_digest
+from agent.models.storyboard_landbank_v3 import digest_text, master_content_digest, route_key_for_fact_ids
 from agent.models.storyboard_landbank_v3_round2 import (
     V3AICopyProposal,
     V3AICopySegment,
     V3AIProviderEnvelope,
     V3AngleProposal,
+    V3StorylineNarrativeRouteProposal,
     V3StorylineFamilyProposal,
 )
 from agent.services import ai_copy_provider_adapter
@@ -516,12 +517,14 @@ async def test_round2_prompt_contract_is_exact_and_mode_aware():
     expected_models = {
         "V3AIProviderEnvelope": V3AIProviderEnvelope,
         "V3AngleProposal": V3AngleProposal,
+        "V3StorylineNarrativeRouteProposal": V3StorylineNarrativeRouteProposal,
         "V3StorylineFamilyProposal": V3StorylineFamilyProposal,
         "V3AICopyProposal": V3AICopyProposal,
         "V3AICopySegment": V3AICopySegment,
     }
     for model_name, model in expected_models.items():
         assert contract["canonical_models"][model_name]["allowed_keys"] == list(model.model_fields)
+    assert "route_key" not in V3StorylineFamilyProposal.model_fields
     # Existing supply is reused, so the illustrative envelope omits both
     # bootstrap-only proposal objects instead of asking DeepSeek to recreate them.
     assert "angle_proposal" not in contract["output_shape"]
@@ -544,12 +547,164 @@ async def test_round2_prompt_contract_is_exact_and_mode_aware():
     }
     assert isinstance(zero_envelope.angle_proposal, V3AngleProposal)
     assert isinstance(zero_envelope.storyline_family_proposal, V3StorylineFamilyProposal)
+    assert "route_key" not in V3StorylineFamilyProposal.model_fields
+    assert "route_key" not in V3StorylineNarrativeRouteProposal.model_fields
     assert all(isinstance(proposal, V3AICopyProposal) for proposal in zero_envelope.proposals)
     assert all(
         isinstance(segment, V3AICopySegment)
         for proposal in zero_envelope.proposals
         for segment in proposal.segments
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("placement", ("top_level", "nested"))
+async def test_round2_provider_route_key_is_not_an_accepted_contract_field(placement):
+    factory, recipe = await _seed_zero_supply_recipe(f"round2-route-key-field-{placement}")
+    service = V3CopyRegisterRound2Service(factory=factory)
+    plan = await service.plan_assistant(
+        recipe.product_id,
+        recipe.recipe_id,
+        mode="CREATE",
+        actor_id="round2-route-key-contract",
+        request_id=f"round2:route-key-contract:{placement}:plan",
+    )
+    contract = service._provider_output_contract(plan, recipe)
+    payload = deepcopy(contract["output_shape"])
+    family = payload["storyline_family_proposal"]
+    if placement == "top_level":
+        family["route_key"] = "provider-authored-route"
+    else:
+        family["narrative_route"]["route_key"] = "provider-authored-route"
+    bundle = await factory.truth_adapter.current(recipe.product_id)
+
+    with pytest.raises(Exception) as error:
+        service._validate_proposals(payload, plan, recipe, bundle)
+
+    assert error.value.code == "V3_PROVIDER_SCHEMA_VALIDATION_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_round2_mwcb_provider_free_precheck_derives_route_key_and_does_not_mutate_supply():
+    product_id = "round2-route-owned-mwcb"
+    await _seed_product_truth(product_id)
+    factory = V3CopyFactoryService()
+    service = V3CopyRegisterRound2Service(factory=factory)
+    setup = await service.create_campaign_recipe(
+        product_id,
+        objective_id="conversion",
+        objective_definition="Drive a safe trial",
+        formula_id="PAS",
+        preset="FAST54",
+        supported_durations_seconds=[8, 16, 24],
+        target_capacity=54,
+        language_profile="Malay",
+        wps_mode="SWEET",
+        actor_id="round2-route-owned-precheck",
+        request_id=f"{product_id}:setup",
+    )
+    recipe = setup["recipe"]
+    production_tables = (
+        "angle_v3",
+        "storyline_family_v3",
+        "storyboard_component_v3",
+        "master_storyboard_v3",
+        "duration_projection_v3",
+        "v3_human_approval_receipt",
+        "materialization_link_v3",
+        "production_copy_supply_manifest_v3",
+    )
+    db = await get_db()
+    before = {
+        table: (await (await db.execute(f"SELECT COUNT(*) FROM {table} WHERE product_id=?", (product_id,))).fetchone())[0]
+        for table in production_tables
+    }
+    plan = await service.plan_assistant(
+        product_id,
+        setup["recipe_id"],
+        mode="CREATE",
+        actor_id="round2-route-owned-precheck",
+        request_id=f"{product_id}:plan",
+    )
+    assert plan.provider.provider_calls == 0
+    assert {gap.semantic_class: gap.gap_count for gap in plan.gaps} == {
+        "HOOK": 6,
+        "BODY_CORE": 3,
+        "CTA": 3,
+    }
+    bundle = await factory.truth_adapter.current(product_id)
+    payload = service._fake_envelope(plan, await factory.repository.get("COPY_RECIPE", setup["recipe_id"]), bundle)
+    family_payload = payload["storyline_family_proposal"]
+    assert "route_key" not in family_payload
+    assert "route_key" not in family_payload["narrative_route"]
+    assert len(payload["proposals"]) == 12
+    assert {
+        semantic: sum(1 for proposal in payload["proposals"] if proposal["semantic_class"] == semantic)
+        for semantic in ("HOOK", "BODY_CORE", "CTA")
+    } == {"HOOK": 6, "BODY_CORE": 3, "CTA": 3}
+
+    envelope, _usage = service._validate_proposals(payload, plan, await factory.repository.get("COPY_RECIPE", setup["recipe_id"]), bundle)
+    proposal = envelope.storyline_family_proposal
+    assert proposal is not None
+    assert "route_key" not in V3StorylineFamilyProposal.model_fields
+    assert "route_key" not in V3StorylineNarrativeRouteProposal.model_fields
+    canonical_route = service._system_derived_storyline_route(proposal)
+    assert canonical_route["route_key"] == route_key_for_fact_ids(list(proposal.route_anchor_fact_ids))
+    assert canonical_route["route_anchor_fact_ids"] == list(proposal.route_anchor_fact_ids)
+
+    after = {
+        table: (await (await db.execute(f"SELECT COUNT(*) FROM {table} WHERE product_id=?", (product_id,))).fetchone())[0]
+        for table in production_tables
+    }
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_round2_route_anchor_validation_remains_fail_closed_without_provider_calls():
+    product_id = "round2-route-anchor-hardening"
+    factory, recipe = await _seed_zero_supply_recipe(product_id)
+    service = V3CopyRegisterRound2Service(factory=factory)
+    plan = await service.plan_assistant(
+        recipe.product_id,
+        recipe.recipe_id,
+        mode="CREATE",
+        actor_id="round2-route-anchor-hardening",
+        request_id=f"{product_id}:plan",
+    )
+    bundle = await factory.truth_adapter.current(product_id)
+    base = service._fake_envelope(plan, recipe, bundle)
+    valid_anchor = base["storyline_family_proposal"]["route_anchor_fact_ids"][0]
+    generic_anchor = next(
+        fact.fact_id
+        for fact in bundle.registry.facts
+        if fact.fact_kind.upper() in {"PRODUCT_DESCRIPTION", "TARGET_CUSTOMER"}
+    )
+    other_route_fact = next(
+        fact.fact_id
+        for fact in bundle.registry.facts
+        if fact.fact_id != valid_anchor
+        and fact.fact_kind.upper() not in {"PRODUCT_DESCRIPTION", "TARGET_CUSTOMER"}
+    )
+
+    cases = (
+        (["missing-route-anchor"], "AI_COPY_ASSIST_ROUTE_ANCHOR_INVALID"),
+        ([generic_anchor], "AI_COPY_ASSIST_ROUTE_ANCHOR_GENERIC"),
+        ([valid_anchor, valid_anchor], "V3_PROVIDER_SCHEMA_VALIDATION_FAILED"),
+        ([""], "V3_PROVIDER_SCHEMA_VALIDATION_FAILED"),
+    )
+    for anchors, expected_code in cases:
+        payload = deepcopy(base)
+        payload["storyline_family_proposal"]["route_anchor_fact_ids"] = anchors
+        with pytest.raises(Exception) as error:
+            service._validate_proposals(payload, plan, recipe, bundle)
+        assert error.value.code == expected_code
+
+    mismatch = deepcopy(base)
+    mismatch["proposals"][0]["segments"][0]["evidence_fact_ids"] = [other_route_fact]
+    with pytest.raises(Exception) as error:
+        service._validate_proposals(mismatch, plan, recipe, bundle)
+    assert error.value.code == "AI_COPY_ASSIST_ROUTE_MISMATCH"
+    assert plan.provider.provider_calls == 0
 
 
 @pytest.mark.asyncio
@@ -1432,6 +1587,8 @@ async def test_round2_create_bootstraps_from_zero_supply(monkeypatch):
     families = await factory.repository.list("STORYLINE_FAMILY", product_id=product_id)
     assert len(angles) == 1 and angles[0].status == "DRAFT"
     assert len(families) == 1 and families[0].status == "DRAFT"
+    family_route = families[0].narrative_route
+    assert family_route["route_key"] == route_key_for_fact_ids(family_route["route_anchor_fact_ids"])
 
     landbank = await service.copy_register_landbank(product_id)
     assert len(landbank["items"]) == 1
