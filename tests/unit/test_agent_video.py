@@ -8,6 +8,7 @@ import asyncio
 import os
 
 from agent.services import agent_video as av
+from agent.services import execution_approval_service as eas
 
 
 def _run(coro):
@@ -486,4 +487,39 @@ def test_permission_after_target_steer_without_ack_fails_before_provider_submit(
     assert result["error"] == av.PRE_APPROVAL_SETTINGS_ACK_REQUIRED
     assert result["provider_submit"] is False
     assert result["credit_spend"] is False
+    assert all(item["permission_action"] != av.APPROVED for item in client.sent)
+
+
+def test_exact_target_acknowledgement_is_persisted_before_approval():
+    client = _PhaseBReplayClient()
+    target = eas.build_provider_target_authorization(
+        lane="FACELESS_VIDEO",
+        route="EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+        model="omni_flash",
+        duration_s=10,
+        aspect_ratio="9:16",
+        product_id="product-1",
+        copy_id="copy-1",
+        profile_digest="profile-digest",
+        sweetwps_digest="sweetwps-digest",
+        compositor_digest="compositor-digest",
+        compiler_digest="compiler-digest",
+        owner_credit_ceiling=30,
+    )
+    persisted = []
+
+    async def persist(acknowledgement):
+        persisted.append(acknowledgement)
+
+    result = _run(av.negotiate_and_generate(
+        client, "project", "session", "prompt", ["ref-1"],
+        target_model="omni_flash", target_duration_s=10, approve=False,
+        target_authorization=target,
+        on_target_acknowledged=persist,
+    ))
+
+    assert result["would_approve"] is not None
+    assert result["negotiation_state"]["target_acknowledgement_persisted"] is True
+    assert persisted[0]["target_digest"] == target["target_digest"]
+    assert persisted[0]["proposed_target_digest"] == target["target_digest"]
     assert all(item["permission_action"] != av.APPROVED for item in client.sent)
