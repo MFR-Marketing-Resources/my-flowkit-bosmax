@@ -1018,6 +1018,9 @@ class GenerateRequest(BaseModel):
     # Immutable shared duration/model profile plus current lane/product/copy
     # authority digests. The approval service canonicalizes this receipt.
     execution_profile_context: Optional[dict[str, Any]] = None
+    # Explicit shared provider-profile binding. The server re-resolves the
+    # tuple/id/digest before any provider-adjacent work; it is not client trust.
+    provider_profile: Optional[dict[str, Any]] = None
 
 
 @router.get("/video-models")
@@ -2387,6 +2390,10 @@ async def generate(body: GenerateRequest):
         manifest_id=body.manifest_id,
         execution_identity=body.execution_identity,
         execution_profile_context=body.execution_profile_context,
+        provider_profile=body.provider_profile,
+        confirm_live_credit_burn=body.confirm_live_credit_burn,
+        maximum_provider_operations=body.maximum_provider_operations,
+        max_retry_operations=body.max_retry_operations,
         production_recipe=_production_recipe or None,
     )
     if isinstance(result, dict) and result.get("status") == "REJECTED":
