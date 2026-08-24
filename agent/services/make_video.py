@@ -42,6 +42,12 @@ _GENERATION_TERMINAL_STATUSES = frozenset({
     "STALE_OR_FOREIGN_CANDIDATES_ONLY",
 })
 
+# Profile certification is a two-phase lifecycle.  The durable row is created
+# before the async worker starts, but it must not look submitted until the
+# editor binding, approval envelope, and provider generation boundary have all
+# been crossed.
+PROFILE_CERTIFICATION_PRE_PROVIDER_STATUS = "PRE_PROVIDER"
+
 # These states have stopped the process-local task, but the durable row still
 # owns a provider handle or a retrieved file that can be reconciled without a
 # second generation submit.  Keep them separate from the terminal set used by
@@ -60,6 +66,16 @@ _DURABLE_RECOVERY_STATUSES = frozenset({
 })
 
 _DURABLE_RECOVERY_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+class FlowEditorBindingError(RuntimeError):
+    """Structured, provider-free failure at the official Flow editor boundary."""
+
+    code = "FLOW_EDITOR_BINDING_REQUIRED"
+
+    def __init__(self, message: str, *, details: dict | None = None):
+        super().__init__(message)
+        self.details = details or {}
 
 # Owner-authorized, one-shot transport discovery.  This remains a separate
 # paid boundary; the normal route below is enabled only from the captured,
@@ -501,16 +517,31 @@ async def _bind_editor_session(client, requested_project_id=None) -> dict:
     inner = h.get("result", h) if isinstance(h, dict) else {}
     if (not isinstance(inner, dict) or inner.get("error") == "NO_FLOW_TAB"
             or inner.get("flow_tab_found") is False):
-        raise RuntimeError("NO_OPEN_EDITOR: open the target Flow project in the controlled tab first")
+        raise FlowEditorBindingError(
+            "NO_OPEN_EDITOR: open the target Flow project in the controlled tab first",
+            details={"flow_path_state": "NO_FLOW_TAB"},
+        )
     flow_url = inner.get("flow_url") or ""
     flow_tab_id = inner.get("flow_tab_id")
     diag = inner.get("diag", inner) if isinstance(inner, dict) else {}
     project_id = diag.get("projectId") if isinstance(diag, dict) else None
     if not project_id or "/project/" not in str(flow_url):
-        raise RuntimeError("NO_OPEN_EDITOR: the Flow tab is not on a project editor — open the project first")
+        raise FlowEditorBindingError(
+            "NO_OPEN_EDITOR: the Flow tab is not on a project editor — open the project first",
+            details={"flow_path_state": "ROOT_OR_NON_EDITOR"},
+        )
     page_diag_fn = getattr(client, "flow_page_state_diagnostic", None)
     if callable(page_diag_fn):
         page_diag = await page_diag_fn("F2V")
+        if isinstance(page_diag, dict) and (
+            page_diag.get("content_script_loaded") is False
+            or page_diag.get("content_script_alive") is False
+            or page_diag.get("same_extension_session") is False
+        ):
+            raise FlowEditorBindingError(
+                "CONTENT_SCRIPT_NOT_READY: the active Flow editor is not bound to the current extension session",
+                details={"page_state": page_diag},
+            )
         error_markers = [
             str(item).strip()
             for item in (page_diag.get("visible_error_markers") or [])
@@ -527,17 +558,21 @@ async def _bind_editor_session(client, requested_project_id=None) -> dict:
                      or (page_diag.get("composer_found") and page_diag.get("composer_editable")))
             )
             if not editor_usable:
-                raise RuntimeError(
+                raise FlowEditorBindingError(
                     "BROKEN_EDITOR_PAGE: the bound Flow editor shows error markers — "
-                    + ", ".join(error_markers)
+                    + ", ".join(error_markers),
+                    details={"page_state": page_diag},
                 )
         if isinstance(page_diag, dict) and page_diag.get("build_match") is False:
-            raise RuntimeError(
-                "CONTENT_BUILD_MISMATCH: reload the Flow tab so the content script matches the background build"
+            raise FlowEditorBindingError(
+                "CONTENT_BUILD_MISMATCH: reload the Flow tab so the content script matches the background build",
+                details={"page_state": page_diag},
             )
     if requested_project_id and requested_project_id != project_id:
-        raise RuntimeError(
-            f"PROJECT_TAB_MISMATCH: requested {requested_project_id} but the open editor is {project_id}")
+        raise FlowEditorBindingError(
+            f"PROJECT_TAB_MISMATCH: requested {requested_project_id} but the open editor is {project_id}",
+            details={"requested_project_id": requested_project_id, "observed_project_id": project_id},
+        )
     return {"project_id": project_id, "flow_tab_id": flow_tab_id, "flow_project_url": flow_url}
 
 
@@ -562,18 +597,74 @@ async def _bind_with_recovery(client, requested_project_id=None, job=None) -> di
                     target = pd.get("stored_flow_project_url") if isinstance(pd, dict) else None
                 except Exception:  # noqa: BLE001
                     target = None
-        if not target:
-            raise  # no known project to restore → stay fail-closed
-        if job is not None:
-            job["stage"] = "editor drifted to home — re-opening the project"
-        opener = getattr(client, "open_target_flow_project", None)
-        if callable(opener):
+        if target:
+            if job is not None:
+                job["stage"] = "editor drifted to home — re-opening the project"
+            opener = getattr(client, "open_target_flow_project", None)
+            if not callable(opener):
+                raise FlowEditorBindingError(
+                    "FLOW_EDITOR_BINDING_REQUIRED: official project-open route unavailable",
+                    details={"target": target, "source_error": str(e)},
+                ) from e
             try:
-                await opener(target)  # navigate; ignore its readiness false-negative
-            except Exception:  # noqa: BLE001
-                pass
-        await asyncio.sleep(3)  # let the editor settle, then re-bind exactly once
-        return await _bind_editor_session(client, requested_project_id)
+                opened = await opener(target)
+            except Exception as open_exc:  # noqa: BLE001 — preserve route evidence
+                opened = {"ok": False, "error": str(open_exc)}
+            if job is not None:
+                job["editor_open_result"] = opened
+        else:
+            # No stored project exists. Use only the extension's official
+            # root -> new project -> editor workflow; never mint a hidden
+            # project through a direct API call in this binding path.
+            opener = getattr(client, "open_flow_new_project", None)
+            if not callable(opener):
+                raise FlowEditorBindingError(
+                    "FLOW_EDITOR_BINDING_REQUIRED: official Flow project-open route unavailable",
+                    details={"source_error": str(e)},
+                ) from e
+            try:
+                opened = await opener("T2V")
+            except Exception as open_exc:  # noqa: BLE001
+                raise FlowEditorBindingError(
+                    "FLOW_EDITOR_BINDING_REQUIRED: official Flow project-open route failed",
+                    details={"source_error": str(e), "open_error": str(open_exc)},
+                ) from open_exc
+            if job is not None:
+                job["editor_open_result"] = opened
+
+        last_error = e
+        for attempt in range(8):
+            try:
+                binding = await _bind_editor_session(client, requested_project_id)
+                binding["recovered_officially"] = True
+                binding["binding_poll_attempts"] = attempt + 1
+                return binding
+            except RuntimeError as bind_exc:
+                last_error = bind_exc
+                if "NO_OPEN_EDITOR" not in str(bind_exc) or attempt == 7:
+                    break
+                await asyncio.sleep(1)
+        raise FlowEditorBindingError(
+            "FLOW_EDITOR_BINDING_REQUIRED: official Flow editor did not become ready",
+            details={"source_error": str(e), "last_error": str(last_error)},
+        ) from last_error
+
+
+async def ensure_editor_binding(
+    client=None,
+    *,
+    requested_project_id: str | None = None,
+    mode: str = "T2V",
+) -> dict:
+    """Perform the official, bounded, provider-free editor binding preflight."""
+
+    client = client or get_flow_client()
+    if not getattr(client, "connected", False):
+        raise FlowEditorBindingError(
+            "FLOW_EDITOR_BINDING_REQUIRED: Flow extension transport is not connected",
+            details={"transport_connected": False, "mode": mode},
+        )
+    return await _bind_with_recovery(client, requested_project_id)
 
 
 def get_job(job_id: str):
@@ -629,7 +720,7 @@ async def _prepare_durable_single_job(
         await crud.create_video_production_job_full(
             job["job_id"],
             logical_job_key=key,
-            status="SUBMITTED",
+            status=job.get("status") or "SUBMITTED",
             project_id=job.get("project_id"),
             requested_duration_seconds=int(job.get("duration_s") or 8),
             product_id=job.get("product_id"),
@@ -808,6 +899,139 @@ async def _sync_durable_single_job(job: dict | None) -> None:
         job["status"] = "DURABILITY_SYNC_FAILED"
         job["durability_sync_error"] = str(exc)
         job["error"] = str(exc)
+
+
+def _pre_provider_evidence(row: dict, state: dict) -> dict:
+    """Return the immutable evidence needed before a failure may be reconciled."""
+
+    provider_ids = state.get("provider_operation_ids") or []
+    handles = state.get("direct_media_targets") or []
+    accounting = state.get("credit_accounting") or {}
+    delta = accounting.get("delta")
+    try:
+        positive_delta = float(delta) > 0
+    except (TypeError, ValueError):
+        positive_delta = False
+    credit_state = str(state.get("credit_state") or "").upper()
+    return {
+        "provider_generation_submit_count": int(
+            state.get("provider_generation_submit_count") or 0
+        ),
+        "provider_operation_ids": list(provider_ids) if isinstance(provider_ids, list) else provider_ids,
+        "direct_media_targets": list(handles) if isinstance(handles, list) else handles,
+        "initial_operation_id": row.get("initial_operation_id"),
+        "initial_media_id": row.get("initial_media_id"),
+        "final_media_id": row.get("final_media_id"),
+        "artifacts": state.get("artifacts") or [],
+        "credit_delta": delta,
+        "credit_state": credit_state,
+        "credit_spent": bool(
+            state.get("credit_spent") is True
+            or credit_state in {"SPENT", "MAY_HAVE_SPENT"}
+            or positive_delta
+        ),
+    }
+
+
+async def reconcile_pre_provider_failure(
+    job_id: str,
+    *,
+    classification_code: str,
+    detail: str,
+    request_id: str | None = None,
+) -> dict:
+    """Reconcile one provider-free failure through the lifecycle CRUD boundary.
+
+    This is intentionally idempotent and refuses any row carrying a provider
+    handle, artifact, submit count, or positive credit evidence.  It preserves
+    the original error/lineage in ``stage_state_json`` while making the durable
+    ``FAILED`` state explicitly terminal and pre-provider.
+    """
+
+    from agent.db import crud
+
+    row = await crud.get_video_production_job(job_id)
+    if not row:
+        raise RuntimeError("PRE_PROVIDER_JOB_NOT_FOUND")
+    state = _durable_state_from_row(row)
+    existing = state.get("pre_provider_failure")
+    if row.get("status") == "FAILED" and isinstance(existing, dict):
+        return {
+            "job_id": job_id,
+            "status": row.get("status"),
+            "pre_provider_failure": existing,
+            "provider_evidence": _pre_provider_evidence(row, state),
+            "idempotent": True,
+        }
+    evidence = _pre_provider_evidence(row, state)
+    if (
+        evidence["provider_generation_submit_count"]
+        or evidence["provider_operation_ids"]
+        or evidence["direct_media_targets"]
+        or evidence["initial_operation_id"]
+        or evidence["initial_media_id"]
+        or evidence["final_media_id"]
+        or evidence["artifacts"]
+        or evidence["credit_spent"]
+    ):
+        raise RuntimeError(
+            "PRE_PROVIDER_RECONCILIATION_PROVIDER_EVIDENCE_PRESENT: "
+            + json.dumps(evidence, ensure_ascii=False, sort_keys=True, default=str)
+        )
+    if evidence["credit_state"] and evidence["credit_state"] not in {
+        "NOT_SPENT", "NOT_SPENT_CONFIRMED", "UNKNOWN",
+    }:
+        raise RuntimeError(
+            f"PRE_PROVIDER_RECONCILIATION_CREDIT_STATE_UNSAFE:{evidence['credit_state']}"
+        )
+
+    failure = {
+        "classification": "PRE_PROVIDER",
+        "error_code": str(classification_code or "PRE_PROVIDER_FAILURE")[:160],
+        "detail": str(detail or "")[:1000],
+        "request_id": request_id or state.get("request_id") or row.get("logical_job_key"),
+        "provider_dispatch_reached": False,
+        "provider_calls": 0,
+        "credit_spend": False,
+        "original_status": row.get("status"),
+        "original_error_code": row.get("error_code"),
+        "original_stage": state.get("stage"),
+        "reconciled_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    state["pre_provider_failure"] = failure
+    state["provider_generation_submit_count"] = 0
+    state["provider_resubmission"] = False
+    state["resubmission_allowed"] = False
+    await crud.update_video_production_job_full(
+        job_id,
+        status="FAILED",
+        # Preserve the exact persisted source failure; the structured
+        # classification and source detail remain in the audit state above.
+        error_code=row.get("error_code") or str(detail or classification_code)[:1000],
+        stage_state_json=json.dumps(state, ensure_ascii=False, default=str),
+    )
+    try:
+        await crud.release_video_generation_lane_lease(job_id)
+    except Exception:
+        pass
+    memory_job = _JOBS.get(job_id)
+    if memory_job is not None:
+        memory_job.update(
+            status="FAILED",
+            stage="pre_provider_failed",
+            error=row.get("error_code") or str(detail or classification_code),
+            pre_provider_failure=failure,
+            provider_generation_submit_count=0,
+            provider_resubmission=False,
+            resubmission_allowed=False,
+        )
+    return {
+        "job_id": job_id,
+        "status": "FAILED",
+        "pre_provider_failure": failure,
+        "provider_evidence": evidence,
+        "idempotent": False,
+    }
 
 
 def _durable_state_from_row(row: dict) -> dict:
@@ -1330,11 +1554,64 @@ async def recover_durable_single_jobs(*, provider_client=None) -> dict:
     }
 
 
+async def _reconcile_profile_certification_task(job: dict | None) -> None:
+    """Reconcile a profile capture that failed before provider acceptance."""
+
+    if not job or not job.get("profile_certification_capture"):
+        return
+    if int(job.get("provider_generation_submit_count") or 0) != 0:
+        return
+    if job.get("artifacts") or job.get("provider_operation_ids"):
+        return
+    message = str(job.get("error") or "PROFILE_CERTIFICATION_PRE_PROVIDER_FAILURE")
+    code = (
+        "FLOW_EDITOR_BINDING_REQUIRED"
+        if any(token in message for token in ("NO_OPEN_EDITOR", "EDITOR_TAB_LOST", "PROJECT_TAB_MISMATCH"))
+        else "PROFILE_CERTIFICATION_PRE_PROVIDER_FAILED"
+    )
+    try:
+        await reconcile_pre_provider_failure(
+            str(job.get("job_id")),
+            classification_code=code,
+            detail=message,
+            request_id=job.get("request_id"),
+        )
+    except Exception as exc:  # noqa: BLE001 — keep original failure and expose reconciliation error
+        job["pre_provider_reconciliation_error"] = str(exc)
+        return
+
+    certification_id = job.get("profile_certification_id")
+    snapshot_id = job.get("execution_snapshot_id")
+    if certification_id:
+        try:
+            from agent.services import provider_certification_service as _certifications
+
+            await _certifications.reconcile_pre_provider_failure(
+                str(certification_id),
+                job_id=str(job.get("job_id")),
+                code=code,
+                detail=message,
+            )
+        except Exception as exc:  # noqa: BLE001
+            job["pre_provider_certification_reconciliation_error"] = str(exc)
+    if snapshot_id:
+        try:
+            from agent.services import execution_approval_service as _eas
+
+            await _eas.reconcile_pre_provider_failure(
+                str(snapshot_id),
+                reason=f"{code}:{message}"[:1000],
+            )
+        except Exception as exc:  # noqa: BLE001
+            job["pre_provider_snapshot_reconciliation_error"] = str(exc)
+
+
 async def _run_generate_task(job_id: str, runner, *args) -> None:
-    """Run a process-local task while keeping the durable lifecycle mirror current."""
+    """Run a task while preserving the pre-provider certification state machine."""
     try:
         await runner(job_id, *args)
     finally:
+        await _reconcile_profile_certification_task(_JOBS.get(job_id))
         await _sync_durable_single_job(_JOBS.get(job_id))
         try:
             from agent.db import crud as _single_crud
@@ -2128,6 +2405,7 @@ async def _verify_generation_approval(
     image_model, asset_fingerprints, image_media_ids, product_id,
     manifest_id, execution_identity, execution_profile_context=None,
     provider_profile=None, allow_uncertified_profile_capture=False,
+    snapshot_id: str | None = None,
 ):
     """Run the normal WYSIWYG approval gate for non-capture dispatches."""
     from agent.services import execution_approval_service as _eas
@@ -2157,7 +2435,7 @@ async def _verify_generation_approval(
         execution_profile_context = _canonical_context
 
     _assets = [] if manifest_id else list(image_media_ids or [])
-    _pinned_snapshot_id = None
+    _pinned_snapshot_id = snapshot_id
     if manifest_id:
         _resolved = await _eas.resolve_manifest_approved_snapshot(
             manifest_id=manifest_id, mode=mode, final_prompt_text=prompt,
@@ -2208,7 +2486,10 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          capture_class: str | None = None,
                          capture_subject: dict | None = None,
                          capture_confirmed: bool = False,
-                         profile_certification_capture: bool = False) -> dict:
+                         profile_certification_capture: bool = False,
+                         execution_snapshot_id: str | None = None,
+                         profile_certification_id: str | None = None,
+                         editor_binding: dict | None = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all.
@@ -2586,7 +2867,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
     # skipped only for the owner-authorized capture boundary above.  That boundary
     # has its own exact class/flag/confirmation checks and is not reachable through
     # the normal /generate request model.
-    if not capture_requested:
+    if not capture_requested and not profile_certification_capture_requested:
         from agent.services import execution_approval_service as _eas
         try:
             await _verify_generation_approval(
@@ -2611,7 +2892,11 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
             return {"status": "REJECTED", "error": _gate_err.code,
                     "detail": _gate_err.message, "approval": _gate_err.details}
     job_id = "g_" + uuid4().hex[:12]
-    _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "mode": mode,
+    _JOBS[job_id] = {"job_id": job_id, "status": (
+                         PROFILE_CERTIFICATION_PRE_PROVIDER_STATUS
+                         if profile_certification_capture_requested
+                         else "SUBMITTED"
+                     ), "mode": mode,
                      "stage": "queued", "project_id": project_id, "local_path": None,
                      "media_id": None, "size_mb": None, "artifact": None,
                      "approved": None, "binding": None, "model": model,
@@ -2658,7 +2943,10 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                      "capture_only": capture_requested,
                      "capture_class": capture_class,
                      "capture_subject": capture_subject,
-                     "profile_certification_capture": profile_certification_capture_requested,
+                      "profile_certification_capture": profile_certification_capture_requested,
+                      "profile_certification_id": profile_certification_id,
+                      "execution_snapshot_id": execution_snapshot_id,
+                      "editor_binding_preflight": editor_binding,
                      "profile_certification_profile_digest": (
                          (execution_profile_context or {})
                          .get("duration_model_profile", {})
@@ -2788,7 +3076,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
             )
             return {
                 "job_id": job_id,
-                "status": "SUBMITTED",
+                "status": PROFILE_CERTIFICATION_PRE_PROVIDER_STATUS,
                 "mode": mode,
                 "lane": lane,
                 "provider_route": _JOBS[job_id]["provider_route"],
@@ -4872,6 +5160,32 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         job["db_known_media_excluded"] = len(known)
         exclude = set(_STALE_VIDEO_IDS) | set(refs) | preexisting | known
 
+        # Profile certification snapshots are deliberately bound only after the
+        # editor is verified.  This is the exact pre-provider dispatch choke
+        # point: the WYSIWYG envelope is revalidated immediately before the
+        # authenticated generation negotiation begins.
+        if job.get("profile_certification_capture"):
+            await _verify_generation_approval(
+                mode=mode,
+                prompt=prompt,
+                source_mode=job.get("source_mode") or "T2V",
+                model=model,
+                aspect=aspect,
+                duration_s=duration_s,
+                num_videos=num_videos,
+                image_model=image_model,
+                asset_fingerprints=None,
+                image_media_ids=refs,
+                product_id=product_id,
+                manifest_id=None,
+                execution_identity=job.get("execution_identity"),
+                execution_profile_context=job.get("profile_certification_context"),
+                provider_profile=job.get("provider_profile"),
+                allow_uncertified_profile_capture=True,
+                snapshot_id=job.get("execution_snapshot_id"),
+            )
+            job["approval_boundary_reached"] = True
+
         job["status"], job["stage"] = "NEGOTIATING", "agent session"
         sess = await client.create_agent_session(project_id)
         sid = _deep(sess.get("data", sess) if isinstance(sess, dict) else {}, "agentSessionId")
@@ -4908,6 +5222,23 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
             job["provider_generation_submit_count"] = 1
             job["provider_resubmission"] = False
             job["resubmission_allowed"] = False
+            if job.get("profile_certification_capture"):
+                # The route remains PRE_PROVIDER until this observed provider
+                # acceptance.  No certification row is SUBMITTED merely because
+                # a background task was created.
+                job["status"] = "SUBMITTED"
+                certification_id = job.get("profile_certification_id")
+                if certification_id:
+                    try:
+                        from agent.services import provider_certification_service as _certifications
+
+                        job["profile_certification"] = await _certifications.mark_submitted(
+                            str(certification_id),
+                            job_id=job_id,
+                            snapshot_id=str(job.get("execution_snapshot_id") or ""),
+                        )
+                    except Exception as exc:  # noqa: BLE001 — preserve paid/provider truth
+                        job["profile_certification_persistence_error"] = str(exc)
         # Expose the FULL post-approve verification status on the job (the API returns the job
         # dict verbatim), so an unverified generation is NEVER presented as fully verified.
         job["model_used"] = nres.get("model_used")

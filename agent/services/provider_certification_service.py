@@ -25,6 +25,11 @@ CERTIFICATION_ARTIFACT_PENDING = "ARTIFACT_PENDING"
 CERTIFICATION_CERTIFIED = "CERTIFIED"
 CERTIFICATION_FAILED = "FAILED"
 
+_REOPENABLE_PRE_PROVIDER_FAILURES = {
+    "FLOW_EDITOR_BINDING_REQUIRED",
+    "PROFILE_CERTIFICATION_PRE_PROVIDER_FAILED",
+}
+
 
 class ProviderCertificationError(ValueError):
     """Structured fail-closed certification error."""
@@ -276,6 +281,19 @@ async def reserve_capture(**kwargs: Any) -> tuple[dict[str, Any], bool]:
     values = _reservation_values(profile=profile, **kwargs)
     existing = await _crud.get_by_profile_digest(values["profile_digest"])
     if existing is not None:
+        if (
+            _norm(existing.get("status")).upper() == CERTIFICATION_FAILED
+            and _norm(existing.get("failure_code")).upper()
+            in _REOPENABLE_PRE_PROVIDER_FAILURES
+        ):
+            return (
+                await _crud.archive_failed_pre_provider_and_create_reservation(
+                    existing,
+                    values,
+                    reason="EXPLICIT_NEW_CAPTURE_AFTER_PRE_PROVIDER_FAILURE",
+                ),
+                True,
+            )
         return existing, False
     try:
         return await _crud.create_reservation(values), True
@@ -327,6 +345,41 @@ async def mark_failed(
     return await _crud.update_certification(
         certification_id,
         status=CERTIFICATION_FAILED,
+        failure_code=_norm(code)[:160],
+        failure_detail=_norm(detail)[:1000],
+    )
+
+
+async def reconcile_pre_provider_failure(
+    certification_id: str,
+    *,
+    job_id: str,
+    code: str,
+    detail: str = "",
+) -> dict[str, Any]:
+    """Close a certification whose linked job proved provider-free failure.
+
+    The certification status remains the repository's existing terminal
+    ``FAILED`` value; the pre-provider classification is carried in the
+    failure code/detail so no schema mutation or fake proof record is needed.
+    """
+
+    row = await _crud.get_by_id(certification_id)
+    if row is None:
+        raise ProviderCertificationError("CERTIFICATION_NOT_FOUND")
+    if _norm(row.get("job_id")) and _norm(row.get("job_id")) != _norm(job_id):
+        raise ProviderCertificationError(
+            "CERTIFICATION_JOB_MISMATCH",
+            details={"expected": row.get("job_id"), "observed": job_id},
+        )
+    if row.get("status") == CERTIFICATION_CERTIFIED:
+        raise ProviderCertificationError("CERTIFICATION_ALREADY_CERTIFIED")
+    if row.get("status") == CERTIFICATION_FAILED:
+        return row
+    return await _crud.update_certification(
+        certification_id,
+        status=CERTIFICATION_FAILED,
+        job_id=_norm(row.get("job_id") or job_id),
         failure_code=_norm(code)[:160],
         failure_detail=_norm(detail)[:1000],
     )
@@ -515,6 +568,7 @@ __all__ = [
     "finalize_capture",
     "mark_failed",
     "mark_submitted",
+    "reconcile_pre_provider_failure",
     "provider_certification_status",
     "reserve_capture",
     "validate_capture_contract",
