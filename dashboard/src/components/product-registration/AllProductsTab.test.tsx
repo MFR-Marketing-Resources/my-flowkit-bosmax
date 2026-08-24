@@ -8,7 +8,6 @@ import {
 	fetchProductRegistry,
 	fetchProductStrategyTypeRegistry,
 } from "../../api/products";
-import { fetchProductVisualReviewQueue } from "../../api/productVisualOnboarding";
 import AllProductsTab from "./AllProductsTab";
 
 vi.mock("../../api/products", async (importOriginal) => {
@@ -22,37 +21,8 @@ vi.mock("../../api/products", async (importOriginal) => {
 	};
 });
 
-vi.mock("../../api/productVisualOnboarding", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("../../api/productVisualOnboarding")>();
-	return {
-		...actual,
-		fetchProductVisualReviewQueue: vi.fn(),
-		approveSelectedProductVisuals: vi.fn(),
-	};
-});
-
-const emptyVisualReviewQueue = {
-	cohort: "PENDING_VISUAL_REVIEW",
-	items: [],
-	total_count: 0,
-	returned_count: 0,
-	limit: 25,
-	offset: 0,
-	has_pagination: false,
-	cohort_counts: {
-		PENDING_VISUAL_REVIEW: 280,
-		SOURCE_REUPLOAD_REQUIRED: 11,
-		BROKEN_APPROVED_VISUAL: 16,
-	},
-	selection_policy: "EXPLICIT_VISIBLE_PAGE_ONLY",
-	metadata_read_policy: "BATCHED_VISUAL_READ_MODEL",
-	provider_operations: 0,
-	created_without_credit: true,
-} as never;
-
 describe("AllProductsTab visual surface", () => {
 	beforeEach(() => {
-		vi.mocked(fetchProductVisualReviewQueue).mockResolvedValue(emptyVisualReviewQueue);
 		vi.mocked(fetchProductRegistry).mockResolvedValue({
 			items: [],
 			total_count: 0,
@@ -82,18 +52,19 @@ describe("AllProductsTab visual surface", () => {
 		cleanup();
 	});
 
-	it("keeps the catalog default and opens the owner review workspace without exposing bulk cutout controls", async () => {
+	it("keeps the canonical catalog shell and exposes visual review as a filter", async () => {
 		render(<AllProductsTab />);
 
-		expect(screen.getByTestId("workspace-product-catalog")).toHaveAttribute("aria-selected", "true");
-		expect(screen.queryByTestId("product-visual-review-queue")).not.toBeInTheDocument();
-		fireEvent.click(screen.getByTestId("workspace-visual-review"));
-		expect(await screen.findByTestId("product-visual-review-queue")).toBeInTheDocument();
-		expect(screen.getByTestId("workspace-visual-review")).toHaveTextContent("280");
-		expect(screen.getByText("Owner Visual Review Queue")).toBeInTheDocument();
-		expect(screen.queryByText("All Products")).not.toBeInTheDocument();
-		const bodyText = document.body.textContent ?? "";
-		expect(bodyText).not.toMatch(/bulk cutout|cutout queue|run all|queue all|pause all|resume all|cancel all/i);
+		expect(screen.getByText("All Products")).toBeInTheDocument();
+		expect(screen.getByTestId("visual-review-filter")).toBeInTheDocument();
+		fireEvent.change(screen.getByTestId("visual-review-filter"), {
+			target: { value: "PENDING_VISUAL_REVIEW" },
+		});
+		await vi.waitFor(() => {
+			expect(fetchProductRegistry).toHaveBeenCalledWith(
+				expect.objectContaining({ visualReview: "PENDING_VISUAL_REVIEW" }),
+			);
+		});
 	});
 
 	it("shows the standard canvas note on each product visual row", async () => {
@@ -235,7 +206,6 @@ describe("All Products Product Truth operator surface", () => {
 	});
 
 	beforeEach(() => {
-		vi.mocked(fetchProductVisualReviewQueue).mockResolvedValue(emptyVisualReviewQueue);
 		vi.mocked(fetchImportSoftReconciliationPreview).mockResolvedValue({
 			safe_candidate_count: 549,
 			review_required_count: 6,

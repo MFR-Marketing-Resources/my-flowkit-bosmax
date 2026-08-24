@@ -1637,6 +1637,11 @@ export interface ProductVisualReadiness {
 	official_visual_failure_code?: string | null;
 	canonical_source_media_id?: string | null;
 	canonical_source_sha256?: string | null;
+	candidate_source_kind?: "AUTO_GENERATED" | "USER_UPLOAD" | string | null;
+	canonical_cutout_media_id?: string | null;
+	canonical_cutout_sha256?: string | null;
+	visual_lock_updated_at?: string | null;
+	candidate_provenance?: Record<string, unknown>;
 	original_source_reauthorization_required?: boolean;
 	original_preview_url?: string | null;
 	original_display_url?: string | null;

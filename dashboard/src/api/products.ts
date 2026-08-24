@@ -176,6 +176,8 @@ export async function fetchProductRegistry(params: {
 	freshness?: string;
 	/** Image availability: READY / MISSING. */
 	image?: string;
+	/** Server-authoritative visual review facet used by Smart Registration. */
+	visualReview?: string;
 	/**
 	 * Product Truth operator filter (PI authority):
 	 * ALL | APPROVED | APPROVED_UPDATE_PENDING | NEEDS_REVIEW | ACTION_REQUIRED | NOT_STARTED.
@@ -212,6 +214,7 @@ export async function fetchProductRegistry(params: {
 		query.set("claim_risk_level", params.claimRiskLevel);
 	if (params.freshness) query.set("freshness", params.freshness);
 	if (params.image) query.set("image", params.image);
+	if (params.visualReview) query.set("visual_review", params.visualReview);
 	if (params.productTruth) query.set("product_truth", params.productTruth);
 	if (params.lifecycleStatus)
 		query.set("lifecycle_status", params.lifecycleStatus);

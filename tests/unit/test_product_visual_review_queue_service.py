@@ -42,6 +42,20 @@ def _pending(product_id: str, *, source_available: bool = True) -> dict:
     }
 
 
+def test_visual_review_filter_reuses_owner_cohort_authority():
+    product = _product("pending-1", "Pending one", _pending("pending-1"))
+    readiness = product["visual_readiness"]
+
+    assert service.visual_review_filter_matches(product, readiness, "PENDING_VISUAL_REVIEW")
+    assert not service.visual_review_filter_matches(product, readiness, "SOURCE_REUPLOAD_REQUIRED")
+    assert not service.visual_review_filter_matches(product, readiness, "VISUAL_READY")
+    assert service.visual_review_filter_matches(
+        product,
+        {**readiness, "cutout_status": "APPROVED", "cutout_review_status": "APPROVED", "exact_commerce_status": "EXACT_COMMERCE_CUTOUT_READY"},
+        "VISUAL_READY",
+    )
+
+
 @pytest.mark.asyncio
 async def test_review_queue_keeps_three_cohorts_separate_and_paginates(monkeypatch):
     products = [

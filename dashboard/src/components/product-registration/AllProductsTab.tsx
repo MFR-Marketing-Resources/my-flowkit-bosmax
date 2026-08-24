@@ -7,9 +7,8 @@ import {
 	type ImportSoftReconciliationPreview,
 } from "../../api/products";
 import type { Product, ProductCatalogResponse } from "../../types";
-import type { VisualReviewCohort } from "../../api/productVisualOnboarding";
 import { resolveProductPreviewUrl } from "../../utils/productVisualPresentation";
-import ProductVisualReviewQueue from "./ProductVisualReviewQueue";
+import ProductVisualReviewDrawer from "./ProductVisualReviewDrawer";
 
 const SOURCE_BADGE: Record<string, string> = {
 	FASTMOSS: "bg-indigo-500/20 text-indigo-300",
@@ -93,6 +92,13 @@ const PRODUCT_TRUTH_OPTIONS = [
 	{ value: "NEEDS_REVIEW", label: "Needs Review" },
 	{ value: "ACTION_REQUIRED", label: "Action Required" },
 	{ value: "NOT_STARTED", label: "Not Started" },
+];
+const VISUAL_REVIEW_OPTIONS = [
+	{ value: "", label: "All" },
+	{ value: "PENDING_VISUAL_REVIEW", label: "Pending Review" },
+	{ value: "SOURCE_REUPLOAD_REQUIRED", label: "Source Re-upload" },
+	{ value: "BROKEN_APPROVED_VISUAL", label: "Broken Approved Visual" },
+	{ value: "VISUAL_READY", label: "Visual Ready" },
 ];
 
 const PAGE_SIZE = 50;
@@ -204,6 +210,23 @@ function getTableVisualStatus(
 		return { label: "CUTOUT REQUIRED", className: TABLE_VISUAL_BADGE.required };
 	}
 
+	if (readiness.official_visual_status === "INVALID") {
+		return {
+			label: "BROKEN APPROVED VISUAL",
+			className: TABLE_VISUAL_BADGE.required,
+		};
+	}
+
+	if (
+		readiness.cutout_review_status === "PENDING_REVIEW" &&
+		readiness.canonical_media_status !== "AVAILABLE"
+	) {
+		return {
+			label: "SOURCE REUPLOAD REQUIRED",
+			className: TABLE_VISUAL_BADGE.required,
+		};
+	}
+
 	const canvaStage =
 		readiness.canva_cutout_workflow?.current_stage || readiness.canva_cutout_stage;
 	if (canvaStage === "CANVA_PRO_REQUIRED") {
@@ -225,7 +248,7 @@ function getTableVisualStatus(
 		readiness.cutout_status === "APPROVED" ||
 		readiness.exact_commerce_status === "EXACT_COMMERCE_CUTOUT_READY"
 	) {
-		return { label: "READY", className: TABLE_VISUAL_BADGE.ready };
+		return { label: "VISUAL READY", className: TABLE_VISUAL_BADGE.ready };
 	}
 
 	if (
@@ -240,16 +263,18 @@ function getTableVisualStatus(
 
 function getTableVisualAction(
 	readiness: Product["visual_readiness"],
-): "Canva Cutout" | "Review" | "Upload Cutout" {
-	if (readiness?.can_review_cutout) return "Review";
+): "REVIEW" | "RE-UPLOAD" | "RECOVER" | "OPEN VISUAL" {
+	if (readiness?.official_visual_status === "INVALID") return "RECOVER";
 	if (
-		readiness?.canonical_media_status === "AVAILABLE" &&
-		readiness.can_start_canva_cutout === true
+		readiness?.cutout_review_status === "PENDING_REVIEW" &&
+		readiness.canonical_media_status !== "AVAILABLE"
 	) {
-		return "Canva Cutout";
+		return "RE-UPLOAD";
 	}
-	if (readiness?.can_upload_manual_cutout) return "Upload Cutout";
-	return "Review";
+	if (readiness?.cutout_review_status === "PENDING_REVIEW" || readiness?.can_review_cutout) {
+		return "REVIEW";
+	}
+	return "OPEN VISUAL";
 }
 
 const SELECT_CLASS =
@@ -264,12 +289,7 @@ interface Props {
 	) => void;
 }
 
-type AllProductsWorkspace = "CATALOG" | "VISUAL_REVIEW";
-type VisualReviewCounts = Record<VisualReviewCohort, number>;
-
 export default function AllProductsTab({ onOpenProduct }: Props) {
-	const [workspace, setWorkspace] = useState<AllProductsWorkspace>("CATALOG");
-	const [visualReviewCounts, setVisualReviewCounts] = useState<VisualReviewCounts | null>(null);
 	const [search, setSearch] = useState("");
 	const [debouncedSearch, setDebouncedSearch] = useState("");
 	const [status, setStatus] = useState("ACTIVE");
@@ -279,12 +299,14 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 	const [productTruth, setProductTruth] = useState("");
 	const [cluster, setCluster] = useState("");
 	const [productType, setProductType] = useState("");
+	const [visualReview, setVisualReview] = useState("");
 	const [offset, setOffset] = useState(0);
 	const [importSoftPreview, setImportSoftPreview] = useState<ImportSoftReconciliationPreview | null>(null);
 	const [importSoftLoading, setImportSoftLoading] = useState(false);
 	const [importSoftBusy, setImportSoftBusy] = useState(false);
 	const [importSoftMsg, setImportSoftMsg] = useState<string | null>(null);
 	const [catalogEpoch, setCatalogEpoch] = useState(0);
+	const [visualReviewProduct, setVisualReviewProduct] = useState<Product | null>(null);
 
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -331,10 +353,6 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 
 	const productTypeOptions = cluster ? (clusterToTypes[cluster] ?? []) : [];
 
-	const handleVisualReviewCounts = useCallback((counts: VisualReviewCounts) => {
-		setVisualReviewCounts(counts);
-	}, []);
-
 	const activeFilterCount =
 		(status !== "ACTIVE" ? 1 : 0) +
 		(freshness ? 1 : 0) +
@@ -343,6 +361,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 		(productTruth ? 1 : 0) +
 		(cluster ? 1 : 0) +
 		(productType ? 1 : 0) +
+		(visualReview ? 1 : 0) +
 		(debouncedSearch.trim() ? 1 : 0);
 
 	const clearFilters = () => {
@@ -354,6 +373,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 		setProductTruth("");
 		setCluster("");
 		setProductType("");
+		setVisualReview("");
 		setOffset(0);
 	};
 
@@ -384,6 +404,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 				freshness: freshness || undefined,
 				image: image || undefined,
 				productTruth: productTruth || undefined,
+				visualReview: visualReview || undefined,
 				// Status = lifecycle. Active excludes archived (default); Archived shows
 				// only archived; All shows both.
 				includeArchived: status === "ALL",
@@ -400,7 +421,7 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 		} finally {
 			if (requestControllerRef.current === controller) setLoading(false);
 		}
-	}, [debouncedSearch, cluster, productType, risk, freshness, image, productTruth, status, offset, catalogEpoch]);
+	}, [debouncedSearch, cluster, productType, risk, freshness, image, productTruth, visualReview, status, offset, catalogEpoch]);
 
 	useEffect(() => {
 		void fetchRows();
@@ -478,38 +499,8 @@ export default function AllProductsTab({ onOpenProduct }: Props) {
 		}
 	}
 
-
-return (
+	return (
 		<div className="w-full min-w-0 max-w-full space-y-5" data-testid="all-products-workspace">
-			<div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-3" data-testid="all-products-workspace-switch" role="tablist" aria-label="Smart Registration workspace">
-				<div className="grid min-w-0 w-full max-w-xl grid-cols-2 rounded-xl border border-slate-800 bg-slate-950/60 p-1 sm:w-auto">
-					<button
-						type="button"
-						role="tab"
-						aria-selected={workspace === "CATALOG"}
-						onClick={() => setWorkspace("CATALOG")}
-						className={`min-w-0 rounded-lg px-3 py-2 text-[9px] font-bold uppercase tracking-widest transition-colors ${workspace === "CATALOG" ? "bg-slate-800 text-white" : "text-slate-500 hover:text-white"}`}
-						data-testid="workspace-product-catalog"
-					>
-						Product Catalog
-					</button>
-					<button
-						type="button"
-						role="tab"
-						aria-selected={workspace === "VISUAL_REVIEW"}
-						onClick={() => setWorkspace("VISUAL_REVIEW")}
-						className={`min-w-0 rounded-lg px-3 py-2 text-[9px] font-bold uppercase tracking-widest transition-colors ${workspace === "VISUAL_REVIEW" ? "bg-amber-500/15 text-amber-200" : "text-slate-500 hover:text-white"}`}
-						data-testid="workspace-visual-review"
-					>
-						Visual Review ({visualReviewCounts?.PENDING_VISUAL_REVIEW ?? "—"})
-					</button>
-				</div>
-			</div>
-
-			{workspace === "VISUAL_REVIEW" ? (
-				<ProductVisualReviewQueue onOpenProduct={onOpenProduct} onCohortCountsChange={handleVisualReviewCounts} />
-			) : (
-				<>
 			{/* Header */}
 			<div className="w-full min-w-0 max-w-full rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
 				<div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-2">
@@ -525,8 +516,8 @@ return (
 						</p>
 					</div>
 					<div className="flex items-center gap-2">
-						<span className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-400" data-testid="visual-queue-workflow">
-							Visual review queue + detail authority
+						<span className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-widest text-slate-400" data-testid="visual-review-integration">
+							Catalog + visual review
 						</span>
 						<span className="px-2 py-0.5 rounded text-[9px] font-bold bg-slate-700/30 text-slate-400">
 							Total: {total.toLocaleString()}
@@ -723,6 +714,25 @@ return (
 							{IMAGE_OPTIONS.map((o) => (
 								<option key={o} value={o}>
 									{o}
+								</option>
+							))}
+						</select>
+					</div>
+					<div className="flex flex-col">
+						<span className={LABEL_CLASS}>Visual Review</span>
+						<select
+							value={visualReview}
+							onChange={(e) => {
+								setVisualReview(e.target.value);
+								setOffset(0);
+							}}
+							className={`${SELECT_CLASS} w-44`}
+							data-testid="visual-review-filter"
+							aria-label="Visual Review filter"
+						>
+							{VISUAL_REVIEW_OPTIONS.map((o) => (
+								<option key={o.value || "all"} value={o.value}>
+									{o.label}
 								</option>
 							))}
 						</select>
@@ -1003,16 +1013,15 @@ return (
 														>
 															{visualStatus.label}
 														</span>
-														<button
-															type="button"
-															onClick={(event) => {
-																event.stopPropagation();
-																onOpenProduct?.(product.id);
-															}}
-															disabled={!onOpenProduct}
-															className="mt-1 inline-flex max-w-full truncate rounded bg-violet-600/80 px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40"
-															data-testid="table-visual-action"
-														>
+															<button
+																type="button"
+																onClick={(event) => {
+																	event.stopPropagation();
+																	setVisualReviewProduct(product);
+																}}
+																className="mt-1 inline-flex max-w-full truncate rounded bg-violet-600/80 px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-white transition-colors hover:bg-violet-500"
+																data-testid="table-visual-action"
+															>
 															{visualAction}
 														</button>
 														<div
@@ -1159,8 +1168,18 @@ return (
 					</div>
 				</div>
 			)}
-				</>
-			)}
+
+			{visualReviewProduct ? (
+				<ProductVisualReviewDrawer
+					product={visualReviewProduct}
+					onClose={() => setVisualReviewProduct(null)}
+					onApproved={() => {
+						setVisualReviewProduct(null);
+						setCatalogEpoch((value) => value + 1);
+					}}
+					onOpenProduct={onOpenProduct}
+				/>
+			) : null}
 		</div>
 	);
 }
