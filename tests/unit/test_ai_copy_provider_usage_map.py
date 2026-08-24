@@ -12,6 +12,24 @@ def _begin():
         structured_output_requested=False, json_output_mode=None)
 
 
+def test_normalize_usage_maps_provider_dimensions_without_using_total_as_output():
+    usage = p.normalize_usage({
+        "prompt_tokens": 10_189,
+        "completion_tokens": 3_000,
+        "total_tokens": 13_189,
+    })
+    assert usage["input_tokens"] == 10_189
+    assert usage["output_tokens"] == 3_000
+    assert usage["total_tokens"] == 13_189
+    assert usage["prompt_tokens"] == 10_189
+    assert usage["completion_tokens"] == 3_000
+
+
+def test_normalize_usage_total_only_has_no_output_dimension():
+    usage = p.normalize_usage({"total_tokens": 999_999})
+    assert usage == {"total_tokens": 999_999}
+
+
 def test_pop_usage_drains():
     p._usage_by_call_id[999999] = {"prompt_tokens": 5}
     assert p._pop_usage(999999) == {"prompt_tokens": 5}
@@ -55,7 +73,7 @@ def test_generate_candidate_drains_and_attaches_on_success(monkeypatch):
     monkeypatch.setattr(p, "_extract_json_object", lambda t, **k: {"hook": "x"})
     p._usage_by_call_id.clear()
     obj = p.generate_candidate("brief")
-    assert obj["__usage__"] == {"prompt_tokens": 11}
+    assert obj["__usage__"] == {"prompt_tokens": 11, "input_tokens": 11}
     assert p._usage_by_call_id == {}
 
 
@@ -114,7 +132,7 @@ def test_complete_json_receipt_is_bound_to_exact_call_under_interleaving(monkeyp
     assert receipt["model_id"] == "exact-model"
     assert receipt["http_status"] == 200
     assert receipt["json_parse_status"] == "VALID"
-    assert receipt["usage"] == {"prompt_tokens": 3}
+    assert receipt["usage"] == {"prompt_tokens": 3, "input_tokens": 3}
     assert p.provider_call_receipt()["last_call"]["model_id"] == "later-model"
     p._pop_usage(receipt["call_id"] + 1)
     p._pop_provider_call_receipt(receipt["call_id"] + 1)

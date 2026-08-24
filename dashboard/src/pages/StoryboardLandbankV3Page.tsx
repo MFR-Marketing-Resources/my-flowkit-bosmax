@@ -438,19 +438,31 @@ export default function StoryboardLandbankV3Page() {
 	const deepLinkResolveRef = useRef<string | null>(null);
 	useEffect(() => {
 		const productId = searchParams.get("product_id");
-		if (!productId || selectedProduct?.id === productId) return;
-		// Cheap path: the deep-linked product is already in the loaded first-page
-		// catalog window (useProductCatalog(50)).
+		if (!productId) return;
+		// A catalog row can carry the exact id but only a lightweight projection.
+		// Keep that exact selection visible immediately, then hydrate the authoritative
+		// detail when visual readiness is absent so preview resolution cannot fall back
+		// to a stale cache route for an official cutout.
 		const inWindow = products.find((item) => item.id === productId);
-		if (inWindow) {
+		const selectedIsExact = selectedProduct?.id === productId;
+		const visualReadiness = selectedProduct?.visual_readiness;
+		const selectedHasVisualReadiness = Boolean(
+			visualReadiness && (
+				visualReadiness.current_system_visual
+				|| visualReadiness.active_cutout_preview_url
+				|| visualReadiness.original_preview_url
+				|| visualReadiness.original_display_url
+				|| visualReadiness.cutout_preview_available
+			),
+		);
+		if (selectedIsExact && selectedHasVisualReadiness) return;
+		if (inWindow && !selectedIsExact) {
 			setSelectedProduct(inWindow);
-			return;
 		}
-		// Deep-link fallback: the product sorts outside the first-page window.
-		// Resolve the EXACT product by id — a single deterministic fetch, never a
-		// full-catalog load, and never a silent substitution of another product.
-		// Wait for the window to finish loading first so the common in-window case
-		// skips the network entirely.
+		// Resolve the EXACT product by id — a single deterministic fetch, whether the
+		// row was outside the first-page window or lacked authoritative visual data.
+		// Never substitute a different product, and wait for the catalog window to
+		// finish loading before deciding that an id is outside it.
 		if (isLoadingProducts) return;
 		if (deepLinkResolveRef.current === productId) return;
 		deepLinkResolveRef.current = productId;
@@ -711,7 +723,7 @@ export default function StoryboardLandbankV3Page() {
 	const generateLane = resolveGenerateLane(provider);
 
 	const handleGenerate = async () => {
-		if (!plan || !selectedProduct || !generateLane || !preflight.ready) return;
+		if (busy || !plan || !selectedProduct || !generateLane || !preflight.ready) return;
 		setBusy(true);
 		setError("");
 		setSuccess("");
@@ -726,6 +738,12 @@ export default function StoryboardLandbankV3Page() {
 			await refreshProductData(selectedProduct.id);
 		} catch (reason) {
 			setError(toOperatorError(errorMessage(reason)));
+			setPromptDigest("");
+			// The server persists a failed run as terminal.  Drop the consumed
+			// plan immediately so the Generate-step effect resolves a fresh,
+			// provider-free plan before another explicit click; never retry the
+			// terminal plan or hide the operator-visible error above.
+			setPlan(null);
 		} finally {
 			setBusy(false);
 		}

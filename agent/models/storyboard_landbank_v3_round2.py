@@ -126,12 +126,7 @@ class V3AICopySegment(BaseModel):
 class V3AICopyProposal(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    proposal_id: str = Field(min_length=1, max_length=120)
     semantic_class: Literal["HOOK", "BODY_CORE", "CTA"]
-    # Angle/Storyline definitions live at the envelope level (V3AngleProposal /
-    # V3StorylineFamilyProposal), not buried redundantly inside every component.
-    angle_definition: str = Field(default="", max_length=500)
-    storyline_definition: str = Field(default="", max_length=500)
     segments: tuple[V3AICopySegment, ...] = Field(min_length=1, max_length=8)
     rationale: str = Field(min_length=8, max_length=800)
     risk_notes: tuple[str, ...] = Field(default_factory=tuple, max_length=12)
@@ -143,17 +138,15 @@ class V3AngleProposal(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     definition: str = Field(min_length=8, max_length=500)
-    objective_id: str = Field(default="", max_length=120)
-    objective_definition: str = Field(default="", max_length=500)
     rationale: str = Field(default="", max_length=800)
 
 
 class V3StorylineNarrativeRouteProposal(BaseModel):
-    """Semantic route description supplied by the provider.
+    """Provider route declaration subject to the locked recipe contract.
 
-    Route identity is deliberately absent. The provider may describe the
-    ordered formula route, but BOSMAX derives the canonical route key from
-    the separately validated evidence anchors.
+    Route identity is deliberately absent. BOSMAX validates the declared
+    formula stages against the recipe and derives the persisted route key,
+    ordering, and evidence binding from system-owned inputs.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

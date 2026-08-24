@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import Any, Mapping, Protocol, Sequence
 
@@ -270,6 +270,12 @@ def _failure_receipt(
     """Add run-level digests to the secret-free provider receipt."""
 
     receipt = dict(provider_receipt or {})
+    if isinstance(receipt.get("usage"), Mapping):
+        # Failure receipts may originate from a transport/parse exception before
+        # the normal success path has a chance to canonicalize provider aliases.
+        # Persist the same explicit input/output dimensions on both paths while
+        # retaining the provider's raw numeric fields.
+        receipt["usage"] = ai_copy_provider_adapter.normalize_usage(receipt["usage"])
     receipt.setdefault("prompt_digest", plan.prompt_digest)
     receipt.setdefault("output_digest", output_digest)
     return receipt
@@ -568,10 +574,7 @@ class V3CopyRegisterRound2Service:
             return _canonical_model_shape(
                 V3AICopyProposal,
                 {
-                    "proposal_id": f"example_{semantic_class.lower()}_proposal",
                     "semantic_class": semantic_class,
-                    "angle_definition": "",
-                    "storyline_definition": "",
                     "segments": segments,
                     "rationale": "Example rationale for a bounded human-reviewable proposal.",
                     "risk_notes": ["HUMAN_REVIEW_REQUIRED"],
@@ -604,8 +607,6 @@ class V3CopyRegisterRound2Service:
                 if supply_name == "angle":
                     values = {
                         "definition": "Example angle definition grounded in approved evidence.",
-                        "objective_id": str(plan.objective.get("objective_id") or "conversion"),
-                        "objective_definition": str(plan.objective.get("definition") or "Example objective."),
                         "rationale": "Example rationale for a reviewable Angle DRAFT.",
                     }
                 else:
@@ -676,28 +677,30 @@ class V3CopyRegisterRound2Service:
             "compact_output_rules": {
                 "purpose": "Fit the complete requested envelope inside the governed output-token budget without dropping any proposal or required field.",
                 "json": "Return minified JSON only; no markdown, commentary, duplicate examples, or whitespace padding.",
-                "proposal_ids": "Use short unique IDs such as h1-h6, b1-b3, and c1-c3.",
-                "redundant_fields": "Use empty strings for permitted angle_definition and storyline_definition fields; use concise rationale 'Reviewable copy.' and risk_notes ['REVIEW'].",
+                "system_identity": "Do not output proposal IDs or per-component Angle/Storyline identity; BOSMAX derives all identity fields.",
+                "rationale": "Use concise rationale 'Reviewable copy.' and risk_notes ['REVIEW'].",
                 "copy": "Keep each authored_text concise but complete and natural; never shorten a claim into a fragment.",
                 "evidence": "Repeat the exact approved route-anchor fact ID where required; do not invent aliases or omit claim evidence.",
             },
             "forbidden_legacy_fields": [
                 "angle_id",
                 "component_id",
+                "proposal_id",
                 "description",
                 "copy",
             ],
             "instructions": [
                 "Return ONLY one JSON object using only the documented canonical keys.",
-                "Do not output legacy fields: angle_id, component_id, description, or copy.",
+                "Do not output legacy or provider-owned identity fields: angle_id, component_id, proposal_id, description, or copy.",
+                "Do not duplicate Angle or Storyline definitions inside a component proposal; those belong at the envelope level.",
                 "Do not substitute field names, add metadata, or silently omit required fields.",
                 "Every proposal must contain segments.",
                 "Every segment must contain formula_stage_key, authored_text, entry_key, exit_key, continuity_requirements, evidence_fact_ids, and claim_bearing.",
                 "Keep every claim-bearing Hook and Body/Core on the single Storyline Family route anchor; never use generic Product Description context to bridge unrelated use cases.",
                 "Choose approved route_anchor_fact_ids for the one coherent route; do not output route_key or any other canonical identity.",
                 "Do not add unsupported speed, immediacy, guarantee, intensity, magnitude, or permanence modifiers to claim-bearing text.",
-                "Repeat the exact proposal shape for each requested gap and use unique proposal_id values.",
-                "Use the compact output rules: minified JSON, short unique proposal IDs, concise complete copy, and no prose outside the JSON object.",
+                "Repeat the exact proposal shape for every requested gap; do not omit any requested Hook, Body/Core, or CTA proposal.",
+                "Use the compact output rules: minified JSON, concise complete copy, and no prose outside the JSON object.",
             ],
         }
 
@@ -955,6 +958,26 @@ class V3CopyRegisterRound2Service:
         if not evidence_fact_ids and (angle is None or family is None):
             evidence_fact_ids = _unique([fact.fact_id for fact in bundle.registry.facts])[:MAX_EVIDENCE_SELECTION]
             evidence_selection = {**evidence_selection, "bootstrap_fallback": "ZERO_SUPPLY_APPROVED_REGISTRY"}
+        # A route-bearing claim cannot compile from Product Description or
+        # Target Customer context alone.  Keep the provider data island
+        # relevance-ranked, but add one approved non-generic fact when ranking
+        # would otherwise leave the plan without a usable route anchor.
+        selected_fact_ids = set(evidence_fact_ids)
+        route_fact = next(
+            (
+                fact
+                for fact in bundle.registry.facts
+                if fact.fact_kind.upper() not in {"PRODUCT_DESCRIPTION", "TARGET_CUSTOMER"}
+                and fact.fact_id not in selected_fact_ids
+            ),
+            None,
+        )
+        if route_fact is not None:
+            evidence_fact_ids = _unique([route_fact.fact_id, *evidence_fact_ids])[:MAX_EVIDENCE_SELECTION]
+            evidence_selection = {
+                **evidence_selection,
+                "route_anchor_fallback_fact_id": route_fact.fact_id,
+            }
         language_profile = normalized_text(str((recipe.campaign_scope or {}).get("language_profile") or "Malay")) or "Malay"
         current_capacity = {
             "HOOK": current["HOOK"],
@@ -1114,13 +1137,22 @@ class V3CopyRegisterRound2Service:
         if len(required) < 3:
             raise V3FactoryError("FORMULA_STAGE_ROUTE_INVALID", "Round 2 requires at least three canonical formula stages.", status_code=409)
         fact = bundle.registry.facts[0] if bundle.registry.facts else None
+        allowed_fact_ids = set(plan.evidence_fact_ids)
         route_fact = next(
             (
                 item
                 for item in bundle.registry.facts
-                if item.fact_kind.upper() not in {"PRODUCT_DESCRIPTION", "TARGET_CUSTOMER"}
+                if item.fact_id in allowed_fact_ids
+                and item.fact_kind.upper() not in {"PRODUCT_DESCRIPTION", "TARGET_CUSTOMER"}
             ),
-            fact,
+            next(
+                (
+                    item
+                    for item in bundle.registry.facts
+                    if item.fact_id in allowed_fact_ids
+                ),
+                fact,
+            ),
         )
         fallback_fact_id = fact.fact_id if fact else ""
         route_anchor_id = route_fact.fact_id if route_fact else fallback_fact_id
@@ -1132,26 +1164,44 @@ class V3CopyRegisterRound2Service:
         if _INJECTION_RE.search(product_name):
             product_name = "this product"
         gap_by_class = {gap.semantic_class: gap.gap_count for gap in plan.gaps}
+        hook_texts = (
+            "Perut kembung mengganggu rutin?",
+            "Badan sengal selepas bekerja?",
+            "Rasa kebas kurang selesa?",
+            "Gigitan serangga terasa gatal?",
+            "Rutin keluarga terasa berat?",
+            "Perlukan sapuan tradisional?",
+        )
+        body_texts = (
+            ("Sapukan sedikit pada kawasan tidak selesa.", "Urut perlahan mengikut keperluan."),
+            ("Gunakan sapuan ringan pada kawasan perlu.", "Jadikan langkah ringkas dalam rutin."),
+            ("Sapu sedikit apabila badan terasa tidak selesa.", "Urut perlahan sebelum kembali berehat."),
+        )
+        cta_texts = (
+            "Simpan satu untuk rutin keluarga.",
+            "Bawa bersama apabila diperlukan.",
+            "Mulakan langkah ringkas hari ini.",
+        )
         proposals: list[dict[str, Any]] = []
         for semantic in ("HOOK", "BODY_CORE", "CTA"):
             for index in range(gap_by_class.get(semantic, 0)):
                 if semantic == "HOOK":
                     keys = (required[0],)
-                    texts = ("Want a lighter routine?",)
+                    texts = (hook_texts[index % len(hook_texts)],)
                     entries = (("arc:start", "arc:body"),)
                     claims = (True,)
                 elif semantic == "CTA":
                     keys = (required[-1],)
-                    texts = ("Start your routine today.",)
+                    texts = (cta_texts[index % len(cta_texts)],)
                     entries = (("arc:cta", "arc:end"),)
                     claims = (False,)
                 else:
                     middle = required[1:-1]
                     keys = middle
+                    body_variant = body_texts[index % len(body_texts)]
                     texts = tuple(
-                        "Choose this lightweight formula today."
-                        if position == 0
-                        else "Keep each step simple and steady."
+                        body_variant[position] if position < len(body_variant)
+                        else "Teruskan langkah ini mengikut keperluan."
                         for position, _key in enumerate(middle)
                     )
                     entries = tuple(
@@ -1172,10 +1222,7 @@ class V3CopyRegisterRound2Service:
                     for position, (key, text) in enumerate(zip(keys, texts))
                 ]
                 proposals.append({
-                    "proposal_id": deterministic_id("fake_proposal", {"run": plan.run_id, "semantic": semantic, "index": index}),
                     "semantic_class": semantic,
-                    "angle_definition": "A practical, evidence-grounded daily-routine angle for a qualified buyer",
-                    "storyline_definition": "Problem to safe next step with one continuous bridge",
                     "segments": segments,
                     "rationale": "Disposable fake provider fixture for browser and integration UAT; human review remains required.",
                     "risk_notes": ["FAKE_TEST_PROVIDER", "HUMAN_REVIEW_REQUIRED"],
@@ -1186,8 +1233,6 @@ class V3CopyRegisterRound2Service:
         if plan.supply_actions.get("angle") == "CREATE_DRAFT":
             envelope["angle_proposal"] = {
                 "definition": f"A grounded {recipe.formula.formula_id} daily-routine angle for {product_name} from approved evidence",
-                "objective_id": recipe.objective.objective_id,
-                "objective_definition": recipe.objective.definition,
                 "rationale": "Disposable fake provider Angle DRAFT for zero-supply CREATE UAT; human review required.",
             }
         if plan.supply_actions.get("storyline_family") == "CREATE_DRAFT":
@@ -1266,16 +1311,26 @@ class V3CopyRegisterRound2Service:
         return dict(raw), dict(receipt or {})
 
     @staticmethod
-    def _system_derived_storyline_route(proposal: V3StorylineFamilyProposal) -> dict[str, Any]:
-        """Attach only BOSMAX-owned route identity before factory persistence."""
+    def _system_derived_storyline_route(
+        proposal: V3StorylineFamilyProposal,
+        required_stage_keys: Sequence[str],
+    ) -> dict[str, Any]:
+        """Derive the complete canonical route before factory persistence.
+
+        The provider selects approved evidence and describes the route, but it
+        does not own route identity, formula-stage mapping, or ordering.  Those
+        values come from the locked recipe and are written immediately before
+        the factory receives the payload.
+        """
 
         route_anchor_ids = tuple(proposal.route_anchor_fact_ids)
         canonical_route_key = route_key_for_fact_ids(list(route_anchor_ids))
-        route = proposal.narrative_route.model_dump(mode="json")
-        route.update({
+        route = {
+            "stage_keys": list(required_stage_keys),
+            "order_locked": True,
             "route_key": canonical_route_key,
             "route_anchor_fact_ids": list(route_anchor_ids),
-        })
+        }
         return route
 
     def _validate_proposals(self, raw: dict[str, Any], plan: V3AssistantPlan, recipe: Any, bundle: Any) -> tuple[V3AIProviderEnvelope, dict[str, int]]:
@@ -1315,23 +1370,67 @@ class V3CopyRegisterRound2Service:
         if plan.supply_actions.get("storyline_family") == "CREATE_DRAFT" and envelope.storyline_family_proposal is None:
             raise V3FactoryError("AI_COPY_ASSIST_STORYLINE_PROPOSAL_REQUIRED", "Zero-supply CREATE requires a distinct Storyline Family DRAFT proposal.", status_code=502)
         required = tuple(required_formula_stage_keys(recipe.formula.formula_id))
+        if len(required) < 3:
+            raise V3FactoryError(
+                "FORMULA_STAGE_ROUTE_INVALID",
+                "Round 2 requires at least three canonical formula stages.",
+                status_code=502,
+            )
         known_facts = {fact.fact_id: fact for fact in bundle.registry.facts}
+        allowed_fact_ids = set(plan.evidence_fact_ids)
         route_anchor_ids: tuple[str, ...] = ()
         if plan.supply_actions.get("storyline_family") == "CREATE_DRAFT":
             proposal = envelope.storyline_family_proposal
             assert proposal is not None
+            if not proposal.narrative_route.order_locked or tuple(proposal.narrative_route.stage_keys) != required:
+                raise V3FactoryError(
+                    "AI_COPY_ASSIST_STAGE_CONTRACT_INVALID",
+                    "Provider storyline route must preserve the locked canonical formula stage order.",
+                    status_code=502,
+                    details={
+                        "expected": required,
+                        "received": tuple(proposal.narrative_route.stage_keys),
+                        "order_locked": proposal.narrative_route.order_locked,
+                    },
+                )
             route_anchor_ids = tuple(proposal.route_anchor_fact_ids)
             for fact_id in route_anchor_ids:
+                if fact_id not in allowed_fact_ids:
+                    raise V3FactoryError(
+                        "AI_COPY_ASSIST_ROUTE_ANCHOR_INVALID",
+                        "Provider route anchor was not included in the governed evidence data island.",
+                        status_code=502,
+                    )
                 fact = known_facts.get(fact_id)
                 if fact is None:
                     raise V3FactoryError("AI_COPY_ASSIST_ROUTE_ANCHOR_INVALID", "Provider route anchor is outside the current approved evidence registry.", status_code=502)
                 if fact.fact_kind.upper() in {"PRODUCT_DESCRIPTION", "TARGET_CUSTOMER"}:
                     raise V3FactoryError("AI_COPY_ASSIST_ROUTE_ANCHOR_GENERIC", "Provider cannot use generic Product Truth context as a route anchor.", status_code=502)
+        elif envelope.angle_proposal is not None or envelope.storyline_family_proposal is not None:
+            raise V3FactoryError(
+                "AI_COPY_ASSIST_UNEXPECTED_SUPPLY_PROPOSAL",
+                "Provider cannot recreate an Angle or Storyline Family that the plan marked for reuse.",
+                status_code=502,
+            )
         expected = {
             "HOOK": (required[0],),
             "BODY_CORE": tuple(required[1:-1]),
             "CTA": (required[-1],),
         }
+        expected_counts = {
+            gap.semantic_class: gap.gap_count
+            for gap in plan.gaps
+            if gap.gap_count > 0
+        }
+        actual_counts = Counter(proposal.semantic_class for proposal in envelope.proposals)
+        actual_counts = {semantic: actual_counts.get(semantic, 0) for semantic in ("HOOK", "BODY_CORE", "CTA") if actual_counts.get(semantic, 0) > 0}
+        if actual_counts != expected_counts:
+            raise V3FactoryError(
+                "AI_COPY_ASSIST_PROPOSAL_COUNT_MISMATCH",
+                "Provider output did not contain exactly the bounded proposal count requested by the assistant plan.",
+                status_code=502,
+                details={"expected": expected_counts, "received": actual_counts},
+            )
         remaining = {gap.semantic_class: gap.gap_count for gap in plan.gaps}
         for proposal in envelope.proposals:
             if remaining.get(proposal.semantic_class, 0) <= 0:
@@ -1344,6 +1443,10 @@ class V3CopyRegisterRound2Service:
             for segment in proposal.segments:
                 if segment.claim_bearing and not segment.evidence_fact_ids:
                     raise V3FactoryError("AI_COPY_ASSIST_EVIDENCE_REQUIRED", "Claim-bearing AI output must cite approved evidence.", status_code=502)
+                if len(segment.evidence_fact_ids) != len(set(segment.evidence_fact_ids)):
+                    raise V3FactoryError("AI_COPY_ASSIST_EVIDENCE_INVALID", "Provider output repeated an evidence fact ID within one segment.", status_code=502)
+                if any(fact_id not in allowed_fact_ids for fact_id in segment.evidence_fact_ids):
+                    raise V3FactoryError("AI_COPY_ASSIST_EVIDENCE_INVALID", "Provider output cited evidence outside the governed data island.", status_code=502)
                 if any(fact_id not in known_facts for fact_id in segment.evidence_fact_ids):
                     raise V3FactoryError("AI_COPY_ASSIST_EVIDENCE_INVALID", "Provider output cited evidence outside the current approved registry.", status_code=502)
                 if segment.claim_bearing:
@@ -1363,7 +1466,9 @@ class V3CopyRegisterRound2Service:
                     if route_anchor_ids and not set(segment.evidence_fact_ids).intersection(route_anchor_ids):
                         raise V3FactoryError("AI_COPY_ASSIST_ROUTE_MISMATCH", "Claim-bearing provider output does not cite the Storyline Family route anchor.", status_code=502)
             remaining[proposal.semantic_class] -= 1
-        return envelope, {"usage_tokens": 0}
+        # Proposal validation has no provider transport usage of its own.  The
+        # execution boundary merges the provider receipt's canonical usage.
+        return envelope, {}
 
     def _failure_result(
         self,
@@ -1521,7 +1626,7 @@ class V3CopyRegisterRound2Service:
                 provider_calls = max(provider_calls, 1)
             receipt_usage = provider_receipt_raw.get("usage")
             if isinstance(receipt_usage, Mapping):
-                provider_usage = {**dict(receipt_usage), **provider_usage}
+                provider_usage = ai_copy_provider_adapter.normalize_usage({**dict(receipt_usage), **provider_usage})
             cost_keys = ("credit_spend", "cost")
             cost_reported = cost_reported or any(key in provider_receipt_raw for key in cost_keys) or any(key in provider_usage for key in cost_keys)
             reported_cost = max(
@@ -1569,7 +1674,7 @@ class V3CopyRegisterRound2Service:
                 system, user, mode=provider_mode, plan=plan, recipe=recipe, bundle=bundle
             )
             raw_output_digest = deterministic_digest(raw)
-            provider_usage = dict(provider_receipt_raw.get("usage") or {})
+            provider_usage = ai_copy_provider_adapter.normalize_usage(provider_receipt_raw.get("usage"))
             provider_calls = 0 if provider_mode == "FAKE_TEST" else 1
             # Provider cost is never invented: it counts only if the provider
             # actually returned a cost/credit field.  Absent that, cost is
@@ -1580,10 +1685,25 @@ class V3CopyRegisterRound2Service:
                 _usage_number(provider_receipt_raw, cost_keys),
                 _usage_number(provider_usage, cost_keys),
             )
+            finish_reason = str(provider_receipt_raw.get("finish_reason") or "").strip().lower()
+            if finish_reason == "length":
+                raise V3FactoryError(
+                    ai_copy_provider_adapter.ERR_RESPONSE_INVALID,
+                    "The text_assist provider response reached its output limit.",
+                    status_code=502,
+                    details={
+                        "diagnostic_category": ai_copy_provider_adapter.DIAGNOSTIC_TRUNCATED_RESPONSE,
+                        "provider_receipt": {
+                            **provider_receipt_raw,
+                            "diagnostic_category": ai_copy_provider_adapter.DIAGNOSTIC_TRUNCATED_RESPONSE,
+                            "diagnostic_metadata": {"finish_reason": "length"},
+                        },
+                    },
+                )
             envelope, usage = self._validate_proposals(raw, plan, recipe, bundle)
             usage_tokens = int(max(
-                _usage_number(usage, ("usage_tokens", "total_tokens", "output_tokens")),
-                _usage_number(provider_usage, ("total_tokens", "output_tokens", "usage_tokens")),
+                _usage_number(usage, ("output_tokens", "completion_tokens", "usage_tokens")),
+                _usage_number(provider_usage, ("output_tokens", "completion_tokens", "usage_tokens")),
             ))
             if provider_calls > plan.max_provider_calls:
                 raise V3FactoryError("AI_COPY_ASSIST_CALL_BUDGET_EXCEEDED", "The provider call count exceeded the explicit Round 2 plan budget.", status_code=502)
@@ -1595,7 +1715,7 @@ class V3CopyRegisterRound2Service:
                 raise V3FactoryError("AI_COPY_ASSIST_COST_BUDGET_EXCEEDED", "The provider reported cost above the explicit Round 2 budget.", status_code=502)
             cost_status = "NOT_REPORTED" if not cost_reported else "WITHIN_BUDGET"
             if usage_tokens:
-                provider_usage["total_tokens"] = usage_tokens
+                provider_usage["output_tokens"] = usage_tokens
         except V3FactoryError as exc:
             await persist_failure(exc)
             raise
@@ -1658,7 +1778,10 @@ class V3CopyRegisterRound2Service:
                         "formula_id": recipe.formula.formula_id,
                         "objective_compatibility": {"objective_ids": [recipe.objective.objective_id]},
                         "reviewed_definition": envelope.storyline_family_proposal.reviewed_definition,
-                        "narrative_route": self._system_derived_storyline_route(envelope.storyline_family_proposal),
+                        "narrative_route": self._system_derived_storyline_route(
+                            envelope.storyline_family_proposal,
+                            required_formula_stage_keys(recipe.formula.formula_id),
+                        ),
                         "route_anchor_fact_ids": list(envelope.storyline_family_proposal.route_anchor_fact_ids),
                         "require_route_identity": True,
                     },
@@ -1666,11 +1789,27 @@ class V3CopyRegisterRound2Service:
                     request_id=f"{request_id}:family",
                     source=ROUND2_SOURCE,
                 )
+            proposal_ordinals: dict[str, int] = defaultdict(int)
+            system_proposal_ids: list[str] = []
             for proposal in envelope.proposals:
+                ordinal = proposal_ordinals[proposal.semantic_class]
+                proposal_ordinals[proposal.semantic_class] += 1
+                system_proposal_id = deterministic_id(
+                    "ai_proposal",
+                    {
+                        "run": plan.run_id,
+                        "semantic_class": proposal.semantic_class,
+                        "ordinal": ordinal,
+                    },
+                )
+                system_proposal_ids.append(system_proposal_id)
                 component = await self.factory.create_component(
                     recipe.product_id,
                     {
-                        "component_id": deterministic_id("ai_component", {"run": plan.run_id, "proposal": proposal.proposal_id}),
+                        "component_id": deterministic_id(
+                            "ai_component",
+                            {"run": plan.run_id, "proposal": system_proposal_id},
+                        ),
                         "angle_id": angle.angle_id,
                         "angle_revision": angle.revision,
                         "storyline_family_id": family.family_id,
@@ -1681,7 +1820,7 @@ class V3CopyRegisterRound2Service:
                         "stage_segments": [segment.model_dump(mode="json") for segment in proposal.segments],
                     },
                     actor_id=actor_id,
-                    request_id=f"{request_id}:component:{proposal.proposal_id}",
+                    request_id=f"{request_id}:component:{system_proposal_id}",
                     source=ROUND2_SOURCE,
                 )
                 created_components.append(component)
@@ -1762,7 +1901,7 @@ class V3CopyRegisterRound2Service:
                 "mode": plan.mode,
                 "status": "EXECUTED",
                 "provider": provider_receipt.model_dump(mode="json"),
-                "proposal_ids": [item.proposal_id for item in envelope.proposals],
+                "proposal_ids": system_proposal_ids,
                 "component_refs": [V3RevisionRef(entity_id=item.component_id, revision=item.revision).model_dump(mode="json") for item in created_components],
                 "master": V3RevisionRef(entity_id=master.master_id, revision=master.revision).model_dump(mode="json"),
                 "projections": [V3RevisionRef(entity_id=item.projection_id, revision=item.revision).model_dump(mode="json") for item in projections],

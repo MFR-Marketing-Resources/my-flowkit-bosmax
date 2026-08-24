@@ -196,6 +196,16 @@ describe("Copywriting Landbank operator wizard", () => {
 		vi.clearAllMocks();
 		mockNavigate.mockReset();
 		mockedStatus.mockResolvedValue({ lane: "text_assist", status: "NOT_CONFIGURED", configured: false, provider_id: null, model_id: null, execution_enabled: false, provider_calls: 0, credit_spend: 0, fake_provider_allowed: true });
+		mockedProductDetail.mockResolvedValue({
+			id: "p1",
+			raw_product_title: "Hydrated Test Product",
+			product_display_name: "Hydrated Test Product",
+			visual_readiness: {
+				active_visual_source: "APPROVED_MANUAL_CANONICAL_CUTOUT",
+				active_cutout_preview_url: "/api/product-visual-onboarding/p1/cutout/preview/active",
+				current_system_visual: { card: "MANUAL_CUTOUT", label: "Approved cutout", status: "OFFICIAL" },
+			} as unknown as Product["visual_readiness"],
+		} as unknown as Product);
 		mockedTruth.mockResolvedValue({ product_id: "p1", lineage: { snapshot_status: "APPROVED", snapshot_id: "snap-1", snapshot_version: 5 }, facts: [{ fact_id: "fact-1", fact_kind: "BENEFIT", text: "A lightweight daily routine.", text_digest: "d".repeat(64), approved: true }], fact_count: 1, provider_calls: 0, mutations: 0 });
 		mockedCapacity.mockResolvedValue(capacityFixture({ semantic_capacity: 18 }));
 		mockedLandbank.mockResolvedValue(landbankResponse([makeItem()]));
@@ -314,6 +324,28 @@ describe("Copywriting Landbank operator wizard", () => {
 		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=GENERATE");
 		fireEvent.click(await screen.findByTestId("v3-generate"));
 		await waitFor(() => expect(mockedExecute).toHaveBeenCalledWith("plan-v3", "LIVE_TEXT_ASSIST"));
+	});
+
+	it("drops a failed terminal plan, preserves the error, and refreshes before the next Generate", async () => {
+		const fresh = planResponse();
+		fresh.plan.plan_id = "plan-v3-fresh";
+		fresh.plan.run_id = "run-v3-fresh";
+		mockedPlan
+			.mockResolvedValueOnce(planResponse())
+			.mockResolvedValueOnce(fresh);
+		mockedExecute.mockRejectedValueOnce(new Error("AI_COPY_ASSIST_TOKEN_BUDGET_EXCEEDED"));
+
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=GENERATE");
+		fireEvent.click(await screen.findByTestId("v3-generate"));
+
+		await waitFor(() => expect(screen.getByTestId("v3-error")).toHaveTextContent(/TOKEN_BUDGET_EXCEEDED/i));
+		await waitFor(() => expect(mockedPlan).toHaveBeenCalledTimes(2));
+		expect(mockedExecute).toHaveBeenCalledTimes(1);
+		expect(screen.getByText(/plan-v3-fresh/)).toBeInTheDocument();
+
+		fireEvent.click(await screen.findByTestId("v3-generate"));
+		await waitFor(() => expect(mockedExecute).toHaveBeenCalledWith("plan-v3-fresh", "FAKE_TEST"));
+		expect(mockedExecute).toHaveBeenCalledTimes(2);
 	});
 
 	// Section 14: fail closed with operator language when Product Truth is missing.
@@ -482,6 +514,26 @@ describe("Copywriting Landbank operator wizard", () => {
 			expect(screen.getByTestId("v3-product-name")).toHaveTextContent("Deep Linked Product"),
 		);
 		await waitFor(() => expect(mockedTruth).toHaveBeenCalledWith("p99"));
+	});
+
+	// Regression C: an exact in-window row can be a lightweight catalog projection.
+	// Hydrate that same id before preview resolution so an official cutout is not
+	// mistaken for a missing image and the UI never substitutes another product.
+	it("hydrates the exact in-window product before resolving its visual preview", async () => {
+		mockedProductDetail.mockResolvedValue({
+			id: "p1",
+			raw_product_title: "Authoritative Product Detail",
+			product_display_name: "Authoritative Product Detail",
+			visual_readiness: {
+				active_visual_source: "APPROVED_MANUAL_CANONICAL_CUTOUT",
+				active_cutout_preview_url: "/api/product-visual-onboarding/p1/cutout/preview/active",
+				current_system_visual: { card: "MANUAL_CUTOUT", label: "Approved cutout", status: "OFFICIAL" },
+			} as unknown as Product["visual_readiness"],
+		} as unknown as Product);
+		renderAt("/creative/storyboard-landbank-v3?product_id=p1&step=SETUP");
+		await waitFor(() => expect(mockedProductDetail).toHaveBeenCalledWith("p1"));
+		await waitFor(() => expect(screen.getByTestId("v3-product-name")).toHaveTextContent("Authoritative Product Detail"));
+		expect(mockedTruth).toHaveBeenCalledWith("p1");
 	});
 
 	// Regression B: an unresolvable deep-link id surfaces an operator error and never
