@@ -30,6 +30,17 @@ _REOPENABLE_PRE_PROVIDER_FAILURES = {
     "PROFILE_CERTIFICATION_PRE_PROVIDER_FAILED",
 }
 
+# Owner-authorized retirement of a submitted-but-unsuitable capture (e.g. a
+# wrong-aspect artifact) reopens the exact profile for ONE corrected capture.
+CERTIFICATION_ARTIFACT_UNSUITABLE = "PROFILE_CERTIFICATION_ARTIFACT_UNSUITABLE"
+
+# Failure codes ``reserve_capture`` may archive+recreate on the next capture.
+# The pre-provider set is preserved verbatim; the supersede code is unioned in
+# without altering existing pre-provider reopen behavior.
+_REOPENABLE_FAILURES = _REOPENABLE_PRE_PROVIDER_FAILURES | {
+    CERTIFICATION_ARTIFACT_UNSUITABLE,
+}
+
 
 class ProviderCertificationError(ValueError):
     """Structured fail-closed certification error."""
@@ -284,16 +295,20 @@ async def reserve_capture(**kwargs: Any) -> tuple[dict[str, Any], bool]:
     values = _reservation_values(profile=profile, **kwargs)
     existing = await _crud.get_by_profile_digest(values["profile_digest"])
     if existing is not None:
+        existing_failure_code = _norm(existing.get("failure_code")).upper()
         if (
             _norm(existing.get("status")).upper() == CERTIFICATION_FAILED
-            and _norm(existing.get("failure_code")).upper()
-            in _REOPENABLE_PRE_PROVIDER_FAILURES
+            and existing_failure_code in _REOPENABLE_FAILURES
         ):
             return (
                 await _crud.archive_failed_pre_provider_and_create_reservation(
                     existing,
                     values,
-                    reason="EXPLICIT_NEW_CAPTURE_AFTER_PRE_PROVIDER_FAILURE",
+                    reason=(
+                        "EXPLICIT_NEW_CAPTURE_AFTER_UNSUITABLE_ARTIFACT_SUPERSEDE"
+                        if existing_failure_code == CERTIFICATION_ARTIFACT_UNSUITABLE
+                        else "EXPLICIT_NEW_CAPTURE_AFTER_PRE_PROVIDER_FAILURE"
+                    ),
                 ),
                 True,
             )
@@ -352,6 +367,65 @@ async def mark_failed(
         **({"snapshot_id": _norm(snapshot_id)} if _norm(snapshot_id) else {}),
         failure_code=_norm(code)[:160],
         failure_detail=_norm(detail)[:1000],
+    )
+
+
+async def supersede_unsuitable(
+    certification_id: str,
+    *,
+    reason: str,
+    superseded_by: str | None = None,
+) -> dict[str, Any]:
+    """Owner-authorized retirement of a submitted-but-unsuitable certification.
+
+    A submitted capture whose artifact is unusable (e.g. a wrong-aspect video)
+    cannot be finalized, yet its immutable job/snapshot/artifact lineage must be
+    preserved.  This marks the row ``FAILED`` with the reopenable
+    artifact-unsuitable code so the next exact-profile ``reserve_capture``
+    archives the full prior row into the append-only history table and opens ONE
+    fresh reservation.  No lineage column is nulled and no row is deleted; the
+    supersede reason and replacement linkage are carried in ``failure_detail``
+    for audit.  Fails closed on a promoted (CERTIFIED) certification.  Idempotent:
+    superseding an already-superseded row returns it unchanged with no duplicate
+    write.
+    """
+
+    row = await _crud.get_by_id(certification_id)
+    if row is None:
+        raise ProviderCertificationError("CERTIFICATION_NOT_FOUND")
+    status = _norm(row.get("status")).upper()
+    if status == CERTIFICATION_CERTIFIED:
+        raise ProviderCertificationError(
+            "CERTIFICATION_CERTIFIED_CANNOT_SUPERSEDE",
+            details={"status": status},
+        )
+    if (
+        status == CERTIFICATION_FAILED
+        and _norm(row.get("failure_code")).upper() == CERTIFICATION_ARTIFACT_UNSUITABLE
+    ):
+        return row
+    if status not in {
+        CERTIFICATION_SUBMITTED,
+        CERTIFICATION_RESERVED,
+        CERTIFICATION_ARTIFACT_PENDING,
+    }:
+        raise ProviderCertificationError(
+            "CERTIFICATION_NOT_SUPERSEDABLE",
+            details={"status": status},
+        )
+    supersede_detail = "SUPERSEDED_UNSUITABLE:" + _stable_json(
+        {
+            "reason": _norm(reason)[:600],
+            "superseded_at": _now(),
+            "superseded_by": _norm(superseded_by),
+        }
+    )
+    # ``mark_failed`` reuses ``update_certification`` for status/code/detail only,
+    # so job_id/snapshot_id/artifact linkage columns are never touched.
+    return await mark_failed(
+        certification_id,
+        code=CERTIFICATION_ARTIFACT_UNSUITABLE,
+        detail=supersede_detail,
     )
 
 
@@ -616,6 +690,7 @@ async def finalize_capture(
 
 __all__ = [
     "CERTIFICATION_ARTIFACT_PENDING",
+    "CERTIFICATION_ARTIFACT_UNSUITABLE",
     "CERTIFICATION_CERTIFIED",
     "CERTIFICATION_FAILED",
     "CERTIFICATION_RESERVED",
@@ -628,5 +703,6 @@ __all__ = [
     "reconcile_pre_provider_failure",
     "provider_certification_status",
     "reserve_capture",
+    "supersede_unsuitable",
     "validate_capture_contract",
 ]
