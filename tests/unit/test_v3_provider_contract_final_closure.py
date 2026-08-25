@@ -115,6 +115,39 @@ async def _seed_mwcb_truth() -> None:
     await db.commit()
 
 
+async def _seed_mwcb_route(factory) -> None:
+    """Pre-lock ONE approved benefit route (Angle + Storyline Family) for MWCB so
+    STRUCTURE authoring receives a locked route, per the owner ruling.  BOSMAX
+    owns the route; the provider only authors words on it."""
+    angle = await factory.create_angle(
+        MWCB_PRODUCT_ID,
+        {
+            "angle_id": f"{MWCB_PRODUCT_ID}-angle",
+            "definition": "Sudut rutin keluarga apabila perut kembung mengganggu hari.",
+            "formula_id": "PAS",
+            "objective_id": "conversion",
+            "objective_definition": "Drive a safe trial",
+            "evidence_fact_ids": [MWCB_ROUTE_FACT_ID],
+        },
+        actor_id="mwcb-route",
+        request_id=f"{MWCB_PRODUCT_ID}:angle",
+    )
+    await factory.create_storyline_family(
+        MWCB_PRODUCT_ID,
+        {
+            "family_id": f"{MWCB_PRODUCT_ID}-family",
+            "angle_id": angle.angle_id,
+            "formula_id": "PAS",
+            "objective_compatibility": {"objective_ids": ["conversion"]},
+            "reviewed_definition": "Satu laluan PAS berterusan daripada masalah perut kembung kepada langkah sapuan tradisional.",
+            "route_anchor_fact_ids": [MWCB_ROUTE_FACT_ID],
+            "require_route_identity": True,
+        },
+        actor_id="mwcb-route",
+        request_id=f"{MWCB_PRODUCT_ID}:family",
+    )
+
+
 def _golden_envelope(plan, recipe) -> dict:
     required = tuple(required_formula_stage_keys(recipe.formula.formula_id))
     route_fact_id = MWCB_ROUTE_FACT_ID
@@ -173,18 +206,10 @@ def _golden_envelope(plan, recipe) -> dict:
             "rationale": "Variasi CTA Malay untuk semakan manusia.",
             "risk_notes": ["REVIEW"],
         })
+    # The provider authors WORDS ONLY; BOSMAX owns the locked route, so the
+    # golden envelope carries no Angle/Storyline Family proposal.
     return {
         "schema_version": "v3-copy-assistant-1",
-        "angle_proposal": {
-            "definition": "Sudut rutin keluarga apabila perut kembung mengganggu hari.",
-            "rationale": "Angle DRAFT grounded in one approved benefit route.",
-        },
-        "storyline_family_proposal": {
-            "reviewed_definition": "Satu laluan PAS berterusan daripada masalah perut kembung kepada langkah sapuan tradisional.",
-            "narrative_route": {"stage_keys": list(required), "order_locked": True},
-            "route_anchor_fact_ids": [route_fact_id],
-            "rationale": "One coherent approved-evidence route for human review.",
-        },
         "proposals": proposals,
     }
 
@@ -252,6 +277,7 @@ async def _production_counts(product_id: str) -> dict[str, int]:
 async def _make_token_boundary_run(product_suffix: str, usage: dict, *, finish_reason: str = "stop", max_output_tokens: int = 4096):
     await _seed_mwcb_truth()
     factory = V3CopyFactoryService()
+    await _seed_mwcb_route(factory)
     setup_service = V3CopyRegisterRound2Service(factory=factory)
     setup = await setup_service.create_campaign_recipe(
         MWCB_PRODUCT_ID,
@@ -322,7 +348,13 @@ async def test_v3_output_budget_rejects_completion_over_cap_before_supply_mutati
     assert error.value.code == "AI_COPY_ASSIST_TOKEN_BUDGET_EXCEEDED"
     assert provider.calls == 1
     counts = await _production_counts(MWCB_PRODUCT_ID)
-    assert all(count == 0 for count in counts.values())
+    # The pre-locked route (Angle + Storyline Family) is a prerequisite; the
+    # budget failure must persist no NEW supply beyond it.
+    assert all(
+        count == 0
+        for table, count in counts.items()
+        if table not in {"angle_v3", "storyline_family_v3"}
+    )
 
 
 def test_v3_finish_reason_length_is_truncated_response():
@@ -372,6 +404,7 @@ async def test_v3_total_tokens_alone_never_trips_output_budget():
 async def test_mwcb_fast54_golden_envelope_completes_provider_free_full_path():
     await _seed_mwcb_truth()
     factory = V3CopyFactoryService()
+    await _seed_mwcb_route(factory)
     setup_service = V3CopyRegisterRound2Service(factory=factory)
     setup = await setup_service.create_campaign_recipe(
         MWCB_PRODUCT_ID,
@@ -400,7 +433,14 @@ async def test_mwcb_fast54_golden_envelope_completes_provider_free_full_path():
     service = V3CopyRegisterRound2Service(factory=factory, provider=provider)
 
     before = await _production_counts(MWCB_PRODUCT_ID)
-    assert all(count == 0 for count in before.values())
+    # The route (Angle + Storyline Family) is pre-locked by BOSMAX; everything
+    # downstream of it is authored provider-free by this run.
+    assert before["angle_v3"] == 1 and before["storyline_family_v3"] == 1
+    assert all(
+        count == 0
+        for table, count in before.items()
+        if table not in {"angle_v3", "storyline_family_v3"}
+    )
     result = await service.execute_assistant(
         plan.plan_id,
         actor_id="closure-fixture",
@@ -440,6 +480,7 @@ async def test_mwcb_fast54_built_in_fake_provider_hits_exact_target_without_auth
     monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
     await _seed_mwcb_truth()
     factory = V3CopyFactoryService()
+    await _seed_mwcb_route(factory)
     service = V3CopyRegisterRound2Service(factory=factory)
     setup = await service.create_campaign_recipe(
         MWCB_PRODUCT_ID,
@@ -497,6 +538,90 @@ async def test_mwcb_fast54_built_in_fake_provider_hits_exact_target_without_auth
 
 
 @pytest.mark.asyncio
+async def test_mwcb_fast54_locked_route_words_only_regression_proof(monkeypatch):
+    # Owner requirement 6: one provider-free regression proof of the simplified,
+    # route-locked, words-only STRUCTURE contract.
+    monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
+    await _seed_mwcb_truth()
+    factory = V3CopyFactoryService()
+    await _seed_mwcb_route(factory)
+    service = V3CopyRegisterRound2Service(factory=factory)
+    setup = await service.create_campaign_recipe(
+        MWCB_PRODUCT_ID,
+        objective_id="conversion",
+        objective_definition="Drive a safe trial",
+        formula_id="PAS",
+        preset="FAST54",
+        supported_durations_seconds=[8, 16, 24],
+        target_capacity=54,
+        language_profile="Malay",
+        wps_mode="SWEET",
+        actor_id="req6",
+        request_id="mwcb-req6:setup",
+    )
+    recipe = await factory.repository.get("COPY_RECIPE", setup["recipe_id"])
+    plan = await service.plan_assistant(
+        MWCB_PRODUCT_ID,
+        setup["recipe_id"],
+        mode="CREATE",
+        evidence_fact_ids=[MWCB_ROUTE_FACT_ID],
+        actor_id="req6",
+        request_id="mwcb-req6:plan",
+    )
+
+    # (1) The prompt contains exactly ONE locked route; BOSMAX owns it.
+    contract = service._provider_output_contract(plan, recipe)
+    assert plan.locked_route_anchor_fact_ids
+    assert contract["locked_route"]["route_anchor_fact_ids"] == list(plan.locked_route_anchor_fact_ids)
+
+    # (2) The provider is not asked for route anchors / an Angle / a Family.
+    assert "storyline_route_rules" not in contract
+    assert "angle_proposal" not in contract["output_shape"]
+    assert "storyline_family_proposal" not in contract["output_shape"]
+    assert "storyline_family_proposal" in contract["forbidden_output_fields"]
+    assert "route_anchor_fact_ids" in contract["forbidden_output_fields"]
+
+    # (3) No duration / WPS authoring rules appear in the semantic prompt.
+    system, user, _truth = await service._prompt_parts(plan, recipe)
+    prompt = system + "\n" + user
+    for banned in ("duration_feasibility", "wps_duration_rules", "shortest_duration"):
+        assert banned not in prompt
+
+    # (4) The provider sees only the locked route's allowed evidence.
+    assert contract["allowed_evidence_fact_ids"] == list(plan.allowed_evidence_fact_ids)
+
+    # (5) A fake 6/3/3 output commits and yields semantic_valid_capacity == 54.
+    assert {gap.semantic_class: gap.gap_count for gap in plan.gaps} == {"HOOK": 6, "BODY_CORE": 3, "CTA": 3}
+    result = await service.execute_assistant(
+        plan.plan_id, actor_id="req6", request_id="mwcb-req6:execute", provider_mode="FAKE_TEST",
+    )
+    assert result["status"] == "EXECUTED"
+    capacity = await factory.capacity(setup["recipe_id"])
+    assert capacity.semantic_valid_capacity == 54
+    assert capacity.fast54_semantic_ready is True
+
+    # (6) Route/evidence violations still fail closed.
+    bundle = await factory.truth_adapter.current(MWCB_PRODUCT_ID)
+    golden = _golden_envelope(plan, recipe)
+    out_of_island = deepcopy(golden)
+    out_of_island["proposals"][0]["segments"][0]["evidence_fact_ids"] = [
+        f"fact:{MWCB_PRODUCT_ID}:product_description:0"
+    ]
+    with pytest.raises(Exception) as error:
+        service._validate_proposals(out_of_island, plan, recipe, bundle)
+    assert error.value.code == "AI_COPY_ASSIST_EVIDENCE_INVALID"
+    supply_owned = deepcopy(golden)
+    supply_owned["storyline_family_proposal"] = {
+        "reviewed_definition": "provider tried to own the route",
+        "narrative_route": {"stage_keys": list(required_formula_stage_keys("PAS")), "order_locked": True},
+        "route_anchor_fact_ids": list(plan.locked_route_anchor_fact_ids),
+    }
+    with pytest.raises(Exception) as error:
+        service._validate_proposals(supply_owned, plan, recipe, bundle)
+    assert error.value.code == "AI_COPY_ASSIST_ROUTE_OWNERSHIP_FORBIDDEN"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("mutation", "expected_code"),
     (
@@ -509,6 +634,7 @@ async def test_mwcb_fast54_built_in_fake_provider_hits_exact_target_without_auth
 async def test_mwcb_provider_free_adversarial_closure_gates_do_not_persist_supply(mutation, expected_code):
     await _seed_mwcb_truth()
     factory = V3CopyFactoryService()
+    await _seed_mwcb_route(factory)
     service = V3CopyRegisterRound2Service(factory=factory)
     setup = await service.create_campaign_recipe(
         MWCB_PRODUCT_ID,
@@ -538,10 +664,14 @@ async def test_mwcb_provider_free_adversarial_closure_gates_do_not_persist_suppl
     elif mutation == "add_proposal":
         payload["proposals"].append(deepcopy(payload["proposals"][-1]))
     elif mutation == "wrong_route_order":
-        payload["storyline_family_proposal"]["narrative_route"]["stage_keys"] = list(reversed(required_formula_stage_keys("PAS")))
+        # Reverse the canonical Body/Core stage route within one proposal so the
+        # per-proposal stage contract fails (BOSMAX owns the family route now).
+        payload["proposals"][6]["segments"] = list(reversed(payload["proposals"][6]["segments"]))
     elif mutation == "outside_evidence_island":
+        # A generic (PRODUCT_DESCRIPTION) fact is never a route anchor and is never
+        # in the locked route's allowed evidence bundle.
         payload["proposals"][0]["segments"][0]["evidence_fact_ids"] = [
-            f"fact:{MWCB_PRODUCT_ID}:allowed_claims_json:0"
+            f"fact:{MWCB_PRODUCT_ID}:product_description:0"
         ]
 
     bundle = await factory.truth_adapter.current(MWCB_PRODUCT_ID)
@@ -550,5 +680,9 @@ async def test_mwcb_provider_free_adversarial_closure_gates_do_not_persist_suppl
     assert error.value.code == expected_code
 
     counts = await _production_counts(MWCB_PRODUCT_ID)
-    assert all(count == 0 for table, count in counts.items() if table != "copy_blueprint_v2")
+    assert all(
+        count == 0
+        for table, count in counts.items()
+        if table not in {"copy_blueprint_v2", "angle_v3", "storyline_family_v3"}
+    )
     assert plan.provider.provider_calls == 0

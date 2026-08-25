@@ -75,6 +75,17 @@ class V3AssistantPlan(BaseModel):
     # Relevance-ranked selection detail (outcome, per-fact scores, explanations)
     # for the "Review Evidence" panel.  The provider receives only fact_ids.
     evidence_selection: dict[str, Any] = Field(default_factory=dict)
+    # BOSMAX-owned LOCKED semantic route (resolved provider-free before the AI
+    # call).  The provider authors words only; it never selects or owns the
+    # route.  ``locked_route`` mirrors the approved Storyline Family
+    # ``narrative_route`` (route_key + route_anchor_fact_ids + stage_keys); it is
+    # empty only for a plan that failed closed with ROUTE_SELECTION_REQUIRED.
+    locked_route: dict[str, Any] = Field(default_factory=dict)
+    locked_route_anchor_fact_ids: tuple[str, ...] = Field(default_factory=tuple, max_length=24)
+    # The single approved evidence bundle the provider may cite for this locked
+    # route.  Claim-bearing copy must stay a subset of this bundle (no route
+    # mixing); the anchors above are always included.
+    allowed_evidence_fact_ids: tuple[str, ...] = Field(default_factory=tuple, max_length=500)
     language_profile: str = Field(default="Malay", min_length=1)
     current_capacity: dict[str, Any] = Field(default_factory=dict)
     # EXPAND/FILL_CAPACITY capacity-engine signals (deficits, marginal unlock per
