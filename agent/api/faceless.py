@@ -79,6 +79,15 @@ class FacelessProfileCertificationReconcileRequest(BaseModel):
     request_id: str | None = None
 
 
+class FacelessProfileCertificationSupersedeRequest(BaseModel):
+    """Owner-authorized retirement of a submitted-but-unsuitable certification."""
+
+    certification_id: str = Field(..., min_length=1)
+    reason: str = Field(..., min_length=1)
+    profile_digest: str = Field(..., min_length=1)
+    request_id: str | None = None
+
+
 async def _require_faceless_staff(staff_id: str | None) -> dict[str, Any]:
     from agent.services.staff_identity_service import (
         StaffIdentityError,
@@ -840,6 +849,49 @@ async def finalize_faceless_profile_certification(
         "certification": result,
         "job": job,
     }
+
+
+@router.post("/profile-certification/supersede")
+async def supersede_faceless_profile_certification(
+    body: FacelessProfileCertificationSupersedeRequest,
+) -> dict[str, Any]:
+    """Owner-authorized supersede of a submitted-but-unsuitable certification.
+
+    Retires one submitted profile certification whose artifact cannot pass frame
+    QC (e.g. wrong aspect) so a single corrected capture can be fired.  The prior
+    certification, its job, snapshot, and artifact rows are preserved — the row is
+    marked FAILED with a reopenable code and archived into append-only history on
+    the next reserve.  Provider-free; never spends credits.
+    """
+
+    owner = _require_profile_certification_owner()
+    from agent.db import provider_certification_crud as _cert_crud
+    from agent.services import provider_certification_service as _certifications
+
+    certification = await _cert_crud.get_by_id(body.certification_id)
+    if certification is None:
+        raise HTTPException(404, "PROFILE_CERTIFICATION_NOT_FOUND")
+    if str(certification.get("profile_digest") or "") != str(body.profile_digest):
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "PROFILE_CERTIFICATION_DIGEST_MISMATCH",
+                "certification_profile_digest": certification.get("profile_digest"),
+                "profile_digest": body.profile_digest,
+            },
+        )
+    try:
+        result = await _certifications.supersede_unsuitable(
+            body.certification_id,
+            reason=body.reason,
+            superseded_by=getattr(owner, "staff_id", None),
+        )
+    except _certifications.ProviderCertificationError as exc:
+        raise HTTPException(
+            409,
+            detail={"error_code": exc.code, "message": str(exc), "details": exc.details},
+        ) from exc
+    return {"status": result.get("status"), "certification": result}
 
 
 @router.post("/prepare")
