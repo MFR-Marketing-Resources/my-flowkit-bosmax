@@ -3547,6 +3547,21 @@ async def _map_lane_to_identity(client, lane: dict, job: dict) -> dict:
     }
 
 
+async def _prepare_initial_bridge_lineage(job: dict) -> dict:
+    """Run the zero-credit editor preflight and persist the immutable vj root."""
+    from agent.services import make_video as _mv
+    from agent.services import video_production_orchestrator as _orch
+
+    client = get_flow_client()
+    binding = await _mv.ensure_editor_binding(
+        client,
+        requested_project_id=(job.get("project_id") or None),
+        mode=str(job.get("initial_mode") or "T2V"),
+    )
+    await _orch.persist_bridge_lineage_root(job["job_id"], binding)
+    return binding
+
+
 async def _production_initial_generator(job: dict) -> dict:
     """LIVE initial block-1 generation through the proven one-door lane.
 
@@ -3559,12 +3574,33 @@ async def _production_initial_generator(job: dict) -> dict:
     NATIVE_EXTEND_ENABLED + a consumed whole-job authorization.
     """
     from agent.services import make_video as _mv
+    from agent.services import video_production_orchestrator as _orch
     import asyncio as _asyncio
     prompt, mode, refs, aspect = _initial_gen_preconditions(job)
 
     client = get_flow_client()
     if not getattr(client, "connected", False):
         raise InitialGenerationError("Extension not connected")
+
+    preflight = job.get("_bridge_lineage_preflight")
+    if not isinstance(preflight, dict):
+        raise InitialGenerationError(
+            "BRIDGE_LINEAGE_PREFLIGHT_REQUIRED: outer job did not supply a released receipt"
+        )
+    try:
+        observed_root, _receipt = _orch._released_preflight_receipt(preflight)
+        persisted_root = _orch.bridge_lineage_root(job)
+    except _orch.OrchestratorError as exc:
+        raise InitialGenerationError(str(exc)) from exc
+    mismatches = {
+        key: {"expected": persisted_root.get(key), "observed": observed_root.get(key)}
+        for key in ("installation_id", "extension_build", "flow_project_id")
+        if str(persisted_root.get(key) or "") != str(observed_root.get(key) or "")
+    }
+    if mismatches:
+        raise InitialGenerationError(
+            "BRIDGE_LINEAGE_PREFLIGHT_MISMATCH:" + json.dumps(mismatches, sort_keys=True)
+        )
 
     from agent.services.product_release_service import (
         ProductOperationalVisibilityError,
@@ -3578,9 +3614,10 @@ async def _production_initial_generator(job: dict) -> dict:
         raise InitialGenerationError(f"{exc.code}:{exc}") from exc
 
     submit = await _mv.start_generate(
-        mode=mode, prompt=prompt, project_id=job.get("project_id") or None,
+        mode=mode, prompt=prompt, project_id=observed_root["flow_project_id"],
         image_media_ids=refs or None,
-        aspect=aspect, model=job.get("model"), duration_s=8, num_videos=1)
+        aspect=aspect, model=job.get("model"), duration_s=8, num_videos=1,
+        product_id=job.get("product_id"), editor_binding=preflight)
     if not isinstance(submit, dict) or submit.get("status") == "REJECTED":
         raise InitialGenerationError(
             f"one-door lane rejected initial: {submit.get('error') if isinstance(submit, dict) else submit}")
@@ -3593,7 +3630,16 @@ async def _production_initial_generator(job: dict) -> dict:
     # re-submits.
     await crud.update_video_production_job_full(
         job["job_id"], initial_lane_job_id=lane_job_id,
-        initial_lane_project_id=(job.get("project_id") or ""))
+        initial_lane_project_id=observed_root["flow_project_id"])
+    if _orch._production_bridge_client(client):
+        try:
+            await _orch.bind_bridge_lineage_initial_lane(
+                job["job_id"],
+                lane_job_id=lane_job_id,
+                project_id=observed_root["flow_project_id"],
+            )
+        except _orch.OrchestratorError as exc:
+            raise InitialGenerationError(str(exc)) from exc
 
     lane = None
     for _ in range(240):  # ~20 min ceiling at 5s; the durable driver owns this wait
@@ -3621,16 +3667,80 @@ async def _resume_initial_generation(job: dict) -> dict:
       {"state": "FAILED", "detail": ...}       lane reached a non-DONE terminal state
     """
     from agent.services import make_video as _mv
+    from agent.services import video_production_orchestrator as _orch
     lane_job_id = job.get("initial_lane_job_id")
     if not lane_job_id:
         return {"state": "INFLIGHT"}  # submit not yet durably recorded; caller waits
+    try:
+        root = _orch.bridge_lineage_root(job)
+    except _orch.OrchestratorError as exc:
+        return {"state": "RECOVERY", "detail": str(exc)}
+    if root.get("initial_lane_job_id") and str(root["initial_lane_job_id"]) != str(lane_job_id):
+        return {
+            "state": "RECOVERY",
+            "detail": "outer bridge root points at a different initial lane",
+        }
     lane = _mv.get_job(lane_job_id)
+    durable = lane is None
     if lane is None:
-        lane = await _mv.get_durable_job(lane_job_id)
+        lane = await _mv.get_durable_job(lane_job_id, reconcile=False)
     if lane is None:
         return {"state": "RECOVERY",
                 "detail": f"initial lane {lane_job_id} lost after restart "
                           f"(project {job.get('initial_lane_project_id') or job.get('project_id')})"}
+
+    inner_preflight = lane.get("editor_binding_preflight")
+    try:
+        inner_root, _inner_receipt = _orch._released_preflight_receipt(inner_preflight)
+    except _orch.OrchestratorError as exc:
+        return {"state": "RECOVERY", "detail": str(exc)}
+    mismatches = {
+        key: {"expected": root.get(key), "observed": inner_root.get(key)}
+        for key in ("installation_id", "extension_build", "flow_project_id")
+        if str(root.get(key) or "") != str(inner_root.get(key) or "")
+    }
+    if lane.get("required_extension_installation_id") not in (
+        None, "", root["installation_id"]
+    ):
+        mismatches["required_extension_installation_id"] = {
+            "expected": root["installation_id"],
+            "observed": lane.get("required_extension_installation_id"),
+        }
+    if lane.get("required_extension_build") not in (None, "", root["extension_build"]):
+        mismatches["required_extension_build"] = {
+            "expected": root["extension_build"],
+            "observed": lane.get("required_extension_build"),
+        }
+    lane_project = str(lane.get("project_id") or "")
+    if lane_project and lane_project != str(root["flow_project_id"]):
+        mismatches["project_id"] = {
+            "expected": root["flow_project_id"],
+            "observed": lane_project,
+        }
+    execution_lease = lane.get("bridge_lease")
+    if isinstance(execution_lease, dict):
+        for key, root_key in (
+            ("installation_id", "installation_id"),
+            ("extension_build", "extension_build"),
+            ("flow_project_id", "flow_project_id"),
+        ):
+            value = execution_lease.get(key)
+            if value not in (None, "") and str(value) != str(root[root_key]):
+                mismatches[f"execution_{key}"] = {
+                    "expected": root[root_key], "observed": value
+                }
+    if mismatches:
+        return {
+            "state": "RECOVERY",
+            "detail": "BRIDGE_LINEAGE_INNER_MISMATCH:"
+            + json.dumps(mismatches, sort_keys=True),
+        }
+    if durable and lane.get("status") not in _INITIAL_GEN_TERMINAL:
+        lane = await _mv.get_durable_job(
+            lane_job_id, reconcile=True, provider_client=get_flow_client()
+        )
+        if lane is None:
+            return {"state": "RECOVERY", "detail": "durable lane reconciliation missing"}
     if lane.get("status") not in _INITIAL_GEN_TERMINAL:
         return {"state": "INFLIGHT"}  # still generating; poll again later
     if lane.get("status") != "DONE":
@@ -3656,6 +3766,7 @@ async def _drive_video_job(job_id: str, token: str):
         await _orch.advance_job(
             client, job_id, authorization_token=token,
             generate_initial=_production_initial_generator,
+            prepare_initial=_prepare_initial_bridge_lineage,
             resume_initial=_resume_initial_generation,
             out_dir=OUTPUT_DIR / "retrieved")
     except Exception:  # noqa: BLE001 — state is persisted; never crash the loop

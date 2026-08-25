@@ -382,6 +382,362 @@ InitialGenFn = Callable[[dict], Awaitable[dict]]
 # Poll-only resume of a persisted in-flight initial lane. Returns a structured state
 # ({"state": "DONE"/"INFLIGHT"/"RECOVERY"/"FAILED", ...}); NEVER submits.
 InitialResumeFn = Callable[[dict], Awaitable[dict]]
+InitialPrepareFn = Callable[[dict], Awaitable[dict]]
+BridgePhaseFn = Callable[[Optional[dict]], Awaitable[Any]]
+
+BRIDGE_LINEAGE_KEY = "bridge_lineage_v1"
+BRIDGE_LINEAGE_VERSION = 1
+_BRIDGE_ROOT_FIELDS = (
+    "installation_id",
+    "extension_build",
+    "flow_project_id",
+)
+_BRIDGE_RECEIPT_FIELDS = (
+    "lease_id",
+    "connection_id",
+    "connection_epoch",
+    "installation_id",
+    "extension_session_id",
+    "extension_build",
+    "flow_tab_id",
+    "flow_url",
+    "flow_project_id",
+    "released",
+    "released_at",
+    "receipt_state",
+)
+
+
+def _decode_stage_state(raw: Any) -> dict:
+    if raw in (None, ""):
+        return {}
+    try:
+        state = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError) as exc:
+        raise OrchestratorError(
+            "VIDEO_STAGE_STATE_INVALID", "stage_state_json is not valid JSON"
+        ) from exc
+    if not isinstance(state, dict):
+        raise OrchestratorError(
+            "VIDEO_STAGE_STATE_INVALID", "stage_state_json must be an object"
+        )
+    return dict(state)
+
+
+async def merge_video_production_job_stage_state(
+    job_id: str,
+    updates: dict,
+    *,
+    max_attempts: int = 8,
+) -> dict:
+    """CAS-merge top-level stage-state keys without losing concurrent evidence."""
+    if not isinstance(updates, dict):
+        raise OrchestratorError("VIDEO_STAGE_STATE_INVALID", "updates must be an object")
+    for _ in range(max(1, int(max_attempts))):
+        job = await _crud.get_video_production_job(job_id)
+        if not job:
+            raise OrchestratorError("VIDEO_JOB_NOT_FOUND", job_id)
+        raw = job.get("stage_state_json")
+        state = _decode_stage_state(raw)
+        state.update(updates)
+        encoded = json.dumps(
+            state, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        )
+        if await _crud.compare_and_swap_video_production_job_stage_state(
+            job_id,
+            expected_stage_state_json=raw,
+            stage_state_json=encoded,
+        ):
+            return state
+    raise OrchestratorError(
+        "VIDEO_STAGE_STATE_CAS_CONFLICT", f"concurrent stage-state writes for {job_id}"
+    )
+
+
+def _released_preflight_receipt(binding: dict) -> tuple[dict, dict]:
+    receipt = binding.get("bridge_lease") if isinstance(binding, dict) else None
+    if not isinstance(receipt, dict):
+        raise OrchestratorError(
+            "BRIDGE_LINEAGE_PREFLIGHT_INVALID", "released bridge receipt missing"
+        )
+    project_id = str(
+        binding.get("project_id") or receipt.get("flow_project_id") or ""
+    ).strip()
+    stable = {
+        "installation_id": str(receipt.get("installation_id") or "").strip(),
+        "extension_build": str(receipt.get("extension_build") or "").strip(),
+        "flow_project_id": project_id,
+    }
+    missing = [key for key, value in stable.items() if not value]
+    invalid_build = stable["extension_build"].lower() in {
+        "legacy", "unknown", "n/a", "none"
+    }
+    if (
+        missing
+        or invalid_build
+        or receipt.get("released") is not True
+        or receipt.get("receipt_state") != "PREFLIGHT_RELEASED"
+    ):
+        raise OrchestratorError(
+            "BRIDGE_LINEAGE_PREFLIGHT_INVALID",
+            f"missing={missing} invalid_build={invalid_build} released="
+            f"{receipt.get('released')!r}",
+        )
+    sanitized = {
+        key: receipt.get(key)
+        for key in _BRIDGE_RECEIPT_FIELDS
+        if receipt.get(key) is not None
+    }
+    return stable, sanitized
+
+
+def bridge_lineage_root(job: dict, *, required: bool = True) -> Optional[dict]:
+    state = _decode_stage_state(job.get("stage_state_json"))
+    root = state.get(BRIDGE_LINEAGE_KEY)
+    if not isinstance(root, dict):
+        if required:
+            raise OrchestratorError(
+                "BRIDGE_LINEAGE_ROOT_REQUIRED", str(job.get("job_id") or "")
+            )
+        return None
+    if root.get("version") != BRIDGE_LINEAGE_VERSION:
+        raise OrchestratorError(
+            "BRIDGE_LINEAGE_VERSION_MISMATCH", str(root.get("version"))
+        )
+    missing = [key for key in _BRIDGE_ROOT_FIELDS if not root.get(key)]
+    if missing:
+        raise OrchestratorError(
+            "BRIDGE_LINEAGE_ROOT_INCOMPLETE", ",".join(missing)
+        )
+    return dict(root)
+
+
+async def persist_bridge_lineage_root(job_id: str, binding: dict) -> dict:
+    """Persist one immutable installation/build/project root before paid work."""
+    stable, receipt = _released_preflight_receipt(binding)
+    for _ in range(8):
+        job = await _crud.get_video_production_job(job_id)
+        if not job:
+            raise OrchestratorError("VIDEO_JOB_NOT_FOUND", job_id)
+        raw = job.get("stage_state_json")
+        state = _decode_stage_state(raw)
+        current = state.get(BRIDGE_LINEAGE_KEY)
+        if current is not None and not isinstance(current, dict):
+            raise OrchestratorError(
+                "BRIDGE_LINEAGE_ROOT_INVALID", "persisted root is not an object"
+            )
+        if isinstance(current, dict):
+            root = dict(current)
+            if root.get("version") != BRIDGE_LINEAGE_VERSION:
+                raise OrchestratorError(
+                    "BRIDGE_LINEAGE_VERSION_MISMATCH", str(root.get("version"))
+                )
+            mismatch = {
+                key: {"expected": root.get(key), "observed": stable[key]}
+                for key in _BRIDGE_ROOT_FIELDS
+                if str(root.get(key) or "") != stable[key]
+            }
+            if mismatch:
+                raise OrchestratorError(
+                    "BRIDGE_LINEAGE_ROOT_MISMATCH", json.dumps(mismatch, sort_keys=True)
+                )
+        else:
+            root = {
+                "version": BRIDGE_LINEAGE_VERSION,
+                **stable,
+                "initial_preflight_receipt": receipt,
+                "phases": {},
+            }
+        if job.get("project_id") and str(job["project_id"]) != stable["flow_project_id"]:
+            raise OrchestratorError(
+                "BRIDGE_LINEAGE_PROJECT_MISMATCH",
+                f"{job.get('project_id')}!={stable['flow_project_id']}",
+            )
+        state[BRIDGE_LINEAGE_KEY] = root
+        encoded = json.dumps(
+            state, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        )
+        if await _crud.compare_and_swap_video_production_job_stage_state(
+            job_id,
+            expected_stage_state_json=raw,
+            stage_state_json=encoded,
+        ):
+            if not job.get("project_id"):
+                await _crud.update_video_production_job_full(
+                    job_id, project_id=stable["flow_project_id"]
+                )
+            return root
+    raise OrchestratorError(
+        "VIDEO_STAGE_STATE_CAS_CONFLICT", f"could not persist bridge root for {job_id}"
+    )
+
+
+async def bind_bridge_lineage_initial_lane(
+    job_id: str,
+    *,
+    lane_job_id: str,
+    project_id: str,
+) -> dict:
+    """Bind the accepted inner lane handle once without replacing another child."""
+    for _ in range(8):
+        job = await _crud.get_video_production_job(job_id)
+        if not job:
+            raise OrchestratorError("VIDEO_JOB_NOT_FOUND", job_id)
+        raw = job.get("stage_state_json")
+        state = _decode_stage_state(raw)
+        root = bridge_lineage_root(job)
+        if str(root["flow_project_id"]) != str(project_id):
+            raise OrchestratorError(
+                "BRIDGE_LINEAGE_PROJECT_MISMATCH",
+                f"{root['flow_project_id']}!={project_id}",
+            )
+        existing = str(root.get("initial_lane_job_id") or "")
+        if existing and existing != str(lane_job_id):
+            raise OrchestratorError(
+                "BRIDGE_LINEAGE_INITIAL_LANE_MISMATCH",
+                f"{existing}!={lane_job_id}",
+            )
+        root["initial_lane_job_id"] = str(lane_job_id)
+        state[BRIDGE_LINEAGE_KEY] = root
+        encoded = json.dumps(
+            state, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        )
+        if await _crud.compare_and_swap_video_production_job_stage_state(
+            job_id,
+            expected_stage_state_json=raw,
+            stage_state_json=encoded,
+        ):
+            return root
+    raise OrchestratorError(
+        "VIDEO_STAGE_STATE_CAS_CONFLICT", f"could not bind initial lane for {job_id}"
+    )
+
+
+async def _record_bridge_phase(job_id: str, phase: str, receipt: dict) -> None:
+    for _ in range(8):
+        job = await _crud.get_video_production_job(job_id)
+        if not job:
+            raise OrchestratorError("VIDEO_JOB_NOT_FOUND", job_id)
+        raw = job.get("stage_state_json")
+        state = _decode_stage_state(raw)
+        root = bridge_lineage_root(job)
+        phases = dict(root.get("phases") or {})
+        phases[str(phase)] = dict(receipt)
+        root["phases"] = phases
+        state[BRIDGE_LINEAGE_KEY] = root
+        encoded = json.dumps(
+            state, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        )
+        if await _crud.compare_and_swap_video_production_job_stage_state(
+            job_id,
+            expected_stage_state_json=raw,
+            stage_state_json=encoded,
+        ):
+            return
+    raise OrchestratorError(
+        "VIDEO_STAGE_STATE_CAS_CONFLICT", f"could not persist phase {phase}"
+    )
+
+
+def _production_bridge_client(client: Any) -> bool:
+    from agent.services.flow_client import FlowClient
+
+    return isinstance(client, FlowClient)
+
+
+async def bridge_lineage_phase(
+    client: Any,
+    job_id: str,
+    phase: str,
+    action: BridgePhaseFn,
+) -> Any:
+    """Run one provider-facing phase on a freshly challenged rooted lease.
+
+    Small non-FlowClient unit doubles remain an explicit provider-free seam.
+    Production ``FlowClient`` instances cannot bypass the persisted root.
+    """
+    if not _production_bridge_client(client):
+        return await action(None)
+
+    job = await _crud.get_video_production_job(job_id)
+    if not job:
+        raise OrchestratorError("VIDEO_JOB_NOT_FOUND", job_id)
+    root = bridge_lineage_root(job)
+    lease_methods = (
+        "acquire_operation_lease",
+        "activate_operation_lease",
+        "release_operation_lease",
+    )
+    if not all(callable(getattr(client, name, None)) for name in lease_methods):
+        raise OrchestratorError(
+            "BRIDGE_LINEAGE_LEASE_API_UNAVAILABLE", client.__class__.__name__
+        )
+
+    lease = None
+    bound_receipt = None
+    released = False
+    try:
+        lease = client.acquire_operation_lease(
+            installation_id=str(root["installation_id"])
+        )
+        with client.activate_operation_lease(lease):
+            from agent.services import make_video as _mv
+
+            binding = await _mv._bind_editor_session(
+                client,
+                str(root["flow_project_id"]),
+                bridge_lease=lease,
+            )
+            lease = dict(binding.get("bridge_lease") or {})
+            observed = {
+                "installation_id": str(lease.get("installation_id") or ""),
+                "extension_build": str(lease.get("extension_build") or ""),
+                "flow_project_id": str(
+                    binding.get("project_id") or lease.get("flow_project_id") or ""
+                ),
+            }
+            mismatch = {
+                key: {"expected": root[key], "observed": observed[key]}
+                for key in _BRIDGE_ROOT_FIELDS
+                if str(root[key]) != observed[key]
+            }
+            if mismatch:
+                raise OrchestratorError(
+                    "BRIDGE_LINEAGE_PHASE_MISMATCH", json.dumps(mismatch, sort_keys=True)
+                )
+            bound_receipt = {
+                key: lease.get(key)
+                for key in _BRIDGE_RECEIPT_FIELDS
+                if lease.get(key) is not None
+            }
+            bound_receipt.update(
+                {
+                    "state": "BOUND",
+                    "phase": str(phase),
+                    "flow_project_id": observed["flow_project_id"],
+                }
+            )
+            await _record_bridge_phase(job_id, phase, bound_receipt)
+            return await action(binding)
+    finally:
+        # This synchronous release is deliberately the first cleanup operation:
+        # cancellation or a failed evidence write cannot strand connection ownership.
+        if lease is not None:
+            try:
+                released = bool(client.release_operation_lease(lease))
+            except Exception:  # noqa: BLE001 — evidence below records the failure
+                released = False
+        if bound_receipt is not None:
+            release_receipt = {
+                **bound_receipt,
+                "state": "RELEASED" if released else "RELEASE_FAILED",
+                "released": released,
+                "released_at": time.time(),
+            }
+            try:
+                await _record_bridge_phase(job_id, phase, release_receipt)
+            except Exception:  # noqa: BLE001 — never mask the provider/action result
+                pass
 
 
 async def _persist_initial_result(job_id: str, idem: str, seg: dict, *,
@@ -499,6 +855,7 @@ async def advance_job(
     client, job_id: str, *,
     authorization_token: str,
     generate_initial: InitialGenFn,
+    prepare_initial: Optional[InitialPrepareFn] = None,
     resume_initial: Optional[InitialResumeFn] = None,
     now: Optional[float] = None,
     poll_interval_s: int = 5,
@@ -567,70 +924,98 @@ async def advance_job(
                 return await get_job_status(job_id)  # await human start
             if _gate_stage_start(job, authorization_token, now) == _AUTH_EXPIRED:
                 return await _stop_auth_expired(job_id)
-            r = await _reserve_or_resume(idem, job_id, "INITIAL")
-            # retry_safety=SAFE contract, INITIAL-stage mirror of the EXTEND fix:
-            # a pre-submit rejection leaves the row NOT_ATTEMPTED / NOT_SPENT /
-            # SAFE with no operation_ref — provably zero provider side effect —
-            # and MAY submit again under a fresh authorization (live:
-            # vj_efed7c24d9cc stuck AUTHORIZED forever after a rate-limiter
-            # rejection). Any other existing row still resumes, never resubmits.
-            _row = r["row"] or {}
-            _safe_retry = (
-                not r["reserved"]
-                and not _row.get("operation_ref")
-                and _row.get("submission_state") == SUB_NOT_ATTEMPTED
-                and _row.get("retry_safety") == RS_SAFE
-            )
-            if not r["reserved"] and not _safe_retry:
-                # lost the reserve race to a concurrent caller — resume, don't submit
-                return await _drive_initial_resume(job_id, idem, resume_initial, client)
-            bal_before = await _safe_credits(client)
-            await _crud.update_video_production_job_full(job_id, status=S_INITIAL_SUBMITTING)
-            await _crud.increment_side_effect_submit_count(idem)
-            await _crud.update_video_job_side_effect(
-                idem, submission_state=SUB_SUBMITTED, credit_state=CR_MAY_HAVE_SPENT,
-                retry_safety=RS_RESUME_ONLY, credit_balance_before=bal_before)
-            try:
-                seg = await generate_initial(job)
-            except Exception as exc:  # noqa: BLE001
-                # Evidence-based classification: the one-door lane persists the
-                # durable lane handle (initial_lane_job_id) the INSTANT a submit
-                # is accepted, BEFORE any long poll. No handle on the job row =>
-                # the provider never accepted a submission (e.g. a CAPTCHA /
-                # rate-limiter rejection) => provably zero credit side effect =>
-                # the row stays SAFE-retryable instead of stranding the job.
-                # A handle present means a lane job existed — but a terminal
-                # error carrying a known zero-credit rejection signature
-                # (editor closed, CAPTCHA, rate limiter, build mismatch) is
-                # STILL provably pre-generation, so it stays retryable too
-                # (live: vj_bda8259b2780 stranded on NO_OPEN_EDITOR). Anything
-                # else stays UNCERTAIN / BLOCKED (credits may have been spent).
-                fresh = await _crud.get_video_production_job(job_id) or {}
-                _err_text = str(exc)
-                _zero_credit = any(
-                    sig in _err_text for sig in ZERO_CREDIT_REJECTION_SIGNATURES
+
+            # The zero-credit editor preflight and immutable root persistence must
+            # finish before INITIAL ownership is reserved.  If this await is
+            # interrupted there is still no side-effect row to strand in an
+            # unsubmitted RESUME_ONLY state; re-entry can safely start again.
+            callback_job = job
+            if prepare_initial is not None:
+                try:
+                    preflight = await prepare_initial(job)
+                except Exception as exc:  # noqa: BLE001 — provider-free, retryable
+                    await _crud.update_video_production_job_full(
+                        job_id, status=F_INITIAL, error_code=F_INITIAL
+                    )
+                    raise OrchestratorError(F_INITIAL, str(exc)[:200]) from exc
+                refreshed = await _crud.get_video_production_job(job_id)
+                if not refreshed:
+                    raise OrchestratorError("VIDEO_JOB_NOT_FOUND", job_id)
+                callback_job = {
+                    **refreshed,
+                    "_bridge_lineage_preflight": preflight,
+                }
+
+            async def _run_initial(_binding):
+                bal_before = await _safe_credits(client)
+                claim = await _crud.claim_safe_video_job_side_effect_submission(
+                    idem,
+                    job_id=job_id,
+                    stage="INITIAL",
+                    expected_submit_count=int(
+                        (existing or {}).get("effective_submit_count") or 0
+                    ),
+                    credit_balance_before=bal_before,
                 )
-                if not str(fresh.get("initial_lane_job_id") or "").strip() or _zero_credit:
-                    await _crud.update_video_job_side_effect(
-                        idem, submission_state=SUB_NOT_ATTEMPTED,
-                        credit_state=CR_NOT_SPENT, retry_safety=RS_SAFE,
-                        detail=str(exc)[:200])
-                else:
-                    await _crud.update_video_job_side_effect(
-                        idem, submission_state=SUB_UNCERTAIN,
-                        credit_state=CR_MAY_HAVE_SPENT,
-                        retry_safety=RS_BLOCKED, detail=str(exc)[:200])
+                if not claim["claimed"]:
+                    # A concurrent caller crossed the exact submit boundary first,
+                    # or the durable row is not provably SAFE. Resume only.
+                    return await _drive_initial_resume(
+                        job_id, idem, resume_initial, client
+                    )
                 await _crud.update_video_production_job_full(
-                    job_id, status=F_INITIAL, error_code=F_INITIAL)
-                raise OrchestratorError(F_INITIAL, str(exc)[:200]) from exc
-            await _persist_initial_result(job_id, idem, seg, bal_before=bal_before, client=client)
+                    job_id, status=S_INITIAL_SUBMITTING
+                )
+                try:
+                    seg = await generate_initial(callback_job)
+                except Exception as exc:  # noqa: BLE001
+                    # The one-door lane persists its handle immediately after an
+                    # accepted submit. No handle (or a proven zero-credit rejection)
+                    # remains SAFE; an accepted unknown child remains BLOCKED.
+                    fresh = await _crud.get_video_production_job(job_id) or {}
+                    _err_text = str(exc)
+                    _zero_credit = any(
+                        sig in _err_text for sig in ZERO_CREDIT_REJECTION_SIGNATURES
+                    )
+                    if (
+                        not str(fresh.get("initial_lane_job_id") or "").strip()
+                        or _zero_credit
+                    ):
+                        await _crud.update_video_job_side_effect(
+                            idem, submission_state=SUB_NOT_ATTEMPTED,
+                            credit_state=CR_NOT_SPENT, retry_safety=RS_SAFE,
+                            detail=str(exc)[:200])
+                    else:
+                        await _crud.update_video_job_side_effect(
+                            idem, submission_state=SUB_UNCERTAIN,
+                            credit_state=CR_MAY_HAVE_SPENT,
+                            retry_safety=RS_BLOCKED, detail=str(exc)[:200])
+                    await _crud.update_video_production_job_full(
+                        job_id, status=F_INITIAL, error_code=F_INITIAL)
+                    raise OrchestratorError(F_INITIAL, str(exc)[:200]) from exc
+                await _persist_initial_result(
+                    job_id, idem, seg, bal_before=bal_before, client=client
+                )
+
+            initial_result = await bridge_lineage_phase(
+                client, job_id, "INITIAL", _run_initial
+            )
             job = await _crud.get_video_production_job(job_id)
+            if not job.get("initial_operation_id"):
+                return initial_result
         else:
             # ALREADY SUBMITTED (this run or a crashed prior run) — resume poll-only.
             if existing.get("submission_state") == SUB_UNCERTAIN:
                 # already reconciled to RECOVERY/failed — surface, never resubmit
                 return await get_job_status(job_id)
-            resumed = await _drive_initial_resume(job_id, idem, resume_initial, client)
+            async def _resume_initial(_binding):
+                return await _drive_initial_resume(
+                    job_id, idem, resume_initial, client
+                )
+
+            resumed = await bridge_lineage_phase(
+                client, job_id, "INITIAL_RESUME", _resume_initial
+            )
             job = await _crud.get_video_production_job(job_id)
             if not job.get("initial_operation_id"):
                 return resumed  # still in-flight / recovery — poll again later
@@ -686,9 +1071,14 @@ async def advance_job(
                 source_operation_id=parent_op, blocks=blocks,
                 aspect_ratio=extend_aspect_ratio(job.get("aspect_ratio")))
             try:
-                result = await _nx.run_native_extend_chain(
-                    client, req, dry_run=False, confirm_live_credit_burn=True,
-                    confirmed_extend_operation_count=1)
+                async def _run_extend(_binding):
+                    return await _nx.run_native_extend_chain(
+                        client, req, dry_run=False, confirm_live_credit_burn=True,
+                        confirmed_extend_operation_count=1)
+
+                result = await bridge_lineage_phase(
+                    client, job_id, f"EXTEND_{position}", _run_extend
+                )
             except Exception as exc:  # noqa: BLE001
                 # Credit honesty: classify by whether the generate_video_extend RPC
                 # was reached (provider touched). A POST-RPC failure code — or a
@@ -710,7 +1100,7 @@ async def advance_job(
                     job_id, status=F_EXTEND, error_code=F_EXTEND)
                 raise OrchestratorError(F_EXTEND, str(exc)[:200]) from exc
             child = (result.get("blocks") or [{}])[-1]
-            child_op = child.get("child_operation_id") or child.get("child_primary_media_id")
+            child_op = child.get("child_operation_id")
             if not child_op:
                 await _crud.update_video_job_side_effect(
                     idem, submission_state=SUB_UNCERTAIN, credit_state=CR_MAY_HAVE_SPENT,
@@ -739,10 +1129,72 @@ async def advance_job(
                     extend_child_operation_id=row["operation_ref"],
                     segment_media_ids_json=json.dumps(segs))
                 job = await _crud.get_video_production_job(job_id)
-            elif row.get("submission_state") == SUB_UNCERTAIN:
-                raise OrchestratorError(F_EXTEND, "prior extend submit UNCERTAIN")
             else:
-                return await get_job_status(job_id)
+                native_idem = _nx._idempotency_key(
+                    str(job.get("project_id") or ""),
+                    str(job.get("scene_id") or ""),
+                    position,
+                    _nx._prompt_hash(prompt),
+                    parent_op,
+                )
+                lineage = await _crud.get_extend_lineage_by_idempotency(native_idem)
+                if lineage and lineage.get("polling_state") in {
+                    _nx.STATE_SUBMITTED,
+                    _nx.STATE_POLLING,
+                    _nx.STATE_HARVEST_FAILED,
+                    _nx.STATE_SUCCEEDED,
+                }:
+                    try:
+                        async def _resume_extend(_binding):
+                            return await _nx.resume_known_extend_child(
+                                client,
+                                lineage_id=lineage["extend_lineage_id"],
+                                poll_interval_s=poll_interval_s,
+                            )
+
+                        child = await bridge_lineage_phase(
+                            client,
+                            job_id,
+                            f"EXTEND_{position}_RESUME",
+                            _resume_extend,
+                        )
+                    except Exception as exc:  # noqa: BLE001 — never resubmit
+                        await _crud.update_video_job_side_effect(
+                            idem,
+                            submission_state=SUB_UNCERTAIN,
+                            credit_state=CR_MAY_HAVE_SPENT,
+                            retry_safety=RS_BLOCKED,
+                            detail=str(exc)[:200],
+                        )
+                        await _crud.update_video_production_job_full(
+                            job_id, status=F_EXTEND, error_code=F_EXTEND
+                        )
+                        raise OrchestratorError(F_EXTEND, str(exc)[:200]) from exc
+                    child_op = child.get("child_operation_id")
+                    if not child_op:
+                        raise OrchestratorError(
+                            F_EXTEND, "known Extend lineage returned no child operation"
+                        )
+                    segs = segments + [child_op]
+                    await _crud.update_video_production_job_full(
+                        job_id,
+                        status=S_EXTEND_READY,
+                        extend_child_operation_id=child_op,
+                        extend_child_workflow_id=child.get("child_workflow_id"),
+                        segment_media_ids_json=json.dumps(segs),
+                    )
+                    await _crud.update_video_job_side_effect(
+                        idem,
+                        submission_state=SUB_TERMINAL,
+                        credit_state=CR_MAY_HAVE_SPENT,
+                        retry_safety=RS_RESUME_ONLY,
+                        operation_ref=child_op,
+                    )
+                    job = await _crud.get_video_production_job(job_id)
+                elif row.get("submission_state") == SUB_UNCERTAIN:
+                    raise OrchestratorError(F_EXTEND, "prior extend submit UNCERTAIN")
+                else:
+                    return await get_job_status(job_id)
 
     # ── CONCAT / final render — DB-atomic idempotency is critical here ───────
     if not job.get("final_media_id"):
@@ -772,12 +1224,17 @@ async def advance_job(
                 idem, submission_state=SUB_SUBMITTED, credit_state=CR_UNKNOWN,
                 retry_safety=RS_RESUME_ONLY)
         try:
-            done = await _ft.finalize_timeline(
-                client, job_id=job_id, segment_media_ids=segments,
-                requested_seconds=int(job.get("requested_duration_seconds") or 16),
-                out_dir=out_dir or (Path("output") / "retrieved"),
-                dry_run=False, confirm_live_credit_burn=True,
-                poll_interval_s=poll_interval_s)
+            async def _run_concat(_binding):
+                return await _ft.finalize_timeline(
+                    client, job_id=job_id, segment_media_ids=segments,
+                    requested_seconds=int(job.get("requested_duration_seconds") or 16),
+                    out_dir=out_dir or (Path("output") / "retrieved"),
+                    dry_run=False, confirm_live_credit_burn=True,
+                    poll_interval_s=poll_interval_s)
+
+            done = await bridge_lineage_phase(
+                client, job_id, "CONCAT", _run_concat
+            )
         except _ft.FinalTimelineError as exc:
             uncertain = exc.code in (_ft.FAIL_FINAL_SUBMIT_UNCERTAIN, _ft.FAIL_FINAL_RENDER)
             await _crud.update_video_job_side_effect(

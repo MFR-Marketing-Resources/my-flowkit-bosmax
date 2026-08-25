@@ -4437,6 +4437,30 @@ async def update_video_production_job_full(job_id: str, **fields) -> None:
         await db.commit()
 
 
+async def compare_and_swap_video_production_job_stage_state(
+    job_id: str,
+    *,
+    expected_stage_state_json: str | None,
+    stage_state_json: str,
+) -> bool:
+    """Replace one raw stage-state snapshot only when it is still current.
+
+    Callers merge against a freshly read JSON object before invoking this
+    primitive.  The raw ``IS ?`` comparison preserves concurrently written
+    recovery/audit keys without adding a schema or lock outside SQLite.
+    """
+    db = await get_db()
+    async with _db_lock:
+        cur = await db.execute(
+            "UPDATE video_production_job SET stage_state_json=?, "
+            "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+            "WHERE job_id=? AND stage_state_json IS ?",
+            (stage_state_json, job_id, expected_stage_state_json),
+        )
+        await db.commit()
+    return cur.rowcount == 1
+
+
 async def consume_job_authorization(job_id: str, token: str, *,
                                     plan_fingerprint: str, now: str) -> dict:
     """Atomically CONSUME a job's single-use authorization at start.
@@ -4491,6 +4515,58 @@ async def reserve_video_job_side_effect(idempotency_key: str, *, job_id: str,
             (idempotency_key,))
         row = await row.fetchone()
     return {"reserved": reserved, "row": dict(row) if row else None}
+
+
+async def claim_safe_video_job_side_effect_submission(
+    idempotency_key: str,
+    *,
+    job_id: str,
+    stage: str,
+    expected_submit_count: int,
+    credit_balance_before: float | None = None,
+) -> dict:
+    """Atomically create/claim the exact provider-safe submission boundary.
+
+    A missing row is inserted as ``NOT_ATTEMPTED/NOT_SPENT/SAFE`` and claimed in
+    the same DB critical section.  An existing row is claimable only from that
+    exact state, with no operation reference and the caller's observed submit
+    count.  The winning transition records ``SUBMITTED/MAY_HAVE_SPENT`` and
+    increments the count; every concurrent loser receives ``claimed=False``.
+    """
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            "INSERT OR IGNORE INTO video_job_side_effect "
+            "(idempotency_key, job_id, stage, submission_state, credit_state, "
+            "retry_safety) VALUES (?,?,?,'NOT_ATTEMPTED','NOT_SPENT','SAFE')",
+            (idempotency_key, job_id, stage),
+        )
+        cur = await db.execute(
+            "UPDATE video_job_side_effect SET submission_state='SUBMITTED', "
+            "credit_state='MAY_HAVE_SPENT', retry_safety='RESUME_ONLY', "
+            "effective_submit_count=effective_submit_count+1, detail=NULL, "
+            "credit_balance_before=?, "
+            "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+            "WHERE idempotency_key=? AND job_id=? AND stage=? "
+            "AND submission_state='NOT_ATTEMPTED' "
+            "AND credit_state='NOT_SPENT' AND retry_safety='SAFE' "
+            "AND operation_ref IS NULL AND effective_submit_count=?",
+            (
+                credit_balance_before,
+                idempotency_key,
+                job_id,
+                stage,
+                int(expected_submit_count),
+            ),
+        )
+        await db.commit()
+        claimed = cur.rowcount == 1
+        row = await db.execute(
+            "SELECT * FROM video_job_side_effect WHERE idempotency_key=?",
+            (idempotency_key,),
+        )
+        row = await row.fetchone()
+    return {"claimed": claimed, "row": dict(row) if row else None}
 
 
 async def list_video_job_side_effects(job_id: str) -> list[dict]:

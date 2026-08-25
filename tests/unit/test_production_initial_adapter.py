@@ -8,10 +8,12 @@ job; resolves durable scene evidence; maps the real result into the identity the
 Extend/concat stages need; and fails closed when any identity is missing.
 """
 import pytest
+import json
 
 from agent.api import flow
 from agent.services import make_video as mv
 from agent.services import google_flow_native_extend_runtime as nx
+from agent.services import product_release_service
 
 
 class _FakeClient:
@@ -21,7 +23,36 @@ class _FakeClient:
         return {"remainingCredits": 1234.0}
 
 
+def _released_binding(project_id="proj-77"):
+    return {
+        "project_id": project_id,
+        "bridge_lease": {
+            "lease_id": "preflight-lease-a",
+            "connection_id": "connection-a1",
+            "connection_epoch": 1,
+            "installation_id": "installation-a",
+            "extension_session_id": "session-a1",
+            "extension_build": "build-current",
+            "flow_tab_id": 77,
+            "flow_url": f"https://labs.google/fx/tools/flow/project/{project_id}",
+            "flow_project_id": project_id,
+            "released": True,
+            "released_at": 1.0,
+            "receipt_state": "PREFLIGHT_RELEASED",
+        },
+    }
+
+
 def _job():
+    binding = _released_binding()
+    root = {
+        "version": 1,
+        "installation_id": "installation-a",
+        "extension_build": "build-current",
+        "flow_project_id": "proj-77",
+        "initial_preflight_receipt": binding["bridge_lease"],
+        "phases": {},
+    }
     return {
         "job_id": "vj_test", "product_id": "6483d624",
         "approved_asset_id": "product-image:6483d624:subject",
@@ -31,13 +62,16 @@ def _job():
         "requested_duration_seconds": 16,
         "initial_prompt_text": "block-1 product-truth prompt: MWTCB held in palm, "
                                "label facing camera, UGC iPhone raw",
-        "project_id": None,
+        "project_id": "proj-77",
+        "stage_state_json": json.dumps({"bridge_lineage_v1": root}),
+        "_bridge_lineage_preflight": binding,
     }
 
 
 def _wire(monkeypatch, *, lane_status="DONE", lane_extra=None, scene="scene-9",
           scene_raises=False):
     captured = {}
+    binding = _released_binding()
 
     async def fake_start_generate(**kwargs):
         captured.update(kwargs)
@@ -45,7 +79,10 @@ def _wire(monkeypatch, *, lane_status="DONE", lane_extra=None, scene="scene-9",
 
     def fake_get_job(job_id):
         job = {"job_id": job_id, "status": lane_status, "project_id": "proj-77",
-               "video_media_id": "clip-op-1"}
+               "video_media_id": "clip-op-1",
+               "editor_binding_preflight": binding,
+               "required_extension_installation_id": "installation-a",
+               "required_extension_build": "build-current"}
         job.update(lane_extra or {})
         return job
 
@@ -55,6 +92,12 @@ def _wire(monkeypatch, *, lane_status="DONE", lane_extra=None, scene="scene-9",
         return {"scene_id": scene, "workflow_id": "wf-42"}
 
     monkeypatch.setattr(flow, "get_flow_client", lambda: _FakeClient())
+    async def allow_product(*args, **kwargs):
+        return {"operational": True}
+
+    monkeypatch.setattr(
+        product_release_service, "require_product_operational_visibility", allow_product
+    )
     monkeypatch.setattr(mv, "start_generate", fake_start_generate)
     monkeypatch.setattr(mv, "get_job", fake_get_job)
     monkeypatch.setattr(nx, "resolve_extend_source_context", fake_scene)
@@ -63,7 +106,8 @@ def _wire(monkeypatch, *, lane_status="DONE", lane_extra=None, scene="scene-9",
 
 async def test_adapter_calls_one_door_with_exact_authority(monkeypatch):
     captured = _wire(monkeypatch)
-    out = await flow._production_initial_generator(_job())
+    job = _job()
+    out = await flow._production_initial_generator(job)
     # the ONE door was called with the exact reviewed authority
     assert captured["mode"] == "I2V"
     assert captured["prompt"] == _job()["initial_prompt_text"]
@@ -71,6 +115,8 @@ async def test_adapter_calls_one_door_with_exact_authority(monkeypatch):
     assert captured["aspect"] == "9:16"                  # PORTRAIT → 9:16
     assert captured["model"] == "veo_3_1_extension_lite"
     assert captured["num_videos"] == 1
+    assert captured["editor_binding"] is job["_bridge_lineage_preflight"]
+    assert captured["project_id"] == "proj-77"
     # identities mapped from the real lane result
     assert out["operation_id"] == "clip-op-1"
     assert out["media_id"] == "clip-op-1"
@@ -187,12 +233,18 @@ async def test_resume_reports_inflight_then_done(monkeypatch):
     monkeypatch.setattr(nx, "resolve_extend_source_context", _raise_scene)
     job = {**_job(), "initial_lane_job_id": "g_run", "initial_lane_project_id": "proj-77"}
 
+    inner = {
+        "editor_binding_preflight": _released_binding(),
+        "required_extension_installation_id": "installation-a",
+        "required_extension_build": "build-current",
+    }
     monkeypatch.setattr(mv, "get_job",
-                        lambda jid: {"status": "GENERATING", "project_id": "proj-77"})
+                        lambda jid: {**inner, "status": "GENERATING", "project_id": "proj-77"})
     assert (await flow._resume_initial_generation(job))["state"] == "INFLIGHT"
 
     monkeypatch.setattr(mv, "get_job", lambda jid: {
-        "status": "DONE", "project_id": "proj-77", "video_media_id": "clip-op-1"})
+        **inner, "status": "DONE", "project_id": "proj-77",
+        "video_media_id": "clip-op-1"})
     done = await flow._resume_initial_generation(job)
     assert done["state"] == "DONE"
     assert done["identity"]["scene_id"] == "scene-created-1"
