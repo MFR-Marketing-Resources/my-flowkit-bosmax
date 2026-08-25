@@ -1086,12 +1086,19 @@ def complete_json_with_receipt(
     *,
     max_output_tokens: int | None = None,
     lane: str = LANE,
+    allow_fallback: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return parsed JSON plus provenance for the exact call that produced it.
 
     The process-global latest-call receipt remains available for diagnostics, but
     production lineage must use this per-call return value so concurrent requests
     cannot be associated with one another.
+
+    ``allow_fallback`` (default ``True``) preserves the existing structure-lane
+    fallback behaviour for every current caller. A caller that must guarantee at
+    most ONE provider call (e.g. the Creative Atom Factory) passes
+    ``allow_fallback=False`` to suppress the fallback for that call only, without
+    disabling or mutating the global structure-fallback setting.
     """
 
     canonical = _canonical_text_structure_lane(lane)
@@ -1118,7 +1125,7 @@ def complete_json_with_receipt(
                 primary_receipt["usage"] = usage
                 exc.usage = dict(usage)
             exc.provider_receipt = primary_receipt
-        if canonical == "structure" and _fallback_is_eligible(exc):
+        if allow_fallback and canonical == "structure" and _fallback_is_eligible(exc):
             target = _structure_fallback_target()
             if target:
                 provider_id, model_id, api_key = target
@@ -1161,7 +1168,7 @@ def complete_json_with_receipt(
         text, finish_reason, call_id
     )
     if parse_error is not None:
-        if canonical == "structure" and _fallback_is_eligible(parse_error):
+        if allow_fallback and canonical == "structure" and _fallback_is_eligible(parse_error):
             target = _structure_fallback_target()
             if target:
                 provider_id, model_id, api_key = target
