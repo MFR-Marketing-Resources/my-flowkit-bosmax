@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from agent.db import crud
 from agent.services import production_output_reporting_service as svc
 
 
@@ -207,6 +208,12 @@ async def test_authoritative_ledgers_exclude_legacy_rows_and_deduplicate_real_ou
            VALUES (?,?,?,?,?,?,?,?,?)""",
         ("media-standalone", "job-standalone", "req-standalone", "F2V", "video", "prod-reporting", "Real Serum", "wgp-reporting-hybrid", stamp),
     )
+    await crud.create_video_production_job_full(
+        "job-standalone", logical_job_key="reporting-standalone-key", status="COMPLETE"
+    )
+    await crud.update_video_production_job_full(
+        "job-standalone", final_media_id="media-standalone"
+    )
     await db.execute(
         """INSERT INTO generation_result
            (media_id, job_id, request_id, mode, artifact_kind, product_id, product_name, created_at)
@@ -236,13 +243,16 @@ async def test_authoritative_ledgers_exclude_legacy_rows_and_deduplicate_real_ou
         """INSERT INTO bulk_generation_run
            (bulk_run_id, kind, status, config_json, created_at, updated_at)
            VALUES (?,?,?,?,?,?)""",
-        ("montage-reporting", "MONTAGE_DISCRETE", "COMPLETE", json.dumps({"product_id": "prod-reporting", "model": "veo-3.1"}), stamp, stamp),
+        ("montage-reporting", "MONTAGE_DISCRETE", "COMPLETE", json.dumps({
+            "product_id": "prod-reporting", "model": "veo-3.1",
+            "assembly": {"final_media_id": "media-montage"},
+        }), stamp, stamp),
     )
     await db.execute(
         """INSERT INTO bulk_generation_item
            (bulk_item_id, bulk_run_id, item_type, source_ref, status, media_id, created_at, completed_at)
            VALUES (?,?,?,?,?,?,?,?)""",
-        ("montage-item-reporting", "montage-reporting", "MONTAGE_SCENE", "scene-1", "RESULT_BOUND", "media-montage", stamp, stamp),
+        ("montage-item-reporting", "montage-reporting", "MONTAGE_SCENE", "scene-1", "RESULT_BOUND", "media-montage-scene", stamp, stamp),
     )
     await db.commit()
 
@@ -257,7 +267,98 @@ async def test_authoritative_ledgers_exclude_legacy_rows_and_deduplicate_real_ou
     assert report["overview"]["successful_outputs"] == 4
     assert all(row["production_recipe"] != "T2V" for row in ledger["items"])
     assert all(row["model_key"] != "Wan 2.6" for row in ledger["items"])
+    assert all(row["artifact_media_id"] != "media-montage-scene" for row in ledger["items"])
     assert {row["production_recipe"] for row in ledger["items"]} == {"HYBRID", "MONTAGE", "POSTER_BUILDER"}
+
+
+@pytest.mark.asyncio
+async def test_p6_montage_final_counted_once_and_scenes_hidden():
+    from agent.db.schema import get_db
+
+    db = await get_db()
+    stamp = "2026-08-01T02:00:00Z"
+    await db.execute(
+        """INSERT INTO product
+           (id, source, raw_product_title, product_display_name, product_short_name)
+           VALUES (?,?,?,?,?)""",
+        ("prod-p6-montage-report", "MANUAL", "Real cleanser", "Real Cleanser", "Cleanser"),
+    )
+    await db.execute(
+        """INSERT INTO creative_production_plan
+           (plan_id, request_id, created_by, name, p58_cohort_sha256,
+            p58_cohort_count, production_recipe, status, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        ("plan-p6-montage-report", "req-p6-montage-report", "alice",
+         "Real montage plan", "sha-montage", 1, "MONTAGE", "APPROVED", stamp, stamp),
+    )
+    await db.execute(
+        """INSERT INTO creative_production_item
+           (item_id, plan_id, item_ordinal, product_id, media_type,
+            production_recipe, creative_dna_sha256, dedupe_guard_key, status,
+            output_media_id, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        ("item-p6-montage-report", "plan-p6-montage-report", 1,
+         "prod-p6-montage-report", "VIDEO", "MONTAGE", "dna-montage",
+         "guard-montage-report", "QA_APPROVED", "p6-montage-final", stamp, stamp),
+    )
+    await db.execute(
+        """INSERT INTO creative_generation_attempt
+           (attempt_id, item_id, attempt_number, idempotency_key, action_request_id,
+            attempt_state, payload_sha256, provider, model_key, artifact_media_id,
+            created_at, completed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        ("attempt-p6-montage-rejected", "item-p6-montage-report", 1,
+         "idem-p6-montage-rejected", "action-p6-montage-rejected", "QA_REJECTED",
+         "payload-rejected", "GOOGLE_FLOW", "veo-3.1", "p6-rejected-scaffold",
+         stamp, stamp),
+    )
+    await db.execute(
+        """INSERT INTO creative_generation_attempt
+           (attempt_id, item_id, attempt_number, idempotency_key, action_request_id,
+            attempt_state, payload_sha256, provider, model_key, artifact_media_id,
+            created_at, completed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+        ("attempt-p6-montage-final", "item-p6-montage-report", 2,
+         "idem-p6-montage-final", "action-p6-montage-final", "REGISTERED",
+         "payload-final", "GOOGLE_FLOW", "veo-3.1", "p6-montage-final",
+         stamp, stamp),
+    )
+    await db.execute(
+        """INSERT INTO bulk_generation_run
+           (bulk_run_id, kind, status, config_json, created_at, updated_at)
+           VALUES (?,?,?,?,?,?)""",
+        ("p6-montage-run-report", "MONTAGE_DISCRETE", "COMPLETE", json.dumps({
+            "product_id": "prod-p6-montage-report",
+            "model": "veo-3.1",
+            "assembly": {"final_media_id": "p6-montage-final"},
+        }), stamp, stamp),
+    )
+    await db.execute(
+        """INSERT INTO bulk_generation_item
+           (bulk_item_id, bulk_run_id, item_type, source_ref, status, media_id,
+            created_at, completed_at)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        ("p6-montage-scene-report", "p6-montage-run-report", "MONTAGE_SCENE",
+         "scene-1", "RESULT_BOUND", "p6-montage-scene", stamp, stamp),
+    )
+    await db.commit()
+
+    report = await svc.get_production_report(
+        start_date="2026-08-01", end_date="2026-08-01"
+    )
+    ledger = await svc.get_production_ledger(
+        start_date="2026-08-01", end_date="2026-08-01", limit=200
+    )
+
+    assert report["overview"]["successful_video_outputs"] == 1
+    assert sum(
+        row["artifact_media_id"] == "p6-montage-final"
+        for row in ledger["items"]
+    ) == 1
+    assert all(
+        row["artifact_media_id"] not in {"p6-montage-scene", "p6-rejected-scaffold"}
+        for row in ledger["items"]
+    )
 
 
 async def _async_records(records):

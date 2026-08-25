@@ -7,6 +7,8 @@ public job view. `_download` is stubbed so tests touch no network.
 """
 import asyncio
 
+import pytest
+
 from agent.services import shoot_oneshot as so
 
 
@@ -126,19 +128,34 @@ def test_missing_start_media_fails_loud(monkeypatch):
 
 # ── public job view ──────────────────────────────────────────
 
-def test_get_job_hides_internal_task_handle(monkeypatch):
-    monkeypatch.setattr(so, "get_flow_client", lambda: _FakeClient())
-    monkeypatch.setattr(so, "_download", _fake_download)
-    monkeypatch.setattr(so, "POLL_INTERVAL", 0.01)
+def test_start_job_retires_before_side_effects_and_history_stays_readable(monkeypatch):
+    so._JOBS.clear()
 
-    async def _go():
-        res = await so.start_job(
-            {"prompt": "x", "start_frame": {"mode": "ai", "image_prompt": "y"}},
-            "PAYGATE_TIER_ONE")
-        jid = res["job_id"]
-        await so._JOBS[jid]["_task"]   # let the background pipeline finish
-        return so.get_job(jid)
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("retired one-shot entrypoint crossed a side-effect boundary")
 
-    view = asyncio.run(_go())
+    async def forbidden_run(*_args, **_kwargs):
+        pytest.fail("retired one-shot entrypoint started provider work")
+
+    monkeypatch.setattr(so, "uuid4", forbidden)
+    monkeypatch.setattr(so, "get_flow_client", forbidden)
+    monkeypatch.setattr(so.asyncio, "create_task", forbidden)
+    monkeypatch.setattr(so, "_run", forbidden_run)
+
+    with pytest.raises(RuntimeError) as exc:
+        asyncio.run(so.start_job(
+            {"prompt": "x", "start_frame": {"mode": "ai"}},
+            "PAYGATE_TIER_ONE",
+        ))
+    assert str(exc.value) == (
+        "LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB"
+    )
+    assert so._JOBS == {}
+
+    so._JOBS["historical-job"] = {
+        "job_id": "historical-job", "status": so.SUCCESSFUL, "_task": object()
+    }
+    view = so.get_job("historical-job")
     assert "_task" not in view
-    assert view["status"] in (so.SUCCESSFUL, so.FAILED)
+    assert view["status"] == so.SUCCESSFUL
+    so._JOBS.clear()

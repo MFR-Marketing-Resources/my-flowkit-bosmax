@@ -43,6 +43,7 @@ ITEM_TYPE = "MONTAGE_SCENE"
 PackageFactory = Callable[..., Awaitable[dict[str, Any]]]
 
 MONTAGE_SCHEDULER_POLL_SECONDS = 5.0
+MONTAGE_ASSEMBLY_CLAIM_SECONDS = 35 * 60
 _MONTAGE_SCHEDULER_LOCK = asyncio.Lock()
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,8 @@ async def create_montage_discrete_run(
     faceless_resolution: Optional[dict[str, Any]] = None,
     staff_id: str | None = None,
     staff_display_name_snapshot: str | None = None,
+    treatment_block_plan: Optional[dict[str, Any]] = None,
+    creative_treatment: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Orchestrate packages and persist a durable run + per-scene jobs."""
     pid = str(product_id or "").strip()
@@ -164,6 +167,38 @@ async def create_montage_discrete_run(
     composed_context = "\n".join(context_bits)
 
     model_label, dur = _resolve_montage_single_settings(model, duration_seconds)
+    treatment_segments: list[dict[str, Any]] = []
+    if str((treatment_block_plan or {}).get("generation_mode") or "SINGLE").upper() == "EXTEND":
+        treatment_segments = copy.deepcopy((treatment_block_plan or {}).get("segments") or [])
+        hashes = [str(segment.get("segment_sha256") or "") for segment in treatment_segments]
+        if (
+            len(treatment_segments) != len(story_beats)
+            or len(treatment_segments) != int((treatment_block_plan or {}).get("segment_count") or 0)
+            or hashes != list((treatment_block_plan or {}).get("ordered_segment_sha256s") or [])
+            or any(int(segment.get("duration_seconds") or 0) != dur for segment in treatment_segments)
+        ):
+            raise ValueError("ERR_MONTAGE_TREATMENT_BLOCK_PLAN_INVALID")
+
+    effective_package_factory = package_factory
+    if treatment_segments:
+        segment_iter = iter(treatment_segments)
+
+        async def _segment_package_factory(**kwargs: Any) -> dict[str, Any]:
+            segment = next(segment_iter)
+            scoped = copy.deepcopy(creative_treatment or {})
+            scoped.update({
+                "master_generation_mode": "EXTEND",
+                "generation_mode": "SINGLE",
+                "duration_seconds": segment["duration_seconds"],
+                "action_sequence": segment.get("action_sequence") or [],
+                "shot_grammar": segment.get("shot_grammar") or [],
+                "dialogue_text": segment.get("exact_dialogue_slice") or "",
+                "active_segment": copy.deepcopy(segment),
+                "segment_plan": copy.deepcopy(treatment_block_plan),
+            })
+            return await package_factory(**kwargs, creative_treatment=scoped)
+
+        effective_package_factory = _segment_package_factory
     mascot_duration_plan: dict[str, Any] | None = None
     if mascot_start_asset is not None or mascot_block_count:
         from agent.services.montage_mascot_creative_grammar import (
@@ -183,7 +218,7 @@ async def create_montage_discrete_run(
         staff_id=staff_id,
         staff_display_name_snapshot=staff_display_name_snapshot,
         story_beats=story_beats,
-        package_factory=package_factory,
+        package_factory=effective_package_factory,
         default_policy=default_policy,
         per_beat_policy=per_beat_policy,
         product_media_id=product_media_id,
@@ -246,6 +281,11 @@ async def create_montage_discrete_run(
         # reference and never a user-facing T2V surface selection.
         "surface_lane": "MONTAGE",
         "faceless_resolution": faceless_resolution,
+        "treatment_block_plan": (
+            copy.deepcopy(treatment_block_plan)
+            if isinstance(treatment_block_plan, dict)
+            else None
+        ),
         "exact_product_video": (
             faceless_resolution.get("exact_product_video")
             if isinstance(faceless_resolution, dict)
@@ -277,9 +317,20 @@ async def create_montage_discrete_run(
     )
 
     scenes_out: list[dict[str, Any]] = []
-    for state in report.scenes:
+    for scene_index, state in enumerate(report.scenes):
         item_id = str(uuid.uuid4())
-        payload = _scene_payload(state, product_media_id=product_media_id)
+        payload = _scene_payload(
+            state,
+            product_media_id=product_media_id,
+            treatment_block_plan=(
+                treatment_block_plan if treatment_segments else None
+            ),
+            treatment_segment=(
+                treatment_segments[scene_index]
+                if scene_index < len(treatment_segments)
+                else None
+            ),
+        )
         await crud.create_bulk_generation_item(
             item_id,
             bulk_run_id=run_id,
@@ -660,6 +711,9 @@ async def authorize_montage_run_generation(
     staff_id: str | None = None,
     staff_display_name_snapshot: str | None = None,
     manifest_id: str | None = None,
+    origin_surface_lane: str | None = None,
+    origin_request_id_prefix: str | None = None,
+    origin_project_id: str | None = None,
 ) -> dict[str, Any]:
     """M-04: explicit operator-authorized multi-scene generation.
 
@@ -741,6 +795,22 @@ async def authorize_montage_run_generation(
         "authorized_expected_provider_operations": needed_provider,
         "worker_poll_interval_s": float(poll_interval_s or 5.0),
         "authorized_at": _now(),
+        "origin_surface_lane": (
+            str(origin_surface_lane or cfg.get("origin_surface_lane") or "MONTAGE")
+            .strip()
+            .upper()
+        ),
+        "origin_request_id_prefix": (
+            str(
+                origin_request_id_prefix
+                or cfg.get("origin_request_id_prefix")
+                or f"montage:{run_id}"
+            ).strip()
+        ),
+        "origin_project_id": (
+            str(origin_project_id or cfg.get("origin_project_id") or "").strip()
+            or None
+        ),
     })
 
     await crud.update_bulk_generation_run(
@@ -1251,7 +1321,20 @@ async def resume_montage_run(
         str(s.get("status") or "").upper() in ("RESULT_BOUND", "VIDEO_READY")
         for s in scene_rows
     ):
-        run_status = "COMPLETE"
+        refreshed_cfg = refreshed.get("config") or {}
+        refreshed_assembly = (
+            refreshed_cfg.get("assembly")
+            if isinstance(refreshed_cfg.get("assembly"), dict)
+            else {}
+        )
+        run_status = (
+            "COMPLETE"
+            if refreshed_cfg.get("assembly_delivery_pair_bound")
+            and _montage_final_media_id(refreshed_assembly)
+            else str(refreshed.get("status") or "GENERATING").upper()
+        )
+        if run_status not in {"GENERATING", "ASSEMBLY_READY", "COMPLETE"}:
+            run_status = "GENERATING"
     elif any(str(s.get("status") or "").upper() == "GENERATE_FAILED" for s in scene_rows):
         run_status = "PARTIAL"
     else:
@@ -1269,7 +1352,17 @@ async def resume_montage_run(
         ),
         "resubmission_allowed": False,
         "continuation": continuation,
-        "next_action": "POLL" if run_status == "GENERATING" else None,
+        "next_action": (
+            "ASSEMBLE"
+            if scene_rows
+            and all(
+                str(s.get("status") or "").upper()
+                in ("RESULT_BOUND", "VIDEO_READY")
+                for s in scene_rows
+            )
+            and run_status != "COMPLETE"
+            else "POLL" if run_status == "GENERATING" else None
+        ),
     }
 
 
@@ -1315,13 +1408,17 @@ async def _default_montage_generate_fn(run_id: str, **kwargs: Any) -> dict[str, 
     body = GenerateRequest(
         mode=str(kwargs.get("mode") or "F2V"),
         prompt=str(kwargs.get("prompt") or f"Montage scene {kwargs.get('scene_id')}"),
-        request_id=f"montage:{run_id}:{str(kwargs.get('scene_id') or '')}",
+        request_id=(
+            f"{str(cfg.get('origin_request_id_prefix') or f'montage:{run_id}')}"
+            f":{str(kwargs.get('scene_id') or '')}"
+        ),
+        project_id=cfg.get("origin_project_id") or None,
         product_id=kwargs.get("product_id") or None,
         production_recipe="MONTAGE",
         staff_id=cfg.get("staff_id") or None,
         aspect="9:16",
         source_mode=kwargs.get("source_mode") or None,
-        surface_lane="MONTAGE",
+        surface_lane=str(cfg.get("origin_surface_lane") or "MONTAGE"),
         workspace_execution_package_id=kwargs.get("workspace_execution_package_id") or None,
         execution_identity=execution_identity,
         model=kwargs.get("model") or None,
@@ -1382,17 +1479,39 @@ async def _dispatch_next_authorized_scene(
             str(scene.get("status") or "").upper()
             for scene in state.get("scenes") or []
         }
-        final_status = (
-            "COMPLETE"
-            if scene_statuses and scene_statuses.issubset({"RESULT_BOUND", "VIDEO_READY"})
-            else "PARTIAL"
-        )
-        await crud.update_bulk_generation_run(
-            run_id,
-            status=final_status,
-            updated_at=_now(),
-        )
-        return {"status": final_status, "provider_generation_submits": 0}
+        if not scene_statuses or not scene_statuses.issubset(
+            {"RESULT_BOUND", "VIDEO_READY"}
+        ):
+            await crud.update_bulk_generation_run(
+                run_id,
+                status="PARTIAL",
+                updated_at=_now(),
+            )
+            return {"status": "PARTIAL", "provider_generation_submits": 0}
+        from agent.services import creative_production_scheduler_service as p6_scheduler
+
+        assembly = await p6_scheduler.resume_p6_montage_assembly(run_id)
+        final_media_id = str(
+            assembly.get("final_media_id")
+            or assembly.get("media_id")
+            or ((assembly.get("assembly") or {}).get("final_media_id"))
+            or ""
+        ).strip() or None
+        if not final_media_id and assembly.get("status") == "ASSEMBLY_OWNER_NOT_FOUND":
+            await crud.update_bulk_generation_run(
+                run_id, status="ASSEMBLY_READY", updated_at=_now()
+            )
+        return {
+            "status": (
+                "COMPLETE"
+                if final_media_id
+                else str(assembly.get("status") or "ASSEMBLY_IN_PROGRESS")
+            ),
+            "final_media_id": final_media_id,
+            "assembly_job_id": assembly.get("assembly_job_id"),
+            "assembly": assembly,
+            "provider_generation_submits": 0,
+        }
     return await authorize_montage_run_generation(
         run_id,
         confirm_credit_burn=True,
@@ -1432,7 +1551,21 @@ async def montage_scheduler_tick(
             cfg = _loads(run.get("config_json"), {})
             if not cfg.get("async_worker_authorized"):
                 continue
-            if str(run.get("status") or "").upper() not in {"GENERATING", "PARTIAL", "PREPARED"}:
+            run_status = str(run.get("status") or "").upper()
+            assembly = cfg.get("assembly") if isinstance(cfg.get("assembly"), dict) else {}
+            assembly_complete = bool(
+                cfg.get("assembly_delivery_pair_bound")
+                and _montage_final_media_id(assembly)
+            )
+            if run_status == "COMPLETE" and assembly_complete:
+                continue
+            if run_status not in {
+                "GENERATING",
+                "PARTIAL",
+                "PREPARED",
+                "ASSEMBLY_READY",
+                "COMPLETE",
+            }:
                 continue
             run_id = str(run.get("bulk_run_id") or "")
             if not run_id:
@@ -1563,6 +1696,89 @@ async def readiness_from_montage_run(run_id: str) -> dict[str, Any]:
     }
 
 
+def _montage_final_media_id(result: dict[str, Any] | None) -> str:
+    envelope = result if isinstance(result, dict) else {}
+    concat = envelope.get("concat") if isinstance(envelope.get("concat"), dict) else {}
+    return str(
+        envelope.get("final_media_id")
+        or envelope.get("media_id")
+        or concat.get("final_media_id")
+        or concat.get("media_id")
+        or ""
+    ).strip()
+
+
+async def _cas_montage_assembly_claim(
+    job_id: str,
+    token: str,
+    status: str,
+    *,
+    final_media_id: str | None = None,
+) -> bool:
+    for _ in range(3):
+        row = await crud.get_video_production_job(job_id)
+        if row is None:
+            return False
+        raw = row.get("stage_state_json")
+        state = _loads(raw, {})
+        current = state.get("montage_assembly_claim") or {}
+        if status == "CLAIMED":
+            if current.get("status") == "COMPLETE" or (
+                current.get("status") == "CLAIMED"
+                and str(current.get("expires_at") or "") > _now()
+            ):
+                return False
+            expires = datetime.now(timezone.utc) + timedelta(
+                seconds=MONTAGE_ASSEMBLY_CLAIM_SECONDS
+            )
+            claim = {
+                "status": status,
+                "claim_token": token,
+                "expires_at": expires.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            }
+        else:
+            if str(current.get("claim_token") or "") != token:
+                return False
+            claim = {**current, "status": status, "expires_at": _now()}
+            if final_media_id:
+                claim["final_media_id"] = final_media_id
+        state["montage_assembly_claim"] = claim
+        if await crud.compare_and_swap_video_production_job_stage_state(
+            job_id, expected_stage_state_json=raw, stage_state_json=json.dumps(state)
+        ):
+            return True
+    return False
+
+
+async def _claim_montage_assembly(
+    run_id: str,
+    cfg: dict[str, Any],
+    *,
+    segment_media_ids: list[str],
+    requested_seconds: int,
+) -> dict[str, str] | None:
+    logical_key = f"montage:{run_id}"
+    owner = await crud.get_video_production_job_by_logical_key(logical_key)
+    if owner is None:
+        await crud.create_video_production_job_full(
+            f"montage-final-{run_id}",
+            logical_job_key=logical_key,
+            requested_duration_seconds=requested_seconds,
+            product_id=cfg.get("product_id"),
+            staff_id=cfg.get("staff_id"),
+            surface_lane=cfg.get("origin_surface_lane") or "MONTAGE",
+            segment_media_ids_json=json.dumps(segment_media_ids),
+            stage_state_json="{}",
+        )
+        owner = await crud.get_video_production_job_by_logical_key(logical_key)
+    if owner is None:
+        raise MontageAssemblyError("MONTAGE_ASSEMBLY_OWNER_REQUIRED", run_id)
+    job_id, token = str(owner["job_id"]), uuid.uuid4().hex
+    if not await _cas_montage_assembly_claim(job_id, token, "CLAIMED"):
+        return None
+    return {"job_id": job_id, "claim_token": token}
+
+
 async def _finalize_single_block_montage_run(
     run_id: str,
     scenes: list["MontageSceneReadiness"],
@@ -1621,21 +1837,56 @@ async def _finalize_single_block_montage_run(
                 "A Montage final output cannot be promoted without its initiating staff identity.",
                 blockers=[{"error_code": "STAFF_IDENTITY_REQUIRED"}],
             )
-        await crud.insert_generated_artifact(
-            clip_media_id,
+        source_artifact = await crud.get_generated_artifact(clip_media_id)
+        source_local_path = str(
+            (source_artifact or {}).get("local_path") or ""
+        ).strip()
+        if not source_local_path:
+            raise MontageAssemblyError(
+                "FINAL_ARTIFACT_DELIVERY_FAILED",
+                "The single Montage clip has no persisted local file evidence.",
+                blockers=[{"error_code": "FINAL_ARTIFACT_DELIVERY_FAILED"}],
+            )
+        from agent.services.video_artifact_delivery_service import (
+            register_final_video_artifact,
+        )
+
+        delivery = await register_final_video_artifact(
+            {
+                "final_media_id": clip_media_id,
+                "local_path": source_local_path,
+                "size_mb": (source_artifact or {}).get("size_mb"),
+                "duration_s": (
+                    (source_artifact or {}).get("duration_used")
+                    or cfg.get("duration_seconds")
+                ),
+            },
             job_id=effective_job,
             staff_id=persisted_staff_id,
             staff_display_name_snapshot=(
                 str(cfg.get("staff_display_name") or "").strip() or None
             ),
             mode="MONTAGE",
-            surface_lane="MONTAGE",
+            surface_lane=str(cfg.get("origin_surface_lane") or "MONTAGE"),
             transport_mode="MONTAGE",
             source_mode=cfg.get("source_mode"),
-            provider_generation_type="montage_scene_artifact",
-            artifact_kind="video",
-            model_used=cfg.get("model"),
-            duration_used=cfg.get("duration_seconds"),
+            provider_generation_type="montage_single_block_final",
+            project_id=cfg.get("origin_project_id"),
+            request_id=str(
+                cfg.get("origin_request_id_prefix") or f"montage:{run_id}"
+            ),
+            product_id=cfg.get("product_id"),
+            prompt=str(cfg.get("scene_context_override") or ""),
+            aspect_ratio="9:16",
+        )
+        payload.update(
+            {
+                "local_path": delivery.get("local_path"),
+                "size_mb": delivery.get("size_mb"),
+                "file_size_bytes": delivery.get("size_bytes"),
+                "file_sha256": delivery.get("sha256"),
+                "delivery": delivery,
+            }
         )
         payload["concat"]["status"] = "COMPLETE"
     return payload
@@ -1665,25 +1916,138 @@ async def assemble_from_montage_run(
     scene_count = len(scenes)
     if scene_count <= 0:
         raise ValueError("ERR_MONTAGE_EMPTY_PLAN")
-    if scene_count == 1:
-        result = await _finalize_single_block_montage_run(
-            run_id, scenes, cfg, job_id=job_id, dry_run=dry_run
+    requested_seconds = duration_s * scene_count
+    readiness = assess_montage_assembly_readiness(scenes)
+    if not readiness.ok:
+        raise MontageAssemblyError(
+            readiness.code or BLOCKED_INCOMPLETE_SCENE_SET,
+            readiness.detail,
+            blockers=readiness.blockers,
         )
+
+    if dry_run:
+        if scene_count == 1:
+            result = await _finalize_single_block_montage_run(
+                run_id, scenes, cfg, job_id=job_id, dry_run=True
+            )
+        else:
+            result = await assemble_montage_discrete(
+                scenes,
+                concat_fn=concat_fn,
+                job_id=job_id or f"montage-run-{run_id[:8]}",
+                requested_seconds=requested_seconds,
+                segment_seconds=duration_s,
+                final_edit_cadence=cfg.get("final_edit_cadence"),
+                dry_run=True,
+            )
+            result["montage_run_id"] = run_id
         await persist_montage_assembly_result(run_id, result)
         return result
-    requested_seconds = duration_s * scene_count
-    result = await assemble_montage_discrete(
-        scenes,
-        concat_fn=concat_fn,
-        job_id=job_id or f"montage-run-{run_id[:8]}",
-        requested_seconds=requested_seconds,
-        segment_seconds=duration_s,
-        final_edit_cadence=cfg.get("final_edit_cadence"),
-        dry_run=dry_run,
+
+    existing_assembly = (
+        cfg.get("assembly") if isinstance(cfg.get("assembly"), dict) else {}
     )
-    result["montage_run_id"] = run_id
-    await persist_montage_assembly_result(run_id, result)
-    return result
+    if cfg.get("assembly_delivery_pair_bound") and _montage_final_media_id(
+        existing_assembly
+    ):
+        return existing_assembly
+
+    claim = await _claim_montage_assembly(
+        run_id,
+        cfg,
+        segment_media_ids=list(readiness.clip_media_ids),
+        requested_seconds=requested_seconds,
+    )
+    if claim is None:
+        owner = await crud.get_video_production_job_by_logical_key(
+            f"montage:{run_id}"
+        )
+        return {
+            "ok": True,
+            "assembly_path": "ASSEMBLY_CLAIMED",
+            "montage_run_id": run_id,
+            "assembly_job_id": (owner or {}).get("job_id"),
+            "status": "ASSEMBLY_IN_PROGRESS",
+            "final_media_id": None,
+            "credit_spend": False,
+            "dry_run": False,
+        }
+
+    owner_job_id = str(claim["job_id"])
+    claim_token = str(claim["claim_token"])
+    try:
+        if scene_count == 1:
+            result = await _finalize_single_block_montage_run(
+                run_id,
+                scenes,
+                cfg,
+                job_id=owner_job_id,
+                dry_run=False,
+            )
+        else:
+            result = await assemble_montage_discrete(
+                scenes,
+                concat_fn=concat_fn,
+                job_id=owner_job_id,
+                requested_seconds=requested_seconds,
+                segment_seconds=duration_s,
+                final_edit_cadence=cfg.get("final_edit_cadence"),
+                dry_run=False,
+            )
+            result["montage_run_id"] = run_id
+
+        concat = result.get("concat") if isinstance(result.get("concat"), dict) else {}
+        final_media_id = _montage_final_media_id(result)
+        if not final_media_id:
+            raise MontageAssemblyError(
+                "MONTAGE_FINAL_MEDIA_ID_REQUIRED",
+                "Montage assembly returned no final media identity.",
+            )
+        result.update(
+            {
+                "assembly_job_id": owner_job_id,
+                "final_media_id": final_media_id,
+                "local_path": result.get("local_path") or concat.get("local_path"),
+                "file_sha256": result.get("file_sha256") or concat.get("sha256"),
+                "file_size_bytes": (
+                    result.get("file_size_bytes") or concat.get("size_bytes")
+                ),
+                "segment_count": scene_count,
+                "requested_seconds": requested_seconds,
+            }
+        )
+        artifact, generation_result = await asyncio.gather(
+            crud.get_generated_artifact(final_media_id),
+            crud.get_generation_result(final_media_id),
+        )
+        if artifact is None or generation_result is None:
+            raise MontageAssemblyError(
+                "FINAL_DELIVERY_PAIR_REQUIRED",
+                "Montage final assembly requires both durable delivery rows.",
+            )
+        await persist_montage_assembly_result(run_id, result)
+        await _cas_montage_assembly_claim(
+            owner_job_id, claim_token, "COMPLETE", final_media_id=final_media_id
+        )
+        await crud.update_video_production_job_full(
+            owner_job_id,
+            status="COMPLETE",
+            final_media_id=final_media_id,
+            final_local_path=artifact.get("local_path"),
+            final_sha256=artifact.get("file_sha256"),
+            final_duration_s=(
+                artifact.get("duration_used") or requested_seconds
+            ),
+        )
+        return result
+    except Exception as exc:
+        await _cas_montage_assembly_claim(owner_job_id, claim_token, "RETRYABLE")
+        await crud.update_bulk_generation_run(
+            run_id,
+            status="ASSEMBLY_READY",
+            updated_at=_now(),
+        )
+        raise
 
 
 async def persist_montage_assembly_result(
@@ -1696,10 +2060,20 @@ async def persist_montage_assembly_result(
     config = _loads(run.get("config_json"), {})
     config["assembly"] = result
     concat = result.get("concat") if isinstance(result, dict) else None
-    final_status = str(
-        (concat or {}).get("status") if isinstance(concat, dict) else ""
-    ).upper()
-    status = "COMPLETE" if final_status == "COMPLETE" else "ASSEMBLY_READY"
+    final_media_id = str(
+        result.get("final_media_id")
+        or ((concat or {}).get("final_media_id") if isinstance(concat, dict) else "")
+        or ""
+    ).strip()
+    delivery_pair_bound = False
+    if final_media_id:
+        artifact, generation_result = await asyncio.gather(
+            crud.get_generated_artifact(final_media_id),
+            crud.get_generation_result(final_media_id),
+        )
+        delivery_pair_bound = artifact is not None and generation_result is not None
+    config["assembly_delivery_pair_bound"] = delivery_pair_bound
+    status = "COMPLETE" if delivery_pair_bound else "ASSEMBLY_READY"
     await crud.update_bulk_generation_run(
         run_id,
         status=status,
@@ -1710,10 +2084,18 @@ async def persist_montage_assembly_result(
 
 
 def _scene_payload(
-    state: SceneJobState, *, product_media_id: Optional[str]
+    state: SceneJobState,
+    *,
+    product_media_id: Optional[str],
+    treatment_block_plan: Optional[dict[str, Any]] = None,
+    treatment_segment: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     d = state.to_dict()
     d["product_media_id"] = d.get("product_media_id") or product_media_id
+    if isinstance(treatment_block_plan, dict):
+        d["treatment_block_plan"] = copy.deepcopy(treatment_block_plan)
+    if isinstance(treatment_segment, dict):
+        d["treatment_segment"] = copy.deepcopy(treatment_segment)
     return d
 
 
@@ -1757,6 +2139,8 @@ def _item_to_public(item: dict[str, Any]) -> dict[str, Any]:
         "product_media_id": payload.get("product_media_id"),
         "copy_architecture_v2": payload.get("copy_architecture_v2"),
         "product_visual_custody": payload.get("product_visual_custody"),
+        "treatment_block_plan": payload.get("treatment_block_plan"),
+        "treatment_segment": payload.get("treatment_segment"),
     }
 
 

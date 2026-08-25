@@ -11,6 +11,7 @@ import pytest
 from agent.db import crud
 from agent.services import ai_caption_assist_service as svc
 from agent.services import ai_copy_provider_adapter as provider
+from agent.services import make_video
 from agent.services import social_copy_package_service as scp
 
 SAFE = {
@@ -42,6 +43,14 @@ async def _make_product(**kw) -> str:
         **kw,
     )
     return product["id"]
+
+
+async def _bind_final(media_id: str) -> None:
+    job_id = f"caption-job-{media_id}"
+    await crud.create_video_production_job_full(
+        job_id, logical_job_key=f"caption-key-{media_id}", status="COMPLETE"
+    )
+    await crud.update_video_production_job_full(job_id, final_media_id=media_id)
 
 
 async def test_not_configured_fails_closed(monkeypatch):
@@ -81,11 +90,58 @@ async def test_grounds_from_media_id(monkeypatch):
         "cap-media-1", mode="T2V", artifact_kind="video",
         product_id=pid, product_name="AI Caption Serum",
         final_prompt_text="a calm morning routine, product held in hand")
+    await _bind_final("cap-media-1")
     _mock(monkeypatch, SAFE)
     out = await svc.generate_caption_candidates(
         {"platform": "tiktok", "artifact_media_id": "cap-media-1"})
     assert out["grounding"]["product_name"] == "AI Caption Serum"
     assert out["candidates"][0]["caption"]
+
+
+async def test_final_result_accepted_intermediate_rejected(monkeypatch):
+    pid = await _make_product(raw_product_title="Final-only caption serum")
+    await crud.insert_generation_result(
+        "caption-final", mode="F2V", artifact_kind="video", product_id=pid,
+        product_name="Final-only caption serum", final_prompt_text="final creative",
+    )
+    await _bind_final("caption-final")
+    await crud.insert_generation_result(
+        "caption-intermediate", mode="F2V", artifact_kind="video", product_id=pid,
+        product_name="Final-only caption serum", final_prompt_text="segment scaffold",
+    )
+    _mock(monkeypatch, SAFE)
+
+    accepted = await svc.generate_caption_candidates({
+        "platform": "tiktok", "artifact_media_id": "caption-final",
+    })
+    assert accepted["candidates"]
+    with pytest.raises(scp.SocialCopyError, match="FINAL_VIDEO_REQUIRED"):
+        await svc.generate_caption_candidates({
+            "platform": "tiktok", "artifact_media_id": "caption-intermediate",
+        })
+
+
+async def test_caption_retry_never_calls_video_generation(monkeypatch):
+    await crud.insert_generation_result(
+        "caption-retained-final", mode="F2V", artifact_kind="video",
+        product_name="Retained final", final_prompt_text="retained final creative",
+    )
+    await _bind_final("caption-retained-final")
+    _mock(monkeypatch, SAFE)
+    video_calls = 0
+
+    async def forbidden_video_generation(*args, **kwargs):
+        nonlocal video_calls
+        video_calls += 1
+        raise AssertionError("caption retry must not generate video")
+
+    monkeypatch.setattr(make_video, "start_generate", forbidden_video_generation)
+    request = {
+        "platform": "instagram", "artifact_media_id": "caption-retained-final",
+    }
+    assert (await svc.generate_caption_candidates(request))["candidates"]
+    assert (await svc.generate_caption_candidates(request))["candidates"]
+    assert video_calls == 0
 
 
 async def test_candidate_count_is_capped(monkeypatch):

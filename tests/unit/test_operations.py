@@ -19,6 +19,7 @@ PROJECT_ID = "proj-001"
 SCENE_ID = "scene-001"
 VIDEO_ID = "video-001"
 CHAR_ID = "char-001"
+RETIREMENT_CODE = "LEGACY_VIDEO_REQUEST_RETIRED_USE_DURABLE_VIDEO_JOB"
 
 
 @pytest.fixture(autouse=True)
@@ -292,6 +293,36 @@ class TestGenerateReferenceImage:
 
 
 # ---------------------------------------------------------------------------
+# Test: Retired direct video operations
+# ---------------------------------------------------------------------------
+
+class TestRetiredDirectVideoOperations:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "method_name",
+        (
+            "generate_scene_video",
+            "generate_scene_video_refs",
+            "upscale_scene_video",
+        ),
+    )
+    async def test_raises_before_crud_or_client(
+        self,
+        method_name,
+        service,
+        base_scene,
+        mock_client,
+    ):
+        with patch("agent.sdk.services.operations.crud") as mock_crud:
+            with pytest.raises(RuntimeError) as exc_info:
+                await getattr(service, method_name)(base_scene, "VERTICAL")
+
+        assert str(exc_info.value) == RETIREMENT_CODE
+        assert mock_crud.mock_calls == []
+        assert mock_client.mock_calls == []
+
+
+# ---------------------------------------------------------------------------
 # Test: Queue wrappers
 # ---------------------------------------------------------------------------
 
@@ -311,32 +342,37 @@ class TestQueueWrappers:
         )
 
     @pytest.mark.asyncio
-    async def test_queue_scene_video_creates_generate_video_request(self, service):
-        """queue_scene_video creates a GENERATE_VIDEO request in the DB and returns its id."""
-        with patch("agent.sdk.services.operations.crud") as mock_crud:
-            mock_crud.create_request = AsyncMock(return_value={"id": "req-002"})
+    @pytest.mark.parametrize(
+        "method_name",
+        (
+            "queue_scene_video",
+            "queue_scene_video_refs",
+            "queue_upscale_video",
+        ),
+    )
+    async def test_retired_video_queue_raises_before_resolution_or_crud(
+        self,
+        method_name,
+        service,
+    ):
+        with patch.object(
+            service,
+            "_resolve_queue_orientation",
+            new_callable=AsyncMock,
+        ) as resolve_orientation, patch(
+            "agent.sdk.services.operations.crud"
+        ) as mock_crud:
+            with pytest.raises(RuntimeError) as exc_info:
+                await getattr(service, method_name)(
+                    SCENE_ID,
+                    PROJECT_ID,
+                    VIDEO_ID,
+                    "VERTICAL",
+                )
 
-            req_id = await service.queue_scene_video(SCENE_ID, PROJECT_ID, VIDEO_ID, "VERTICAL")
-
-        assert req_id == "req-002"
-        mock_crud.create_request.assert_called_once_with(
-            req_type="GENERATE_VIDEO", orientation="VERTICAL",
-            scene_id=SCENE_ID, project_id=PROJECT_ID, video_id=VIDEO_ID,
-        )
-
-    @pytest.mark.asyncio
-    async def test_queue_upscale_video_creates_upscale_video_request(self, service):
-        """queue_upscale_video creates an UPSCALE_VIDEO request in the DB and returns its id."""
-        with patch("agent.sdk.services.operations.crud") as mock_crud:
-            mock_crud.create_request = AsyncMock(return_value={"id": "req-003"})
-
-            req_id = await service.queue_upscale_video(SCENE_ID, PROJECT_ID, VIDEO_ID, "VERTICAL")
-
-        assert req_id == "req-003"
-        mock_crud.create_request.assert_called_once_with(
-            req_type="UPSCALE_VIDEO", orientation="VERTICAL",
-            scene_id=SCENE_ID, project_id=PROJECT_ID, video_id=VIDEO_ID,
-        )
+        assert str(exc_info.value) == RETIREMENT_CODE
+        resolve_orientation.assert_not_awaited()
+        assert mock_crud.mock_calls == []
 
     @pytest.mark.asyncio
     async def test_generate_character_image_delegates_to_queue_reference_image(self, service):

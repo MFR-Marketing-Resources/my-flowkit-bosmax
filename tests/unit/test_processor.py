@@ -4,11 +4,23 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent.worker.processor import (
+    _dispatch,
+    _process_one,
     _is_already_completed,
     _mark_scene_failed,
     _handle_failure,
 )
 from agent.config import MAX_RETRIES
+
+
+RETIREMENT_CODE = "LEGACY_VIDEO_REQUEST_RETIRED_USE_DURABLE_VIDEO_JOB"
+RETIRED_VIDEO_TYPES = (
+    "GENERATE_VIDEO",
+    "REGENERATE_VIDEO",
+    "GENERATE_VIDEO_REFS",
+    "TRUE_F2V",
+    "UPSCALE_VIDEO",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -31,6 +43,93 @@ def make_req(
         "project_id": "proj-001",
         "video_id": "video-001",
     }
+
+
+# ---------------------------------------------------------------------------
+# Retired generic video requests
+# ---------------------------------------------------------------------------
+
+class TestRetiredVideoRequests:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("req_type", RETIRED_VIDEO_TYPES)
+    async def test_process_one_marks_failed_before_processing(self, req_type):
+        req = make_req(req_type=req_type)
+        with patch("agent.worker.processor.crud") as mock_crud, \
+             patch("agent.worker.processor._resolve_orientation", new_callable=AsyncMock) as resolve_orientation, \
+             patch("agent.worker.processor._is_already_completed", new_callable=AsyncMock) as already_completed, \
+             patch("agent.worker.processor._prerequisites_met", new_callable=AsyncMock) as prerequisites_met, \
+             patch("agent.worker.processor._dispatch", new_callable=AsyncMock) as dispatch, \
+             patch("agent.worker.processor._handle_failure", new_callable=AsyncMock) as handle_failure, \
+             patch("agent.worker.processor._recover_entity_not_found", new_callable=AsyncMock) as recover, \
+             patch("agent.worker.processor._mark_scene_failed", new_callable=AsyncMock) as mark_scene_failed, \
+             patch("agent.sdk.services.operations.get_operations") as get_operations:
+            mock_crud.update_request = AsyncMock()
+
+            await _process_one(req, {}, {})
+
+        mock_crud.update_request.assert_awaited_once_with(
+            req["id"],
+            status="FAILED",
+            error_message=RETIREMENT_CODE,
+        )
+        resolve_orientation.assert_not_awaited()
+        already_completed.assert_not_awaited()
+        prerequisites_met.assert_not_awaited()
+        dispatch.assert_not_awaited()
+        handle_failure.assert_not_awaited()
+        recover.assert_not_awaited()
+        mark_scene_failed.assert_not_awaited()
+        get_operations.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("req_type", RETIRED_VIDEO_TYPES)
+    async def test_dispatch_returns_error_before_sdk_or_crud(self, req_type):
+        req = make_req(req_type=req_type)
+        with patch("agent.sdk.services.operations.get_operations") as get_operations, \
+             patch("agent.worker.processor.crud") as mock_crud:
+            result = await _dispatch(req, "VERTICAL")
+
+        assert result == {"error": RETIREMENT_CODE}
+        get_operations.assert_not_called()
+        assert mock_crud.mock_calls == []
+
+    @pytest.mark.asyncio
+    async def test_dispatch_preserves_scene_image_generation(self):
+        req = make_req(req_type="GENERATE_IMAGE")
+        scene = {"id": req["scene_id"]}
+        ops = MagicMock()
+        ops.generate_scene_image = AsyncMock(return_value={"ok": True})
+        with patch("agent.sdk.services.operations.get_operations", return_value=ops), \
+             patch("agent.worker.processor.crud") as mock_crud:
+            mock_crud.get_scene = AsyncMock(return_value=scene)
+            result = await _dispatch(req, "VERTICAL")
+
+        assert result == {"ok": True}
+        mock_crud.get_scene.assert_awaited_once_with(req["scene_id"])
+        ops.generate_scene_image.assert_awaited_once_with(
+            {"id": req["scene_id"], "_project_id": req["project_id"]},
+            "VERTICAL",
+            request_id=req["id"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_dispatch_preserves_character_image_generation(self):
+        req = make_req(req_type="GENERATE_CHARACTER_IMAGE", scene_id=None)
+        req["character_id"] = "character-001"
+        character = {"id": req["character_id"]}
+        ops = MagicMock()
+        ops.generate_reference_image = AsyncMock(return_value={"ok": True})
+        with patch("agent.sdk.services.operations.get_operations", return_value=ops), \
+             patch("agent.worker.processor.crud") as mock_crud:
+            mock_crud.get_character = AsyncMock(return_value=character)
+            result = await _dispatch(req, "VERTICAL")
+
+        assert result == {"ok": True}
+        mock_crud.get_character.assert_awaited_once_with(req["character_id"])
+        ops.generate_reference_image.assert_awaited_once_with(
+            character,
+            req["project_id"],
+        )
 
 
 # ---------------------------------------------------------------------------

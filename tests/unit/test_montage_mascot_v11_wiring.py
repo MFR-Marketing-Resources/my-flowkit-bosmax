@@ -113,16 +113,36 @@ async def test_single_block_finalize_promotes_clip_without_concat(monkeypatch):
 
 async def test_single_block_finalize_live_registers_artifact(monkeypatch):
     from agent.services import montage_run_service as rs
+    from agent.services import video_artifact_delivery_service as delivery
     monkeypatch.setattr(
         rs, "assess_montage_assembly_readiness",
         lambda scenes: SimpleNamespace(ok=True, clip_media_ids=["clip-9"], blockers=[], code=None, detail=""),
     )
+
+    # The single finished clip is promoted through the SHARED final-delivery path,
+    # which requires persisted local-file evidence for the clip (no final artifact
+    # without local bytes) and then registers the artifact/result pair.
+    async def fake_get_artifact(media_id):
+        assert media_id == "clip-9"
+        return {"local_path": "/tmp/clip-9.mp4", "size_mb": 1.5, "duration_used": 10}
+
+    monkeypatch.setattr(rs.crud, "get_generated_artifact", fake_get_artifact)
+
     calls: list = []
 
-    async def fake_insert(media_id, **kw):
-        calls.append((media_id, kw))
+    async def fake_register(result, **kw):
+        calls.append((result, kw))
+        return {
+            "status": "COMPLETE",
+            "final_media_id": result["final_media_id"],
+            "local_path": result["local_path"],
+            "size_mb": result.get("size_mb"),
+            "size_bytes": 1_572_864,
+            "sha256": "a" * 64,
+        }
 
-    monkeypatch.setattr(rs.crud, "insert_generated_artifact", fake_insert)
+    monkeypatch.setattr(delivery, "register_final_video_artifact", fake_register)
+
     result = await rs._finalize_single_block_montage_run(
         "run-2",
         [object()],
@@ -135,11 +155,14 @@ async def test_single_block_finalize_live_registers_artifact(monkeypatch):
         job_id="job-x", dry_run=False,
     )
     assert result["concat"]["status"] == "COMPLETE"
-    assert calls and calls[0][0] == "clip-9"
-    assert calls[0][1]["mode"] == "MONTAGE" and calls[0][1]["artifact_kind"] == "video"
+    assert result["final_media_id"] == "clip-9"
+    assert result["file_sha256"] == "a" * 64
+    assert calls and calls[0][0]["final_media_id"] == "clip-9"
+    assert calls[0][0]["local_path"] == "/tmp/clip-9.mp4"
+    assert calls[0][1]["mode"] == "MONTAGE"
     assert calls[0][1]["surface_lane"] == "MONTAGE"
     assert calls[0][1]["transport_mode"] == "MONTAGE"
-    assert calls[0][1]["provider_generation_type"] == "montage_scene_artifact"
+    assert calls[0][1]["provider_generation_type"] == "montage_single_block_final"
 
 
 async def test_assemble_single_block_run_skips_concat(monkeypatch):
@@ -174,6 +197,10 @@ async def test_assemble_multi_block_run_uses_discrete_assembly(monkeypatch):
 
     monkeypatch.setattr(rs, "get_montage_discrete_run", fake_run)
     monkeypatch.setattr(rs, "scene_jobs_to_readiness", lambda scenes, product_media_id=None: [object(), object()])
+    monkeypatch.setattr(
+        rs, "assess_montage_assembly_readiness",
+        lambda scenes: SimpleNamespace(ok=True, clip_media_ids=["c1", "c2"], blockers=[], code=None, detail=""),
+    )
     monkeypatch.setattr(rs, "persist_montage_assembly_result", AsyncMock(return_value={}))
     discrete = AsyncMock(return_value={"assembly_path": "DISCRETE_MONTAGE", "concat": {"status": "SEGMENTS_READY"}})
     monkeypatch.setattr(rs, "assemble_montage_discrete", discrete)

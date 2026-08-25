@@ -791,6 +791,122 @@ async def _run_one_extend_block(
     }
 
 
+async def resume_known_extend_child(
+    client,
+    *,
+    lineage_id: str,
+    poll_timeout_s: int = 600,
+    poll_interval_s: int = 5,
+) -> dict:
+    """Resume only a durably known Extend child; this function cannot submit.
+
+    The signature intentionally contains no prompt/model/aspect/submit authority.
+    A submitted row without its child operation id is ambiguous and remains
+    blocked with zero client calls.  Harvest failures retry retrieval only.
+    """
+    row = await _crud.get_extend_lineage(str(lineage_id or ""))
+    if not row:
+        raise NativeExtendError(EXTEND_DUPLICATE_SUBMISSION_BLOCKED, "lineage missing")
+    project_id = str(row.get("project_id") or "").strip()
+    if not project_id:
+        raise NativeExtendError(EXTEND_PROJECT_CONTEXT_MISSING, lineage_id)
+
+    state = str(row.get("polling_state") or STATE_NOT_STARTED)
+    child_op = str(row.get("child_operation_id") or "").strip()
+    legacy_harvest_failure = bool(
+        state == STATE_SUCCEEDED
+        and row.get("error_code") == "HARVEST_FAILED"
+        and not row.get("output_url")
+    )
+
+    if state == STATE_SUCCEEDED and not legacy_harvest_failure:
+        if not child_op:
+            raise NativeExtendError(
+                EXTEND_DUPLICATE_SUBMISSION_BLOCKED,
+                f"{lineage_id}:succeeded-without-child",
+            )
+        return {
+            **_lineage_outcome(row, resumed=True),
+            "child_workflow_id": row.get("child_workflow_id"),
+        }
+
+    if state in (STATE_SUBMITTED, STATE_POLLING):
+        if not child_op:
+            raise NativeExtendError(
+                EXTEND_DUPLICATE_SUBMISSION_BLOCKED,
+                f"{lineage_id}:submitted-without-child",
+            )
+        try:
+            _routes.require_capability("GOOGLE_FLOW_EXTEND_CHILD_POLLING")
+            status = await _poll_child(
+                client,
+                project_id,
+                child_op,
+                lineage_id,
+                poll_timeout_s=poll_timeout_s,
+                poll_interval_s=poll_interval_s,
+            )
+        except asyncio.CancelledError:
+            raise
+        if status is None:
+            await _crud.update_extend_lineage(
+                lineage_id,
+                polling_state=STATE_POLLING,
+                error_code=EXTEND_OPERATION_TIMEOUT,
+            )
+            raise NativeExtendError(EXTEND_OPERATION_TIMEOUT, child_op)
+        if status == TERMINAL_FAILED:
+            await _crud.update_extend_lineage(
+                lineage_id,
+                polling_state=STATE_FAILED,
+                error_code=EXTEND_OPERATION_FAILED,
+                completed_at=_crud._now(),
+            )
+            raise NativeExtendError(EXTEND_OPERATION_FAILED, child_op)
+    elif state not in (STATE_HARVEST_FAILED, STATE_SUCCEEDED):
+        raise NativeExtendError(
+            EXTEND_DUPLICATE_SUBMISSION_BLOCKED,
+            f"{lineage_id}:state={state}",
+        )
+
+    if not child_op:
+        raise NativeExtendError(
+            EXTEND_DUPLICATE_SUBMISSION_BLOCKED,
+            f"{lineage_id}:harvest-without-child",
+        )
+
+    _routes.require_capability("GOOGLE_FLOW_PER_BLOCK_MEDIA_RETRIEVAL")
+    try:
+        media = await client.get_media(child_op)
+        output_url = _extract_media_url(media)
+        if not output_url:
+            raise NativeExtendError("HARVEST_FAILED", "media URL missing")
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — child remains the recovery handle
+        await _crud.update_extend_lineage(
+            lineage_id,
+            polling_state=STATE_HARVEST_FAILED,
+            error_code="HARVEST_FAILED",
+            error_message=str(exc)[:500],
+        )
+        raise NativeExtendError("HARVEST_FAILED", child_op) from exc
+
+    _routes.require_capability("GOOGLE_FLOW_EXTEND_LINEAGE")
+    row = await _crud.update_extend_lineage(
+        lineage_id,
+        polling_state=STATE_SUCCEEDED,
+        output_url=output_url,
+        error_code=None,
+        error_message=None,
+        completed_at=_crud._now(),
+    )
+    return {
+        **_lineage_outcome(row or {}, resumed=True),
+        "child_workflow_id": (row or {}).get("child_workflow_id"),
+    }
+
+
 async def _poll_child(client, project_id: str, child_op: str, lineage_id: str,
                       *, poll_timeout_s: int, poll_interval_s: int) -> Optional[str]:
     await _crud.update_extend_lineage(lineage_id, polling_state=STATE_POLLING)

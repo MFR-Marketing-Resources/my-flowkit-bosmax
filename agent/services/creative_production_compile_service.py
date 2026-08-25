@@ -369,18 +369,52 @@ async def _compile_faceless_recipe(
 
 
 def _montage_story_beats(treatment: dict[str, Any] | None) -> list[Any]:
-    shots = treatment.get("shot_grammar") if isinstance(treatment, dict) else None
-    if isinstance(shots, list) and shots:
+    if isinstance(treatment, dict):
+        segment_plan = treatment.get("segment_plan")
+        segments = (
+            segment_plan.get("segments")
+            if isinstance(segment_plan, dict)
+            else None
+        )
+        if not isinstance(segments, list) or not segments:
+            segments = [
+                {
+                    "segment_index": 1,
+                    "shot_grammar": treatment.get("shot_grammar") or [],
+                }
+            ]
         beats: list[Any] = []
-        for index, shot in enumerate(shots, start=1):
-            if not isinstance(shot, dict):
+        for index, segment in enumerate(segments, start=1):
+            if not isinstance(segment, dict):
                 continue
+            shots = [
+                shot
+                for shot in segment.get("shot_grammar") or []
+                if isinstance(shot, dict)
+            ]
+            purposes = [
+                str(shot.get("purpose") or "").strip()
+                for shot in shots
+                if str(shot.get("purpose") or "").strip()
+            ]
+            subjects = [
+                str(shot.get("subject") or "").strip()
+                for shot in shots
+                if str(shot.get("subject") or "").strip()
+            ]
+            segment_index = int(segment.get("segment_index") or index)
             beats.append(
                 SimpleNamespace(
-                    beat_id=f"treatment-shot-{index}",
-                    role="BODY" if index < len(shots) else "CTA",
-                    objective=str(shot.get("purpose") or "Approved treatment beat"),
-                    visual_action=str(shot.get("subject") or "Product-led scene"),
+                    beat_id=f"treatment-block-{segment_index}",
+                    role=(
+                        "HOOK"
+                        if index == 1
+                        else "CTA"
+                        if index == len(segments)
+                        else "BODY"
+                    ),
+                    objective="; ".join(purposes) or "Approved treatment block",
+                    visual_action="; ".join(subjects) or "Product-led scene",
                 )
             )
         if beats:
@@ -423,6 +457,28 @@ async def _compile_montage_recipe(
     from agent.services.montage_scene_reference_policy import SceneReferencePolicy
 
     model = str(dimensions.get("model_key") or "").strip()
+    treatment_segment_plan = (
+        treatment.get("segment_plan") if isinstance(treatment, dict) else None
+    )
+    if not isinstance(treatment_segment_plan, dict):
+        treatment_segment_plan = {
+            "generation_mode": "SINGLE",
+            "requested_total_duration_seconds": int(
+                (treatment or {}).get("duration_seconds") or engine_block_duration
+            ),
+            "engine_block_duration_seconds": engine_block_duration,
+            "segment_count": 1,
+            "resolved_block_plan": [engine_block_duration],
+            "ordered_segment_sha256s": [],
+            "segments": [
+                {
+                    "segment_index": 1,
+                    "operation": "INITIAL",
+                    "duration_seconds": engine_block_duration,
+                    "shot_grammar": (treatment or {}).get("shot_grammar") or [],
+                }
+            ],
+        }
     lane_context = (
         {**copy_v2_context, "lane": "MONTAGE"}
         if isinstance(copy_v2_context, dict)
@@ -439,6 +495,8 @@ async def _compile_montage_recipe(
         staff_display_name_snapshot=item.get("staff_display_name_snapshot"),
         copy_fallback_confirmed=False,
         copy_v2_context=lane_context,
+        treatment_block_plan=treatment_segment_plan,
+        creative_treatment=treatment,
     )
     if not bool(run.get("ok")) or not run.get("montage_run_id"):
         raise CreativeProductionError(

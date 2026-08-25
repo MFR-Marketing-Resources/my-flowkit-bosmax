@@ -67,13 +67,25 @@ VIDEO_MODELS = {
 DEFAULT_MODEL = "veo_3_1_lite"  # backward-compatible (patch I4)
 
 
+def _match_key(value) -> str:
+    """Separator-insensitive match key: keep only alphanumerics, lowercased.
+
+    So 'Veo 3.1 Lite', 'Veo 3.1 - Lite', and 'veo_3_1_lite' all collapse to the
+    same token — a cosmetic label/separator difference never reads as an unknown
+    model. Genuinely different models stay distinct (veo31lite vs veo31fast)."""
+    return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
+
 def resolve(model) -> dict:
-    """Resolve a model by key OR ui_label OR agent_label. Raises on unknown."""
+    """Resolve a model by key OR ui_label OR agent_label. Raises on unknown.
+
+    Matching is separator-insensitive (see :func:`_match_key`)."""
     if not model:
         return VIDEO_MODELS[DEFAULT_MODEL]
-    m = str(model).strip().lower()
+    m = _match_key(model)
     for spec in VIDEO_MODELS.values():
-        if m in (spec["key"].lower(), spec["ui_label"].lower(), spec["agent_label"].lower()):
+        if m in (_match_key(spec["key"]), _match_key(spec["ui_label"]),
+                 _match_key(spec["agent_label"])):
             return spec
     raise ValueError(f"unknown video model '{model}'")
 

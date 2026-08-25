@@ -18,6 +18,7 @@ import {
 	checkMontageRunReadiness,
 	createMontagePlan,
 	createMontageRun,
+	fetchMontageRun,
 	fetchMontageVideoCapability,
 	fetchMascotDurationOptions,
 	type MascotDurationOption,
@@ -49,7 +50,12 @@ import {
 	singleDurations,
 	type VideoCapabilityMatrix,
 } from "../utils/videoCapability";
-import { collectMontageSessionResults } from "../utils/videoSessionResults";
+import {
+	collectMontageSessionResults,
+	forgetMontageRunId,
+	rehydrateMontageRun,
+	rememberMontageRunId,
+} from "../utils/videoSessionResults";
 import { ManifestApprovalModal } from "../components/execution-approval/ManifestApprovalModal";
 import { materializeMontageManifest } from "../api/executionApproval";
 
@@ -145,6 +151,16 @@ export default function MontagePage() {
 			.catch(() => setMascotDurationOptions([]));
 	}, []);
 
+	useEffect(() => {
+		let alive = true;
+		void rehydrateMontageRun(fetchMontageRun).then((persistedRun) => {
+			if (alive && persistedRun) setRun(persistedRun);
+		});
+		return () => {
+			alive = false;
+		};
+	}, []);
+
 	const hookLabel = labelOf(settings.hook.options, hookId);
 	const backgroundLabel = labelOf(settings.background.options, backgroundId);
 
@@ -217,6 +233,7 @@ export default function MontagePage() {
 		setBusy(true);
 		setError(null);
 		setReadiness(null);
+		forgetMontageRunId();
 		setRun(null);
 		setAssembleNote(null);
 		setAssembleResult(null);
@@ -277,6 +294,7 @@ export default function MontagePage() {
 				final_video_duration_seconds: useMascot ? finalDuration : null,
 			});
 			setRun(res);
+			rememberMontageRunId(res.montage_run_id);
 			try {
 				const est = await fetchMontageGenerationEstimate(res.montage_run_id);
 				setEstimate(est);
@@ -503,6 +521,7 @@ export default function MontagePage() {
 							onSelect={(p) => {
 								setSelectedProduct(p);
 								setPlan(null);
+								forgetMontageRunId();
 								setRun(null);
 								setReadiness(null);
 								setAssembleNote(null);
@@ -517,6 +536,7 @@ export default function MontagePage() {
 								onChange={(e) => {
 									setUseMascot(e.target.checked);
 									setPlan(null);
+									forgetMontageRunId();
 									setRun(null);
 								}}
 								className="mt-0.5"
@@ -659,6 +679,7 @@ export default function MontagePage() {
 										onChange={(e) => {
 											setFinalDuration(Number(e.target.value));
 											setPlan(null);
+											forgetMontageRunId();
 											setRun(null);
 										}}
 										data-testid="montage-final-duration"
@@ -1073,6 +1094,9 @@ export default function MontagePage() {
 						generating={busy}
 						mediaKind="video"
 						libraryHref="/library/videos"
+						staffId={staffIdentity.staffId}
+						surfaceLane="MONTAGE"
+						requestId={run?.montage_run_id ? `montage:${run.montage_run_id}` : null}
 					/>
 				</aside>
 			</div>

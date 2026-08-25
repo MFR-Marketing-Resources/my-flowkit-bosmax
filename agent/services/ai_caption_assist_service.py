@@ -47,7 +47,7 @@ def _name_of(product: dict | None) -> str:
     )
 
 
-async def _resolve_product_and_creative(
+async def _resolve_grounding(
     *, product_id: str | None, artifact_media_id: str | None
 ) -> tuple[dict | None, dict | None]:
     """Resolve the product row + the durable creative snapshot. An explicit
@@ -57,6 +57,13 @@ async def _resolve_product_and_creative(
     pid = scp._normalize(product_id)
     if artifact_media_id:
         record = await crud.get_generation_result(artifact_media_id)
+        if record and str(record.get("artifact_kind") or "video").lower() == "video":
+            if not await crud.is_final_video_media_id(artifact_media_id):
+                raise scp.SocialCopyError("FINAL_VIDEO_REQUIRED")
+        elif not record:
+            artifact = await crud.get_generated_artifact(artifact_media_id)
+            if artifact and str(artifact.get("artifact_kind") or "video").lower() == "video":
+                raise scp.SocialCopyError("FINAL_RESULT_REQUIRED")
         if record and not pid:
             pid = scp._normalize(record.get("product_id"))
     product = await crud.get_product(pid) if pid else None
@@ -239,7 +246,7 @@ async def generate_caption_candidates(req: dict) -> dict[str, Any]:
     except (TypeError, ValueError):
         count = 1
 
-    product, record = await _resolve_product_and_creative(
+    product, record = await _resolve_grounding(
         product_id=req.get("product_id"),
         artifact_media_id=req.get("artifact_media_id"),
     )

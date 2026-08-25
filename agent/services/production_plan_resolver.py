@@ -47,6 +47,8 @@ _CLIENT_OVERRIDABLE_AUTHORITY = (
     "initial_reference_media_ids", "initial_source_mode",
     "initial_mode", "model", "aspect_ratio", "initial_prompt_text",
     "initial_prompt_fingerprint", "continuation_prompts",
+    "staff_id", "staff_display_name_snapshot", "faceless_execution_identity",
+    "product_visual_custody", "surface_lane",
 )
 
 _SEGMENT_SECONDS = 8
@@ -105,10 +107,10 @@ def _primary_product_asset(resolved_assets: list[dict]) -> dict | None:
 
 class AuthorityMismatchError(ValueError):
     """A supplied fingerprint did not match the canonical prompt text."""
-    def __init__(self, detail: str) -> None:
-        self.code = FINGERPRINT_MISMATCH
+    def __init__(self, detail: str, *, code: str = FINGERPRINT_MISMATCH) -> None:
+        self.code = code
         self.detail = detail
-        super().__init__(f"{FINGERPRINT_MISMATCH}:{detail}")
+        super().__init__(f"{code}:{detail}")
 
 
 async def resolve_production_authority(
@@ -122,6 +124,8 @@ async def resolve_production_authority(
     authority is DROPPED and re-resolved from the execution package (SSOT).
     """
     out: dict[str, Any] = dict(intent)
+    supplied_profile_context = intent.get("execution_profile_context")
+    supplied_provider_profile = intent.get("provider_profile")
     if not trust_client_authority:
         for k in _CLIENT_OVERRIDABLE_AUTHORITY:
             out.pop(k, None)
@@ -146,6 +150,10 @@ async def resolve_production_authority(
         from agent.db import crud
         pkg = await crud.get_workspace_execution_package(exec_pkg_id)
     if pkg:
+        try:
+            package_lineage = json.loads(pkg.get("request_lineage_payload") or "{}")
+        except (TypeError, ValueError):
+            package_lineage = {}
         # Fail-closed package gate: a BLOCKED execution package (readiness
         # blockers, e.g. a missing required I2V recipe role) must never mint a
         # production plan — even when its media-ref count still lands inside the
@@ -161,6 +169,20 @@ async def resolve_production_authority(
             out["initial_mode"] = pkg.get("mode")
         if not _clean(out.get("product_id")):
             out["product_id"] = pkg.get("product_id")
+        out["staff_id"] = pkg.get("staff_id") or (
+            package_lineage.get("staff_identity") or {}
+        ).get("staff_id")
+        out["staff_display_name_snapshot"] = (
+            pkg.get("staff_display_name_snapshot")
+            or (package_lineage.get("staff_identity") or {}).get("staff_display_name")
+        )
+        faceless_identity = package_lineage.get("faceless_execution_identity")
+        if isinstance(faceless_identity, dict):
+            out["faceless_execution_identity"] = dict(faceless_identity)
+            out["surface_lane"] = "FACELESS"
+        custody = package_lineage.get("product_visual_custody")
+        if isinstance(custody, dict):
+            out["product_visual_custody"] = dict(custody)
         if not _clean(out.get("initial_prompt_text")):
             # ONE generation = ONE block. `pkg.prompt_text` is the FULL compiled
             # document — for a multi-block (EXTEND) package it joins every block,
@@ -266,6 +288,102 @@ async def resolve_production_authority(
         out["initial_prompt_fingerprint"] = computed
     conts = out.get("continuation_prompts") or []
     out["continuation_prompt_fingerprints"] = [c["fingerprint"] for c in conts]
+
+    if (
+        out.get("duration_valid")
+        and _clean(out.get("initial_mode")) in _VIDEO_START_MODES
+    ):
+        from agent.services import make_video as _make_video
+        from agent.services import video_execution_profile_service as _profiles
+
+        try:
+            duration_profile, provider_profile = _make_video._server_derived_video_profiles(
+                mode=out.get("initial_mode"),
+                source_mode=out.get("initial_source_mode"),
+                model=out.get("model"),
+                duration_s=out.get("requested_duration_seconds"),
+                aspect=out.get("aspect_ratio"),
+                ref_count=len(out.get("initial_reference_media_ids") or []),
+                num_videos=1,
+            )
+        except (TypeError, ValueError) as exc:
+            raise AuthorityMismatchError(
+                str(exc), code="PROVIDER_PROFILE_RESOLUTION_FAILED"
+            ) from exc
+        resolved_lane = _clean(
+            out.get("surface_lane") or intent.get("surface_lane")
+        ).upper()
+        canonical_profile_context: dict[str, Any] = {
+            "duration_model_profile": duration_profile,
+            "lane": resolved_lane,
+        }
+        if isinstance(supplied_profile_context, dict):
+            expected_duration_profile = supplied_profile_context.get(
+                "duration_model_profile"
+            )
+            try:
+                expected_duration_profile = _profiles.canonicalize_profile(
+                    expected_duration_profile or {}
+                )
+                expected_digest = expected_duration_profile["profile_digest"]
+                if expected_digest != duration_profile["profile_digest"]:
+                    raise AuthorityMismatchError(
+                        "client profile evidence does not match the server-derived tuple",
+                        code="EXECUTION_PROFILE_CONTEXT_MISMATCH",
+                    )
+                approval_digest_fields = (
+                    "lane_adapter_digest",
+                    "product_digest",
+                    "copy_digest",
+                    "sweetwps_digest",
+                    "compositor_digest",
+                    "compiler_digest",
+                )
+                if any(supplied_profile_context.get(key) for key in approval_digest_fields):
+                    canonical_profile_context = _profiles.normalize_approval_context(
+                        supplied_profile_context
+                    )
+                    supplied_lane = _clean(
+                        canonical_profile_context.get("lane")
+                    ).upper()
+                    if resolved_lane and supplied_lane != resolved_lane:
+                        raise AuthorityMismatchError(
+                            "client profile lane does not match the server-resolved surface",
+                            code="EXECUTION_PROFILE_CONTEXT_MISMATCH",
+                        )
+                    canonical_profile_context["lane"] = resolved_lane or supplied_lane
+            except AuthorityMismatchError:
+                raise
+            except (TypeError, ValueError) as exc:
+                raise AuthorityMismatchError(
+                    "client profile evidence is not canonical",
+                    code="EXECUTION_PROFILE_CONTEXT_MISMATCH",
+                ) from exc
+        if isinstance(supplied_provider_profile, dict):
+            expected_digest = _clean(
+                supplied_provider_profile.get("provider_profile_digest")
+                or supplied_provider_profile.get("profile_digest")
+            )
+            if expected_digest and expected_digest != provider_profile["provider_profile_digest"]:
+                raise AuthorityMismatchError(
+                    "client provider-profile evidence does not match the server-derived tuple",
+                    code="PROVIDER_PROFILE_CONTEXT_MISMATCH",
+                )
+        out["execution_profile_context"] = canonical_profile_context
+        out["provider_profile"] = provider_profile
+        stable_material = {
+            "execution_package_id": exec_pkg_id,
+            "product_id": out.get("product_id"),
+            "profile_digest": duration_profile["profile_digest"],
+            "provider_profile_digest": provider_profile["provider_profile_digest"],
+            "client_request_nonce": intent.get("client_request_nonce"),
+        }
+        out["stable_request_identity"] = (
+            _clean(intent.get("stable_request_identity"))
+            or "initial_" + hashlib.sha256(
+                json.dumps(stable_material, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()[:24]
+        )
 
     out["missing"] = _missing_fields(out, extend_ops)
     return out
@@ -415,4 +533,23 @@ def _missing_fields(out: dict[str, Any], extend_ops: int) -> list[str]:
         ok = detail is None
     if not ok:
         missing.append(f"initial_reference_contract ({detail})")
+    if _clean(out.get("surface_lane")).upper() == "FACELESS":
+        for field in (
+            "staff_id",
+            "faceless_execution_identity",
+            "execution_profile_context",
+            "provider_profile",
+            "stable_request_identity",
+        ):
+            if not out.get(field):
+                missing.append(field)
+        custody = out.get("product_visual_custody")
+        if not isinstance(custody, dict):
+            missing.append("product_visual_custody")
+        elif custody.get("exact_product_required"):
+            if not custody.get("receipt_sha256"):
+                missing.append("product_visual_custody_receipt_sha256")
+            exact_plan = custody.get("exact_product_video")
+            if not isinstance(exact_plan, dict):
+                missing.append("exact_product_video")
     return missing

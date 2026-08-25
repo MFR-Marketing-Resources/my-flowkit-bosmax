@@ -3,12 +3,8 @@
 // It makes the four options unambiguous (independent blocks / native Extend /
 // Download-Project ZIP / final-concat-export-UNAVAILABLE), resolves live readiness +
 // blockers through the ONE backend resolver, previews the continuation plan as a
-// zero-credit dry-run, shows parent→child lineage + polling status, and surfaces the
-// exact number of credit-consuming Extend operations a live run would perform.
-//
-// Live execution requires an explicit confirmation after dry-run. The backend grants
-// a process-local, single-use authorization bound to the exact reviewed chain and
-// planned operation count; /extend-run remains the only execution path.
+// zero-credit dry-run, and shows parent→child lineage + polling status. Live work is
+// owned only by the durable Full Video job above this diagnostics surface.
 import { useEffect, useRef, useState } from 'react';
 import {
   NATIVE_EXTEND_ROUTES,
@@ -20,9 +16,6 @@ import {
   fetchNativeExtendLineage,
   fetchNativeExtendSourceCandidates,
   resolveNativeExtendSource,
-  requestNativeExtendLiveAuthorization,
-  runNativeExtend,
-  materializeNativeExtendManifest,
   lookupVideoJob,
   planVideoJob,
   authorizeVideoJob,
@@ -36,7 +29,6 @@ import {
   type VideoJobPlan,
   type VideoJobStatus,
 } from '../api/nativeExtend';
-import { ManifestApprovalModal } from './execution-approval/ManifestApprovalModal';
 
 export interface NativeExtendPanelProps {
   surfaceLane?: 'HYBRID' | 'FACELESS' | 'MONTAGE' | 'PRODUCTION_STUDIO_P6';
@@ -77,15 +69,6 @@ export default function NativeExtendPanel({
   const [lineage, setLineage] = useState<ExtendLineageRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmLive, setConfirmLive] = useState(false);
-  const [liveResult, setLiveResult] = useState<ExtendRunResult | null>(null);
-  // Final Prompt Approval Gate — a LIVE Extend chain first materialises ALL its
-  // per-block continuation prompts into one manifest and requires human WYSIWYG
-  // approval; the deferred paid dispatch runs on approval. The blocks are reviewed
-  // ONCE here (not per-clip).
-  const [pendingExtendManifest, setPendingExtendManifest] = useState<
-    { manifestId: string; input: Parameters<typeof runNativeExtend>[0] } | null
-  >(null);
   // SEV-1 UX repair: finished Block-1 clips auto-inherit into the Extend context —
   // the operator selects a clip, never pastes raw project/scene/operation ids.
   const [candidates, setCandidates] = useState<ExtendSourceCandidate[]>([]);
@@ -262,65 +245,6 @@ export default function NativeExtendPanel({
         aspect_ratio: aspectRatio,
       });
       setPreview(r);
-      setConfirmLive(false);
-      setLiveResult(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const canStartLive =
-    !!preview &&
-    preview.planned_operation_count > 0 &&
-    !!resolution?.route_executable &&
-    !busy;
-
-  // Paid dispatch — runs only after the per-block manifest is human-approved.
-  const dispatchExtendLive = async (
-    input: Parameters<typeof runNativeExtend>[0],
-  ) => {
-    if (!preview) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const authorization = await requestNativeExtendLiveAuthorization(input);
-      if (authorization.planned_operation_count !== preview.planned_operation_count) {
-        throw new Error('EXTEND_CONFIRMATION_COUNT_MISMATCH');
-      }
-      const result = await runNativeExtend({
-        ...input,
-        live_authorization_token: authorization.authorization_token,
-      });
-      setLiveResult(result);
-      setConfirmLive(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const runLive = async () => {
-    if (!preview || !canStartLive) return;
-    const input = {
-      project_id: projectId,
-      scene_id: sceneId,
-      source_operation_id: sourceOperationId,
-      blocks: plannedBlocks,
-      aspect_ratio: aspectRatio,
-      dry_run: false,
-      confirm_live_credit_burn: true,
-      confirmed_extend_operation_count: preview.planned_operation_count,
-    };
-    // Final Prompt Approval Gate: freeze the per-block continuation prompts into a
-    // manifest and require human WYSIWYG approval BEFORE any paid Extend operation.
-    setBusy(true);
-    setError(null);
-    try {
-      const manifest = await materializeNativeExtendManifest(input);
-      setPendingExtendManifest({ manifestId: manifest.manifest_id, input });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -395,19 +319,6 @@ export default function NativeExtendPanel({
       data-testid="native-extend-panel"
       className="mt-4 rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-4 text-sm text-slate-200"
     >
-      {pendingExtendManifest && (
-        <ManifestApprovalModal
-          manifestId={pendingExtendManifest.manifestId}
-          approvedBy="operator"
-          title="Review every Extend block's final prompt"
-          onApproved={() => {
-            const deferred = pendingExtendManifest.input;
-            setPendingExtendManifest(null);
-            void dispatchExtendLive(deferred);
-          }}
-          onCancel={() => setPendingExtendManifest(null)}
-        />
-      )}
       <div className="mb-2 flex items-center justify-between">
         <h4 className="font-semibold text-indigo-200">Full Video</h4>
         <span className="text-xs text-slate-400">
@@ -735,6 +646,14 @@ export default function NativeExtendPanel({
             Preview continuation plan (dry-run · no credits)
           </button>
 
+          <div
+            data-testid="native-extend-orchestrator-only"
+            className="mt-2 rounded border border-indigo-400/30 bg-indigo-400/5 p-2 text-xs text-indigo-100"
+          >
+            Direct live Extend is retired. Use Generate Video above; the durable Full
+            Video job owns initial generation, Extend recovery, and final delivery.
+          </div>
+
           {error && (
             <div data-testid="native-extend-error" className="mt-2 text-xs text-rose-300">
               {error}
@@ -760,63 +679,6 @@ export default function NativeExtendPanel({
                     : ' · parent resolved at run time'}
                 </div>
               ))}
-            </div>
-          )}
-
-          {canStartLive && (
-            <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-100">
-              <p data-testid="native-extend-live-warning">
-                Live test spends Google Flow credits. This authorizes exactly{' '}
-                {preview?.planned_operation_count} Extend operation
-                {preview?.planned_operation_count === 1 ? '' : 's'}; the final render is a separate gated step.
-              </p>
-              <button
-                type="button"
-                data-testid="native-extend-live-btn"
-                className="mt-2 rounded bg-amber-600 px-3 py-1.5 font-medium text-white"
-                onClick={() => setConfirmLive(true)}
-              >
-                Run live test ({preview?.planned_operation_count} credit-consuming operation
-                {preview?.planned_operation_count === 1 ? '' : 's'})
-              </button>
-            </div>
-          )}
-
-          {confirmLive && preview && (
-            <div
-              data-testid="native-extend-live-confirm"
-              className="mt-3 rounded border border-rose-500/50 bg-rose-500/10 p-3 text-xs text-rose-100"
-            >
-              <p>
-                Confirm live Native Extend: Google Flow will be asked to run exactly{' '}
-                {preview.planned_operation_count} credit-consuming operation
-                {preview.planned_operation_count === 1 ? '' : 's'} for this reviewed plan.
-              </p>
-              <div className="mt-2 flex gap-2">
-                <button
-                  type="button"
-                  data-testid="native-extend-live-confirm-btn"
-                  className="rounded bg-rose-600 px-3 py-1.5 font-medium text-white disabled:opacity-40"
-                  disabled={busy}
-                  onClick={runLive}
-                >
-                  Confirm &amp; run live
-                </button>
-                <button
-                  type="button"
-                  className="rounded border border-slate-500 px-3 py-1.5"
-                  disabled={busy}
-                  onClick={() => setConfirmLive(false)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-
-          {liveResult && (
-            <div data-testid="native-extend-live-result" className="mt-3 text-xs text-emerald-300">
-              Live request accepted by the authoritative Extend orchestrator. Polling and lineage status are shown below.
             </div>
           )}
 

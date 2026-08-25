@@ -15,10 +15,15 @@ import asyncio
 import base64
 import json
 import struct
+from contextlib import contextmanager
+from unittest.mock import AsyncMock
 
 import pytest
 
 from agent.db import crud
+from agent.services.flow_client import FlowClient
+from agent.services import make_video as mv
+from agent.services import product_release_service
 from agent.services import video_production_orchestrator as orch
 
 
@@ -53,7 +58,7 @@ def _intent(nonce, duration=16):
         "execution_package_id": "wep_1", "approved_asset_id": "product-image:6483d624:subject",
         "approved_asset_sha256": "hashA", "initial_asset_media_id": f"asset-{nonce}",
         "requested_duration_seconds": duration, "engine": "GOOGLE_FLOW",
-        "model": "veo_3_1_extension_lite", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "model": "veo_3_1_lite", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
         "initial_mode": "I2V",
         "initial_prompt_text": f"block-1 product-truth prompt for {nonce}",
         "continuation_prompts": _continuations(nonce, duration),
@@ -100,6 +105,110 @@ class FakeClient:
     async def check_video_concatenation_status(self, envelope):
         return {"status": "MEDIA_GENERATION_STATUS_SUCCESSFUL", "outputUri": "",
                 "mediaGenerationId": "", "inputsCount": 3, "encodedVideo": self._encoded}
+
+
+def _released_binding(*, installation="installation-a", build="build-current",
+                      project="proj-root", session="session-a1"):
+    return {
+        "project_id": project,
+        "bridge_lease": {
+            "lease_id": f"preflight-{session}",
+            "connection_id": f"connection-{session}",
+            "connection_epoch": 1,
+            "installation_id": installation,
+            "extension_session_id": session,
+            "extension_build": build,
+            "flow_tab_id": 91,
+            "flow_url": f"https://labs.google/fx/tools/flow/project/{project}",
+            "flow_project_id": project,
+            "released": True,
+            "released_at": 1.0,
+            "receipt_state": "PREFLIGHT_RELEASED",
+        },
+    }
+
+
+class LeaseClient(FakeClient, FlowClient):
+    """FlowClient-typed provider-free fixture for production-only lineage gates."""
+
+    def __init__(self, nonce, *, installation="installation-a",
+                 build="build-current", project="proj-root", **kwargs):
+        FakeClient.__init__(self, nonce, **kwargs)
+        self.installation = installation
+        self.build = build
+        self.project = project
+        self.active_installation = None
+        self.acquired = []
+        self.released = []
+        self.credit_probe = None
+
+    def acquire_operation_lease(self, *, installation_id=None, **_kwargs):
+        if installation_id and installation_id != self.installation:
+            raise ConnectionError("ERR_EXTENSION_CONNECTION_NOT_FOUND")
+        lease = {
+            "lease_id": f"phase-{len(self.acquired) + 1}",
+            "connection_id": f"connection-{self.installation}",
+            "connection_epoch": len(self.acquired) + 1,
+            "installation_id": self.installation,
+            "extension_session_id": f"session-{len(self.acquired) + 1}",
+        }
+        self.acquired.append((installation_id, dict(lease)))
+        return lease
+
+    @contextmanager
+    def activate_operation_lease(self, lease):
+        previous = self.active_installation
+        self.active_installation = lease["installation_id"]
+        try:
+            yield lease
+        finally:
+            self.active_installation = previous
+
+    def release_operation_lease(self, lease):
+        self.released.append(dict(lease))
+        return True
+
+    async def get_credits(self):
+        assert self.active_installation == self.installation
+        if self.credit_probe is not None:
+            await self.credit_probe()
+        return await FakeClient.get_credits(self)
+
+    async def generate_video_extend(self, **kw):
+        assert self.active_installation == self.installation
+        return await FakeClient.generate_video_extend(self, **kw)
+
+    async def check_video_status_by_media(self, media):
+        assert self.active_installation == self.installation
+        return await FakeClient.check_video_status_by_media(self, media)
+
+    async def get_media(self, mid):
+        assert self.active_installation == self.installation
+        return await FakeClient.get_media(self, mid)
+
+    async def run_video_concatenation(self, input_videos):
+        assert self.active_installation == self.installation
+        return await FakeClient.run_video_concatenation(self, input_videos)
+
+    async def check_video_concatenation_status(self, envelope):
+        assert self.active_installation == self.installation
+        return await FakeClient.check_video_concatenation_status(self, envelope)
+
+
+def _wire_rooted_binder(monkeypatch):
+    async def bind(client, requested_project_id=None, *, bridge_lease=None, **_kwargs):
+        lease = {
+            **dict(bridge_lease or {}),
+            "extension_build": client.build,
+            "flow_tab_id": 92,
+            "flow_url": (
+                "https://labs.google/fx/tools/flow/project/" + client.project
+            ),
+            "flow_project_id": client.project,
+        }
+        return {"project_id": client.project, "bridge_lease": lease}
+
+    monkeypatch.setattr(mv, "_bind_editor_session", bind)
 
 
 def _initial_gen(calls, nonce, *, credit_after=None):
@@ -207,6 +316,413 @@ async def test_advance_requires_valid_authorization(monkeypatch, tmp_path):
     assert exc.value.code == orch.F_AUTH
 
 
+async def test_bridge_lineage_root_persisted_before_initial_provider_touch(
+    monkeypatch, tmp_path
+):
+    _wire_rooted_binder(monkeypatch)
+    planned, auth = await _plan_authorize(monkeypatch, "root-before-touch")
+    client = LeaseClient("root-before-touch", project="proj-root-before-touch")
+    events = []
+
+    async def prepare(job):
+        events.append("prepare")
+        binding = _released_binding(project=client.project)
+        await orch.persist_bridge_lineage_root(job["job_id"], binding)
+        return binding
+
+    async def credit_probe():
+        persisted = await crud.get_video_production_job(planned["job_id"])
+        root = orch.bridge_lineage_root(persisted)
+        assert root["installation_id"] == "installation-a"
+        assert root["extension_build"] == "build-current"
+        assert root["flow_project_id"] == client.project
+        events.append("credits")
+
+    async def stop_after_probe(_job):
+        events.append("generate")
+        raise RuntimeError("STOP_AFTER_ROOT_ORDER")
+
+    client.credit_probe = credit_probe
+    with pytest.raises(orch.OrchestratorError):
+        await orch.advance_job(
+            client,
+            planned["job_id"],
+            authorization_token=auth["authorization_token"],
+            prepare_initial=prepare,
+            generate_initial=stop_after_probe,
+            out_dir=tmp_path,
+        )
+
+    assert events == ["prepare", "credits", "generate"]
+    assert len(client.released) == 1
+
+
+async def test_initial_preflight_interruption_reenters_without_stranded_reservation(
+    monkeypatch, tmp_path
+):
+    """A cancellation after root persistence but before INITIAL reservation leaves
+    no side-effect owner; re-entry submits exactly once instead of polling forever."""
+    _wire_rooted_binder(monkeypatch)
+    nonce = "preflight-interrupt"
+    planned, auth = await _plan_authorize(monkeypatch, nonce)
+    client = LeaseClient(nonce, project=f"proj-{nonce}")
+    prepare_calls = []
+    initial_calls = []
+
+    async def allow_product(*_args, **_kwargs):
+        return {"operational": True}
+
+    monkeypatch.setattr(
+        product_release_service, "require_product_operational_visibility", allow_product
+    )
+
+    async def prepare(job):
+        prepare_calls.append(job["job_id"])
+        binding = _released_binding(
+            project=client.project,
+            session=f"preflight-{len(prepare_calls)}",
+        )
+        await orch.persist_bridge_lineage_root(job["job_id"], binding)
+        if len(prepare_calls) == 1:
+            raise asyncio.CancelledError()
+        return binding
+
+    with pytest.raises(asyncio.CancelledError):
+        await orch.advance_job(
+            client,
+            planned["job_id"],
+            authorization_token=auth["authorization_token"],
+            prepare_initial=prepare,
+            generate_initial=_initial_gen(initial_calls, nonce),
+            out_dir=tmp_path,
+            poll_interval_s=0,
+        )
+
+    interrupted_job = await crud.get_video_production_job(planned["job_id"])
+    initial_key = orch._stage_key(
+        interrupted_job, "INITIAL", interrupted_job["logical_job_key"]
+    )
+    assert await crud.get_video_job_side_effect(initial_key) is None
+
+    status = await orch.advance_job(
+        client,
+        planned["job_id"],
+        authorization_token=auth["authorization_token"],
+        prepare_initial=prepare,
+        generate_initial=_initial_gen(initial_calls, nonce),
+        out_dir=tmp_path,
+        poll_interval_s=0,
+    )
+
+    assert status["complete"] is True
+    assert initial_calls == [planned["job_id"]]
+    row = await crud.get_video_job_side_effect(initial_key)
+    assert row["submission_state"] == orch.SUB_TERMINAL
+    assert int(row["effective_submit_count"]) == 1
+
+
+async def test_initial_credit_probe_interruption_reenters_before_atomic_claim(
+    monkeypatch, tmp_path
+):
+    """Cancellation during rooted binding/credit probing occurs before the atomic
+    submit claim, so re-entry remains provider-safe and submits exactly once."""
+    _wire_rooted_binder(monkeypatch)
+    nonce = "credit-interrupt"
+    planned, auth = await _plan_authorize(monkeypatch, nonce)
+    client = LeaseClient(nonce, project=f"proj-{nonce}")
+    initial_calls = []
+    credit_calls = 0
+
+    async def allow_product(*_args, **_kwargs):
+        return {"operational": True}
+
+    monkeypatch.setattr(
+        product_release_service, "require_product_operational_visibility", allow_product
+    )
+
+    async def prepare(job):
+        binding = _released_binding(project=client.project)
+        await orch.persist_bridge_lineage_root(job["job_id"], binding)
+        return binding
+
+    async def interrupt_first_credit_probe():
+        nonlocal credit_calls
+        credit_calls += 1
+        if credit_calls == 1:
+            raise asyncio.CancelledError()
+
+    client.credit_probe = interrupt_first_credit_probe
+    with pytest.raises(asyncio.CancelledError):
+        await orch.advance_job(
+            client,
+            planned["job_id"],
+            authorization_token=auth["authorization_token"],
+            prepare_initial=prepare,
+            generate_initial=_initial_gen(initial_calls, nonce),
+            out_dir=tmp_path,
+            poll_interval_s=0,
+        )
+
+    interrupted_job = await crud.get_video_production_job(planned["job_id"])
+    initial_key = orch._stage_key(
+        interrupted_job, "INITIAL", interrupted_job["logical_job_key"]
+    )
+    assert await crud.get_video_job_side_effect(initial_key) is None
+
+    status = await orch.advance_job(
+        client,
+        planned["job_id"],
+        authorization_token=auth["authorization_token"],
+        prepare_initial=prepare,
+        generate_initial=_initial_gen(initial_calls, nonce),
+        out_dir=tmp_path,
+        poll_interval_s=0,
+    )
+
+    assert status["complete"] is True
+    assert initial_calls == [planned["job_id"]]
+    row = await crud.get_video_job_side_effect(initial_key)
+    assert row["submission_state"] == orch.SUB_TERMINAL
+    assert int(row["effective_submit_count"]) == 1
+
+
+async def test_bridge_lineage_cas_preserves_concurrent_stage_state(
+    monkeypatch,
+):
+    planned, _auth = await _plan_authorize(monkeypatch, "root-cas")
+    await crud.update_video_production_job_full(
+        planned["job_id"],
+        stage_state_json=json.dumps({"owner_recovery_hold": {"version": 1}}),
+    )
+    root = {
+        "version": 1,
+        "installation_id": "installation-a",
+        "extension_build": "build-current",
+        "flow_project_id": "proj-root-cas",
+    }
+    original_cas = crud.compare_and_swap_video_production_job_stage_state
+    injected_conflict = False
+
+    async def lose_first_cas(
+        job_id, *, expected_stage_state_json, stage_state_json
+    ):
+        nonlocal injected_conflict
+        if not injected_conflict:
+            injected_conflict = True
+            concurrent = json.loads(expected_stage_state_json)
+            concurrent["concurrent_audit"] = {"writer": "b"}
+            await crud.update_video_production_job_full(
+                job_id,
+                stage_state_json=json.dumps(
+                    concurrent, separators=(",", ":"), sort_keys=True
+                ),
+            )
+            return False
+        return await original_cas(
+            job_id,
+            expected_stage_state_json=expected_stage_state_json,
+            stage_state_json=stage_state_json,
+        )
+
+    monkeypatch.setattr(
+        crud, "compare_and_swap_video_production_job_stage_state", lose_first_cas
+    )
+    await orch.merge_video_production_job_stage_state(
+        planned["job_id"], {"bridge_lineage_v1": root}
+    )
+
+    persisted = await crud.get_video_production_job(planned["job_id"])
+    state = json.loads(persisted["stage_state_json"])
+    assert state["owner_recovery_hold"] == {"version": 1}
+    assert state["bridge_lineage_v1"] == root
+    assert state["concurrent_audit"] == {"writer": "b"}
+
+
+async def test_initial_result_merge_preserves_bridge_lineage(monkeypatch):
+    planned, _auth = await _plan_authorize(monkeypatch, "initial-stage-merge")
+    root = {"version": 1, "installation_id": "installation-stage-merge"}
+    await crud.update_video_production_job_full(
+        planned["job_id"],
+        stage_state_json=json.dumps({"bridge_lineage_v1": root}),
+    )
+    job = await crud.get_video_production_job(planned["job_id"])
+    idem = orch._stage_key(job, "INITIAL", job["logical_job_key"])
+
+    await orch._persist_initial_result(
+        planned["job_id"],
+        idem,
+        {
+            "operation_id": "initial-stage-merge-media",
+            "media_id": "initial-stage-merge-media",
+            "workflow_id": "workflow-stage-merge",
+            "project_id": "project-stage-merge",
+            "scene_id": "scene-stage-merge",
+        },
+        bal_before=None,
+        client=FakeClient("initial-stage-merge"),
+    )
+
+    persisted = await crud.get_video_production_job(planned["job_id"])
+    state = json.loads(persisted["stage_state_json"])
+    assert state["bridge_lineage_v1"] == root
+    assert state["stable_request_identity"]
+    assert state["provider_profile_digest"]
+
+
+async def test_exact_final_adapter_runs_once_then_startup_repairs_locally(
+    monkeypatch, tmp_path
+):
+    from agent.services import exact_product_video_compositor_service as exact_video
+    from agent.services import video_artifact_delivery_service as delivery
+
+    product = await crud.create_product("Exact Final Adapter Test")
+    source_path = tmp_path / "source-final.mp4"
+    adapted_path = tmp_path / "adapted-final.mp4"
+    source_path.write_bytes(b"source-final-bytes")
+    adapted_path.write_bytes(b"adapted-final-bytes")
+    job_id = f"vj_exact_once_{product['id'][:8]}"
+    custody = {
+        "product_id": product["id"],
+        "exact_product_required": True,
+        "provider_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+        "exact_product_video": {
+            "selected_execution_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+            "generate_eligibility": True,
+        },
+    }
+    await crud.create_video_production_job_full(
+        job_id,
+        logical_job_key=f"logical-{job_id}",
+        status=orch.S_FINAL_SAVING,
+        product_id=product["id"],
+        requested_duration_seconds=16,
+        whole_plan_json=json.dumps({
+            "surface_lane": "FACELESS",
+            "stable_request_identity": f"request-{job_id}",
+            "workspace_execution_package_id": f"wep-{job_id}",
+            "product_visual_custody": custody,
+        }),
+    )
+    await crud.update_video_production_job_full(
+        job_id,
+        final_media_id=f"scene-{job_id}",
+        final_local_path=str(source_path),
+        final_sha256="source-sha",
+        final_duration_s=16,
+    )
+
+    compose_calls = []
+
+    def compose(**kwargs):
+        compose_calls.append(kwargs["scene_artifact"]["media_id"])
+        return {
+            "media_id": f"final-{job_id}",
+            "local_path": str(adapted_path),
+            "output_sha256": "adapted-sha",
+            "exact_product_lineage": {"adapter": "exact-test"},
+            "product_visual_custody": {
+                **custody,
+                "exact_video_composite": {"adapter": "exact-test"},
+            },
+        }
+
+    monkeypatch.setattr(exact_video, "compose_exact_product_video_artifact", compose)
+    real_register = delivery.register_final_video_artifact
+    delivery_attempts = 0
+
+    async def fail_first_delivery(*args, **kwargs):
+        nonlocal delivery_attempts
+        delivery_attempts += 1
+        if delivery_attempts == 1:
+            raise RuntimeError("forced local delivery interruption")
+        return await real_register(*args, **kwargs)
+
+    monkeypatch.setattr(delivery, "register_final_video_artifact", fail_first_delivery)
+    job = await crud.get_video_production_job(job_id)
+    with pytest.raises(RuntimeError, match="forced local delivery interruption"):
+        await orch._register_and_bind_final_delivery(
+            job, orch._final_result_from_job(job)
+        )
+
+    repair_job = await crud.get_video_production_job(job_id)
+    monkeypatch.setattr(
+        crud,
+        "list_incomplete_final_video_deliveries",
+        AsyncMock(return_value=[repair_job]),
+    )
+    summary = await orch.reconcile_incomplete_final_deliveries()
+
+    assert summary["repaired"] == 1
+    assert summary["provider_calls"] == 0
+    assert summary["provider_submits"] == 0
+    assert compose_calls == [f"scene-{job_id}"]
+    completed = await crud.get_video_production_job(job_id)
+    assert completed["status"] == orch.S_COMPLETE
+    pair = await crud.get_final_video_delivery(f"final-{job_id}")
+    assert pair["complete"] is True
+    assert await crud.is_final_video_media_id(f"final-{job_id}") is True
+
+
+@pytest.mark.parametrize(
+    ("field", "observed"),
+    [
+        ("installation_id", "installation-b"),
+        ("extension_build", "build-rotated"),
+        ("flow_project_id", "proj-rotated"),
+    ],
+)
+async def test_outer_lineage_rejects_installation_build_or_project_rotation(
+    monkeypatch, field, observed
+):
+    _wire_rooted_binder(monkeypatch)
+    planned, _auth = await _plan_authorize(monkeypatch, f"root-rotate-{field}")
+    await orch.persist_bridge_lineage_root(
+        planned["job_id"], _released_binding(project="proj-root")
+    )
+    kwargs = {"installation": "installation-a", "build": "build-current",
+              "project": "proj-root"}
+    kwargs[{"installation_id": "installation", "extension_build": "build",
+            "flow_project_id": "project"}[field]] = observed
+    client = LeaseClient(f"rotate-{field}", **kwargs)
+    reached = False
+
+    async def forbidden(_binding):
+        nonlocal reached
+        reached = True
+
+    with pytest.raises((orch.OrchestratorError, ConnectionError)):
+        await orch.bridge_lineage_phase(
+            client, planned["job_id"], "ROTATION_TEST", forbidden
+        )
+    assert reached is False
+    if field != "installation_id":
+        assert len(client.released) == 1
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
+async def test_outer_phase_lease_released_on_failure_and_cancellation(
+    monkeypatch, error_type
+):
+    _wire_rooted_binder(monkeypatch)
+    planned, _auth = await _plan_authorize(
+        monkeypatch, f"root-release-{error_type.__name__}"
+    )
+    await orch.persist_bridge_lineage_root(
+        planned["job_id"], _released_binding(project="proj-root")
+    )
+    client = LeaseClient("release", project="proj-root")
+
+    async def fail(_binding):
+        raise error_type("phase interrupted")
+
+    with pytest.raises(error_type):
+        await orch.bridge_lineage_phase(
+            client, planned["job_id"], "RELEASE_TEST", fail
+        )
+    assert len(client.released) == 1
+    assert client.active_installation is None
+
+
 # ── full happy path CREATED → COMPLETE ──────────────────────────────────────
 async def test_full_lifecycle_created_to_complete(monkeypatch, tmp_path):
     planned, auth = await _plan_authorize(monkeypatch, "full")
@@ -225,6 +741,47 @@ async def test_full_lifecycle_created_to_complete(monkeypatch, tmp_path):
     assert job["extend_child_operation_id"] == "child-full"
     assert job["final_media_id"] and job["final_duration_s"] == pytest.approx(16.0, abs=0.05)
     assert json.loads(job["segment_media_ids_json"]) == ["init-full", "child-full"]
+
+
+async def test_concat_uses_rooted_installation(monkeypatch, tmp_path):
+    _wire_rooted_binder(monkeypatch)
+    planned, auth = await _plan_authorize(monkeypatch, "rooted-concat")
+    await orch.persist_bridge_lineage_root(
+        planned["job_id"],
+        _released_binding(project="proj-rooted-concat"),
+    )
+    await crud.update_video_production_job_full(
+        planned["job_id"],
+        status=orch.S_EXTEND_READY,
+        project_id="proj-rooted-concat",
+        scene_id="scene-rooted-concat",
+        initial_operation_id="init-rooted-concat",
+        initial_media_id="init-rooted-concat",
+        segment_media_ids_json=json.dumps(
+            ["init-rooted-concat", "child-rooted-concat"]
+        ),
+        extend_child_operation_id="child-rooted-concat",
+    )
+    client = LeaseClient(
+        "rooted-concat", project="proj-rooted-concat", final_seconds=16.0
+    )
+
+    async def forbidden_initial(_job):
+        raise AssertionError("initial must not run")
+
+    status = await orch.advance_job(
+        client,
+        planned["job_id"],
+        authorization_token=auth["authorization_token"],
+        generate_initial=forbidden_initial,
+        out_dir=tmp_path,
+        poll_interval_s=0,
+    )
+
+    assert status["complete"] is True
+    assert client.concat_submits == 1
+    assert [item[0] for item in client.acquired] == ["installation-a"]
+    assert len(client.released) == 1
 
 
 # ── idempotency: re-advance never double-submits any side effect ────────────
@@ -252,6 +809,13 @@ async def test_concurrent_advance_single_concat(monkeypatch, tmp_path):
     planned, auth = await _plan_authorize(monkeypatch, "conc")
     client = FakeClient("conc")
     calls = []
+
+    async def allow_product(*_args, **_kwargs):
+        return {"operational": True}
+
+    monkeypatch.setattr(
+        product_release_service, "require_product_operational_visibility", allow_product
+    )
     args = dict(authorization_token=auth["authorization_token"],
                 generate_initial=_initial_gen(calls, "conc"), out_dir=tmp_path, poll_interval_s=0)
     await asyncio.gather(
@@ -261,6 +825,125 @@ async def test_concurrent_advance_single_concat(monkeypatch, tmp_path):
     assert len(calls) == 1
     assert client.extend_submits == 1
     assert client.concat_submits == 1
+
+    # The same race against an existing SAFE retry row must also have one owner.
+    retry_plan, _ = await _drive_to_initial(monkeypatch, tmp_path, "conc-safe")
+    retry_job = await crud.get_video_production_job(retry_plan["job_id"])
+    retry_cont = json.loads(retry_job["continuation_prompts_json"])[0]
+    retry_key = orch._stage_key(
+        retry_job,
+        "EXTEND",
+        "init-conc-safe|"
+        f"{orch._nx._prompt_hash(retry_cont['prompt'])}|pos1",
+    )
+    await crud.reserve_video_job_side_effect(
+        retry_key, job_id=retry_job["job_id"], stage="EXTEND"
+    )
+    await crud.increment_side_effect_submit_count(retry_key)
+    await crud.update_video_job_side_effect(
+        retry_key,
+        submission_state=orch.SUB_NOT_ATTEMPTED,
+        credit_state=orch.CR_NOT_SPENT,
+        retry_safety=orch.RS_SAFE,
+        detail="provider-free SAFE retry fixture",
+    )
+    await crud.update_video_production_job_full(
+        retry_job["job_id"], status=orch.F_EXTEND, error_code=orch.F_EXTEND
+    )
+    retry_auth = await orch.authorize_job(
+        retry_job["job_id"],
+        confirmed_plan_fingerprint=retry_plan["plan_fingerprint"],
+    )
+    retry_client = FakeClient("conc-safe")
+    retry_args = dict(
+        authorization_token=retry_auth["authorization_token"],
+        generate_initial=_initial_gen([], "conc-safe"),
+        out_dir=tmp_path,
+        poll_interval_s=0,
+    )
+    await asyncio.gather(
+        orch.advance_job(retry_client, retry_job["job_id"], **retry_args),
+        orch.advance_job(retry_client, retry_job["job_id"], **retry_args),
+    )
+    retry_row = await crud.get_video_job_side_effect(retry_key)
+    assert retry_client.extend_submits == 1
+    assert retry_client.concat_submits == 1
+    assert retry_row["submission_state"] == orch.SUB_TERMINAL
+    assert int(retry_row["effective_submit_count"]) == 2
+
+    # A caller that read a fresh candidate but then fails rooted binding must
+    # not downgrade the concurrent winner's active SUBMITTED ownership.
+    race_plan, race_auth = await _drive_to_initial(
+        monkeypatch, tmp_path, "conc-preclaim-fail"
+    )
+    race_job = await crud.get_video_production_job(race_plan["job_id"])
+    race_cont = json.loads(race_job["continuation_prompts_json"])[0]
+    race_key = orch._stage_key(
+        race_job,
+        "EXTEND",
+        "init-conc-preclaim-fail|"
+        f"{orch._nx._prompt_hash(race_cont['prompt'])}|pos1",
+    )
+    first_entered = asyncio.Event()
+    second_entered = asyncio.Event()
+    winner_active = asyncio.Event()
+    release_winner = asyncio.Event()
+    original_phase = orch.bridge_lineage_phase
+    extend_entries = 0
+
+    class _BlockingExtend(FakeClient):
+        async def generate_video_extend(self, **kwargs):
+            result = await super().generate_video_extend(**kwargs)
+            winner_active.set()
+            await release_winner.wait()
+            return result
+
+    async def controlled_phase(client_arg, job_id, phase, action):
+        nonlocal extend_entries
+        if job_id == race_job["job_id"] and phase == "EXTEND_1":
+            extend_entries += 1
+            if extend_entries == 1:
+                first_entered.set()
+                await second_entered.wait()
+                return await action(None)
+            second_entered.set()
+            await winner_active.wait()
+            raise RuntimeError("provider-free preclaim binding failure")
+        return await original_phase(client_arg, job_id, phase, action)
+
+    monkeypatch.setattr(orch, "bridge_lineage_phase", controlled_phase)
+    race_client = _BlockingExtend("conc-preclaim-fail")
+    race_args = dict(
+        authorization_token=race_auth["authorization_token"],
+        generate_initial=_initial_gen([], "conc-preclaim-fail"),
+        out_dir=tmp_path,
+        poll_interval_s=0,
+    )
+    winner = asyncio.create_task(
+        orch.advance_job(race_client, race_job["job_id"], **race_args)
+    )
+    await first_entered.wait()
+    loser = asyncio.create_task(
+        orch.advance_job(race_client, race_job["job_id"], **race_args)
+    )
+    await winner_active.wait()
+    with pytest.raises(orch.OrchestratorError, match="preclaim binding failure"):
+        await loser
+
+    active_row = await crud.get_video_job_side_effect(race_key)
+    assert active_row["submission_state"] == orch.SUB_SUBMITTED
+    assert active_row["credit_state"] == orch.CR_MAY_HAVE_SPENT
+    assert active_row["retry_safety"] == orch.RS_RESUME_ONLY
+    assert int(active_row["effective_submit_count"]) == 1
+    assert race_client.extend_submits == 1
+
+    release_winner.set()
+    completed = await winner
+    final_row = await crud.get_video_job_side_effect(race_key)
+    assert completed["complete"] is True
+    assert race_client.extend_submits == 1
+    assert final_row["submission_state"] == orch.SUB_TERMINAL
+    assert int(final_row["effective_submit_count"]) == 1
 
 
 # ── restart / resume: resume_only never fresh-submits ───────────────────────

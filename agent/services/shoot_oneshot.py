@@ -102,7 +102,8 @@ def get_job(job_id: str):
 
 
 async def start_job(envelope: dict, effective_tier: str) -> dict:
-    """Mint a job, spawn the background pipeline, return immediately (§4.1)."""
+    """Retired paid compatibility entrypoint; use the durable video job."""
+    raise RuntimeError("LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB")
     job_id = "j_" + uuid4().hex[:12]
     job = {
         "job_id": job_id, "status": SUBMITTED, "stage": "queued",

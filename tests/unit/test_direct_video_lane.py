@@ -11,11 +11,12 @@ Pure logic — no network, no credits. Exercises:
     fake client (DONE + generated_artifact registration + lane release);
   * honest failure classification (render FAILED vs poll timeout ->
     GENERATED_BUT_UNRETRIEVED with re-pollable operations);
-  * the flag-gated live-capture entrypoint (raw submit response + background
-    retrieval).
+  * retired compatibility entrypoints fail before job/task/provider side effects.
 """
 import asyncio
 import base64
+
+import pytest
 
 import agent.services.make_video as mv
 from agent.services.flow_client import FlowClient, resolve_video_model_key
@@ -460,6 +461,7 @@ def test_routing_flag_on_eligible_takes_direct_lane(monkeypatch):
         ran["direct"] = job_id
 
     monkeypatch.setattr(mv, "_run_generate_direct", fake_direct_run)
+    monkeypatch.setattr(mv, "get_flow_client", lambda: _FakeDirectClient())
 
     async def go():
         res = await mv.start_generate("F2V", "p", project_id="pid",
@@ -535,6 +537,7 @@ def test_exact_product_t2v_scaffold_passes_custody_guard_before_provider(monkeyp
     )
     monkeypatch.setattr(mv, "_prepare_durable_single_job", fake_prepare)
     monkeypatch.setattr(mv, "_run_generate", fake_run)
+    monkeypatch.setattr(mv, "get_flow_client", lambda: _FakeDirectClient())
     monkeypatch.setattr(
         "agent.db.crud.acquire_video_generation_lane_lease",
         fake_lease,
@@ -655,78 +658,79 @@ def test_direct_lane_poll_timeout_is_generated_but_unretrieved(monkeypatch, tmp_
     _reset_lane()
 
 
-# ── live-capture entrypoint ─────────────────────────────────────────────────
+# ── retired compatibility entrypoints ───────────────────────────────────────
 
-def test_capture_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("DIRECT_VIDEO_CAPTURE_ENABLED", raising=False)
-    res = _run(mv.start_direct_capture("F2V", "p", "pid", ["m1"]))
-    assert res["ok"] is False and "DIRECT_CAPTURE_DISABLED" in res["error"]
-
-
-def test_capture_requires_explicit_credit_confirmation(monkeypatch):
-    monkeypatch.setenv("DIRECT_VIDEO_CAPTURE_ENABLED", "1")
-    res = _run(mv.start_direct_capture("F2V", "p", "pid", ["m1"]))
-    assert res["ok"] is False
-    assert "DIRECT_CAPTURE_CONFIRMATION_REQUIRED" in res["error"]
-
-
-def test_capture_returns_raw_submit_and_retrieves_in_background(monkeypatch, tmp_path):
+def test_legacy_paid_make_video_services_retire_before_side_effects(monkeypatch):
     _reset_lane()
     monkeypatch.setenv("DIRECT_VIDEO_CAPTURE_ENABLED", "1")
-    client = _FakeDirectClient()
-    recorded = _patch_direct_runtime(monkeypatch, tmp_path, client)
+    retired = "LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB"
 
-    async def go():
-        res = await mv.start_direct_capture(
-            "F2V", "p", "pid-1", ["ref-1"], aspect="9:16",
-            tier="PAYGATE_TIER_TWO", source_mode="HYBRID",
-            confirm_live_credit_burn=True)
-        assert res["ok"] is True
-        assert res["operations"] == ["op-r2v-1"]
-        assert res["submit_response"]["data"]["operations"]  # RAW contract capture
-        assert res["fired"]["video_model_key"] == "veo_3_1_r2v_fast_landscape_ultra_relaxed"
-        await mv._JOBS[res["job_id"]]["_task"]
-        return mv.get_job(res["job_id"])
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("retired service crossed a side-effect boundary")
 
-    job = _run(go())
-    assert job["status"] == "DONE"
-    assert job["lane"] == "DIRECT_CAPTURE"
-    assert len(recorded) == 1 and recorded[0]["media_id"] == _MID
+    async def forbidden_async(*_args, **_kwargs):
+        pytest.fail("retired service started legacy provider work")
+
+    from agent.security import access_control
+    from agent.db import crud
+    monkeypatch.setattr(mv, "uuid4", forbidden)
+    monkeypatch.setattr(mv, "get_flow_client", forbidden)
+    monkeypatch.setattr(mv.asyncio, "create_task", forbidden)
+    monkeypatch.setattr(mv, "_run", forbidden_async)
+    monkeypatch.setattr(mv, "_run_negotiate", forbidden_async)
+    monkeypatch.setattr(mv, "_run_on_existing", forbidden_async)
+    monkeypatch.setattr(access_control, "get_current_auth_context", forbidden)
+    monkeypatch.setattr(access_control, "resolve_request_staff", forbidden_async)
+    monkeypatch.setattr(
+        crud, "acquire_video_generation_lane_lease", forbidden_async
+    )
+
+    calls = [
+        lambda: mv.start("prompt", "image prompt"),
+        lambda: mv.start_negotiate("prompt", dry=False),
+        lambda: mv.start_on_existing("project-1", "image-1", "prompt"),
+        lambda: mv.start_direct_capture(
+            "F2V", "prompt", "project-1", ["image-1"],
+            source_mode="HYBRID", confirm_live_credit_burn=True,
+            production_recipe="HYBRID",
+        ),
+    ]
+    for call in calls:
+        with pytest.raises(RuntimeError) as exc:
+            _run(call())
+        assert str(exc.value) == retired
+
+    assert mv._JOBS == {}
     assert mv._VIDEO_LANE_JOB is None
-    _reset_lane()
 
 
-def test_capture_current_media_submit_contract_polls_without_second_submit(
-        monkeypatch, tmp_path):
-    """The current media/workflow response is accepted and retrieved once."""
+def test_dry_negotiation_service_remains_available_without_provider_contact(
+        monkeypatch):
     _reset_lane()
-    monkeypatch.setenv("DIRECT_VIDEO_CAPTURE_ENABLED", "1")
-    client = _FakeCurrentMediaDirectClient()
-    recorded = _patch_direct_runtime(monkeypatch, tmp_path, client)
+    calls = {}
+
+    async def fake_run_negotiate(*args):
+        calls["args"] = args
+
+    def forbidden_client():
+        pytest.fail("dry negotiation contacted the provider in the service seam")
+
+    monkeypatch.setattr(mv, "_run_negotiate", fake_run_negotiate)
+    monkeypatch.setattr(mv, "get_flow_client", forbidden_client)
 
     async def go():
-        res = await mv.start_direct_capture(
-            "F2V", "p", "pid-1", ["ref-1"], aspect="9:16",
-            tier="PAYGATE_TIER_TWO", source_mode="HYBRID",
-            confirm_live_credit_burn=True)
-        assert res["ok"] is True
-        assert res["operations"] == [_MID]
-        assert res["submit_response"]["data"]["media"]
-        await mv._JOBS[res["job_id"]]["_task"]
-        return mv.get_job(res["job_id"])
+        result = await mv.start_negotiate(
+            "dry prompt", image_prompt=None, dry=True,
+            project_id="project-1", reference_media_ids=["reference-1"],
+        )
+        await mv._JOBS[result["job_id"]]["_task"]
+        return result
 
-    job = _run(go())
-    assert job["status"] == "DONE"
-    assert job["approved"] is True
-    assert job["credit_state"] == "MAY_HAVE_SPENT"
-    assert job["provider_operation_ids"] == [_MID]
-    assert job["output_correlation"]["matched_on"] == "media_status"
-    assert client.media_poll_count == 2
-    assert [c[0] for c in client.calls].count("r2v") == 1
-    assert [c[0] for c in client.calls].count("media_poll") == 2
-    assert not any(c[0] == "poll" for c in client.calls)
-    assert (tmp_path / "retrieved" / f"{_MID}.mp4").read_bytes() == _VBYTES
-    assert len(recorded) == 1 and recorded[0]["media_id"] == _MID
+    result = _run(go())
+    assert result["status"] == "SUBMITTED"
+    assert calls["args"][3] is True
+    assert calls["args"][6] == "project-1"
+    assert calls["args"][7] == ["reference-1"]
     _reset_lane()
 
 
@@ -760,32 +764,4 @@ def test_direct_media_recovery_never_calls_provider_submit(monkeypatch, tmp_path
     assert job["lane"] == "DIRECT_CAPTURE_RECOVERY"
     assert not any(call[0] == "r2v" for call in client.calls)
     assert client.media_poll_count == 2
-    _reset_lane()
-
-
-def test_capture_forwards_explicit_model_and_duration_after_key_capture(
-        monkeypatch, tmp_path):
-    _reset_lane()
-    monkeypatch.setenv("DIRECT_VIDEO_CAPTURE_ENABLED", "1")
-    monkeypatch.setitem(
-        mv.DIRECT_VIDEO_MODEL_KEYS, "veo_3_1_lite",
-        {"reference_frame_2_video": {
-            "VIDEO_ASPECT_RATIO_PORTRAIT": "captured_r2v_portrait"}})
-    _seed_direct_profile_certification(monkeypatch)
-    client = _FakeDirectClient()
-    _patch_direct_runtime(monkeypatch, tmp_path, client)
-
-    async def go():
-        res = await mv.start_direct_capture(
-            "F2V", "p", "pid-1", ["ref-1"], aspect="9:16",
-            tier="PAYGATE_TIER_TWO", source_mode="HYBRID",
-            model="veo_3_1_lite", duration_s=8,
-            confirm_live_credit_burn=True)
-        assert res["ok"] is True
-        assert client.calls[0][2]["video_model_key"] == "captured_r2v_portrait"
-        assert res["fired"]["model"] == "veo_3_1_lite"
-        assert res["fired"]["duration_s"] == 8
-        await mv._JOBS[res["job_id"]]["_task"]
-
-    _run(go())
     _reset_lane()

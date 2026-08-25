@@ -470,6 +470,42 @@ def test_manual_lane_i2v_three_refs_preserve_slot_order(monkeypatch):
     assert calls["start_generate"]["image_media_ids"] == [_UUID_A, _UUID_B, _UUID_C]
 
 
+def test_ui_driver_flag_cannot_divert_canonical_manual_lane(monkeypatch):
+    calls = {}
+    _wire_contract(monkeypatch, calls)
+    monkeypatch.setenv("FLOW_UI_DRIVER_ENABLED", "1")
+    from agent.services import google_flow_ui_driver as ui_driver
+    from agent.services import copy_execution_resolver
+    monkeypatch.setattr(ui_driver, "ui_driver_enabled", lambda: True)
+
+    async def copy_free_resolution(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        copy_execution_resolver,
+        "resolve_persisted_copy_execution_binding",
+        copy_free_resolution,
+    )
+
+    async def forbidden_composer(*_args, **_kwargs):
+        pytest.fail("canonical manual work diverted to the retired UI composer")
+
+    monkeypatch.setattr(
+        ui_driver, "run_initial_block1_via_composer", forbidden_composer
+    )
+    body = {
+        "request_id": "m_api_first_flag_on",
+        "prompt": "canonical prompt",
+        "startAsset": {"mediaId": _UUID_A},
+        "source_mode": "F2V",
+    }
+    result = _run(
+        flow_api._run_manual_job_via_generate(body, "F2V", body["startAsset"])
+    )
+    assert result["lane"] == "API_FIRST_GENERATE"
+    assert calls["start_generate"]["mode"] == "F2V"
+
+
 def test_manual_lane_rejects_client_source_mode_contradicting_package(monkeypatch):
     """Required test 7 (PR321 closure): the client's source_mode declaration is
     checked against the execution package's SERVER-OWNED compiled lineage — a
@@ -528,6 +564,8 @@ def test_manual_lane_rejects_client_source_mode_contradicting_package(monkeypatc
 # dispatch), so the DOM lane can never run a canonical production job.
 
 def _guard_wire(monkeypatch, calls):
+    from agent.security import access_control
+
     class _C:
         connected = True
 
@@ -544,7 +582,19 @@ def _guard_wire(monkeypatch, calls):
     async def fake_upsert(request_id, **kw):
         calls.setdefault("telemetry", []).append(kw.get("status"))
 
-    monkeypatch.setattr(flow_api, "get_flow_client", lambda: _C())
+    async def fake_resolve_staff(_staff_id):
+        return {"staff_id": "staff-route-guard", "display_name": "Route Guard"}
+
+    async def fake_require_product(_product_id, *, lane):
+        calls.setdefault("product_lanes", []).append(lane)
+
+    def fake_get_flow_client():
+        calls["client"] = calls.get("client", 0) + 1
+        return _C()
+
+    monkeypatch.setattr(flow_api, "get_flow_client", fake_get_flow_client)
+    monkeypatch.setattr(access_control, "resolve_request_staff", fake_resolve_staff)
+    monkeypatch.setattr(flow_api, "_require_flow_product", fake_require_product)
     monkeypatch.setattr(flow_api.crud, "get_request", fake_get_request)
     monkeypatch.setattr(flow_api.crud, "add_stage_event", fake_stage)
     monkeypatch.setattr(flow_api.crud, "upsert_request_telemetry", fake_upsert)
@@ -563,15 +613,74 @@ def test_execute_flow_job_fails_closed_on_source_canonical_mode(monkeypatch):
     assert "dom_dispatch" not in calls  # DOM lane never reached
 
 
-def test_execute_flow_job_does_not_over_block_legacy_non_mode_payload(monkeypatch):
-    """The guard must not over-block: a genuinely legacy payload with NO canonical
-    mode and NO canonical source_mode still reaches the frozen DOM dispatch."""
+def test_execute_flow_job_retires_noncanonical_payload_before_contact(monkeypatch):
+    """A non-smoke compatibility payload cannot fall through to the dead DOM lane."""
     calls = {}
     _guard_wire(monkeypatch, calls)
     body = {"request_id": "legacy_probe", "prompt": "diagnostic"}
-    result = _run(flow_api.execute_flow_job(body))
-    assert result.get("ok") is True
-    assert calls.get("dom_dispatch") == "legacy_probe"  # DOM lane reached
+    with pytest.raises(HTTPException) as exc:
+        _run(flow_api.execute_flow_job(body))
+    assert exc.value.status_code == 410
+    assert exc.value.detail == (
+        "LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB"
+    )
+    assert "client" not in calls
+    assert "product_lanes" not in calls
+    assert "stages" not in calls
+    assert "dom_dispatch" not in calls
+
+
+def _install_direct_capture_retirement_sentinels(monkeypatch):
+    from agent.security import access_control
+
+    def forbidden_sync(*_args, **_kwargs):
+        pytest.fail("direct-capture compatibility request crossed a side effect")
+
+    async def forbidden_async(*_args, **_kwargs):
+        pytest.fail("direct-capture compatibility request crossed a side effect")
+
+    monkeypatch.setattr(flow_api, "get_flow_client", forbidden_sync)
+    monkeypatch.setattr(flow_api, "_require_flow_product", forbidden_async)
+    monkeypatch.setattr(access_control, "get_current_auth_context", forbidden_sync)
+    monkeypatch.setattr(access_control, "resolve_request_staff", forbidden_async)
+    monkeypatch.setattr(flow_api.crud, "get_request", forbidden_async)
+    monkeypatch.setattr(flow_api.crud, "get_db", forbidden_async)
+    monkeypatch.setattr(flow_api.crud, "add_stage_event", forbidden_async)
+    monkeypatch.setattr(flow_api.crud, "upsert_request_telemetry", forbidden_async)
+
+
+def test_execute_flow_job_retires_direct_capture_before_contact(monkeypatch):
+    _install_direct_capture_retirement_sentinels(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        _run(flow_api.execute_flow_job({
+            "_direct_capture": True,
+            "mode": "F2V",
+            "source_mode": "HYBRID",
+            "production_recipe": "HYBRID",
+            "confirm_live_credit_burn": True,
+        }))
+    assert exc.value.status_code == 410
+    assert exc.value.detail == (
+        "LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB"
+    )
+
+
+def test_manual_helper_retires_direct_capture_before_contact(monkeypatch):
+    _install_direct_capture_retirement_sentinels(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        _run(flow_api._run_manual_job_via_generate(
+            {
+                "_direct_capture": True,
+                "production_recipe": "HYBRID",
+                "confirm_live_credit_burn": True,
+            },
+            "F2V",
+            None,
+        ))
+    assert exc.value.status_code == 410
+    assert exc.value.detail == (
+        "LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB"
+    )
 
 
 def test_execute_flow_job_smoke_probe_is_not_canonical_blocked(monkeypatch):
@@ -579,7 +688,7 @@ def test_execute_flow_job_smoke_probe_is_not_canonical_blocked(monkeypatch):
     be 422-blocked — it reaches the bridge and short-circuits without generating."""
     calls = {}
     _guard_wire(monkeypatch, calls)
-    body = {"request_id": "smoke_probe", "source_mode": "HYBRID", "smoke_test": True}
+    body = {"request_id": "smoke_probe", "mode": "F2V", "smoke_test": True}
     result = _run(flow_api.execute_flow_job(body))
     assert result.get("ok") is True
     assert calls.get("dom_dispatch") == "smoke_probe"  # reached bridge, not 422

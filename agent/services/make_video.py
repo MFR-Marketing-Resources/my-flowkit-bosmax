@@ -17,7 +17,7 @@ from uuid import uuid4
 from urllib.parse import unquote
 
 from agent.config import OUTPUT_DIR, DIRECT_VIDEO_MODEL_KEYS
-from agent.services.flow_client import get_flow_client, resolve_video_model_key
+from agent.services.flow_client import FlowClient, get_flow_client, resolve_video_model_key
 from agent.services import agent_video
 from agent.services import video_models
 from agent.services import provider_execution_profile as _pep
@@ -209,6 +209,120 @@ def _owner_authorized_shared_reference_8s_bootstrap(
         and "OWNER" in {str(role).upper() for role in context.role_codes}
         and "production.execute" in context.permission_codes
     )
+
+
+def _server_derived_video_profiles(
+    *,
+    mode: str,
+    source_mode: str | None,
+    model: str | None,
+    duration_s: int | None,
+    aspect: str | None,
+    ref_count: int,
+    num_videos: int,
+) -> tuple[dict, dict]:
+    """Derive the exact WEP/PEP tuple from provider-affecting request fields.
+
+    Surface and client-authored profile receipts are intentionally absent. A
+    supplied receipt can only be compared with these server-derived profiles;
+    it never chooses the tuple certified for paid dispatch.
+    """
+    from agent.services import video_execution_profile_service as _profiles
+
+    # Durable Extend packages historically persist the captured provider model
+    # key for their continuation blocks. Its request-model authority is still
+    # Veo 3.1 Lite; keep the provider key below unchanged.
+    request_model = (
+        "veo_3_1_lite"
+        if str(model or "").strip().lower() == "veo_3_1_extension_lite"
+        else model
+    )
+    spec = video_models.resolve(request_model)
+    duration = int(duration_s or spec["default_duration_s"])
+    normalized_mode = str(mode or "").strip().upper()
+    normalized_source = str(source_mode or "").strip().upper() or (
+        "T2V" if normalized_mode == "T2V" else None
+    )
+    normalized_aspect = _profiles.normalize_aspect_ratio(aspect or "9:16")
+    exact_omni_10 = hybrid_reference_omni10_route_matches(
+        normalized_mode, normalized_source, spec["key"], duration, normalized_aspect,
+        ref_count, num_videos,
+    )
+    profile_kwargs = {
+        "model": spec["key"],
+        "duration_s": duration,
+        "aspect_ratio": normalized_aspect,
+        "logical_mode": normalized_mode,
+        "source_mode": normalized_source,
+        "reference_count": ref_count,
+    }
+    if exact_omni_10:
+        profile_kwargs.update(
+            transport_route=HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE,
+            provider_transport_key_provenance=(
+                "captured_flow_agent_contract[abra_r2v_10s]"
+            ),
+        )
+    duration_profile = _profiles.resolve_duration_model_profile(**profile_kwargs)
+
+    if duration in (16, 24):
+        reference_topology = "SOURCE_AGNOSTIC"
+        generation_type = "native_extend"
+        execution_transport = "google_flow_native_extend"
+        provider_model_key = "veo_3_1_extension_lite"
+        contract_version = "google-flow-native-extend-v1"
+        provider_tool = None
+        provider_rpc = "batchAsyncGenerateVideoExtendVideo"
+    elif ref_count:
+        reference_topology = (
+            "ONE_REFERENCE" if ref_count == 1 else f"MULTI_REFERENCE_{ref_count}"
+        )
+        generation_type = "reference_frame_2_video"
+        execution_transport = "flow_creation_agent"
+        provider_model_key = None
+        contract_version = _pep.PROVIDER_EXECUTION_PROFILE_VERSION
+        provider_tool = None
+        provider_rpc = None
+        if (
+            duration == 8
+            and normalized_mode == "F2V"
+            and normalized_source == "HYBRID"
+            and spec["key"] == "veo_3_1_lite"
+            and ref_count == 1
+            and int(num_videos) == 1
+        ):
+            execution_transport = "google_flow_reference"
+            provider_model_key = SHARED_REFERENCE_VEO_8S_PROVIDER_MODEL_KEY
+            contract_version = SHARED_REFERENCE_VEO_8S_CONTRACT_VERSION
+    else:
+        reference_topology = "NONE"
+        generation_type = "text_to_video"
+        execution_transport = "flow_creation_agent"
+        provider_model_key = None
+        contract_version = _pep.PROVIDER_EXECUTION_PROFILE_VERSION
+        provider_tool = None
+        provider_rpc = None
+    if exact_omni_10:
+        provider_model_key = HYBRID_REFERENCE_OMNI_10S_PROVIDER_MODEL_KEY
+        contract_version = HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION
+        provider_tool = HYBRID_REFERENCE_OMNI_10S_PROVIDER_TOOL
+        provider_rpc = "agent_stream_chat"
+    provider_profile = _pep.resolve_provider_execution_profile(
+        provider="GOOGLE_FLOW",
+        model=spec["key"],
+        duration_seconds=duration,
+        prompt_block_count=duration_profile["prompt_block_count"],
+        aspect_ratio=normalized_aspect,
+        output_count=num_videos,
+        reference_topology=reference_topology,
+        generation_type=generation_type,
+        execution_transport=execution_transport,
+        provider_model_key=provider_model_key,
+        capability_contract_version=contract_version,
+        provider_tool=provider_tool,
+        provider_rpc=provider_rpc,
+    )
+    return duration_profile, provider_profile
 
 
 def hybrid_reference_omni10_capture_enabled() -> bool:
@@ -509,7 +623,11 @@ def _gc_jobs():
         _JOBS.pop(jid, None)
 
 
-async def _bind_editor_session(client, requested_project_id=None) -> dict:
+async def _bind_editor_session(
+    client,
+    requested_project_id=None,
+    bridge_lease: dict | None = None,
+) -> dict:
     """Bind a video job to the OPEN Flow editor → {project_id, flow_tab_id, flow_project_url}.
     Fail-closed (locked patch A/G): raise if no editor project is open, or if the open editor
     differs from a requested project_id. Never mint a hidden project; never use the wrong tab."""
@@ -533,10 +651,86 @@ async def _bind_editor_session(client, requested_project_id=None) -> dict:
             "NO_OPEN_EDITOR: open the target Flow project in the controlled tab first",
             details={"flow_path_state": "NO_FLOW_TAB"},
         )
+    handled_fields = (
+        "handled_flow_tab_id",
+        "handled_flow_url",
+        "handled_flow_project_id",
+    )
+    handled_present = [field in inner for field in handled_fields]
+    if any(handled_present) and not all(handled_present):
+        raise FlowEditorBindingError(
+            "FLOW_BRIDGE_HANDLED_IDENTITY_INCOMPLETE: the extension did not return a complete handled tab/project tuple",
+            details={"handled_fields_present": dict(zip(handled_fields, handled_present))},
+        )
+    if bridge_lease is not None and not all(handled_present):
+        raise FlowEditorBindingError(
+            "FLOW_BRIDGE_HANDLED_IDENTITY_REQUIRED: reload the current extension build before provider work",
+            details={"lease_id": bridge_lease.get("lease_id")},
+        )
+
     flow_url = inner.get("flow_url") or ""
     flow_tab_id = inner.get("flow_tab_id")
     diag = inner.get("diag", inner) if isinstance(inner, dict) else {}
     project_id = diag.get("projectId") if isinstance(diag, dict) else None
+    if all(handled_present):
+        handled_tab_id = inner.get("handled_flow_tab_id")
+        handled_url = str(inner.get("handled_flow_url") or "").strip()
+        handled_project_id = str(
+            inner.get("handled_flow_project_id") or ""
+        ).strip()
+        envelope_tab_id = inner.get("envelope_flow_tab_id")
+        envelope_url = str(inner.get("envelope_flow_url") or "").strip()
+        canonical_project_id = str(inner.get("flow_project_id") or "").strip()
+        diag_project_id = str(project_id or "").strip()
+        tab_values = [
+            value for value in (flow_tab_id, handled_tab_id)
+            if value is not None
+        ]
+        if (
+            handled_tab_id is None
+            or len({str(value) for value in tab_values}) != 1
+        ):
+            raise FlowEditorBindingError(
+                "FLOW_BRIDGE_TAB_IDENTITY_MISMATCH: wrapper and handled Flow tabs disagree",
+                details={
+                    "flow_tab_id": flow_tab_id,
+                    "handled_flow_tab_id": handled_tab_id,
+                    "envelope_flow_tab_id": envelope_tab_id,
+                },
+            )
+        url_values = [
+            value.rstrip("/")
+            for value in (str(flow_url).strip(), handled_url)
+            if value
+        ]
+        if not handled_url or len(set(url_values)) != 1:
+            raise FlowEditorBindingError(
+                "FLOW_BRIDGE_URL_IDENTITY_MISMATCH: wrapper and handled Flow URLs disagree",
+                details={
+                    "flow_url": flow_url,
+                    "handled_flow_url": handled_url,
+                    "envelope_flow_url": envelope_url,
+                },
+            )
+        project_values = [
+            value for value in (
+                handled_project_id,
+                canonical_project_id,
+                diag_project_id,
+            ) if value
+        ]
+        if not handled_project_id or len(set(project_values)) != 1:
+            raise FlowEditorBindingError(
+                "FLOW_BRIDGE_PROJECT_IDENTITY_MISMATCH: handled and diagnostic Flow projects disagree",
+                details={
+                    "handled_flow_project_id": handled_project_id,
+                    "flow_project_id": canonical_project_id,
+                    "diagnostic_project_id": diag_project_id,
+                },
+            )
+        flow_tab_id = handled_tab_id
+        flow_url = handled_url
+        project_id = handled_project_id
     if not project_id or "/project/" not in str(flow_url):
         raise FlowEditorBindingError(
             "NO_OPEN_EDITOR: the Flow tab is not on a project editor — open the project first",
@@ -590,8 +784,134 @@ async def _bind_editor_session(client, requested_project_id=None) -> dict:
         "flow_tab_id": flow_tab_id,
         "flow_project_url": flow_url,
     }
+    if bridge_lease is not None:
+        required_lease_identity = {
+            "connection_id": bridge_lease.get("connection_id"),
+            "installation_id": bridge_lease.get("installation_id"),
+            "extension_session_id": bridge_lease.get("extension_session_id"),
+        }
+        if not all(required_lease_identity.values()):
+            raise FlowEditorBindingError(
+                "FLOW_BRIDGE_LEASE_IDENTITY_INCOMPLETE: connection, installation, and session are required",
+                details={"lease_id": bridge_lease.get("lease_id")},
+            )
+        response_identity = {
+            "connection_id": inner.get("connection_id"),
+            "installation_id": inner.get("installation_id"),
+            "extension_session_id": inner.get("extension_session_id"),
+        }
+        mismatched_identity = {
+            key: {"expected": required_lease_identity[key], "observed": value}
+            for key, value in response_identity.items()
+            if not value or str(value) != str(required_lease_identity[key])
+        }
+        if mismatched_identity:
+            raise FlowEditorBindingError(
+                "FLOW_BRIDGE_CONNECTION_IDENTITY_MISMATCH: handled editor response rotated outside the operation lease",
+                details={"mismatches": mismatched_identity},
+            )
+        if (
+            bridge_lease.get("flow_tab_id") is not None
+            and str(bridge_lease["flow_tab_id"]) != str(flow_tab_id)
+        ):
+            raise FlowEditorBindingError(
+                "FLOW_BRIDGE_TAB_IDENTITY_MISMATCH: handled tab differs from the bound operation lease",
+                details={
+                    "lease_flow_tab_id": bridge_lease.get("flow_tab_id"),
+                    "handled_flow_tab_id": flow_tab_id,
+                },
+            )
+        if (
+            bridge_lease.get("flow_project_id")
+            and str(bridge_lease["flow_project_id"]) != str(project_id)
+        ):
+            raise FlowEditorBindingError(
+                "FLOW_BRIDGE_PROJECT_IDENTITY_MISMATCH: handled project differs from the bound operation lease",
+                details={
+                    "lease_flow_project_id": bridge_lease.get("flow_project_id"),
+                    "handled_flow_project_id": project_id,
+                },
+            )
+        challenge_fn = getattr(client, "verify_provider_session_challenge", None)
+        if not callable(challenge_fn):
+            raise FlowEditorBindingError(
+                "FLOW_BRIDGE_SESSION_CHALLENGE_UNAVAILABLE: provider authority cannot be proven"
+            )
+        challenge = await challenge_fn(flow_tab_id)
+        if not isinstance(challenge, dict):
+            raise FlowEditorBindingError(
+                "FLOW_BRIDGE_SESSION_CHALLENGE_FAILED: invalid challenge response"
+            )
+        challenge_identity = {
+            "connection_id": challenge.get("backend_connection_id"),
+            "connection_epoch": challenge.get("backend_connection_epoch"),
+            "installation_id": challenge.get("backend_installation_id"),
+            "extension_session_id": challenge.get("backend_extension_session_id"),
+            "flow_tab_id": challenge.get("flow_tab_id"),
+            "flow_project_id": challenge.get("flow_project_id"),
+        }
+        expected_challenge_identity = {
+            "connection_id": bridge_lease.get("connection_id"),
+            "connection_epoch": bridge_lease.get("connection_epoch"),
+            "installation_id": bridge_lease.get("installation_id"),
+            "extension_session_id": bridge_lease.get("extension_session_id"),
+            "flow_tab_id": flow_tab_id,
+            "flow_project_id": project_id,
+        }
+        challenge_mismatches = {
+            key: {
+                "expected": expected_challenge_identity[key],
+                "observed": value,
+            }
+            for key, value in challenge_identity.items()
+            if expected_challenge_identity[key] is not None
+            and str(value) != str(expected_challenge_identity[key])
+        }
+        extension_build = str(challenge.get("extension_build") or "").strip()
+        extension_build_rejected = extension_build.lower() in {
+            "legacy",
+            "unknown",
+            "n/a",
+            "none",
+        }
+        if (
+            challenge.get("ok") is not True
+            or challenge.get("session_challenge_verified") is not True
+            or challenge.get("extension_build_match") is not True
+            or not extension_build
+            or extension_build_rejected
+            or challenge_mismatches
+        ):
+            raise FlowEditorBindingError(
+                "FLOW_BRIDGE_SESSION_CHALLENGE_FAILED: connection/tab/project authority was not proven",
+                details={
+                    "primary_blocker": challenge.get("primary_blocker"),
+                    "identity_mismatches": challenge_mismatches,
+                    "extension_build_present": bool(extension_build),
+                    "extension_build_rejected": extension_build_rejected,
+                },
+            )
+        try:
+            bound_lease = client.bind_operation_lease(
+                bridge_lease,
+                connection_id=required_lease_identity["connection_id"],
+                connection_epoch=bridge_lease.get("connection_epoch"),
+                installation_id=required_lease_identity["installation_id"],
+                extension_session_id=required_lease_identity["extension_session_id"],
+                extension_build=extension_build,
+                flow_tab_id=flow_tab_id,
+                flow_url=flow_url,
+                flow_project_id=project_id,
+            )
+        except (ConnectionError, RuntimeError, ValueError) as exc:
+            raise FlowEditorBindingError(
+                f"FLOW_BRIDGE_LEASE_BINDING_MISMATCH: {exc}",
+                details={"lease_id": bridge_lease.get("lease_id")},
+            ) from exc
+        binding["bridge_lease"] = bound_lease
     if isinstance(selected_binding, dict):
         for key in (
+            "connection_id", "connection_epoch", "installation_id",
             "extension_session_id", "extension_id", "extension_version",
             "extension_build", "content_build_id", "content_script_protocol_version",
             "challenge_verified", "same_extension_session", "same_flow_tab",
@@ -607,8 +927,31 @@ async def _bind_with_recovery(client, requested_project_id=None, job=None) -> di
     on its own). Recovery RE-OPENS the project the user was working in — the explicitly requested
     project, else the last stored editor URL — and NEVER mints a new project, then re-binds once.
     A BROKEN_EDITOR_PAGE / CONTENT_BUILD_MISMATCH / PROJECT_TAB_MISMATCH still fails closed."""
+    bridge_lease = job.get("bridge_lease") if isinstance(job, dict) else None
+
+    async def bind_once() -> dict:
+        if bridge_lease is None:
+            binding = await _bind_editor_session(client, requested_project_id)
+        else:
+            binding = await _bind_editor_session(
+                client,
+                requested_project_id,
+                bridge_lease=bridge_lease,
+            )
+        if job is not None:
+            job["binding"] = binding
+            if isinstance(binding.get("bridge_lease"), dict):
+                job["bridge_lease"] = dict(binding["bridge_lease"])
+                job["bridge_lease_state"] = "BOUND"
+            sync_ok = await _sync_durable_single_job(job)
+            if sync_ok is False:
+                raise FlowEditorBindingError(
+                    "BRIDGE_LEASE_DURABILITY_FAILED: bound bridge identity was not durably recorded"
+                )
+        return binding
+
     try:
-        return await _bind_editor_session(client, requested_project_id)
+        return await bind_once()
     except RuntimeError as e:
         if "NO_OPEN_EDITOR" not in str(e):
             raise
@@ -660,7 +1003,7 @@ async def _bind_with_recovery(client, requested_project_id=None, job=None) -> di
         last_error = e
         for attempt in range(8):
             try:
-                binding = await _bind_editor_session(client, requested_project_id)
+                binding = await bind_once()
                 binding["recovered_officially"] = True
                 binding["binding_poll_attempts"] = attempt + 1
                 return binding
@@ -689,7 +1032,68 @@ async def ensure_editor_binding(
             "FLOW_EDITOR_BINDING_REQUIRED: Flow extension transport is not connected",
             details={"transport_connected": False, "mode": mode},
         )
-    return await _bind_with_recovery(client, requested_project_id)
+    lease_methods = (
+        "acquire_operation_lease",
+        "activate_operation_lease",
+        "bind_operation_lease",
+        "release_operation_lease",
+    )
+    if not all(callable(getattr(client, method, None)) for method in lease_methods):
+        raise FlowEditorBindingError(
+            "FLOW_BRIDGE_LEASE_API_UNAVAILABLE: the connected backend cannot bind provider authority"
+        )
+    lease = None
+    binding = None
+    released = False
+    try:
+        acquire_filters = {}
+        if isinstance(client, FlowClient):
+            selection = await client.bind_flow_session(
+                project_id=requested_project_id,
+            )
+            if selection.get("ok") is not True or not selection.get(
+                "connection_id"
+            ):
+                blocker = selection.get("primary_blocker") or (
+                    "NO_ELIGIBLE_EXTENSION_SESSION"
+                )
+                raise FlowEditorBindingError(
+                    f"{blocker}: project-aware bridge selection failed",
+                    details={"selection": selection},
+                )
+            acquire_filters["connection_id"] = selection["connection_id"]
+        lease = client.acquire_operation_lease(**acquire_filters)
+        with client.activate_operation_lease(lease):
+            binding = await _bind_editor_session(
+                client,
+                requested_project_id,
+                bridge_lease=lease,
+            )
+            lease = dict(binding["bridge_lease"])
+    except (ConnectionError, RuntimeError, ValueError) as exc:
+        if isinstance(exc, FlowEditorBindingError):
+            raise
+        raise FlowEditorBindingError(
+            f"FLOW_BRIDGE_LEASE_ACQUISITION_FAILED: {exc}",
+            details={"mode": mode},
+        ) from exc
+    finally:
+        if lease is not None:
+            try:
+                released = bool(client.release_operation_lease(lease))
+            except Exception:  # noqa: BLE001 — report a closed-preflight failure
+                released = False
+    if binding is None or not released:
+        raise FlowEditorBindingError(
+            "FLOW_BRIDGE_LEASE_RELEASE_FAILED: provider readiness lease did not close cleanly"
+        )
+    binding["bridge_lease"] = {
+        **dict(lease),
+        "released": True,
+        "released_at": time.time(),
+        "receipt_state": "PREFLIGHT_RELEASED",
+    }
+    return binding
 
 
 def get_job(job_id: str):
@@ -751,6 +1155,7 @@ async def _prepare_durable_single_job(
             product_id=job.get("product_id"),
             staff_id=job.get("staff_id"),
             staff_display_name_snapshot=job.get("staff_display_name_snapshot"),
+            execution_package_id=job.get("workspace_execution_package_id"),
             engine="GOOGLE_FLOW_API_FIRST",
             model=job.get("model"),
             aspect_ratio=job.get("aspect"),
@@ -766,6 +1171,19 @@ async def _prepare_durable_single_job(
                         or [],
                         "model": job.get("model"),
                         "duration_s": job.get("duration_s"),
+                        "requested_profile_duration_s": job.get(
+                            "requested_profile_duration_s"
+                        ),
+                        "workspace_execution_package_id": job.get(
+                            "workspace_execution_package_id"
+                        ),
+                        "execution_profile_context": job.get(
+                            "execution_profile_context"
+                        ),
+                        "provider_profile": job.get("provider_profile"),
+                        "product_visual_custody": job.get(
+                            "product_visual_custody"
+                        ),
                     },
                     sort_keys=True,
                     separators=(",", ":"),
@@ -775,14 +1193,32 @@ async def _prepare_durable_single_job(
                 {
                     "execution_mode": "SINGLE",
                     "lane": "MAKE_VIDEO_ONE_DOOR",
-                    "request_id": idempotency_key,
+                    "request_id": job.get("request_id") or idempotency_key,
+                    "stable_request_identity": (
+                        job.get("request_id") or idempotency_key
+                    ),
+                    "workspace_execution_package_id": job.get(
+                        "workspace_execution_package_id"
+                    ),
                     "mode": job.get("mode"),
                     "source_mode": job.get("source_mode"),
                     "production_recipe": job.get("production_recipe"),
+                    "surface_lane": job.get("surface_lane"),
                     "product_id": job.get("product_id"),
                     "project_id": job.get("project_id"),
                     "staff_id": job.get("staff_id"),
                     "staff_display_name": job.get("staff_display_name_snapshot"),
+                    "requested_profile_duration_s": job.get(
+                        "requested_profile_duration_s"
+                    ),
+                    "execution_identity": job.get("execution_identity"),
+                    "execution_profile_context": job.get(
+                        "execution_profile_context"
+                    ),
+                    "provider_profile": job.get("provider_profile"),
+                    "product_visual_custody": job.get(
+                        "product_visual_custody"
+                    ),
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -817,16 +1253,19 @@ async def _prepare_durable_single_job(
         return None, True
 
 
-async def _sync_durable_single_job(job: dict | None) -> None:
+async def _sync_durable_single_job(job: dict | None) -> bool:
     """Mirror terminal/in-flight state into the existing lifecycle ledger."""
     if not job or not str(job.get("job_id") or "").startswith("g_"):
-        return
+        return True
     from agent.db import crud
 
     try:
         row = await crud.get_video_production_job(job["job_id"])
         if not row:
-            return
+            return False if (
+                job.get("durable") is True
+                or job.get("bridge_lease_required") is True
+            ) else True
         media_id = job.get("media_id") or job.get("video_media_id")
         local_path = job.get("local_path")
         file_sha256 = None
@@ -920,10 +1359,12 @@ async def _sync_durable_single_job(job: dict | None) -> None:
                 ensure_ascii=False,
             ),
         )
+        return True
     except Exception as exc:  # noqa: BLE001 — a terminal success needs honest state
         job["status"] = "DURABILITY_SYNC_FAILED"
         job["durability_sync_error"] = str(exc)
         job["error"] = str(exc)
+        return False
 
 
 def _pre_provider_evidence(row: dict, state: dict) -> dict:
@@ -1404,33 +1845,57 @@ async def reconcile_durable_single_job(
             }
 
         client = provider_client
+        production_lease_required = client is None or isinstance(client, FlowClient)
         if client is None:
             client = get_flow_client()
-        pin_session = getattr(client, "pin_extension_session", None)
-        if callable(pin_session):
-            binding = state.get("binding") if isinstance(state.get("binding"), dict) else {}
-            session_id = str(binding.get("extension_session_id") or "").strip()
-            if not session_id:
-                identity_error = "EXTENSION_SESSION_ID_MISSING"
-            elif not pin_session(session_id, binding):
-                identity_error = "PINNED_EXTENSION_SESSION_UNAVAILABLE"
-            else:
-                identity_error = None
-            if identity_error:
+        recovery_lease = None
+        persisted_lease = (
+            state.get("bridge_lease")
+            if isinstance(state.get("bridge_lease"), dict)
+            else {}
+        )
+
+        if production_lease_required:
+            project_identity = {
+                "row_project_id": str(row.get("project_id") or "").strip(),
+                "state_project_id": str(state.get("project_id") or "").strip(),
+                "lease_flow_project_id": str(
+                    persisted_lease.get("flow_project_id") or ""
+                ).strip(),
+            }
+            media_target_projects = (
+                [
+                    str(target.get("projectId") or "").strip()
+                    for target in handles
+                    if isinstance(target, dict)
+                ]
+                if handle_kind == "media"
+                else []
+            )
+            project_values = [
+                *project_identity.values(),
+                *media_target_projects,
+            ]
+            if (
+                any(not value for value in project_values)
+                or len(set(project_values)) != 1
+            ):
                 job.update(
-                    status="RECOVERY_UNRECOVERABLE",
-                    stage="recovery_unrecoverable",
-                    recovery_unrecoverable=True,
-                    error=identity_error,
+                    status="RECOVERY_REQUIRED",
+                    stage="bridge_lease_recovery_blocked",
+                    error="DURABLE_PROVIDER_PROJECT_CUSTODY_MISMATCH",
                     recovery_hint=(
-                        "The provider handle exists, but its original extension session "
-                        "is not available. No socket substitution or provider resubmission "
-                        "is allowed."
+                        "The provider handle is preserved, but its row/state/lease/"
+                        "media project custody is incomplete or inconsistent. Never "
+                        "poll or resubmit until the durable identity is repaired."
                     ),
                 )
                 job["provider_reconciliation"].update({
-                    "state": "UNRECOVERABLE",
-                    "error_code": identity_error,
+                    "state": "BRIDGE_LEASE_BLOCKED",
+                    "error_code": "DURABLE_PROVIDER_PROJECT_CUSTODY_MISMATCH",
+                    "project_identity": project_identity,
+                    "media_target_projects": media_target_projects,
+                    "provider_calls": 0,
                 })
                 await _sync_durable_single_job(job)
                 fresh = await crud.get_video_production_job(job_id)
@@ -1438,17 +1903,165 @@ async def reconcile_durable_single_job(
                     fresh or row,
                     _durable_state_from_row(fresh or row),
                 )
-        if handle_kind == "media":
-            poll = await _check_direct_media_targets_once(client, handles)
+
+        def release_recovery_lease() -> None:
+            nonlocal recovery_lease
+            if recovery_lease is None:
+                return
+            try:
+                released = bool(client.release_operation_lease(recovery_lease))
+            except Exception as exc:  # noqa: BLE001 — persist exact cleanup state
+                released = False
+                job["bridge_lease_release_error"] = str(exc)
+            job["bridge_lease"] = {
+                **dict(job.get("bridge_lease") or recovery_lease),
+                "released": released,
+                "released_at": time.time(),
+            }
+            job["bridge_lease_state"] = (
+                "RELEASED" if released else "RELEASE_FAILED"
+            )
+            recovery_lease = None
+
+        if production_lease_required:
+            installation_id = str(
+                persisted_lease.get("installation_id") or ""
+            ).strip()
+            extension_build = str(
+                persisted_lease.get("extension_build") or ""
+            ).strip()
+            durable_project_id = str(
+                persisted_lease.get("flow_project_id")
+                or job.get("project_id")
+                or ""
+            ).strip()
+            missing_lease_fields = [
+                field for field, value in {
+                    "installation_id": installation_id,
+                    "extension_build": extension_build,
+                    "flow_project_id": durable_project_id,
+                }.items() if not value
+            ]
+            if missing_lease_fields:
+                job.update(
+                    status="RECOVERY_REQUIRED",
+                    stage="bridge_lease_recovery_blocked",
+                    error="DURABLE_BRIDGE_LEASE_IDENTITY_REQUIRED",
+                    recovery_hint=(
+                        "The provider handle remains durable, but restart polling is "
+                        "blocked until its exact installation/build/project lease can "
+                        "be proven. Never resubmit the generation."
+                    ),
+                )
+                job["provider_reconciliation"].update({
+                    "state": "BRIDGE_LEASE_BLOCKED",
+                    "error_code": "DURABLE_BRIDGE_LEASE_IDENTITY_REQUIRED",
+                    "missing_lease_fields": missing_lease_fields,
+                    "provider_calls": 0,
+                })
+                await _sync_durable_single_job(job)
+                fresh = await crud.get_video_production_job(job_id)
+                return _durable_public_state(
+                    fresh or row,
+                    _durable_state_from_row(fresh or row),
+                )
+            lease_methods = (
+                "acquire_operation_lease",
+                "activate_operation_lease",
+                "bind_operation_lease",
+                "release_operation_lease",
+            )
+            if not all(
+                callable(getattr(client, method, None)) for method in lease_methods
+            ):
+                job.update(
+                    status="RECOVERY_REQUIRED",
+                    stage="bridge_lease_recovery_blocked",
+                    error="FLOW_BRIDGE_LEASE_API_UNAVAILABLE",
+                )
+                job["provider_reconciliation"].update({
+                    "state": "BRIDGE_LEASE_BLOCKED",
+                    "error_code": "FLOW_BRIDGE_LEASE_API_UNAVAILABLE",
+                    "provider_calls": 0,
+                })
+                await _sync_durable_single_job(job)
+                fresh = await crud.get_video_production_job(job_id)
+                return _durable_public_state(
+                    fresh or row,
+                    _durable_state_from_row(fresh or row),
+                )
+            try:
+                recovery_lease = client.acquire_operation_lease(
+                    installation_id=installation_id
+                )
+                with client.activate_operation_lease(recovery_lease):
+                    recovery_lease = client.bind_operation_lease(
+                        recovery_lease,
+                        extension_build=extension_build,
+                        flow_project_id=durable_project_id,
+                    )
+                    job["bridge_lease_previous"] = dict(persisted_lease)
+                    job["bridge_lease"] = dict(recovery_lease)
+                    job["bridge_lease_state"] = "REACQUIRED"
+                    sync_ok = await _sync_durable_single_job(job)
+                    if sync_ok is False:
+                        raise RuntimeError(
+                            "BRIDGE_LEASE_DURABILITY_FAILED: reacquired bridge identity was not persisted"
+                        )
+                    binding = await _bind_with_recovery(
+                        client,
+                        durable_project_id,
+                        job,
+                    )
+                    recovery_lease = dict(binding["bridge_lease"])
+                    if handle_kind == "media":
+                        poll = await _check_direct_media_targets_once(client, handles)
+                    else:
+                        poll = await _check_direct_operations_once(client, handles)
+            except asyncio.CancelledError:
+                # Cancellation must not strand a process-local lease or mutate the
+                # durable provider handle/status into a retry classification.
+                release_recovery_lease()
+                raise
+            except Exception as exc:  # noqa: BLE001 — never poll through another profile
+                release_recovery_lease()
+                job.update(
+                    status="RECOVERY_REQUIRED",
+                    stage="bridge_lease_recovery_blocked",
+                    error=f"FLOW_BRIDGE_REBIND_FAILED:{exc}",
+                    recovery_hint=(
+                        "Reconnect the same extension installation and its exact Flow "
+                        "project. The provider handle is preserved and must not be resubmitted."
+                    ),
+                )
+                job["provider_reconciliation"].update({
+                    "state": "BRIDGE_LEASE_BLOCKED",
+                    "error_code": "FLOW_BRIDGE_REBIND_FAILED",
+                    "provider_calls": 0,
+                })
+                await _sync_durable_single_job(job)
+                fresh = await crud.get_video_production_job(job_id)
+                return _durable_public_state(
+                    fresh or row,
+                    _durable_state_from_row(fresh or row),
+                )
         else:
-            poll = await _check_direct_operations_once(client, handles)
+            # Explicit provider injection is a provider-free unit-test seam.  All
+            # production callers use the singleton path above.
+            job["bridge_lease_test_seam"] = "INJECTED_PROVIDER_CLIENT"
+            if handle_kind == "media":
+                poll = await _check_direct_media_targets_once(client, handles)
+            else:
+                poll = await _check_direct_operations_once(client, handles)
         job["provider_reconciliation"].update({
             "state": poll.get("state"),
             "error": poll.get("error"),
             "handle_kind": handle_kind,
             "provider_handle_count": len(handles),
+            "provider_calls": 1,
         })
         if poll.get("state") == "PENDING":
+            release_recovery_lease()
             job.update(
                 status="RECOVERY_REQUIRED",
                 stage="provider_poll_pending",
@@ -1465,6 +2078,7 @@ async def reconcile_durable_single_job(
                 _durable_state_from_row(fresh or row),
             )
         if poll.get("state") != "SUCCESS":
+            release_recovery_lease()
             job.update(
                 status="GENERATED_BUT_UNRETRIEVED",
                 stage="provider_reconciliation_error",
@@ -1491,27 +2105,34 @@ async def reconcile_durable_single_job(
         }
         seed = (state.get("generation_identity") or {}).get("seed", 0)
         try:
-            if handle_kind == "media":
-                await _direct_media_retrieve_from_poll(
-                    job,
-                    client,
-                    job.get("mode") or "F2V",
-                    handles,
-                    plan,
-                    seed,
-                    int(job.get("num_videos") or 1),
-                    poll.get("data") or {},
-                )
+            if recovery_lease is not None:
+                lease_context = client.activate_operation_lease(recovery_lease)
             else:
-                await _direct_operation_retrieve_from_poll(
-                    job,
-                    client,
-                    job.get("mode") or "F2V",
-                    poll.get("data") or {},
-                    plan,
-                    seed,
-                    int(job.get("num_videos") or 1),
-                )
+                from contextlib import nullcontext
+
+                lease_context = nullcontext()
+            with lease_context:
+                if handle_kind == "media":
+                    await _direct_media_retrieve_from_poll(
+                        job,
+                        client,
+                        job.get("mode") or "F2V",
+                        handles,
+                        plan,
+                        seed,
+                        int(job.get("num_videos") or 1),
+                        poll.get("data") or {},
+                    )
+                else:
+                    await _direct_operation_retrieve_from_poll(
+                        job,
+                        client,
+                        job.get("mode") or "F2V",
+                        poll.get("data") or {},
+                        plan,
+                        seed,
+                        int(job.get("num_videos") or 1),
+                    )
         except Exception as exc:  # noqa: BLE001 — retain provider terminal identity
             job.update(
                 status="GENERATED_BUT_UNRETRIEVED",
@@ -1522,6 +2143,8 @@ async def reconcile_durable_single_job(
                     "the persisted identity; never resubmit."
                 ),
             )
+        finally:
+            release_recovery_lease()
         await _sync_durable_single_job(job)
         fresh = await crud.get_video_production_job(job_id)
         return _durable_public_state(
@@ -1575,8 +2198,7 @@ async def recover_durable_single_jobs(*, provider_client=None) -> dict:
             )
             if isinstance(result, dict):
                 reconciliation = result.get("provider_reconciliation") or {}
-                if reconciliation.get("state") not in (None, "UNRECOVERABLE"):
-                    provider_calls += 1
+                provider_calls += int(reconciliation.get("provider_calls") or 0)
                 if result.get("status") == "DONE":
                     recovered += 1
                 if result.get("status") == "RECOVERY_UNRECOVERABLE":
@@ -1666,17 +2288,210 @@ async def _reconcile_profile_certification_task(job: dict | None) -> None:
 
 async def _run_generate_task(job_id: str, runner, *args) -> None:
     """Run a task while preserving the pre-provider certification state machine."""
+    job = _JOBS.get(job_id)
+    client = get_flow_client()
+    lease = None
+    runner_started = False
+    lease_methods = (
+        "acquire_operation_lease",
+        "activate_operation_lease",
+        "bind_operation_lease",
+        "release_operation_lease",
+    )
+    lease_capable = all(
+        callable(getattr(client, method, None)) for method in lease_methods
+    )
     try:
-        await runner(job_id, *args)
-    finally:
-        await _reconcile_profile_certification_task(_JOBS.get(job_id))
-        await _sync_durable_single_job(_JOBS.get(job_id))
-        try:
-            from agent.db import crud as _single_crud
+        if not job:
+            raise RuntimeError("VIDEO_JOB_STATE_MISSING")
+        injected_runner_fixture = bool(
+            getattr(runner, "__module__", "")
+            and getattr(runner, "__module__", "") != __name__
+        )
+        if injected_runner_fixture and not isinstance(client, FlowClient):
+            job["bridge_lease_test_seam"] = "INJECTED_RUNNER_FIXTURE"
+            runner_started = True
+            await runner(job_id, *args)
+            return
+        if not lease_capable:
+            # Existing isolated unit fixtures inject small provider doubles.  The
+            # production singleton is never allowed through this compatibility seam.
+            if isinstance(client, FlowClient):
+                raise FlowEditorBindingError(
+                    "FLOW_BRIDGE_LEASE_API_UNAVAILABLE: production FlowClient cannot acquire an operation lease"
+                )
+            job["bridge_lease_test_seam"] = "INJECTED_NON_FLOWCLIENT_FIXTURE"
+            runner_started = True
+            await runner(job_id, *args)
+            return
 
-            await _single_crud.release_video_generation_lane_lease(job_id)
-        except Exception:  # noqa: BLE001 - cleanup must not mask lifecycle evidence
-            pass
+        required_installation_id = str(
+            job.get("required_extension_installation_id") or ""
+        ).strip() or None
+        acquire_filters = (
+            {"installation_id": required_installation_id}
+            if required_installation_id
+            else {}
+        )
+        if not acquire_filters and isinstance(client, FlowClient):
+            selection = await client.bind_flow_session(
+                project_id=job.get("project_id"),
+            )
+            if selection.get("ok") is not True or not selection.get(
+                "connection_id"
+            ):
+                blocker = selection.get("primary_blocker") or (
+                    "NO_ELIGIBLE_EXTENSION_SESSION"
+                )
+                raise FlowEditorBindingError(
+                    f"{blocker}: project-aware bridge selection failed",
+                    details={"selection": selection},
+                )
+            acquire_filters = {"connection_id": selection["connection_id"]}
+        lease = client.acquire_operation_lease(**acquire_filters)
+        job["bridge_lease"] = dict(lease)
+        job["bridge_lease_state"] = "ACQUIRED"
+        sync_ok = await _sync_durable_single_job(job)
+        if sync_ok is False:
+            raise FlowEditorBindingError(
+                "BRIDGE_LEASE_DURABILITY_FAILED: acquired bridge identity was not durably recorded"
+            )
+        with client.activate_operation_lease(lease):
+            status_fn = getattr(client, "get_status", None)
+            if not callable(status_fn):
+                raise FlowEditorBindingError(
+                    "FLOW_BRIDGE_STATUS_UNAVAILABLE: connection identity cannot be proven"
+                )
+            status = await status_fn(timeout=5)
+            status_identity = {
+                "connection_id": status.get("connection_id"),
+                "connection_epoch": status.get("connection_epoch"),
+                "installation_id": status.get("installation_id"),
+                "extension_session_id": status.get("extension_session_id"),
+            }
+            required_status_fields = (
+                "connection_id",
+                "installation_id",
+                "extension_session_id",
+            )
+            if status.get("error") or not all(
+                status_identity.get(field) for field in required_status_fields
+            ):
+                raise FlowEditorBindingError(
+                    "FLOW_BRIDGE_LEASE_IDENTITY_INCOMPLETE: live connection identity is incomplete",
+                    details={"status_error": status.get("error")},
+                )
+            lease_mismatches = {
+                field: {
+                    "expected": lease.get(field),
+                    "observed": status_identity.get(field),
+                }
+                for field in required_status_fields
+                if lease.get(field) is not None
+                and str(lease.get(field)) != str(status_identity.get(field))
+            }
+            if lease_mismatches:
+                raise FlowEditorBindingError(
+                    "FLOW_BRIDGE_CONNECTION_IDENTITY_MISMATCH: status rotated outside the acquired lease",
+                    details={"mismatches": lease_mismatches},
+                )
+            extension_build = str(
+                status.get("extension_build")
+                or status.get("background_build_id")
+                or ""
+            ).strip()
+            if not extension_build or extension_build.lower() in {
+                "legacy",
+                "unknown",
+                "n/a",
+                "none",
+            }:
+                raise FlowEditorBindingError(
+                    "FLOW_BRIDGE_BUILD_IDENTITY_INVALID: a current non-legacy extension build is required"
+                )
+            required_build = str(
+                job.get("required_extension_build") or ""
+            ).strip()
+            if required_build and required_build != extension_build:
+                raise FlowEditorBindingError(
+                    "FLOW_BRIDGE_BUILD_IDENTITY_MISMATCH: preflight and dispatch extension builds differ",
+                    details={
+                        "expected_extension_build": required_build,
+                        "observed_extension_build": extension_build,
+                    },
+                )
+            lease = client.bind_operation_lease(
+                lease,
+                **status_identity,
+                extension_build=extension_build,
+            )
+            job["bridge_lease"] = dict(lease)
+            job["bridge_lease_state"] = "CONNECTION_BOUND"
+            sync_ok = await _sync_durable_single_job(job)
+            if sync_ok is False:
+                raise FlowEditorBindingError(
+                    "BRIDGE_LEASE_DURABILITY_FAILED: acquired bridge identity was not durably recorded"
+                )
+
+            if job.get("mode") in _VIDEO_MODES:
+                binding = await _bind_with_recovery(
+                    client,
+                    job.get("project_id"),
+                    job,
+                )
+                job["binding"] = binding
+                job["project_id"] = binding["project_id"]
+                lease = dict(binding["bridge_lease"])
+
+            runner_started = True
+            await runner(job_id, *args)
+    except Exception as exc:  # noqa: BLE001 — pre-provider lease failures are terminal
+        if runner_started:
+            raise
+        if job is not None:
+            if job.get("status") != "DURABILITY_SYNC_FAILED":
+                job["status"] = "FAILED"
+            job["stage"] = "bridge_lease_failed_pre_provider"
+            job["error"] = str(exc)
+            job["bridge_lease_error"] = {
+                "classification": "PRE_PROVIDER",
+                "provider_calls": 0,
+                "credit_spend": False,
+                "detail": str(exc),
+            }
+            _stamp_credit(job, CREDIT_NOT_SPENT)
+    finally:
+        job = _JOBS.get(job_id)
+        # Release the process-local bridge lease before any cancellable cleanup
+        # await. Durable/profile cleanup must never strand connection ownership.
+        if lease is not None and lease_capable:
+            try:
+                released = bool(client.release_operation_lease(lease))
+            except Exception as exc:  # noqa: BLE001 — retain exact cleanup evidence
+                released = False
+                if job is not None:
+                    job["bridge_lease_release_error"] = str(exc)
+            if job is not None:
+                job["bridge_lease"] = {
+                    **dict(job.get("bridge_lease") or lease),
+                    "released": released,
+                    "released_at": time.time(),
+                }
+                job["bridge_lease_state"] = (
+                    "RELEASED" if released else "RELEASE_FAILED"
+                )
+        try:
+            await _reconcile_profile_certification_task(job)
+        finally:
+            try:
+                await _sync_durable_single_job(job)
+            finally:
+                try:
+                    from agent.db import crud as _single_crud
+
+                    await _single_crud.release_video_generation_lane_lease(job_id)
+                except Exception:  # noqa: BLE001 - cleanup must not mask lifecycle evidence
+                    pass
 
 
 async def _run_reference_contract_capture(
@@ -1880,6 +2695,8 @@ def _deep(obj, *keys):
 
 
 async def start(prompt: str, image_prompt: str, product_id: str | None = None) -> dict:
+    """Retired paid compatibility entrypoint; use the durable video job."""
+    raise RuntimeError("LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB")
     job_id = "v_" + uuid4().hex[:12]
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "stage": "queued",
                      "project_id": None, "product_id": product_id,
@@ -1901,6 +2718,8 @@ async def start_negotiate(prompt: str, image_prompt: str = None, dry: bool = Tru
     skips the start frame (pure T2V dry capture). Existing reference_media_ids are passed
     through unchanged so a dry negotiation can audit the real reference contract without
     creating or uploading a new media target."""
+    if dry is not True:
+        raise RuntimeError("LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB")
     job_id = "n_" + uuid4().hex[:12]
     refs = [str(media_id) for media_id in (reference_media_ids or []) if media_id]
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "stage": "queued",
@@ -1923,8 +2742,9 @@ async def start_on_existing(project_id: str, image_media_id: str, prompt: str) -
     endpoint now routes through the guarded one door; this legacy path has NO single-flight
     lane, bound-session, or drift invariants. Do not call it for new work.
 
-    Generate a video in an EXISTING project using an EXISTING (user-uploaded) image,
-    then retrieve the real new video and save it. The Flow tab must be on this project."""
+    The historical implementation is retained below for forensic context, but
+    invocation is retired; /make-video-existing already uses start_generate."""
+    raise RuntimeError("LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB")
     job_id = "x_" + uuid4().hex[:12]
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "stage": "queued",
                      "project_id": project_id, "image_media_id": image_media_id,
@@ -2530,8 +3350,10 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          copy_execution_binding: dict | None = None,
                          manifest_id: str | None = None,
                          asset_fingerprints: list[str] | None = None,
+                         workspace_execution_package_id: str | None = None,
                          execution_identity: dict | None = None,
                          execution_profile_context: dict | None = None,
+                         requested_profile_duration_s: int | None = None,
                          provider_profile: dict | None = None,
                          product_visual_custody: dict | None = None,
                          request_id: str | None = None,
@@ -2653,7 +3475,83 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
         staff_id = profile["staff_id"]
         staff_display_name_snapshot = profile["display_name"]
     idempotency_key = idempotency_key or request_id
-    strict_durable = bool(request_id or idempotency_key)
+    strict_durable = bool(request_id or idempotency_key or mode in _ALL_MODES)
+    required_extension_installation_id = None
+    required_extension_build = None
+    if editor_binding is not None:
+        editor_binding_dict = (
+            editor_binding if isinstance(editor_binding, dict) else {}
+        )
+        preflight_lease = (
+            editor_binding_dict.get("bridge_lease")
+        )
+        preflight_project_id = str(
+            editor_binding_dict.get("project_id")
+            or (preflight_lease or {}).get("flow_project_id")
+            or ""
+        ).strip()
+        required_preflight_fields = (
+            "connection_id",
+            "installation_id",
+            "extension_session_id",
+            "extension_build",
+            "flow_tab_id",
+            "flow_project_id",
+        )
+        missing_preflight_fields = [
+            field for field in required_preflight_fields
+            if not (preflight_lease or {}).get(field)
+        ]
+        preflight_extension_build = str(
+            (preflight_lease or {}).get("extension_build") or ""
+        ).strip()
+        rejected_preflight_build = preflight_extension_build.lower() in {
+            "legacy",
+            "unknown",
+            "n/a",
+            "none",
+        }
+        if (
+            not isinstance(preflight_lease, dict)
+            or missing_preflight_fields
+            or rejected_preflight_build
+            or preflight_lease.get("released") is not True
+            or not preflight_project_id
+        ):
+            return {
+                "status": "REJECTED",
+                "error": "FLOW_BRIDGE_PREFLIGHT_LEASE_REQUIRED",
+                "detail": (
+                    "Editor preflight must include a released installation/connection/"
+                    "session/tab/project lease receipt."
+                ),
+                "pre_provider": {
+                    "classification": "BLOCKED",
+                    "provider_calls": 0,
+                    "credit_spend": False,
+                    "missing_fields": missing_preflight_fields,
+                    "extension_build_rejected": rejected_preflight_build,
+                },
+            }
+        if project_id and str(project_id) != preflight_project_id:
+            return {
+                "status": "REJECTED",
+                "error": "FLOW_BRIDGE_PREFLIGHT_PROJECT_MISMATCH",
+                "detail": (
+                    f"requested {project_id} but preflight proved "
+                    f"{preflight_project_id}"
+                ),
+                "pre_provider": {
+                    "classification": "BLOCKED",
+                    "provider_calls": 0,
+                    "credit_spend": False,
+                },
+            }
+        project_id = preflight_project_id
+        required_extension_installation_id = str(
+            preflight_lease["installation_id"]
+        )
+        required_extension_build = str(preflight_lease["extension_build"])
     num_videos = max(1, min(4, int(num_videos or 1)))
     max_image_attempts = max(1, min(8, int(max_image_attempts or 1)))
     # ONE-DOOR reference contract (transport hard caps): T2V is text-only —
@@ -2675,14 +3573,71 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 "blocker_code": _violation.split(":", 1)[0],
             },
         }
+    _duration_model_profile = None
+    _provider_profile_certification = None
     _submitted_provider_profile = None
-    if provider_profile is not None:
+    if mode in _VIDEO_MODES:
         try:
-            _submitted_provider_profile = _resolve_submitted_provider_profile(
-                provider_profile
+            _duration_model_profile, _derived_provider_profile = (
+                _server_derived_video_profiles(
+                    mode=mode,
+                    source_mode=source_mode,
+                    model=model,
+                    duration_s=(requested_profile_duration_s or duration_s),
+                    aspect=aspect,
+                    ref_count=_ref_count,
+                    num_videos=num_videos,
+                )
             )
-        except ValueError as exc:
-            _code = str(exc).split(":", 1)[0]
+            if provider_profile is not None:
+                _submitted_provider_profile = _resolve_submitted_provider_profile(
+                    provider_profile
+                )
+                if (
+                    _submitted_provider_profile["provider_profile_digest"]
+                    != _derived_provider_profile["provider_profile_digest"]
+                ):
+                    raise ValueError("PROVIDER_PROFILE_CONTEXT_MISMATCH")
+            if execution_profile_context is not None:
+                from agent.services import video_execution_profile_service as _profiles
+
+                _expected_context = dict(execution_profile_context)
+                _expected_profile = (
+                    execution_profile_context.get("duration_model_profile")
+                    if isinstance(execution_profile_context, dict)
+                    else None
+                )
+                _expected_profile = _profiles.canonicalize_profile(
+                    _expected_profile or {}
+                )
+                if (
+                    _expected_profile["profile_digest"]
+                    != _duration_model_profile["profile_digest"]
+                ):
+                    raise ValueError("EXECUTION_PROFILE_CONTEXT_MISMATCH")
+                _approval_digest_fields = (
+                    "lane_adapter_digest",
+                    "product_digest",
+                    "copy_digest",
+                    "sweetwps_digest",
+                    "compositor_digest",
+                    "compiler_digest",
+                )
+                if any(_expected_context.get(key) for key in _approval_digest_fields):
+                    execution_profile_context = _profiles.normalize_approval_context(
+                        _expected_context
+                    )
+                else:
+                    execution_profile_context = {
+                        "duration_model_profile": _expected_profile,
+                        "lane": str(_expected_context.get("lane") or "")
+                        .strip()
+                        .upper()
+                        .replace("-", "_"),
+                    }
+            provider_profile = _derived_provider_profile
+        except (TypeError, ValueError) as exc:
+            _code = getattr(exc, "code", None) or str(exc).split(":", 1)[0]
             return {
                 "status": "REJECTED",
                 "error": _code,
@@ -2694,7 +3649,6 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                     "blocker_code": _code,
                 },
             }
-        provider_profile = _submitted_provider_profile
     _shared_8s_profile = _resolve_shared_reference_8s_profile(
         mode=mode,
         source_mode=source_mode,
@@ -2705,13 +3659,39 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
         num_videos=num_videos,
         provider_profile=provider_profile,
     )
-    _shared_8s_bootstrap_authorized = _owner_authorized_shared_reference_8s_bootstrap(
+    _shared_8s_capture_authorized = _owner_authorized_shared_reference_8s_bootstrap(
         profile=_shared_8s_profile,
         confirm_live_credit_burn=confirm_live_credit_burn,
         maximum_provider_operations=maximum_provider_operations,
         max_retry_operations=max_retry_operations,
     )
-    if _shared_8s_profile and not _shared_8s_bootstrap_authorized:
+    _exact_profile_certified = bool(
+        isinstance(provider_profile, dict)
+        and provider_profile.get("certification_status") == _pep.PROFILE_CERTIFIED
+    )
+    if mode in _VIDEO_MODES and not _exact_profile_certified:
+        try:
+            from agent.services import provider_certification_service as _certifications
+
+            _provider_profile_certification = (
+                await _certifications.provider_certification_status(
+                    _duration_model_profile
+                )
+            )
+            _exact_profile_certified = bool(
+                _provider_profile_certification.get("certified")
+            )
+        except Exception as exc:  # noqa: BLE001 - fail closed before provider
+            _provider_profile_certification = {
+                "certified": False,
+                "status": "NOT_CERTIFIED",
+                "reason": "PROFILE_CERTIFICATION_LOOKUP_FAILED",
+                "detail": str(exc),
+            }
+    _shared_8s_route_authorized = bool(
+        _exact_profile_certified or _shared_8s_capture_authorized
+    )
+    if _shared_8s_profile and not _shared_8s_route_authorized:
         return {
             "status": "REJECTED",
             "error": "SHARED_8S_BOOTSTRAP_AUTHORIZATION_REQUIRED",
@@ -2727,7 +3707,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 "blocker_code": "SHARED_8S_BOOTSTRAP_AUTHORIZATION_REQUIRED",
             },
         }
-    if _shared_8s_profile and not str(manifest_id or "").strip():
+    if _shared_8s_capture_authorized and not str(manifest_id or "").strip():
         return {
             "status": "REJECTED",
             "error": "SHARED_8S_EXECUTION_MANIFEST_REQUIRED",
@@ -2739,19 +3719,27 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 "blocker_code": "SHARED_8S_EXECUTION_MANIFEST_REQUIRED",
             },
         }
-    if provider_profile is not None and not _shared_8s_profile:
+    if (
+        mode in _VIDEO_MODES
+        and not _exact_profile_certified
+        and not capture_requested
+        and not profile_certification_capture_requested
+        and not _shared_8s_capture_authorized
+    ):
         return {
             "status": "REJECTED",
-            "error": "PROVIDER_PROFILE_NOT_AUTHORIZED_FOR_ROUTE",
+            "error": "DURATION_PROFILE_NOT_CERTIFIED",
             "detail": (
-                "Explicit provider profiles are accepted here only for the exact "
-                "shared 8s bootstrap tuple."
+                "Provider proof is missing for the exact server-derived "
+                "duration/model/transport profile."
             ),
+            "provider_profile": provider_profile,
+            "provider_certification": _provider_profile_certification,
             "pre_provider": {
                 "classification": "BLOCKED",
                 "provider_calls": 0,
                 "credit_spend": False,
-                "blocker_code": "PROVIDER_PROFILE_NOT_AUTHORIZED_FOR_ROUTE",
+                "blocker_code": "DURATION_PROFILE_NOT_CERTIFIED",
             },
         }
     # A replay must resolve to the existing logical job before the process-local
@@ -2811,7 +3799,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 ref_count=_ref_count, num_videos=num_videos,
                 surface_lane=surface_lane,
                 provider_profile=provider_profile,
-                shared_8s_bootstrap_authorized=_shared_8s_bootstrap_authorized,
+                shared_8s_bootstrap_authorized=_shared_8s_route_authorized,
             )
             _routing_receipt = _build_reference_routing_receipt(
                 mode, source_mode, image_media_ids, _direct_plan,
@@ -2973,7 +3961,12 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                       **_surface_provenance,
                       "transport_mode": _surface_provenance["transport_mode"] or mode,
                       "direct_plan": _direct_plan,
+                      "workspace_execution_package_id": workspace_execution_package_id,
                       "execution_identity": execution_identity,
+                      "execution_profile_context": execution_profile_context,
+                      "requested_profile_duration_s": requested_profile_duration_s,
+                      "duration_model_profile": _duration_model_profile,
+                      "provider_profile_certification": _provider_profile_certification,
                       "provider_profile": provider_profile,
                       "provider_profile_id": (
                           provider_profile.get("profile_id")
@@ -2986,13 +3979,11 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                           else None
                       ),
                       "provider_profile_status": (
-                          provider_profile.get("certification_status")
-                          if isinstance(provider_profile, dict)
-                          else None
+                          "CERTIFIED" if _exact_profile_certified else "NOT_CERTIFIED"
                       ),
                       "provider_certification_bootstrap": (
                           "OWNER_AUTHORIZED_SHARED_8_TO_24_CHAIN"
-                          if _shared_8s_bootstrap_authorized
+                          if _shared_8s_capture_authorized
                           else None
                       ),
                       "provider_operation_budget": maximum_provider_operations,
@@ -3007,6 +3998,9 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                       "execution_snapshot_id": execution_snapshot_id,
                       "provider_target_authorization": provider_target_authorization,
                       "editor_binding_preflight": editor_binding,
+                      "bridge_lease_required": True,
+                      "required_extension_installation_id": required_extension_installation_id,
+                      "required_extension_build": required_extension_build,
                      "profile_certification_profile_digest": (
                          (execution_profile_context or {})
                          .get("duration_model_profile", {})
@@ -4714,12 +5708,10 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
                                staff_id: str | None = None,
                                staff_display_name_snapshot: str | None = None,
                                production_recipe: str | None = None) -> dict:
-    """LIVE-CAPTURE GATE (owner-authorized, DIRECT_VIDEO_CAPTURE_ENABLED): fire
-    ONE direct batchAsync submit, return the RAW submit response for contract
-    capture, and poll/retrieve/persist in the background so the spent credit
-    still yields a real artifact. Single-flight like every video job. The
-    confirmation flag is mandatory; explicit model and duration settings are
-    forwarded and fail closed when their direct contract is unproven."""
+    """Retired compatibility capture; canonical certification uses start_generate.
+
+    The historical implementation remains below as contract archaeology."""
+    raise RuntimeError("LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB")
     global _VIDEO_LANE_JOB
     production_recipe = str(production_recipe or "").strip().upper() or None
     from agent.security.access_control import get_current_auth_context, resolve_request_staff
@@ -5536,16 +6528,78 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                 raise RuntimeError("EDITOR_TAB_LOST: the bound Flow tab/editor is gone")
             diag = inner.get("diag", inner) if isinstance(inner, dict) else {}
             seen_pid = diag.get("projectId") if isinstance(diag, dict) else None
+            bridge_lease = job.get("bridge_lease")
+            if isinstance(bridge_lease, dict):
+                handled_tab_id = inner.get("handled_flow_tab_id")
+                handled_project_id = inner.get("handled_flow_project_id")
+                handled_url = str(inner.get("handled_flow_url") or "").strip()
+                expected_tab_id = (
+                    bridge_lease.get("flow_tab_id")
+                    if bridge_lease.get("flow_tab_id") is not None
+                    else bound_tab
+                )
+                expected_project_id = (
+                    bridge_lease.get("flow_project_id") or project_id
+                )
+                expected_url = str(
+                    bridge_lease.get("flow_url")
+                    or (job.get("binding") or {}).get("flow_project_url")
+                    or ""
+                ).strip()
+                identity_checks = {
+                    "connection_id": (
+                        bridge_lease.get("connection_id"),
+                        inner.get("connection_id"),
+                    ),
+                    "installation_id": (
+                        bridge_lease.get("installation_id"),
+                        inner.get("installation_id"),
+                    ),
+                    "extension_session_id": (
+                        bridge_lease.get("extension_session_id"),
+                        inner.get("extension_session_id"),
+                    ),
+                    "handled_flow_tab_id": (expected_tab_id, handled_tab_id),
+                    "canonical_flow_tab_id": (handled_tab_id, inner.get("flow_tab_id")),
+                    "binding_flow_tab_id": (expected_tab_id, bound_tab),
+                    "handled_flow_project_id": (
+                        expected_project_id,
+                        handled_project_id,
+                    ),
+                    "canonical_flow_project_id": (
+                        handled_project_id,
+                        inner.get("flow_project_id"),
+                    ),
+                    "diagnostic_project_id": (expected_project_id, seen_pid),
+                }
+                if expected_url:
+                    identity_checks["handled_flow_url"] = (
+                        expected_url.rstrip("/"),
+                        handled_url.rstrip("/"),
+                    )
+                identity_mismatches = {
+                    key: {"expected": expected, "observed": observed}
+                    for key, (expected, observed) in identity_checks.items()
+                    if expected is None
+                    or observed is None
+                    or str(expected) != str(observed)
+                }
+                if identity_mismatches:
+                    raise RuntimeError(
+                        "TAB_DRIFT: BOUND_RETRIEVAL_IDENTITY_MISMATCH: "
+                        + json.dumps(
+                            identity_mismatches,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            default=str,
+                        )
+                    )
             if seen_pid and seen_pid != project_id:
                 raise RuntimeError(
                     f"PROJECT_DRIFT: tab moved to {seen_pid}, expected {project_id}")
-            # NOTE: inner["flow_tab_id"] is GLOBAL envelope metadata (the WS wrapper's
-            # best-flow-tab snapshot), NOT the tab the harvest actually read. With a
-            # second Flow tab open it differs from bound_tab and used to raise a FALSE
-            # "TAB_DRIFT" (live: g_b9fce39bbc46). The exact-tab guarantee already comes
-            # from the extension (chrome.tabs.get(bound) -> BOUND_TAB_GONE fail-close)
-            # plus the PROJECT_DRIFT check on diag.projectId below — so no envelope
-            # tab comparison here.
+            # Commit 2 canonicalizes flow_tab_id to handled_flow_tab_id.  The global
+            # envelope_* snapshot may legitimately identify another Flow tab during a
+            # targeted harvest, so retrieval validates only handled/canonical identity.
             cands = []
             for k in ("videoIds", "imageIds", "mediaIds"):
                 cands += (diag.get(k) or []) if isinstance(diag, dict) else []

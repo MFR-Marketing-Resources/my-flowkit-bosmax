@@ -1182,6 +1182,9 @@ export default function FacelessVideoPage() {
 					generating={isExecuting}
 					mediaKind="video"
 					libraryHref="/library/videos"
+					staffId={staffIdentity.staffId}
+					surfaceLane="FACELESS"
+					requestId={notice?.requestId ?? null}
 					onRemoved={(mediaId) =>
 						setSessionResults((prev) => prev.filter((r) => r.media_id !== mediaId))
 					}

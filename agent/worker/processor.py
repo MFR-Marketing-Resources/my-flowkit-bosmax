@@ -21,6 +21,17 @@ from agent.sdk.services.result_handler import parse_result, apply_scene_result, 
 
 logger = logging.getLogger(__name__)
 
+LEGACY_VIDEO_REQUEST_RETIRED_CODE = (
+    "LEGACY_VIDEO_REQUEST_RETIRED_USE_DURABLE_VIDEO_JOB"
+)
+_RETIRED_VIDEO_REQUEST_TYPES = frozenset({
+    "GENERATE_VIDEO",
+    "REGENERATE_VIDEO",
+    "GENERATE_VIDEO_REFS",
+    "TRUE_F2V",
+    "UPSCALE_VIDEO",
+})
+
 _API_CALL_TYPES = {"GENERATE_IMAGE", "REGENERATE_IMAGE", "EDIT_IMAGE",
                    "GENERATE_VIDEO", "REGENERATE_VIDEO", "GENERATE_VIDEO_REFS", "TRUE_F2V", "UPSCALE_VIDEO",
                    "GENERATE_CHARACTER_IMAGE", "REGENERATE_CHARACTER_IMAGE",
@@ -256,6 +267,14 @@ async def _log_telemetry(request_id: str, stage: str, status: str = "PROCESSING"
 
 async def _process_one(req: dict, deferred: dict = None, retry_after: dict = None):
     rid, req_type = req["id"], req["type"]
+    if req_type in _RETIRED_VIDEO_REQUEST_TYPES:
+        await crud.update_request(
+            rid,
+            status="FAILED",
+            error_message=LEGACY_VIDEO_REQUEST_RETIRED_CODE,
+        )
+        return
+
     orientation = await _resolve_orientation(req)
 
     if await _is_already_completed(req, orientation):
@@ -318,9 +337,13 @@ async def _process_one(req: dict, deferred: dict = None, retry_after: dict = Non
 
 async def _dispatch(req: dict, orientation: str) -> dict:
     """Route request to the appropriate OperationService method."""
+    req_type = req["type"]
+    if req_type in _RETIRED_VIDEO_REQUEST_TYPES:
+        return {"error": LEGACY_VIDEO_REQUEST_RETIRED_CODE}
+
     from agent.sdk.services.operations import get_operations
     ops = get_operations()
-    req_type, rid = req["type"], req["id"]
+    rid = req["id"]
     pid = req.get("project_id", "0")
 
     # Scene-based operations

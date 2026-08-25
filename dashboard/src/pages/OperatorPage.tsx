@@ -3157,6 +3157,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 								generating={isExecuting}
 								mediaKind={isImageMode ? "image" : "video"}
 								libraryHref={isImageMode ? "/library/images" : "/library/videos"}
+								staffId={staffIdentity.staffId}
+								surfaceLane={isImageMode ? null : "HYBRID"}
+								requestId={notice.requestId}
 								onRemoved={(mediaId) =>
 									setSessionResults((prev) =>
 										prev.filter((r) => r.media_id !== mediaId),

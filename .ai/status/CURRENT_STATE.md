@@ -82,7 +82,7 @@ ADR-007 win.
   reproduced defect. Check the existing final artifact and evidence BEFORE spending
   any credits.
 
-## DIRECT API-FIRST VIDEO LANE (flag-gated, capture-gated — 2026-08-14)
+## DIRECT API-FIRST VIDEO LANE (flag-gated, canonical — 2026-08-14)
 - Root cause of "video generates but never appears in results/library": the agent
   lane's retrieval is DOM-blind — it detects a finished video ONLY via the
   extension DOM harvest, so a labs.google React crash (error boundary) loses a
@@ -108,20 +108,16 @@ ADR-007 win.
   video` tuple is now a separate `FLOW_AGENT_REFERENCE_OMNI_10S` route. The
   `abra_r2v_10s` identity is agent `model_usage_key` evidence, not a direct
   `videoModelKey`, and remains absent from `direct_video_model_keys`.
-- **Before flipping the flag, run the LIVE-CAPTURE GATE** (owner-authorized,
-  ≈1 video credit): set `DIRECT_VIDEO_CAPTURE_ENABLED=1`, fire the manual lane
-  with body key `_direct_capture: true` (HYBRID/I2V with resolved refs) and
-  `confirm_live_credit_burn: true`. The request is terminal: disabled,
-  unconfirmed, or ineligible capture never falls through to normal generation.
-  It returns the RAW submit response (contract capture) and retrieves + persists
-  the artifact in the background. Requested model/duration are forwarded;
-  unproven explicit model keys or non-8s durations are rejected before submit.
-  Captured per-model videoModelKey strings go into models.json
-  `direct_video_model_keys` (data-only change) to widen explicit-model
-  eligibility.
-- `DIRECT_VIDEO_POLL_TIMEOUT` (default 900 s) bounds the direct poll; on timeout
-  the job reports GENERATED_BUT_UNRETRIEVED with re-pollable
-  `provider_operation_ids` — never a false "no video".
+- **Compatibility capture is retired in source:** `DIRECT_VIDEO_CAPTURE_ENABLED`
+  and the `_direct_capture` request key no longer authorize a provider submit.
+  Governed certification runs execute inside the canonical `start_generate`
+  lane; the captures above remain historical contract evidence, not a live
+  compatibility door or a deployment claim. Submit-free
+  `/api/flow/direct-capture/recover` remains available to retrieve media from an
+  already accepted provider operation without creating another generation.
+- `DIRECT_VIDEO_POLL_TIMEOUT` (default 900 s) bounds retained direct-lane and
+  recovery polling; on timeout the job reports GENERATED_BUT_UNRETRIEVED with
+  re-pollable `provider_operation_ids` — never a false "no video".
 
 ## THE ONE ARCHITECTURE (ADR-007 — final, do not relitigate)
 - Generation is **API-first**. The Chrome extension is **authenticated

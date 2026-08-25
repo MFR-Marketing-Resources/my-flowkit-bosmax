@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from agent.api import social_copy_packages as api
+from agent.db import crud
 from agent.services import ai_copy_provider_adapter as provider
 
 SAFE = {
@@ -56,3 +57,25 @@ async def test_ai_assist_unsupported_platform_422(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await api.ai_assist(api.AICaptionAssistRequest(platform="linkedin"))
     assert exc.value.status_code == 422
+
+
+async def test_caption_api_rejects_non_final_video(monkeypatch):
+    await crud.insert_generation_result(
+        "caption-api-segment", job_id="segment-job", mode="F2V",
+        artifact_kind="video", final_prompt_text="intermediate segment",
+    )
+    provider_calls = 0
+
+    def must_not_call_provider(system, user, **kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        return dict(SAFE)
+
+    monkeypatch.setattr(provider, "complete_json", must_not_call_provider)
+    with pytest.raises(HTTPException) as exc:
+        await api.ai_assist(api.AICaptionAssistRequest(
+            platform="tiktok", artifact_media_id="caption-api-segment",
+        ))
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "FINAL_VIDEO_REQUIRED"
+    assert provider_calls == 0

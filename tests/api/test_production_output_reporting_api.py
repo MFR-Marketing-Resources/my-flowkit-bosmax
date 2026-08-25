@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -6,6 +8,15 @@ from agent.api.production_output_reporting import router
 
 def _client() -> TestClient:
     app = FastAPI()
+
+    @app.middleware("http")
+    async def owner_context(request, call_next):
+        request.state.auth_context = SimpleNamespace(
+            staff_id="owner-reporting",
+            role_codes=("OWNER",),
+        )
+        return await call_next(request)
+
     app.include_router(router)
     return TestClient(app)
 

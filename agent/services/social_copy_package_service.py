@@ -177,13 +177,20 @@ async def generate_social_copy_package(
     """Create + persist a social copy variant for an artifact, claim-safe checked."""
     p = _validate_platform(platform)
     artifact = await crud.get_generated_artifact(artifact_media_id)
-    if not artifact:
+    result = await crud.get_generation_result(artifact_media_id)
+    if not artifact and not result:
         raise SocialCopyError("ARTIFACT_NOT_FOUND")
+    source = artifact or result or {}
+    kind = str(source.get("artifact_kind") or "video").lower()
+    if kind == "video" and not await crud.is_final_video_media_id(artifact_media_id):
+        raise SocialCopyError("FINAL_VIDEO_REQUIRED")
+    if kind == "video" and result is None:
+        raise SocialCopyError("FINAL_RESULT_REQUIRED")
 
     # PI-FINAL-B04: when the artifact traces to a product (via its generation
     # package), social captioning is a copy lane and the product must be
     # COPY_ELIGIBLE. Artifacts with no product linkage are not product copy.
-    wgp_id = artifact.get("workspace_generation_package_id")
+    wgp_id = (result or {}).get("workspace_generation_package_id")
     if wgp_id:
         package = await crud.get_workspace_generation_package(str(wgp_id))
         linked_product_id = str((package or {}).get("product_id") or "")
@@ -214,7 +221,7 @@ async def generate_social_copy_package(
         package_id,
         artifact_media_id=artifact_media_id,
         platform=p,
-        source_mode=source_mode or artifact.get("mode"),
+        source_mode=source_mode or source.get("mode"),
         caption=caption,
         first_comment=first_comment,
         hashtags_json=json.dumps(clean_tags),

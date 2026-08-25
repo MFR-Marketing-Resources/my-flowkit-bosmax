@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
+from unittest.mock import AsyncMock
 
 from agent.api import flow
 from agent.db import crud
@@ -93,3 +94,17 @@ def test_manual_delete_endpoint_removes_images_but_not_videos(tmp_path):
         await crud.delete_generated_artifact(video_id)
 
     _run(scenario())
+
+
+def test_video_library_requests_final_projection_while_image_is_unchanged(monkeypatch):
+    listing = AsyncMock(return_value=[])
+    monkeypatch.setattr(crud, "list_generated_artifacts", listing)
+    monkeypatch.setattr(
+        crud, "purge_expired_artifacts", AsyncMock(return_value={"purged": 0})
+    )
+
+    _run(flow.list_artifacts(kind="video", limit=17))
+    assert listing.await_args.kwargs["final_only"] is True
+
+    _run(flow.list_artifacts(kind="image", limit=17))
+    assert listing.await_args.kwargs["final_only"] is False

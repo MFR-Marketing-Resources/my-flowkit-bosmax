@@ -1,7 +1,5 @@
-// Typed client for the native Flow Extend surface. All calls go through the ONE
-// authoritative backend path (/api/flow/extend-run) or the read-only resolver /
-// lineage endpoints. Live execution is available only after the backend issues a
-// process-local, single-use authorization bound to the reviewed plan and count.
+// Typed client for provider-free Native Extend planning/diagnostics and the
+// durable full-video job. Direct live Extend submission is intentionally absent.
 import { getAPI, postAPI } from './client';
 
 export interface NativeExtendResolution {
@@ -67,12 +65,6 @@ export interface ExtendBlockInput {
   is_final?: boolean;
 }
 
-export interface NativeExtendLiveAuthorization {
-  authorization_token: string;
-  planned_operation_count: number;
-  expires_in_seconds: number;
-}
-
 export interface NativeExtendRunInput {
   project_id: string;
   scene_id: string;
@@ -106,20 +98,9 @@ export async function previewNativeExtend(input: {
   return postAPI('/api/flow/extend-run', { ...input, dry_run: true });
 }
 
-export async function requestNativeExtendLiveAuthorization(
-  input: NativeExtendRunInput,
-): Promise<NativeExtendLiveAuthorization> {
-  return postAPI('/api/flow/native-extend/live-authorization', input);
-}
-
-export async function runNativeExtend(input: NativeExtendRunInput): Promise<ExtendRunResult> {
-  return postAPI('/api/flow/extend-run', input);
-}
-
-// Freeze the chain's per-block continuation prompts into an Approved Generation
-// Manifest for human WYSIWYG review BEFORE any paid Extend operation. The operator
-// reviews every Extend prompt ONCE here; each /extend-run block then resolves its
-// approved item by canonical envelope hash (no ad-hoc per-clip approval).
+// Provider-free compatibility helper: freeze continuation prompts into an
+// Approved Generation Manifest for human review. Paid work remains exclusively
+// owned by the durable Full Video job.
 export async function materializeNativeExtendManifest(
   input: NativeExtendRunInput,
 ): Promise<import('./executionApproval').ApprovalManifest> {

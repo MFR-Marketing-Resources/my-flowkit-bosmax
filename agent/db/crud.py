@@ -4320,6 +4320,194 @@ async def get_generated_artifact(media_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+async def insert_final_video_delivery(
+    media_id: str,
+    *,
+    artifact: dict,
+    generation_result: dict,
+) -> dict:
+    """Atomically register the public artifact/result pair for one final video.
+
+    This deliberately does not call the two generic upsert helpers: each helper
+    owns its own commit.  Final delivery has a stronger invariant, so both
+    existing-table writes and both readbacks share one transaction.
+    """
+    artifact = dict(artifact or {})
+    result = dict(generation_result or {})
+    if not str(media_id or "").strip():
+        raise ValueError("FINAL_VIDEO_MEDIA_ID_REQUIRED")
+    if str(artifact.get("artifact_kind") or "video").lower() != "video":
+        raise ValueError("FINAL_VIDEO_ARTIFACT_KIND_INVALID")
+    if str(result.get("artifact_kind") or "video").lower() != "video":
+        raise ValueError("FINAL_VIDEO_RESULT_KIND_INVALID")
+
+    db = await get_db()
+    async with _db_lock:
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            await db.execute(
+                """INSERT INTO generated_artifact
+                   (media_id, job_id, staff_id, staff_display_name_snapshot, mode,
+                    surface_lane, transport_mode, source_mode,
+                    provider_generation_type, artifact_kind, local_path, size_mb,
+                    file_size_bytes, file_sha256, delivery_status, readback_verified,
+                    project_id, model_used, duration_used, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(media_id) DO UPDATE SET
+                     job_id=COALESCE(excluded.job_id, generated_artifact.job_id),
+                     staff_id=COALESCE(excluded.staff_id, generated_artifact.staff_id),
+                     staff_display_name_snapshot=COALESCE(
+                         excluded.staff_display_name_snapshot,
+                         generated_artifact.staff_display_name_snapshot),
+                     mode=COALESCE(excluded.mode, generated_artifact.mode),
+                     surface_lane=COALESCE(excluded.surface_lane, generated_artifact.surface_lane),
+                     transport_mode=COALESCE(excluded.transport_mode, generated_artifact.transport_mode),
+                     source_mode=COALESCE(excluded.source_mode, generated_artifact.source_mode),
+                     provider_generation_type=COALESCE(
+                         excluded.provider_generation_type,
+                         generated_artifact.provider_generation_type),
+                     artifact_kind='video',
+                     local_path=COALESCE(excluded.local_path, generated_artifact.local_path),
+                     size_mb=COALESCE(excluded.size_mb, generated_artifact.size_mb),
+                     file_size_bytes=COALESCE(
+                         excluded.file_size_bytes, generated_artifact.file_size_bytes),
+                     file_sha256=COALESCE(excluded.file_sha256, generated_artifact.file_sha256),
+                     delivery_status=excluded.delivery_status,
+                     readback_verified=excluded.readback_verified,
+                     project_id=COALESCE(excluded.project_id, generated_artifact.project_id),
+                     model_used=COALESCE(excluded.model_used, generated_artifact.model_used),
+                     duration_used=COALESCE(excluded.duration_used, generated_artifact.duration_used)""",
+                (
+                    media_id, artifact.get("job_id"), artifact.get("staff_id"),
+                    artifact.get("staff_display_name_snapshot"), artifact.get("mode"),
+                    artifact.get("surface_lane"), artifact.get("transport_mode"),
+                    artifact.get("source_mode"), artifact.get("provider_generation_type"),
+                    "video", artifact.get("local_path"), artifact.get("size_mb"),
+                    artifact.get("file_size_bytes"), artifact.get("file_sha256"),
+                    artifact.get("delivery_status") or "REGISTERED",
+                    int(bool(artifact.get("readback_verified"))),
+                    artifact.get("project_id"), artifact.get("model_used"),
+                    artifact.get("duration_used"), _now(),
+                ),
+            )
+            await db.execute(
+                """INSERT INTO generation_result
+                   (media_id, job_id, request_id, staff_id, staff_display_name_snapshot,
+                    mode, surface_lane, transport_mode, source_mode,
+                    provider_generation_type, artifact_kind, product_id,
+                    product_name, final_prompt_text, aspect_ratio, model_label,
+                    duration_s, count_setting, reference_media_ids_json,
+                    workspace_generation_package_id, project_id,
+                    product_visual_custody_json, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(media_id) DO UPDATE SET
+                     job_id=COALESCE(excluded.job_id, generation_result.job_id),
+                     request_id=COALESCE(excluded.request_id, generation_result.request_id),
+                     staff_id=COALESCE(excluded.staff_id, generation_result.staff_id),
+                     staff_display_name_snapshot=COALESCE(
+                         excluded.staff_display_name_snapshot,
+                         generation_result.staff_display_name_snapshot),
+                     mode=COALESCE(excluded.mode, generation_result.mode),
+                     surface_lane=COALESCE(excluded.surface_lane, generation_result.surface_lane),
+                     transport_mode=COALESCE(excluded.transport_mode, generation_result.transport_mode),
+                     source_mode=COALESCE(excluded.source_mode, generation_result.source_mode),
+                     provider_generation_type=COALESCE(
+                         excluded.provider_generation_type,
+                         generation_result.provider_generation_type),
+                     artifact_kind='video',
+                     product_id=COALESCE(excluded.product_id, generation_result.product_id),
+                     product_name=COALESCE(excluded.product_name, generation_result.product_name),
+                     final_prompt_text=CASE
+                       WHEN excluded.final_prompt_text!='' THEN excluded.final_prompt_text
+                       ELSE generation_result.final_prompt_text END,
+                     aspect_ratio=COALESCE(excluded.aspect_ratio, generation_result.aspect_ratio),
+                     model_label=COALESCE(excluded.model_label, generation_result.model_label),
+                     duration_s=COALESCE(excluded.duration_s, generation_result.duration_s),
+                     count_setting=COALESCE(excluded.count_setting, generation_result.count_setting),
+                     reference_media_ids_json=CASE
+                       WHEN excluded.reference_media_ids_json!='[]'
+                       THEN excluded.reference_media_ids_json
+                       ELSE generation_result.reference_media_ids_json END,
+                     workspace_generation_package_id=COALESCE(
+                         excluded.workspace_generation_package_id,
+                         generation_result.workspace_generation_package_id),
+                     project_id=COALESCE(excluded.project_id, generation_result.project_id),
+                     product_visual_custody_json=CASE
+                       WHEN excluded.product_visual_custody_json!='{}'
+                       THEN excluded.product_visual_custody_json
+                       ELSE generation_result.product_visual_custody_json END""",
+                (
+                    media_id, result.get("job_id"), result.get("request_id"),
+                    result.get("staff_id"), result.get("staff_display_name_snapshot"),
+                    result.get("mode"), result.get("surface_lane"),
+                    result.get("transport_mode"), result.get("source_mode"),
+                    result.get("provider_generation_type"), "video",
+                    result.get("product_id"), result.get("product_name"),
+                    result.get("final_prompt_text") or "", result.get("aspect_ratio"),
+                    result.get("model_label"), result.get("duration_s"),
+                    result.get("count_setting"), json.dumps(
+                        result.get("reference_media_ids") or [], ensure_ascii=False),
+                    result.get("workspace_generation_package_id"),
+                    result.get("project_id"), json.dumps(
+                        result.get("product_visual_custody") or {}, ensure_ascii=False),
+                    _now(),
+                ),
+            )
+            artifact_row = await (
+                await db.execute(
+                    "SELECT * FROM generated_artifact WHERE media_id=?", (media_id,)
+                )
+            ).fetchone()
+            result_row = await (
+                await db.execute(
+                    "SELECT * FROM generation_result WHERE media_id=?", (media_id,)
+                )
+            ).fetchone()
+            if artifact_row is None or result_row is None:
+                raise RuntimeError(f"FINAL_VIDEO_DELIVERY_READBACK_MISSING:{media_id}")
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return {
+        "media_id": media_id,
+        "artifact": dict(artifact_row),
+        "generation_result": dict(result_row),
+        "complete": True,
+    }
+
+
+async def get_final_video_delivery(media_id: str) -> dict:
+    """Read the two final-delivery rows without inferring provider state."""
+    artifact = await get_generated_artifact(media_id)
+    result = await get_generation_result(media_id)
+    return {
+        "media_id": media_id,
+        "artifact": artifact,
+        "generation_result": result,
+        "complete": artifact is not None and result is not None,
+    }
+
+
+async def list_incomplete_final_video_deliveries(limit: int = 200) -> list[dict]:
+    """Final files whose local delivery pair needs repair (never provider work)."""
+    db = await get_db()
+    cur = await db.execute(
+        """SELECT v.*,
+                  CASE WHEN ga.media_id IS NULL THEN 0 ELSE 1 END AS has_artifact,
+                  CASE WHEN gr.media_id IS NULL THEN 0 ELSE 1 END AS has_result
+           FROM video_production_job v
+           LEFT JOIN generated_artifact ga ON ga.media_id=v.final_media_id
+           LEFT JOIN generation_result gr ON gr.media_id=v.final_media_id
+           WHERE v.final_media_id IS NOT NULL AND v.final_media_id!=''
+             AND v.final_local_path IS NOT NULL AND v.final_local_path!=''
+             AND (ga.media_id IS NULL OR gr.media_id IS NULL)
+           ORDER BY v.updated_at ASC LIMIT ?""",
+        (max(1, min(1000, int(limit or 200))),),
+    )
+    return [dict(row) for row in await cur.fetchall()]
+
+
 async def list_artifact_scene_ids(project_id: str) -> list[str]:
     """Distinct scene ids we have durable artifact evidence for in a project."""
     db = await get_db()
@@ -4437,6 +4625,30 @@ async def update_video_production_job_full(job_id: str, **fields) -> None:
         await db.commit()
 
 
+async def compare_and_swap_video_production_job_stage_state(
+    job_id: str,
+    *,
+    expected_stage_state_json: str | None,
+    stage_state_json: str,
+) -> bool:
+    """Replace one raw stage-state snapshot only when it is still current.
+
+    Callers merge against a freshly read JSON object before invoking this
+    primitive.  The raw ``IS ?`` comparison preserves concurrently written
+    recovery/audit keys without adding a schema or lock outside SQLite.
+    """
+    db = await get_db()
+    async with _db_lock:
+        cur = await db.execute(
+            "UPDATE video_production_job SET stage_state_json=?, "
+            "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+            "WHERE job_id=? AND stage_state_json IS ?",
+            (stage_state_json, job_id, expected_stage_state_json),
+        )
+        await db.commit()
+    return cur.rowcount == 1
+
+
 async def consume_job_authorization(job_id: str, token: str, *,
                                     plan_fingerprint: str, now: str) -> dict:
     """Atomically CONSUME a job's single-use authorization at start.
@@ -4491,6 +4703,58 @@ async def reserve_video_job_side_effect(idempotency_key: str, *, job_id: str,
             (idempotency_key,))
         row = await row.fetchone()
     return {"reserved": reserved, "row": dict(row) if row else None}
+
+
+async def claim_safe_video_job_side_effect_submission(
+    idempotency_key: str,
+    *,
+    job_id: str,
+    stage: str,
+    expected_submit_count: int,
+    credit_balance_before: float | None = None,
+) -> dict:
+    """Atomically create/claim the exact provider-safe submission boundary.
+
+    A missing row is inserted as ``NOT_ATTEMPTED/NOT_SPENT/SAFE`` and claimed in
+    the same DB critical section.  An existing row is claimable only from that
+    exact state, with no operation reference and the caller's observed submit
+    count.  The winning transition records ``SUBMITTED/MAY_HAVE_SPENT`` and
+    increments the count; every concurrent loser receives ``claimed=False``.
+    """
+    db = await get_db()
+    async with _db_lock:
+        await db.execute(
+            "INSERT OR IGNORE INTO video_job_side_effect "
+            "(idempotency_key, job_id, stage, submission_state, credit_state, "
+            "retry_safety) VALUES (?,?,?,'NOT_ATTEMPTED','NOT_SPENT','SAFE')",
+            (idempotency_key, job_id, stage),
+        )
+        cur = await db.execute(
+            "UPDATE video_job_side_effect SET submission_state='SUBMITTED', "
+            "credit_state='MAY_HAVE_SPENT', retry_safety='RESUME_ONLY', "
+            "effective_submit_count=effective_submit_count+1, detail=NULL, "
+            "credit_balance_before=?, "
+            "updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+            "WHERE idempotency_key=? AND job_id=? AND stage=? "
+            "AND submission_state='NOT_ATTEMPTED' "
+            "AND credit_state='NOT_SPENT' AND retry_safety='SAFE' "
+            "AND operation_ref IS NULL AND effective_submit_count=?",
+            (
+                credit_balance_before,
+                idempotency_key,
+                job_id,
+                stage,
+                int(expected_submit_count),
+            ),
+        )
+        await db.commit()
+        claimed = cur.rowcount == 1
+        row = await db.execute(
+            "SELECT * FROM video_job_side_effect WHERE idempotency_key=?",
+            (idempotency_key,),
+        )
+        row = await row.fetchone()
+    return {"claimed": claimed, "row": dict(row) if row else None}
 
 
 async def list_video_job_side_effects(job_id: str) -> list[dict]:
@@ -4821,12 +5085,71 @@ async def delete_generated_artifact(media_id: str) -> dict:
     return {"deleted": 1, "file_removed": file_removed}
 
 
+_FINAL_VIDEO_MEDIA_IDS_SQL = """
+    SELECT final_media_id AS media_id
+      FROM video_production_job
+     WHERE final_media_id IS NOT NULL AND final_media_id!=''
+    UNION
+    SELECT json_extract(config_json, '$.assembly.final_media_id') AS media_id
+      FROM bulk_generation_run
+     WHERE kind='MONTAGE_DISCRETE' AND json_valid(config_json)
+       AND json_extract(config_json, '$.assembly.final_media_id') IS NOT NULL
+    UNION
+    SELECT json_extract(config_json, '$.assembly.concat.final_media_id') AS media_id
+      FROM bulk_generation_run
+     WHERE kind='MONTAGE_DISCRETE' AND json_valid(config_json)
+       AND json_extract(config_json, '$.assembly.concat.final_media_id') IS NOT NULL
+    UNION
+    SELECT item.output_media_id AS media_id
+      FROM creative_production_item item
+     WHERE item.media_type='VIDEO'
+       AND item.output_media_id IS NOT NULL AND item.output_media_id!=''
+       AND UPPER(COALESCE(item.status,'')) NOT IN
+           ('FAILED','CANCELLED','SUPERSEDED','QA_REJECTED')
+       AND EXISTS (
+           SELECT 1 FROM creative_generation_attempt attempt
+            WHERE attempt.item_id=item.item_id
+              AND attempt.artifact_media_id=item.output_media_id
+              AND UPPER(COALESCE(attempt.attempt_state,''))='REGISTERED'
+       )
+"""
+
+
+async def is_final_video_media_id(media_id: str) -> bool:
+    """Whether existing lane bindings deterministically designate this video FINAL."""
+    value = str(media_id or "").strip()
+    if not value:
+        return False
+    db = await get_db()
+    row = await (
+        await db.execute(
+            f"SELECT 1 FROM ({_FINAL_VIDEO_MEDIA_IDS_SQL}) finals WHERE media_id=? LIMIT 1",
+            (value,),
+        )
+    ).fetchone()
+    return row is not None
+
+
+async def list_final_video_media_ids(limit: int | None = None) -> list[str]:
+    """Project authoritative single/Extend, Montage assembly, and accepted P6 finals."""
+    db = await get_db()
+    query = f"SELECT media_id FROM ({_FINAL_VIDEO_MEDIA_IDS_SQL}) WHERE media_id IS NOT NULL"
+    params: tuple = ()
+    if limit is not None:
+        query += " LIMIT ?"
+        params = (max(1, min(10000, int(limit))),)
+    rows = await (await db.execute(query, params)).fetchall()
+    return [str(row[0]) for row in rows if row[0]]
+
+
 async def list_generated_artifacts(limit: int = 50, mode: str = None,
                                      kind: str = None,
-                                     surface_lane: str = None) -> list:
+                                     surface_lane: str = None,
+                                     final_only: bool = False) -> list:
     """Newest-first library listing for the dashboard gallery."""
     db = await get_db()
-    query = """SELECT media_id, job_id, mode, surface_lane, transport_mode,
+    query = """SELECT media_id, job_id, staff_id, staff_display_name_snapshot,
+                      mode, surface_lane, transport_mode,
                       source_mode, provider_generation_type, artifact_kind,
                       local_path, size_mb, project_id, model_used, duration_used,
                       created_at
@@ -4842,13 +5165,18 @@ async def list_generated_artifacts(limit: int = 50, mode: str = None,
     if surface_lane:
         clauses.append("surface_lane = ?")
         params += (str(surface_lane).upper(),)
+    if final_only:
+        clauses.append(
+            f"(artifact_kind!='video' OR media_id IN ({_FINAL_VIDEO_MEDIA_IDS_SQL}))"
+        )
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
     query += " ORDER BY created_at DESC LIMIT ?"
     params += (int(limit),)
     cursor = await db.execute(query, params)
     rows = await cursor.fetchall()
-    keys = ("media_id", "job_id", "mode", "surface_lane", "transport_mode",
+    keys = ("media_id", "job_id", "staff_id", "staff_display_name_snapshot",
+            "mode", "surface_lane", "transport_mode",
             "source_mode", "provider_generation_type", "artifact_kind", "local_path",
             "size_mb", "project_id", "model_used", "duration_used", "created_at")
     return [dict(zip(keys, row)) for row in rows]
@@ -4987,7 +5315,9 @@ async def get_generation_result(media_id: str) -> dict | None:
 async def list_generation_results(limit: int = 60, mode: str = None,
                                   kind: str = None, request_id: str = None,
                                   job_id: str = None,
-                                  surface_lane: str = None) -> list:
+                                  surface_lane: str = None,
+                                  staff_id: str = None,
+                                  final_only: bool = False) -> list:
     """Newest-first durable deliverable records for the Results Hub."""
     db = await get_db()
     query = "SELECT * FROM generation_result"
@@ -5007,6 +5337,13 @@ async def list_generation_results(limit: int = 60, mode: str = None,
     if job_id:
         clauses.append("job_id=?")
         params.append(job_id)
+    if staff_id:
+        clauses.append("staff_id=?")
+        params.append(staff_id)
+    if final_only:
+        clauses.append(
+            f"(artifact_kind!='video' OR media_id IN ({_FINAL_VIDEO_MEDIA_IDS_SQL}))"
+        )
     if clauses:
         query += " WHERE " + " AND ".join(clauses)
     query += " ORDER BY created_at DESC LIMIT ?"

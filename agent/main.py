@@ -121,32 +121,48 @@ logger = logging.getLogger(__name__)
 
 # ─── WebSocket Server for Extension ─────────────────────────
 
-def _clear_extension_if_current(client, websocket) -> bool:
-    """Keep replacement extension sockets live when an older socket closes."""
-    clear_socket = getattr(client, "clear_extension_socket", None)
-    if callable(clear_socket):
-        return bool(clear_socket(websocket))
-    if getattr(client, "_extension_ws", None) is not websocket:
-        logger.info("Superseded extension socket disconnected; preserving active bridge")
+def _clear_extension_if_current(client, websocket, connection_id=None) -> bool:
+    """Unregister only the server-owned record for this exact WebSocket."""
+    if connection_id is None:
+        record = client._connection_record(websocket)
+        connection_id = record.get("connection_id") if record else None
+    if not connection_id:
         return False
-    client.clear_extension()
-    return True
+    return client.unregister_extension_connection(
+        str(connection_id),
+        websocket=websocket,
+    )
 
 
 async def ws_handler(websocket):
     """Handle a Chrome extension WebSocket connection."""
     client = get_flow_client()
-    client.set_extension(websocket, require_identity=True)
-    logger.info("Extension connected from %s", websocket.remote_address)
-
-    # Send callback secret so extension can authenticate HTTP callbacks
-    await websocket.send(json.dumps({"type": "callback_secret", "secret": _CALLBACK_SECRET}))
+    connection_id = _secrets.token_urlsafe(18)
+    callback_secret = _secrets.token_urlsafe(32)
+    client.register_extension_connection(
+        websocket,
+        connection_id=connection_id,
+        callback_secret=callback_secret,
+        metadata={"remote_address": str(websocket.remote_address)},
+    )
+    logger.info(
+        "Extension connected id=%s from %s",
+        connection_id,
+        websocket.remote_address,
+    )
 
     try:
+        # The secret and connection id are server-owned and scoped to this exact
+        # socket.  A failed initial send still reaches the finally unregister.
+        await websocket.send(json.dumps({
+            "type": "callback_secret",
+            "secret": callback_secret,
+            "connection_id": connection_id,
+        }))
         async for raw in websocket:
             try:
                 data = json.loads(raw)
-                await client.handle_message(data, websocket=websocket)
+                await client.handle_message(data, connection_id=connection_id)
             except json.JSONDecodeError:
                 logger.warning("Invalid JSON from extension")
             except Exception as e:
@@ -154,8 +170,8 @@ async def ws_handler(websocket):
     except websockets.ConnectionClosed:
         pass
     finally:
-        if _clear_extension_if_current(client, websocket):
-            logger.info("Extension disconnected")
+        if _clear_extension_if_current(client, websocket, connection_id):
+            logger.info("Extension disconnected id=%s", connection_id)
 
 
 async def run_ws_server():
@@ -334,7 +350,20 @@ async def lifespan(app: FastAPI):
 
     async def _resume_durable_video_jobs():
         # Restart recovery: RESUME (poll only) any in-flight authorized full-video
-        # job — never a fresh credit submit. Best-effort; boot never blocks on it.
+        # job — never a fresh credit submit. Repair already-retrieved final delivery
+        # pairs locally first. Best-effort; boot never blocks on either sweep.
+        try:
+            from agent.services import video_production_orchestrator as _orch
+            repaired = await _orch.reconcile_incomplete_final_deliveries()
+            if repaired.get("selected"):
+                logger.info(
+                    "Final-video delivery repair after restart: selected=%d repaired=%d failed=%d",
+                    repaired.get("selected", 0),
+                    repaired.get("repaired", 0),
+                    repaired.get("failed", 0),
+                )
+        except Exception:  # noqa: BLE001 — recovery must never crash startup
+            logger.debug("final-video delivery repair sweep skipped", exc_info=True)
         try:
             from agent.services import video_production_orchestrator as _orch
             from agent.api.flow import (_production_initial_generator,
@@ -496,33 +525,44 @@ async def ext_callback(request: Request):
     Requires X-Callback-Secret header matching the secret sent to extension on WS connect.
     """
     supplied_secret = request.headers.get("x-callback-secret", "")
-    if not supplied_secret or not _secrets.compare_digest(supplied_secret, _CALLBACK_SECRET):
+    client = get_flow_client()
+    auth_probe = client.resolve_extension_callback(supplied_secret, None)
+    legacy_noop = bool(
+        supplied_secret
+        and _secrets.compare_digest(supplied_secret, _CALLBACK_SECRET)
+        and not client.connected
+        and not client._pending
+    )
+    if not auth_probe.get("authenticated") and not legacy_noop:
         return JSONResponse(
             {"detail": {"error": "CALLBACK_AUTHENTICATION_REQUIRED"}},
             status_code=401,
         )
     data = await request.json()
-    client = get_flow_client()
     req_id = data.get("id")
-    logger.info("ext/callback: id=%s pending=%d match=%s",
-                str(req_id)[:8] if req_id else "none",
-                len(client._pending),
-                "yes" if req_id and req_id in client._pending else "no")
-    if req_id and req_id in client._pending:
-        record_diag = getattr(client, "_record_session_diagnostics", None)
-        if callable(record_diag):
-            pending_session = getattr(client, "_pending_session_ids", {}).get(req_id)
-            record_diag(
-                pending_session,
-                data.get("result") if isinstance(data.get("result"), dict) else data,
-            )
-        future = client._pending[req_id]
-        try:
-            future.set_result(data)
-        except asyncio.InvalidStateError:
-            pass
+    if legacy_noop:
+        logger.info("ext/callback legacy no-op id=%s", str(req_id)[:8] if req_id else "none")
+        return {"ok": False, "reason": "no matching pending request"}
+
+    resolution = client.resolve_extension_callback(supplied_secret, data)
+    if not resolution.get("authenticated"):
+        return JSONResponse(
+            {"detail": {"error": "CALLBACK_AUTHENTICATION_REQUIRED"}},
+            status_code=401,
+        )
+    logger.info(
+        "ext/callback id=%s pending=%d resolved=%s reason=%s",
+        str(req_id)[:8] if req_id else "none",
+        len(client._pending),
+        "yes" if resolution.get("resolved") else "no",
+        resolution.get("reason"),
+    )
+    if resolution.get("resolved"):
         return {"ok": True}
-    return {"ok": False, "reason": "no matching pending request"}
+    return {
+        "ok": False,
+        "reason": str(resolution.get("reason") or "no matching pending request"),
+    }
 
 
 @app.get("/health")

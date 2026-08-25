@@ -7,6 +7,25 @@ from agent.db import crud
 
 router = APIRouter(prefix="/requests", tags=["requests"])
 
+LEGACY_VIDEO_REQUEST_RETIRED_CODE = (
+    "LEGACY_VIDEO_REQUEST_RETIRED_USE_DURABLE_VIDEO_JOB"
+)
+_RETIRED_VIDEO_REQUEST_TYPES = frozenset({
+    "GENERATE_VIDEO",
+    "REGENERATE_VIDEO",
+    "GENERATE_VIDEO_REFS",
+    "TRUE_F2V",
+    "UPSCALE_VIDEO",
+})
+
+
+def _reject_retired_video_request(req_type: str) -> None:
+    if req_type in _RETIRED_VIDEO_REQUEST_TYPES:
+        raise HTTPException(
+            status_code=410,
+            detail=LEGACY_VIDEO_REQUEST_RETIRED_CODE,
+        )
+
 
 class RequestUpdate(BaseModel):
     status: Optional[StatusType] = None
@@ -34,6 +53,7 @@ class BatchStatus(BaseModel):
 
 @router.post("", response_model=Request)
 async def create(body: RequestCreate):
+    _reject_retired_video_request(body.type)
     data = body.model_dump(exclude_none=True)
     data["req_type"] = data.pop("type")
 
@@ -65,6 +85,9 @@ async def create(body: RequestCreate):
 async def create_batch(body: BatchRequestCreate):
     """Submit multiple requests atomically. Server handles throttling (max 5 concurrent, 10s cooldown).
     Duplicate active requests for the same scene+type are skipped (not errors)."""
+    for item in body.requests:
+        _reject_retired_video_request(item.type)
+
     # Auto-set video orientation from the batch (tracks current active orientation)
     _seen_vids: set[str] = set()
     for item in body.requests:

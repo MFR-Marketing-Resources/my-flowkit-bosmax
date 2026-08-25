@@ -214,6 +214,61 @@ async def test_in_flight_or_crashed_submit_blocks_duplicate(monkeypatch):
     assert exc.value.code == nx.EXTEND_DUPLICATE_SUBMISSION_BLOCKED
 
 
+async def test_known_extend_child_restart_polls_without_submit():
+    lineage_id = str(uuid.uuid4())
+    await crud.insert_extend_lineage(
+        lineage_id,
+        project_id="p-known-child",
+        scene_id="s-known-child",
+        block_index=2,
+        block_position=1,
+        parent_operation_id="parent-known",
+        child_operation_id="child-known",
+        child_primary_media_id="primary-known",
+        child_workflow_id="workflow-known",
+        idempotency_key="idem-known-child-" + lineage_id,
+        polling_state=nx.STATE_SUBMITTED,
+    )
+    client = FakeClient(["must-not-submit"])
+
+    out = await nx.resume_known_extend_child(
+        client, lineage_id=lineage_id, poll_interval_s=0
+    )
+
+    assert out["child_operation_id"] == "child-known"
+    assert out["resumed"] is True
+    assert client.submits == []
+    assert client.polls == [[{"name": "child-known", "projectId": "p-known-child"}]]
+    assert client.gets == ["child-known"]
+    row = await crud.get_extend_lineage(lineage_id)
+    assert row["polling_state"] == nx.STATE_SUCCEEDED
+
+
+async def test_submitted_without_child_remains_blocked_without_calls():
+    lineage_id = str(uuid.uuid4())
+    await crud.insert_extend_lineage(
+        lineage_id,
+        project_id="p-ambiguous-child",
+        scene_id="s-ambiguous-child",
+        block_index=2,
+        block_position=1,
+        parent_operation_id="parent-ambiguous",
+        child_primary_media_id="primary-is-not-operation",
+        idempotency_key="idem-ambiguous-child-" + lineage_id,
+        polling_state=nx.STATE_SUBMITTED,
+    )
+    client = FakeClient(["must-not-submit"])
+
+    with pytest.raises(nx.NativeExtendError) as exc:
+        await nx.resume_known_extend_child(client, lineage_id=lineage_id)
+
+    assert exc.value.code == nx.EXTEND_DUPLICATE_SUBMISSION_BLOCKED
+    assert client.submits == client.polls == client.gets == []
+    row = await crud.get_extend_lineage(lineage_id)
+    assert row["polling_state"] == nx.STATE_SUBMITTED
+    assert row["child_operation_id"] is None
+
+
 async def test_lineage_mismatch_when_child_equals_parent(monkeypatch):
     monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
 
