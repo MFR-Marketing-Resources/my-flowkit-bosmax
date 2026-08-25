@@ -461,7 +461,7 @@ async def test_round2_observed_legacy_deepseek_shape_is_rejected_without_normali
 
 
 @pytest.mark.asyncio
-async def test_round2_prompt_contract_is_exact_and_mode_aware():
+async def test_round2_prompt_contract_is_words_only_and_route_locked():
     factory, recipe, _angle, _family = await _seed_round2_fixture("round2-contract-reuse")
     service = V3CopyRegisterRound2Service(factory=factory)
     plan = await service.plan_assistant(
@@ -471,14 +471,41 @@ async def test_round2_prompt_contract_is_exact_and_mode_aware():
         actor_id="round2-contract-test",
         request_id="round2:contract-reuse-plan",
     )
+    # BOSMAX locked exactly ONE approved semantic route provider-free.  The
+    # anchors pin the route_key and are a subset of the single allowed evidence
+    # bundle the provider may cite.
+    assert plan.locked_route_anchor_fact_ids
+    assert plan.locked_route["route_key"] == route_key_for_fact_ids(
+        list(plan.locked_route_anchor_fact_ids)
+    )
+    assert set(plan.locked_route_anchor_fact_ids).issubset(
+        set(plan.allowed_evidence_fact_ids)
+    )
+
+    contract = service._provider_output_contract(plan, recipe)
+    # The provider authors WORDS ONLY: no duration/WPS/route-authoring rules are
+    # shown to it any more.
+    assert "duration_feasibility" not in contract
+    assert "wps_duration_rules" not in contract
+    assert "storyline_route_rules" not in contract
+    # BOSMAX hands the provider the locked route + allowed evidence read-only.
+    assert contract["locked_route"]["route_anchor_fact_ids"] == list(
+        plan.locked_route_anchor_fact_ids
+    )
+    assert contract["allowed_evidence_fact_ids"] == list(plan.allowed_evidence_fact_ids)
+    assert "route_anchor" in contract["evidence_rules"]
+    # The illustrative envelope never asks the provider to author supply/identity.
+    assert "angle_proposal" not in contract["output_shape"]
+    assert "storyline_family_proposal" not in contract["output_shape"]
+    assert "angle_proposal" in contract["forbidden_output_fields"]
+    assert "storyline_family_proposal" in contract["forbidden_output_fields"]
+    assert "route_key" in contract["forbidden_output_fields"]
+
     system, user, _truth = await service._prompt_parts(plan, recipe)
     prompt = system + "\n" + user
-    required_fields = (
+    # The copy-shape field names still travel to the provider verbatim.
+    for field_name in (
         "schema_version",
-        "angle_proposal",
-        "definition",
-        "storyline_family_proposal",
-        "reviewed_definition",
         "semantic_class",
         "segments",
         "formula_stage_key",
@@ -490,47 +517,16 @@ async def test_round2_prompt_contract_is_exact_and_mode_aware():
         "claim_bearing",
         "rationale",
         "risk_notes",
-    )
-    for field_name in required_fields:
+    ):
         assert field_name in prompt
-    assert "Do not output legacy fields" in prompt
-    for legacy_field in ("angle_id", "component_id", "description", "copy"):
-        assert legacy_field in prompt
+    assert "WORDS ONLY" in prompt
+    # No duration/WPS authoring rule leaks into the semantic prompt.
+    assert "wps_duration_rules" not in prompt
+    assert "duration_feasibility" not in prompt
 
-    contract = service._provider_output_contract(plan, recipe)
-    duration_envelope = contract["duration_feasibility"]
-    assert [item["duration_seconds"] for item in duration_envelope] == [8, 16, 24]
-    assert all(item["required_formula_stage_order"] == list(required_formula_stage_keys("PAS")) for item in duration_envelope)
-    for item in duration_envelope:
-        blocks = canonical_prompt_compiler.resolve_block_plan("GOOGLE_FLOW", item["duration_seconds"])
-        budgets = [
-            canonical_prompt_compiler.strict_dialogue_word_budget(
-                seconds, plan.language_profile, wps_mode=plan.wps_mode,
-            )
-            for seconds in blocks
-        ]
-        assert item["block_plan_seconds"] == blocks
-        assert item["per_block_word_budgets"] == budgets
-        assert item["total_word_budget"] == sum(budgets)
-        assert item["first_block_budget"] == budgets[0]
-        assert item["final_block_budget"] == budgets[-1]
-    assert contract["wps_duration_rules"]["shortest_duration"]
-    expected_models = {
-        "V3AIProviderEnvelope": V3AIProviderEnvelope,
-        "V3AngleProposal": V3AngleProposal,
-        "V3StorylineNarrativeRouteProposal": V3StorylineNarrativeRouteProposal,
-        "V3StorylineFamilyProposal": V3StorylineFamilyProposal,
-        "V3AICopyProposal": V3AICopyProposal,
-        "V3AICopySegment": V3AICopySegment,
-    }
-    for model_name, model in expected_models.items():
-        assert contract["canonical_models"][model_name]["allowed_keys"] == list(model.model_fields)
-    assert "route_key" not in V3StorylineFamilyProposal.model_fields
-    # Existing supply is reused, so the illustrative envelope omits both
-    # bootstrap-only proposal objects instead of asking DeepSeek to recreate them.
-    assert "angle_proposal" not in contract["output_shape"]
-    assert "storyline_family_proposal" not in contract["output_shape"]
-
+    # Zero-supply CREATE succeeds provider-free: route authority comes from
+    # approved evidence, not from a pre-existing Storyline Family. BOSMAX derives
+    # ONE route and never asks the AI to author it.
     zero_factory, zero_recipe = await _seed_zero_supply_recipe("round2-contract-create")
     zero_service = V3CopyRegisterRound2Service(factory=zero_factory)
     zero_plan = await zero_service.plan_assistant(
@@ -540,57 +536,84 @@ async def test_round2_prompt_contract_is_exact_and_mode_aware():
         actor_id="round2-contract-test",
         request_id="round2:contract-create-plan",
     )
+    assert zero_plan.provider.provider_calls == 0
+    assert zero_plan.storyline_family is None  # family need not pre-exist
+    assert zero_plan.locked_route_anchor_fact_ids  # derived from approved evidence
     zero_contract = zero_service._provider_output_contract(zero_plan, zero_recipe)
-    zero_envelope = V3AIProviderEnvelope.model_validate(zero_contract["output_shape"])
-    assert zero_plan.supply_actions == {
-        "angle": "CREATE_DRAFT",
-        "storyline_family": "CREATE_DRAFT",
-    }
-    assert isinstance(zero_envelope.angle_proposal, V3AngleProposal)
-    assert isinstance(zero_envelope.storyline_family_proposal, V3StorylineFamilyProposal)
-    assert "route_key" not in V3StorylineFamilyProposal.model_fields
-    assert "route_key" not in V3StorylineNarrativeRouteProposal.model_fields
-    assert all(isinstance(proposal, V3AICopyProposal) for proposal in zero_envelope.proposals)
-    assert all(
-        isinstance(segment, V3AICopySegment)
-        for proposal in zero_envelope.proposals
-        for segment in proposal.segments
-    )
+    assert "angle_proposal" not in zero_contract["output_shape"]
+    assert "storyline_family_proposal" not in zero_contract["output_shape"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("placement", ("top_level", "nested"))
-async def test_round2_provider_route_key_is_not_an_accepted_contract_field(placement):
-    factory, recipe = await _seed_zero_supply_recipe(f"round2-route-key-field-{placement}")
+@pytest.mark.parametrize("field", ("angle_proposal", "storyline_family_proposal"))
+async def test_round2_provider_cannot_author_route_or_supply(field):
+    factory, recipe, _angle, _family = await _seed_round2_fixture(f"round2-route-owned-{field}")
     service = V3CopyRegisterRound2Service(factory=factory)
     plan = await service.plan_assistant(
         recipe.product_id,
         recipe.recipe_id,
         mode="CREATE",
-        actor_id="round2-route-key-contract",
-        request_id=f"round2:route-key-contract:{placement}:plan",
+        actor_id="round2-route-owned",
+        request_id=f"round2:route-owned:{field}:plan",
     )
-    contract = service._provider_output_contract(plan, recipe)
-    payload = deepcopy(contract["output_shape"])
-    family = payload["storyline_family_proposal"]
-    if placement == "top_level":
-        family["route_key"] = "provider-authored-route"
-    else:
-        family["narrative_route"]["route_key"] = "provider-authored-route"
     bundle = await factory.truth_adapter.current(recipe.product_id)
+    payload = service._fake_envelope(plan, recipe, bundle)
+    # The provider authors WORDS ONLY; any Angle/Storyline Family proposal crosses
+    # the authoring boundary because BOSMAX owns the locked route.
+    if field == "angle_proposal":
+        payload["angle_proposal"] = {
+            "definition": "Provider tried to author an angle here.",
+            "rationale": "x",
+        }
+    else:
+        payload["storyline_family_proposal"] = {
+            "reviewed_definition": "Provider tried to author its own route here.",
+            "narrative_route": {"stage_keys": list(required_formula_stage_keys("PAS")), "order_locked": True},
+            "route_anchor_fact_ids": list(plan.locked_route_anchor_fact_ids),
+        }
 
     with pytest.raises(Exception) as error:
         service._validate_proposals(payload, plan, recipe, bundle)
 
-    assert error.value.code == "V3_PROVIDER_SCHEMA_VALIDATION_FAILED"
+    assert error.value.code == "AI_COPY_ASSIST_ROUTE_OWNERSHIP_FORBIDDEN"
 
 
 @pytest.mark.asyncio
-async def test_round2_mwcb_provider_free_precheck_derives_route_key_and_does_not_mutate_supply():
+async def test_round2_mwcb_provider_free_precheck_locks_route_and_does_not_mutate_supply():
     product_id = "round2-route-owned-mwcb"
     await _seed_product_truth(product_id)
+    fact_id = f"fact:{product_id}:allowed_claims_json:0"
     factory = V3CopyFactoryService()
     service = V3CopyRegisterRound2Service(factory=factory)
+    # BOSMAX pre-locks ONE approved route (Angle + Storyline Family) before
+    # STRUCTURE authoring; the provider only authors words on it.
+    angle = await factory.create_angle(
+        product_id,
+        {
+            "angle_id": f"{product_id}-angle",
+            "definition": "A lightweight daily routine angle for qualified buyers",
+            "formula_id": "PAS",
+            "objective_id": "conversion",
+            "objective_definition": "Drive a safe trial",
+            "evidence_fact_ids": [fact_id],
+        },
+        actor_id="round2-route-owned-precheck",
+        request_id=f"{product_id}:angle",
+    )
+    await factory.create_storyline_family(
+        product_id,
+        {
+            "family_id": f"{product_id}-family",
+            "angle_id": angle.angle_id,
+            "formula_id": "PAS",
+            "objective_compatibility": {"objective_ids": ["conversion"]},
+            "reviewed_definition": "One continuous daily routine route for the buyer",
+            "route_anchor_fact_ids": [fact_id],
+            "require_route_identity": True,
+        },
+        actor_id="round2-route-owned-precheck",
+        request_id=f"{product_id}:family",
+    )
     setup = await service.create_campaign_recipe(
         product_id,
         objective_id="conversion",
@@ -633,28 +656,24 @@ async def test_round2_mwcb_provider_free_precheck_derives_route_key_and_does_not
         "BODY_CORE": 3,
         "CTA": 3,
     }
+    # BOSMAX owns the route: the plan carries the locked route + anchors, derived
+    # provider-free from the approved Storyline Family.
+    assert plan.locked_route_anchor_fact_ids
+    assert plan.locked_route["route_key"] == route_key_for_fact_ids(list(plan.locked_route_anchor_fact_ids))
     bundle = await factory.truth_adapter.current(product_id)
-    payload = service._fake_envelope(plan, await factory.repository.get("COPY_RECIPE", setup["recipe_id"]), bundle)
-    family_payload = payload["storyline_family_proposal"]
-    assert "route_key" not in family_payload
-    assert "route_key" not in family_payload["narrative_route"]
+    payload = service._fake_envelope(plan, recipe, bundle)
+    # The provider authors words only — no Angle/Storyline Family proposal.
+    assert "storyline_family_proposal" not in payload
+    assert "angle_proposal" not in payload
     assert len(payload["proposals"]) == 12
     assert {
         semantic: sum(1 for proposal in payload["proposals"] if proposal["semantic_class"] == semantic)
         for semantic in ("HOOK", "BODY_CORE", "CTA")
     } == {"HOOK": 6, "BODY_CORE": 3, "CTA": 3}
 
-    envelope, _usage = service._validate_proposals(payload, plan, await factory.repository.get("COPY_RECIPE", setup["recipe_id"]), bundle)
-    proposal = envelope.storyline_family_proposal
-    assert proposal is not None
-    assert "route_key" not in V3StorylineFamilyProposal.model_fields
-    assert "route_key" not in V3StorylineNarrativeRouteProposal.model_fields
-    canonical_route = service._system_derived_storyline_route(
-        proposal,
-        required_formula_stage_keys(recipe.formula.formula_id),
-    )
-    assert canonical_route["route_key"] == route_key_for_fact_ids(list(proposal.route_anchor_fact_ids))
-    assert canonical_route["route_anchor_fact_ids"] == list(proposal.route_anchor_fact_ids)
+    envelope, _usage = service._validate_proposals(payload, plan, recipe, bundle)
+    assert envelope.storyline_family_proposal is None
+    assert envelope.angle_proposal is None
 
     after = {
         table: (await (await db.execute(f"SELECT COUNT(*) FROM {table} WHERE product_id=?", (product_id,))).fetchone())[0]
@@ -665,49 +684,45 @@ async def test_round2_mwcb_provider_free_precheck_derives_route_key_and_does_not
 
 @pytest.mark.asyncio
 async def test_round2_route_anchor_validation_remains_fail_closed_without_provider_calls():
-    product_id = "round2-route-anchor-hardening"
-    factory, recipe = await _seed_zero_supply_recipe(product_id)
+    factory, recipe, _angle, _family = await _seed_round2_fixture("round2-route-anchor-hardening")
     service = V3CopyRegisterRound2Service(factory=factory)
     plan = await service.plan_assistant(
         recipe.product_id,
         recipe.recipe_id,
         mode="CREATE",
         actor_id="round2-route-anchor-hardening",
-        request_id=f"{product_id}:plan",
+        request_id="round2-route-anchor-hardening:plan",
     )
-    bundle = await factory.truth_adapter.current(product_id)
+    bundle = await factory.truth_adapter.current(recipe.product_id)
     base = service._fake_envelope(plan, recipe, bundle)
-    valid_anchor = base["storyline_family_proposal"]["route_anchor_fact_ids"][0]
-    generic_anchor = next(
-        fact.fact_id
-        for fact in bundle.registry.facts
-        if fact.fact_kind.upper() in {"PRODUCT_DESCRIPTION", "TARGET_CUSTOMER"}
-    )
-    other_route_fact = next(
-        fact.fact_id
-        for fact in bundle.registry.facts
-        if fact.fact_id != valid_anchor
-        and fact.fact_kind.upper() not in {"PRODUCT_DESCRIPTION", "TARGET_CUSTOMER"}
-    )
+    # The single seeded product fact IS the locked anchor and the entire allowed
+    # evidence bundle, so evidence safety is proven by missing / out-of-island /
+    # duplicate citations.  (Route-mixing across two routes is structurally
+    # unreachable with one approved product fact.)
+    anchor = plan.locked_route_anchor_fact_ids[0]
+    assert base["proposals"][0]["segments"][0]["evidence_fact_ids"] == [anchor]
 
-    cases = (
-        (["missing-route-anchor"], "AI_COPY_ASSIST_ROUTE_ANCHOR_INVALID"),
-        ([generic_anchor], "AI_COPY_ASSIST_ROUTE_ANCHOR_GENERIC"),
-        ([valid_anchor, valid_anchor], "V3_PROVIDER_SCHEMA_VALIDATION_FAILED"),
-        ([""], "V3_PROVIDER_SCHEMA_VALIDATION_FAILED"),
-    )
-    for anchors, expected_code in cases:
-        payload = deepcopy(base)
-        payload["storyline_family_proposal"]["route_anchor_fact_ids"] = anchors
-        with pytest.raises(Exception) as error:
-            service._validate_proposals(payload, plan, recipe, bundle)
-        assert error.value.code == expected_code
-
-    mismatch = deepcopy(base)
-    mismatch["proposals"][0]["segments"][0]["evidence_fact_ids"] = [other_route_fact]
+    # (a) Claim-bearing copy citing NO evidence fails closed.
+    missing = deepcopy(base)
+    missing["proposals"][0]["segments"][0]["evidence_fact_ids"] = []
     with pytest.raises(Exception) as error:
-        service._validate_proposals(mismatch, plan, recipe, bundle)
-    assert error.value.code == "AI_COPY_ASSIST_ROUTE_MISMATCH"
+        service._validate_proposals(missing, plan, recipe, bundle)
+    assert error.value.code == "AI_COPY_ASSIST_EVIDENCE_REQUIRED"
+
+    # (b) Claim-bearing copy citing a fact OUTSIDE the locked allowed bundle fails closed.
+    outside = deepcopy(base)
+    outside["proposals"][0]["segments"][0]["evidence_fact_ids"] = [f"fact:{recipe.product_id}:fabricated:0"]
+    with pytest.raises(Exception) as error:
+        service._validate_proposals(outside, plan, recipe, bundle)
+    assert error.value.code == "AI_COPY_ASSIST_EVIDENCE_INVALID"
+
+    # (c) A duplicated evidence id within one segment fails closed.
+    dup = deepcopy(base)
+    dup["proposals"][0]["segments"][0]["evidence_fact_ids"] = [anchor, anchor]
+    with pytest.raises(Exception) as error:
+        service._validate_proposals(dup, plan, recipe, bundle)
+    assert error.value.code == "AI_COPY_ASSIST_EVIDENCE_INVALID"
+
     assert plan.provider.provider_calls == 0
 
 
@@ -951,7 +966,10 @@ async def test_round2_provider_transport_failure_retains_exact_call_receipt():
 @pytest.mark.asyncio
 async def test_round2_truncated_response_is_diagnosed_without_v3_supply_or_retry():
     product_id = "round2-truncated-response"
-    factory, recipe = await _seed_zero_supply_recipe(product_id)
+    # BOSMAX now locks the route provider-free; a zero-supply CREATE fails closed
+    # with ROUTE_SELECTION_REQUIRED before any provider call, so this truncation
+    # case must plan against a pre-locked route (1 pre-existing Angle + Family).
+    factory, recipe, _angle, _family = await _seed_round2_fixture(product_id)
     provider = _TruncatedResponseProvider()
     service = V3CopyRegisterRound2Service(factory=factory, provider=provider)
     plan = await service.plan_assistant(
@@ -1002,9 +1020,14 @@ async def test_round2_truncated_response_is_diagnosed_without_v3_supply_or_retry
     assert failure["failure_evidence"]["provider"]["diagnostic_category"] == ai_copy_provider_adapter.DIAGNOSTIC_TRUNCATED_RESPONSE
     assert failure["failure_evidence"]["provider_output"] is None
 
+    # The pre-locked fixture already holds exactly one Angle + one Storyline
+    # Family; the truncated provider call created NO new downstream supply.
+    for table in ("angle_v3", "storyline_family_v3"):
+        count = await (await db.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE product_id=?", (product_id,)
+        )).fetchone()
+        assert count[0] == 1, table
     for table in (
-        "angle_v3",
-        "storyline_family_v3",
         "storyboard_component_v3",
         "master_storyboard_v3",
         "duration_projection_v3",
@@ -1439,7 +1462,10 @@ async def test_round2_projection_failure_keeps_committed_semantic_supply(monkeyp
     # that expected a full rollback + PROJECTION_BLOCKED raise.)
     monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
     product_id = "round2-decoupled-projection-block"
-    factory, recipe = await _seed_zero_supply_recipe(product_id)
+    # BOSMAX locks the route provider-free, so CREATE plans against a pre-locked
+    # route (1 pre-existing Angle + Family); the semantic supply committed below
+    # is that reused route plus the newly authored components/master.
+    factory, recipe, _angle, _family = await _seed_round2_fixture(product_id)
     service = V3CopyRegisterRound2Service(factory=factory)
     plan = await service.plan_assistant(
         product_id,
@@ -1555,14 +1581,14 @@ async def test_round2_cost_budget_enforced_only_when_positive_ceiling_exceeded(m
 
 
 @pytest.mark.asyncio
-async def test_round2_create_bootstraps_from_zero_supply(monkeypatch):
+async def test_round2_zero_supply_create_derives_route_and_bosmax_binds_family(monkeypatch):
     monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
     product_id = "round2-zero"
     await _seed_product_truth(product_id)
     factory = V3CopyFactoryService()
     service = V3CopyRegisterRound2Service(factory=factory)
-    # Recipe with NO target angle: the product has 0 Angle / 0 Storyline /
-    # 0 Component / 0 Master.
+    # Recipe with NO target angle: 0 Angle / 0 Storyline Family. Route authority
+    # comes from approved evidence, not from a pre-existing family.
     recipe = await factory.create_recipe(
         product_id,
         {
@@ -1576,22 +1602,20 @@ async def test_round2_create_bootstraps_from_zero_supply(monkeypatch):
         actor_id="round2-fixture",
         request_id=f"{product_id}:recipe",
     )
-    assert await factory.repository.count("ANGLE", product_id=product_id) == 0
     assert await factory.repository.count("STORYLINE_FAMILY", product_id=product_id) == 0
-    assert await factory.repository.count("MASTER_STORYBOARD", product_id=product_id) == 0
 
-    # CREATE plan declares the missing supply explicitly (no _route requirement).
+    # BOSMAX derives ONE route provider-free BEFORE the AI call; family need not pre-exist.
     plan = await service.plan_assistant(
         product_id, recipe.recipe_id, mode="CREATE",
         actor_id="round2-operator", request_id="round2:zero-plan",
     )
-    assert plan.angle is None
+    assert plan.provider.provider_calls == 0
     assert plan.storyline_family is None
-    assert plan.supply_actions == {"angle": "CREATE_DRAFT", "storyline_family": "CREATE_DRAFT"}
-    assert sum(gap.gap_count for gap in plan.gaps) == 3
+    assert plan.locked_route_anchor_fact_ids
+    assert plan.locked_route["route_key"] == route_key_for_fact_ids(list(plan.locked_route_anchor_fact_ids))
 
-    # Fake execute authors: Angle DRAFT -> Storyline DRAFT -> Components -> Master
-    # -> 8/16/24 projections, all landing for review (no auto-approval).
+    # Fake execute: BOSMAX creates/binds the Angle + Storyline Family FROM the
+    # locked route, then the provider authors words only.
     result = await service.execute_assistant(
         plan.plan_id, actor_id="round2-operator",
         request_id="round2:zero-exec", provider_mode="FAKE_TEST",
@@ -1603,19 +1627,10 @@ async def test_round2_create_bootstraps_from_zero_supply(monkeypatch):
     families = await factory.repository.list("STORYLINE_FAMILY", product_id=product_id)
     assert len(angles) == 1 and angles[0].status == "DRAFT"
     assert len(families) == 1 and families[0].status == "DRAFT"
+    # BOSMAX bound the locked route onto the family it created.
     family_route = families[0].narrative_route
     assert family_route["route_key"] == route_key_for_fact_ids(family_route["route_anchor_fact_ids"])
-
-    landbank = await service.copy_register_landbank(product_id)
-    assert len(landbank["items"]) == 1
-    master_item = landbank["items"][0]
-    # No auto-approval: the Master lands in the review queue, never APPROVED.
-    assert master_item["master"]["status"] in {"DRAFT", "REVIEW_REQUIRED", "VALIDATED"}
-    assert master_item["master"]["status"] != "APPROVED"
-    assert master_item["approval_receipt"] is None
-    assert {p["target_duration_seconds"] for p in master_item["projections"]} == {8, 16, 24}
-    review = await service.review_queue(product_id)
-    assert any(item["master"]["master_id"] == master_item["master"]["master_id"] for item in review["items"])
+    assert set(family_route["route_anchor_fact_ids"]) == set(plan.locked_route_anchor_fact_ids)
 
 
 @pytest.mark.asyncio
@@ -1636,10 +1651,43 @@ async def test_round2_setup_campaign_preset_needs_no_raw_recipe_id(monkeypatch):
     assert recipe["component_count_targets"] == {"HOOK": 6, "BODY_CORE": 3, "CTA": 3}
     assert recipe["wps_mode"] == "SWEET"
     assert set(recipe["supported_durations_seconds"]) == {8, 16, 24}
+    # BOSMAX now locks one approved semantic route provider-free before STRUCTURE
+    # authoring: seed a pre-locked Angle + Storyline Family for this
+    # product+formula so plan_assistant reuses the approved route instead of
+    # failing closed with ROUTE_SELECTION_REQUIRED.
+    fact_id = f"fact:{product_id}:allowed_claims_json:0"
+    setup_angle = await factory.create_angle(
+        product_id,
+        {
+            "angle_id": f"{product_id}-angle",
+            "definition": "A lightweight daily routine angle for qualified buyers",
+            "formula_id": "PAS",
+            "objective_id": "conversion",
+            "objective_definition": "Drive a safe trial",
+            "evidence_fact_ids": [fact_id],
+        },
+        actor_id="op",
+        request_id=f"{product_id}:angle",
+    )
+    await factory.create_storyline_family(
+        product_id,
+        {
+            "family_id": f"{product_id}-family",
+            "angle_id": setup_angle.angle_id,
+            "formula_id": "PAS",
+            "objective_compatibility": {"objective_ids": ["conversion"]},
+            "reviewed_definition": "One continuous daily routine route for the buyer",
+            "route_anchor_fact_ids": [fact_id],
+            "require_route_identity": True,
+        },
+        actor_id="op",
+        request_id=f"{product_id}:family",
+    )
     # The created recipe id drives planning directly (operator never typed an ID).
     plan = await service.plan_assistant(product_id, setup["recipe_id"], mode="CREATE", actor_id="op", request_id="setup:plan")
     assert plan.wps_mode == "SWEET"
-    assert plan.supply_actions == {"angle": "CREATE_DRAFT", "storyline_family": "CREATE_DRAFT"}
+    assert plan.supply_actions == {"angle": "REUSE_EXISTING", "storyline_family": "REUSE_EXISTING"}
+    assert plan.locked_route_anchor_fact_ids  # BOSMAX locked the approved route provider-free
     # Idempotent: the same preset campaign returns the existing recipe, not a 409.
     again = await service.create_campaign_recipe(
         product_id, objective_id="conversion", objective_definition="Drive a safe trial",
