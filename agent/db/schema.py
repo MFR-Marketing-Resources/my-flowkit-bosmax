@@ -2486,6 +2486,164 @@ async def _seed_access_control(db: aiosqlite.Connection) -> None:
     await db.commit()
 
 
+CREATIVE_FACTORY_SCHEMA = """
+-- ==========================================================================
+-- Benefit-Centric Creative Factory (Round 1)
+-- SYSTEM OWNS STRUCTURE; AI AUTHORS WORDS.  Benefit Registry + deterministic
+-- Product-Intelligence cross-check + audited manual review + Creative Atom
+-- Factory (angle/hook/body/cta) + (hook,body,cta) triple compatibility +
+-- immutable build receipts.  Additive only: no parallel authority; never
+-- mutates Product Intelligence, Copy Register V2, or Storyboard V3.
+-- ==========================================================================
+
+CREATE TABLE IF NOT EXISTS product_benefit (
+    benefit_id          TEXT PRIMARY KEY,
+    product_id          TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    canonical_text      TEXT NOT NULL,
+    text_digest         TEXT NOT NULL CHECK(length(text_digest) = 64),
+    usage_hint          TEXT,
+    status              TEXT NOT NULL DEFAULT 'DRAFT'
+                        CHECK(status IN ('DRAFT','VERIFIED','REVIEW_REQUIRED','BLOCKED','ARCHIVED')),
+    pi_snapshot_id      TEXT,
+    pi_snapshot_version INTEGER,
+    pi_check_json       TEXT NOT NULL DEFAULT '{}',
+    provenance_json     TEXT NOT NULL DEFAULT '{}',
+    schema_version      TEXT NOT NULL DEFAULT '1.0',
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_benefit_product
+    ON product_benefit(product_id, status);
+
+CREATE TABLE IF NOT EXISTS creative_angle (
+    angle_id              TEXT PRIMARY KEY,
+    benefit_id            TEXT NOT NULL REFERENCES product_benefit(benefit_id) ON DELETE CASCADE,
+    product_id            TEXT NOT NULL,
+    build_id              TEXT NOT NULL,
+    ordinal               INTEGER NOT NULL CHECK(ordinal >= 0),
+    angle_text            TEXT NOT NULL,
+    angle_digest          TEXT NOT NULL CHECK(length(angle_digest) = 64),
+    source_benefit_digest TEXT NOT NULL CHECK(length(source_benefit_digest) = 64),
+    status                TEXT NOT NULL DEFAULT 'ACTIVE'
+                          CHECK(status IN ('ACTIVE','STALE','SUPERSEDED','ARCHIVED')),
+    provenance_json       TEXT NOT NULL DEFAULT '{}',
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_creative_angle_benefit
+    ON creative_angle(benefit_id, status);
+
+CREATE TABLE IF NOT EXISTS creative_hook (
+    hook_id               TEXT PRIMARY KEY,
+    angle_id              TEXT NOT NULL REFERENCES creative_angle(angle_id) ON DELETE CASCADE,
+    benefit_id            TEXT NOT NULL,
+    build_id              TEXT NOT NULL,
+    ordinal               INTEGER NOT NULL CHECK(ordinal >= 0),
+    atom_text             TEXT NOT NULL,
+    text_digest           TEXT NOT NULL CHECK(length(text_digest) = 64),
+    source_benefit_digest TEXT NOT NULL CHECK(length(source_benefit_digest) = 64),
+    status                TEXT NOT NULL DEFAULT 'ACTIVE'
+                          CHECK(status IN ('ACTIVE','STALE','SUPERSEDED','ARCHIVED')),
+    provenance_json       TEXT NOT NULL DEFAULT '{}',
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_creative_hook_angle ON creative_hook(angle_id, status);
+
+CREATE TABLE IF NOT EXISTS creative_body (
+    body_id               TEXT PRIMARY KEY,
+    angle_id              TEXT NOT NULL REFERENCES creative_angle(angle_id) ON DELETE CASCADE,
+    benefit_id            TEXT NOT NULL,
+    build_id              TEXT NOT NULL,
+    ordinal               INTEGER NOT NULL CHECK(ordinal >= 0),
+    atom_text             TEXT NOT NULL,
+    text_digest           TEXT NOT NULL CHECK(length(text_digest) = 64),
+    source_benefit_digest TEXT NOT NULL CHECK(length(source_benefit_digest) = 64),
+    status                TEXT NOT NULL DEFAULT 'ACTIVE'
+                          CHECK(status IN ('ACTIVE','STALE','SUPERSEDED','ARCHIVED')),
+    provenance_json       TEXT NOT NULL DEFAULT '{}',
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_creative_body_angle ON creative_body(angle_id, status);
+
+CREATE TABLE IF NOT EXISTS creative_cta (
+    cta_id                TEXT PRIMARY KEY,
+    angle_id              TEXT NOT NULL REFERENCES creative_angle(angle_id) ON DELETE CASCADE,
+    benefit_id            TEXT NOT NULL,
+    build_id              TEXT NOT NULL,
+    ordinal               INTEGER NOT NULL CHECK(ordinal >= 0),
+    atom_text             TEXT NOT NULL,
+    text_digest           TEXT NOT NULL CHECK(length(text_digest) = 64),
+    source_benefit_digest TEXT NOT NULL CHECK(length(source_benefit_digest) = 64),
+    status                TEXT NOT NULL DEFAULT 'ACTIVE'
+                          CHECK(status IN ('ACTIVE','STALE','SUPERSEDED','ARCHIVED')),
+    provenance_json       TEXT NOT NULL DEFAULT '{}',
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_creative_cta_angle ON creative_cta(angle_id, status);
+
+-- Optional deterministic narrowing of valid (hook,body,cta) triples within an
+-- Angle.  EMPTY in Round 1 => full within-Angle Cartesian product.  Enumerated
+-- deterministically; never requires a provider call.
+CREATE TABLE IF NOT EXISTS creative_atom_compatibility (
+    hook_id        TEXT NOT NULL,
+    body_id        TEXT NOT NULL,
+    cta_id         TEXT NOT NULL,
+    angle_id       TEXT NOT NULL,
+    score          REAL NOT NULL DEFAULT 1.0,
+    rationale_json TEXT NOT NULL DEFAULT '{}',
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    PRIMARY KEY (hook_id, body_id, cta_id)
+);
+CREATE INDEX IF NOT EXISTS idx_creative_atom_compat_angle
+    ON creative_atom_compatibility(angle_id);
+
+-- Immutable, benefit-and-snapshot-bound authoring receipt (one per build call).
+CREATE TABLE IF NOT EXISTS creative_build_receipt (
+    build_id              TEXT PRIMARY KEY,
+    product_id            TEXT NOT NULL,
+    benefit_id            TEXT NOT NULL,
+    benefit_digest        TEXT NOT NULL,
+    pi_snapshot_id        TEXT,
+    pi_snapshot_version   INTEGER,
+    input_digest          TEXT NOT NULL CHECK(length(input_digest) = 64),
+    status                TEXT NOT NULL DEFAULT 'RESERVED'
+                          CHECK(status IN ('RESERVED','RUNNING','COMPLETED','FAILED')),
+    provider              TEXT,
+    model_key             TEXT,
+    provider_operation_id TEXT,
+    output_digest         TEXT,
+    credit_delta          REAL,
+    runtime_sha           TEXT,
+    receipt_json          TEXT NOT NULL DEFAULT '{}',
+    token_usage_json      TEXT NOT NULL DEFAULT '{}',
+    provider_calls        INTEGER NOT NULL DEFAULT 0,
+    failure_code          TEXT,
+    failure_detail        TEXT,
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_creative_build_receipt_benefit
+    ON creative_build_receipt(benefit_id, status, created_at);
+
+-- Append-only audit for manual REVIEW_REQUIRED resolution (VERIFY / BLOCK).
+CREATE TABLE IF NOT EXISTS product_benefit_review (
+    review_id             TEXT PRIMARY KEY,
+    benefit_id            TEXT NOT NULL,
+    product_id            TEXT NOT NULL,
+    action                TEXT NOT NULL CHECK(action IN ('VERIFY','BLOCK')),
+    from_status           TEXT NOT NULL,
+    to_status             TEXT NOT NULL,
+    reviewer_id           TEXT NOT NULL,
+    reviewer_note         TEXT NOT NULL DEFAULT '',
+    pi_snapshot_id        TEXT,
+    pi_snapshot_version   INTEGER,
+    decision_json         TEXT NOT NULL DEFAULT '{}',
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_benefit_review_benefit
+    ON product_benefit_review(benefit_id, created_at);
+"""
+
+
 async def init_db():
     """Initialize database with schema and run migrations."""
     async with aiosqlite.connect(str(DB_PATH)) as db:
@@ -6696,6 +6854,14 @@ END;
         # Additive only; introduces no parallel authority and never mutates the
         # V2 activation pointer (copy_execution_authority_v2).
         await db.executescript(V3_ROUND3_SCHEMA)
+        await db.commit()
+
+        # Benefit-Centric Creative Factory (Round 1): benefit registry, creative
+        # atoms (angle/hook/body/cta), (hook,body,cta) triple compatibility, build
+        # receipts, and append-only manual-review audit.  Additive and idempotent
+        # (CREATE ... IF NOT EXISTS); introduces no parallel authority and never
+        # mutates Product Intelligence, Copy Register V2, or Storyboard V3.
+        await db.executescript(CREATIVE_FACTORY_SCHEMA)
         await db.commit()
 
         # Round 3 P6 per-item copy selection: real production items durably carry

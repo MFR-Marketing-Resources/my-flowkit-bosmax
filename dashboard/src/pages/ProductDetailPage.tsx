@@ -24,6 +24,8 @@ import {
 } from "../api/taxonomy";
 import type { Product, ProductStrategyTypeRegistryResponse } from "../types";
 import ProductIntelligenceReviewDraftPanel from "../components/product-intelligence/ProductIntelligenceReviewDraftPanel";
+import { BenefitRegistryPanel } from "../components/product-intelligence/BenefitRegistryPanel";
+import { CreativeFactoryPanel } from "../components/product-intelligence/CreativeFactoryPanel";
 import CreativeSetupPanel from "../components/product-intelligence/CreativeSetupPanel";
 import RecommendedScenePromptsCard from "../components/product-intelligence/RecommendedScenePromptsCard";
 import RecommendedCameraPresetsCard from "../components/product-intelligence/RecommendedCameraPresetsCard";
@@ -41,9 +43,9 @@ import {
 // recommendation cards) in a consistent house-style layout — no cramped
 // three-column Sales-Analyzer clutter.
 
-type DetailTab = "EDIT" | "INTELLIGENCE" | "CREATIVE" | "VISUAL";
+type DetailTab = "EDIT" | "INTELLIGENCE" | "BENEFITS" | "CREATIVE" | "VISUAL";
 
-const DETAIL_TABS = new Set<DetailTab>(["EDIT", "INTELLIGENCE", "CREATIVE", "VISUAL"]);
+const DETAIL_TABS = new Set<DetailTab>(["EDIT", "INTELLIGENCE", "BENEFITS", "CREATIVE", "VISUAL"]);
 
 function resolveDetailTab(raw: string | null): DetailTab {
 	const token = String(raw || "").trim().toUpperCase();
@@ -126,6 +128,7 @@ export default function ProductDetailPage() {
 	const [product, setProduct] = useState<Product | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [loadError, setLoadError] = useState<string | null>(null);
+	const [factoryReload, setFactoryReload] = useState(0);
 	const [tab, setTab] = useState<DetailTab>(() =>
 		resolveDetailTab(searchParams.get("tab")),
 	);
@@ -505,6 +508,7 @@ export default function ProductDetailPage() {
 							[
 								["EDIT", "Edit & Save"],
 								["INTELLIGENCE", "Product Intelligence"],
+								["BENEFITS", "Benefits"],
 								["CREATIVE", "Creative Setup"],
 								["VISUAL", "Visual / Canva"],
 							] as [DetailTab, string][]
@@ -547,6 +551,9 @@ export default function ProductDetailPage() {
 								<Hl>Recompute (Validate)</Hl> re-checks readiness deterministically (no
 								AI, free).
 							</>
+						)}
+						{tab === "BENEFITS" && (
+							<>Register benefits (Benefit required, Usage Hint optional); each row is auto-checked against approved Product Intelligence. Resolve Review rows, then Build atoms into reusable Angle / Hook / Body / CTA seeds. Capacity is computed deterministically (reads never spend a provider call).</>
 						)}
 						{tab === "CREATIVE" && (
 							<>
@@ -907,6 +914,12 @@ export default function ProductDetailPage() {
 						/>
 					)}
 
+					{tab === "BENEFITS" && (
+						<div data-testid="benefits-tab" className="space-y-5">
+							<BenefitRegistryPanel productId={product.id} onMutate={() => setFactoryReload((n) => n + 1)} />
+							<CreativeFactoryPanel productId={product.id} reloadToken={factoryReload} onMutate={() => setFactoryReload((n) => n + 1)} />
+						</div>
+					)}
 					{tab === "CREATIVE" && (
 						<div data-testid="creative-setup-tab" className="space-y-5">
 							<CreativeSetupPanel productId={product.id} />
