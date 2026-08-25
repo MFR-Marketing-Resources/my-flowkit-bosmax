@@ -149,6 +149,7 @@ async def faceless_profile_certification(
     owner = _require_profile_certification_owner()
     runtime = _current_runtime_proof()
     from agent.services.flow_client import get_flow_client
+    from agent.services.flow_client import FlowClient
     from agent.services import make_video as _mv
     from agent.services import provider_certification_service as _certifications
     from agent.services import video_execution_profile_service as _profiles
@@ -158,492 +159,554 @@ async def faceless_profile_certification(
     client = get_flow_client()
     if not client.connected:
         raise HTTPException(503, "PROFILE_CERTIFICATION_FLOW_TRANSPORT_NOT_CONNECTED")
-    try:
-        credits = await client.get_credits()
-    except Exception as exc:  # noqa: BLE001 — no provider operation on quote failure
-        raise HTTPException(
-            502,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_CREDITS_QUOTE_FAILED",
-                "message": str(exc),
-            },
-        ) from exc
-    balance = _mv._capture_credit_balance(credits)
-    if balance is None:
-        raise HTTPException(
-            502,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_CREDITS_QUOTE_UNPROVEN",
-                "response": credits,
-            },
-        )
 
+    # --- Certification session-pin preamble ---
+    # Bind ONE installation/session/epoch for the WHOLE certification before
+    # the first provider-affecting call. Every downstream provider call
+    # (credits quote, editor binding, upload, generate, retrieve) then runs
+    # under this single operation lease; fail closed (no provider spend) when
+    # selection is ambiguous or no eligible session exists.
+    _cert_op_lease = None
+    _cert_pinned_project_id = None
     if (
-        body.model.strip() != "veo_3_1_lite"
-        or body.duration_seconds != 8
-        or body.aspect_ratio != "9:16"
-        or body.confirm_live_credit_burn is not True
-        or body.maximum_provider_operations != 1
-        or body.max_retry_operations != 0
+        isinstance(client, FlowClient)
+        and callable(getattr(client, "bind_flow_session", None))
+        and callable(getattr(client, "acquire_operation_lease", None))
+        and callable(getattr(client, "activate_operation_lease", None))
+        and callable(getattr(client, "release_operation_lease", None))
     ):
-        raise HTTPException(
-            422,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_TUPLE_INVALID",
-                "required": {
-                    "model": "veo_3_1_lite",
-                    "duration_seconds": 8,
-                    "aspect_ratio": "9:16",
-                    "maximum_provider_operations": 1,
-                    "max_retry_operations": 0,
-                    "confirm_live_credit_burn": True,
+        _cert_selection = await client.bind_flow_session(project_id=None)
+        if _cert_selection.get("ok") is not True or not _cert_selection.get(
+            "connection_id"
+        ):
+            _cert_blocker = str(_cert_selection.get("primary_blocker") or "")
+            if _cert_blocker in {
+                "NO_OPEN_EDITOR",
+                "PROJECT_TAB_MISMATCH",
+                "EXTENSION_BUILD_MISMATCH",
+            }:
+                _cert_selection_error_code = "FLOW_EDITOR_BINDING_REQUIRED"
+            elif _cert_blocker == "AMBIGUOUS":
+                _cert_selection_error_code = "PROFILE_CERTIFICATION_SESSION_AMBIGUOUS"
+            else:
+                _cert_selection_error_code = (
+                    "PROFILE_CERTIFICATION_SESSION_SELECTION_FAILED"
+                )
+            raise HTTPException(
+                409,
+                detail={
+                    "error_code": _cert_selection_error_code,
+                    "primary_blocker": _cert_blocker,
+                    "message": f"{_cert_blocker}: project-aware session selection failed before any provider work",
+                    "request_id": correlation_id,
+                    "provider_calls": 0,
+                    "credit_spend": False,
+                    "selection": _cert_selection,
                 },
-            },
-        )
-
-    try:
-        prepared = await faceless_prepare(
-            FacelessPrepareRequest(
-                product_id=body.product_id,
-                staff_id=owner.staff_id,
-                model=body.model,
-                generation_mode="SINGLE",
-                duration_seconds=8,
-                aspect_ratio="9:16",
-                copy_v2_context={"lane": "FACELESS"},
             )
+        _cert_pinned_project_id = (
+            str(_cert_selection.get("flow_project_id") or "").strip() or None
         )
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001 — preserve a structured pre-provider boundary
-        logger.exception(
-            "Faceless profile certification preparation failure request_id=%s",
-            correlation_id,
-        )
-        raise HTTPException(
-            500,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_PREPARATION_FAILED",
-                "message": str(exc),
-                "exception_type": type(exc).__name__,
-                "request_id": correlation_id,
-            },
-        ) from exc
-    package = prepared.get("package") if isinstance(prepared, dict) else None
-    if not isinstance(package, dict) or not package.get("execution_allowed"):
-        raise HTTPException(
-            422,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_PACKAGE_NOT_READY",
-                "blockers": (package or {}).get("blockers") if isinstance(package, dict) else None,
-            },
-        )
-    if prepared.get("selected_execution_route") != "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE":
-        raise HTTPException(
-            422,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_ACTIVE_ROUTE_REQUIRED",
-                "selected_execution_route": prepared.get("selected_execution_route"),
-            },
+        _cert_op_lease = client.acquire_operation_lease(
+            connection_id=_cert_selection["connection_id"]
         )
 
-    try:
-        copy_resolution = await resolve_persisted_copy_execution_binding(
-            body.product_id, "FACELESS", {"lane": "FACELESS"}
-        )
-        truth = await _copy_register.get_product_truth_proof(body.product_id)
-        blueprint = await _copy_register.get_blueprint(
-            copy_resolution.binding.blueprint_id,
-            copy_resolution.binding.revision,
-        ) if copy_resolution.binding is not None else None
-    except Exception as exc:  # noqa: BLE001 — authority resolution is fail-closed
-        raise HTTPException(
-            409,
-            detail={"error_code": "PROFILE_CERTIFICATION_AUTHORITY_RESOLUTION_FAILED", "message": str(exc)},
-        ) from exc
-    if not copy_resolution.ready or copy_resolution.binding is None:
-        raise HTTPException(
-            409,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_COPY_NOT_READY",
-                "status": copy_resolution.status,
-            },
-        )
-    copy_digest = (
-        blueprint.approval_snapshot.blueprint_digest
-        if blueprint is not None and blueprint.approval_snapshot is not None
-        else None
-    )
-    if not copy_digest:
-        raise HTTPException(
-            409,
-            detail={"error_code": "PROFILE_CERTIFICATION_COPY_DIGEST_UNPROVEN"},
-        )
-    copy_id = copy_resolution.binding.blueprint_id
-    if body.copy_id and body.copy_id != copy_id:
-        raise HTTPException(
-            409,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_COPY_BINDING_MISMATCH",
-                "resolved_copy_id": copy_id,
-                "requested_copy_id": body.copy_id,
-            },
-        )
-    product_digest = (
-        (truth.get("product_truth") or {}).get("snapshot") or {}
-    ).get("digest")
-    if not truth.get("ready_for_copy") or not product_digest:
-        raise HTTPException(
-            409,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_PRODUCT_TRUTH_NOT_READY",
-                "blockers": truth.get("blockers") or [],
-            },
-        )
+    async def _run_pinned_certification() -> dict[str, Any]:
+        try:
+            credits = await client.get_credits()
+        except Exception as exc:  # noqa: BLE001 — no provider operation on quote failure
+            raise HTTPException(
+                502,
+                detail={
+                    "error_code": "PROFILE_CERTIFICATION_CREDITS_QUOTE_FAILED",
+                    "message": str(exc),
+                },
+            ) from exc
+        balance = _mv._capture_credit_balance(credits)
+        if balance is None:
+            raise HTTPException(
+                502,
+                detail={
+                    "error_code": "PROFILE_CERTIFICATION_CREDITS_QUOTE_UNPROVEN",
+                    "response": credits,
+                },
+            )
 
-    try:
-        profile = _profiles.resolve_duration_model_profile(
-            model="veo_3_1_lite",
-            duration_s=8,
-            aspect_ratio="9:16",
-            logical_mode="T2V",
-            source_mode="T2V",
-            generation_mode="SINGLE",
-            reference_count=0,
-            prompt_block_count=1,
+        if (
+            body.model.strip() != "veo_3_1_lite"
+            or body.duration_seconds != 8
+            or body.aspect_ratio != "9:16"
+            or body.confirm_live_credit_burn is not True
+            or body.maximum_provider_operations != 1
+            or body.max_retry_operations != 0
+        ):
+            raise HTTPException(
+                422,
+                detail={
+                    "error_code": "PROFILE_CERTIFICATION_TUPLE_INVALID",
+                    "required": {
+                        "model": "veo_3_1_lite",
+                        "duration_seconds": 8,
+                        "aspect_ratio": "9:16",
+                        "maximum_provider_operations": 1,
+                        "max_retry_operations": 0,
+                        "confirm_live_credit_burn": True,
+                    },
+                },
+            )
+
+        try:
+            prepared = await faceless_prepare(
+                FacelessPrepareRequest(
+                    product_id=body.product_id,
+                    staff_id=owner.staff_id,
+                    model=body.model,
+                    generation_mode="SINGLE",
+                    duration_seconds=8,
+                    aspect_ratio="9:16",
+                    copy_v2_context={"lane": "FACELESS"},
+                )
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 — preserve a structured pre-provider boundary
+            logger.exception(
+                "Faceless profile certification preparation failure request_id=%s",
+                correlation_id,
+            )
+            raise HTTPException(
+                500,
+                detail={
+                    "error_code": "PROFILE_CERTIFICATION_PREPARATION_FAILED",
+                    "message": str(exc),
+                    "exception_type": type(exc).__name__,
+                    "request_id": correlation_id,
+                },
+            ) from exc
+        package = prepared.get("package") if isinstance(prepared, dict) else None
+        if not isinstance(package, dict) or not package.get("execution_allowed"):
+            raise HTTPException(
+                422,
+                detail={
+                    "error_code": "PROFILE_CERTIFICATION_PACKAGE_NOT_READY",
+                    "blockers": (package or {}).get("blockers") if isinstance(package, dict) else None,
+                },
+            )
+        if prepared.get("selected_execution_route") != "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE":
+            raise HTTPException(
+                422,
+                detail={
+                    "error_code": "PROFILE_CERTIFICATION_ACTIVE_ROUTE_REQUIRED",
+                    "selected_execution_route": prepared.get("selected_execution_route"),
+                },
+            )
+
+        try:
+            copy_resolution = await resolve_persisted_copy_execution_binding(
+                body.product_id, "FACELESS", {"lane": "FACELESS"}
+            )
+            truth = await _copy_register.get_product_truth_proof(body.product_id)
+            blueprint = await _copy_register.get_blueprint(
+                copy_resolution.binding.blueprint_id,
+                copy_resolution.binding.revision,
+            ) if copy_resolution.binding is not None else None
+        except Exception as exc:  # noqa: BLE001 — authority resolution is fail-closed
+            raise HTTPException(
+                409,
+                detail={"error_code": "PROFILE_CERTIFICATION_AUTHORITY_RESOLUTION_FAILED", "message": str(exc)},
+            ) from exc
+        if not copy_resolution.ready or copy_resolution.binding is None:
+            raise HTTPException(
+                409,
+                detail={
+                    "error_code": "PROFILE_CERTIFICATION_COPY_NOT_READY",
+                    "status": copy_resolution.status,
+                },
+            )
+        copy_digest = (
+            blueprint.approval_snapshot.blueprint_digest
+            if blueprint is not None and blueprint.approval_snapshot is not None
+            else None
         )
-        profile_context = _profiles.build_approval_context(
-            profile,
-            lane="FACELESS",
-            product_digest=str(product_digest),
-            copy_digest=copy_digest,
-        )
-        authority_digests = {
-            "sweetwps_digest": _profiles.sweetwps_digest(),
-            "compositor_digest": _profiles.compositor_digest(),
-            "compiler_digest": _profiles.compiler_digest(),
-            "lane_adapter_digest": _profiles.lane_adapter_digest("FACELESS"),
+        if not copy_digest:
+            raise HTTPException(
+                409,
+                detail={"error_code": "PROFILE_CERTIFICATION_COPY_DIGEST_UNPROVEN"},
+            )
+        copy_id = copy_resolution.binding.blueprint_id
+        if body.copy_id and body.copy_id != copy_id:
+            raise HTTPException(
+                409,
+                detail={
+                    "error_code": "PROFILE_CERTIFICATION_COPY_BINDING_MISMATCH",
+                    "resolved_copy_id": copy_id,
+                    "requested_copy_id": body.copy_id,
+                },
+            )
+        product_digest = (
+            (truth.get("product_truth") or {}).get("snapshot") or {}
+        ).get("digest")
+        if not truth.get("ready_for_copy") or not product_digest:
+            raise HTTPException(
+                409,
+                detail={
+                    "error_code": "PROFILE_CERTIFICATION_PRODUCT_TRUTH_NOT_READY",
+                    "blockers": truth.get("blockers") or [],
+                },
+            )
+
+        try:
+            profile = _profiles.resolve_duration_model_profile(
+                model="veo_3_1_lite",
+                duration_s=8,
+                aspect_ratio="9:16",
+                logical_mode="T2V",
+                source_mode="T2V",
+                generation_mode="SINGLE",
+                reference_count=0,
+                prompt_block_count=1,
+            )
+            profile_context = _profiles.build_approval_context(
+                profile,
+                lane="FACELESS",
+                product_digest=str(product_digest),
+                copy_digest=copy_digest,
+            )
+            authority_digests = {
+                "sweetwps_digest": _profiles.sweetwps_digest(),
+                "compositor_digest": _profiles.compositor_digest(),
+                "compiler_digest": _profiles.compiler_digest(),
+                "lane_adapter_digest": _profiles.lane_adapter_digest("FACELESS"),
+            }
+        except _profiles.ExecutionProfileError as exc:
+            logger.exception(
+                "Faceless profile certification authority failure request_id=%s code=%s",
+                correlation_id,
+                exc.code,
+            )
+            raise HTTPException(
+                409,
+                detail={
+                    "error_code": "PROFILE_CERTIFICATION_PROFILE_RESOLUTION_FAILED",
+                    "message": str(exc),
+                    "exception_type": type(exc).__name__,
+                    "source_error_code": exc.code,
+                    "request_id": correlation_id,
+                    "details": exc.details,
+                },
+            ) from exc
+        custody = package.get("product_visual_custody")
+        execution_identity = package.get("faceless_execution_identity") or {
+            "workspace_execution_package_id": package.get("workspace_execution_package_id"),
+            "prompt_fingerprint": package.get("prompt_fingerprint"),
+            "surface_lane": "FACELESS",
         }
-    except _profiles.ExecutionProfileError as exc:
-        logger.exception(
-            "Faceless profile certification authority failure request_id=%s code=%s",
-            correlation_id,
-            exc.code,
+        copy_binding = package.get("copy_execution_binding") or copy_resolution.binding.model_dump(
+            mode="json"
         )
-        raise HTTPException(
-            409,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_PROFILE_RESOLUTION_FAILED",
-                "message": str(exc),
-                "exception_type": type(exc).__name__,
-                "source_error_code": exc.code,
-                "request_id": correlation_id,
-                "details": exc.details,
-            },
-        ) from exc
-    custody = package.get("product_visual_custody")
-    execution_identity = package.get("faceless_execution_identity") or {
-        "workspace_execution_package_id": package.get("workspace_execution_package_id"),
-        "prompt_fingerprint": package.get("prompt_fingerprint"),
-        "surface_lane": "FACELESS",
-    }
-    copy_binding = package.get("copy_execution_binding") or copy_resolution.binding.model_dump(
-        mode="json"
-    )
-    prompt = str(package.get("prompt_text") or "").strip()
-    if not prompt or not isinstance(custody, dict):
-        raise HTTPException(
-            422,
-            detail={"error_code": "PROFILE_CERTIFICATION_PACKAGE_LINEAGE_INCOMPLETE"},
-        )
+        prompt = str(package.get("prompt_text") or "").strip()
+        if not prompt or not isinstance(custody, dict):
+            raise HTTPException(
+                422,
+                detail={"error_code": "PROFILE_CERTIFICATION_PACKAGE_LINEAGE_INCOMPLETE"},
+            )
 
-    # Bind the official Flow editor before reserving certification state. This
-    # is provider-free and may use only the extension's supported project-open
-    # route when the tab is still on the Flow root. A failed bind therefore
-    # leaves no certification, snapshot, or generation job to reconcile.
-    try:
-        editor_binding = await _mv.ensure_editor_binding(client, mode="T2V")
-    except _mv.FlowEditorBindingError as exc:
-        logger.exception(
-            "Faceless profile certification editor binding failure request_id=%s",
-            correlation_id,
-        )
-        raise HTTPException(
-            409,
-            detail={
-                "error_code": "FLOW_EDITOR_BINDING_REQUIRED",
-                "message": str(exc),
-                "details": exc.details,
-                "request_id": correlation_id,
-                "provider_calls": 0,
-                "credit_spend": False,
-            },
-        ) from exc
-    except Exception as exc:  # noqa: BLE001 — no unstructured pre-provider failure
-        logger.exception(
-            "Faceless profile certification editor binding exception request_id=%s",
-            correlation_id,
-        )
-        raise HTTPException(
-            409,
-            detail={
-                "error_code": "FLOW_EDITOR_BINDING_REQUIRED",
-                "message": str(exc),
-                "exception_type": type(exc).__name__,
-                "request_id": correlation_id,
-                "provider_calls": 0,
-                "credit_spend": False,
-            },
-        ) from exc
+        # Bind the official Flow editor before reserving certification state. This
+        # is provider-free and may use only the extension's supported project-open
+        # route when the tab is still on the Flow root. A failed bind therefore
+        # leaves no certification, snapshot, or generation job to reconcile.
+        try:
+            editor_binding = await _mv.ensure_editor_binding(client, requested_project_id=_cert_pinned_project_id, mode="T2V")
+        except _mv.FlowEditorBindingError as exc:
+            logger.exception(
+                "Faceless profile certification editor binding failure request_id=%s",
+                correlation_id,
+            )
+            raise HTTPException(
+                409,
+                detail={
+                    "error_code": "FLOW_EDITOR_BINDING_REQUIRED",
+                    "message": str(exc),
+                    "details": exc.details,
+                    "request_id": correlation_id,
+                    "provider_calls": 0,
+                    "credit_spend": False,
+                },
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 — no unstructured pre-provider failure
+            logger.exception(
+                "Faceless profile certification editor binding exception request_id=%s",
+                correlation_id,
+            )
+            raise HTTPException(
+                409,
+                detail={
+                    "error_code": "FLOW_EDITOR_BINDING_REQUIRED",
+                    "message": str(exc),
+                    "exception_type": type(exc).__name__,
+                    "request_id": correlation_id,
+                    "provider_calls": 0,
+                    "credit_spend": False,
+                },
+            ) from exc
 
-    snapshot = None
-    capture_request_id = correlation_id
-    try:
-        target_authorization = _eas.build_provider_target_authorization(
-            lane="FACELESS_VIDEO",
-            route="EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
-            model="veo_3_1_lite",
-            duration_s=8,
-            aspect_ratio="9:16",
-            product_id=body.product_id,
-            copy_id=copy_id,
-            profile_digest=str(profile["profile_digest"]),
-            sweetwps_digest=authority_digests["sweetwps_digest"],
-            compositor_digest=authority_digests["compositor_digest"],
-            compiler_digest=authority_digests["compiler_digest"],
-            owner_credit_ceiling=(profile.get("credits_cost_rule") or {}).get(
-                "profile_cost_ceiling"
-            ),
-        )
-        snapshot = await _eas.create_review_snapshot(
-            surface="FACELESS",
-            logical_mode="T2V",
-            final_prompt_text=prompt,
-            product_id=body.product_id,
-            source_mode="T2V",
-            model="veo_3_1_lite",
-            aspect="9:16",
-            duration_s=8,
-            count=1,
-            execution_identity=execution_identity,
-            execution_profile_context=profile_context,
-            created_by=owner.staff_id,
-        )
-        snapshot = await _eas.approve_snapshot(
-            snapshot["snapshot_id"], approved_by=owner.staff_id
-        )
-    except _eas.ExecutionApprovalError as exc:
-        if snapshot:
+        snapshot = None
+        capture_request_id = correlation_id
+        try:
+            target_authorization = _eas.build_provider_target_authorization(
+                lane="FACELESS_VIDEO",
+                route="EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+                model="veo_3_1_lite",
+                duration_s=8,
+                aspect_ratio="9:16",
+                product_id=body.product_id,
+                copy_id=copy_id,
+                profile_digest=str(profile["profile_digest"]),
+                sweetwps_digest=authority_digests["sweetwps_digest"],
+                compositor_digest=authority_digests["compositor_digest"],
+                compiler_digest=authority_digests["compiler_digest"],
+                owner_credit_ceiling=(profile.get("credits_cost_rule") or {}).get(
+                    "profile_cost_ceiling"
+                ),
+            )
+            snapshot = await _eas.create_review_snapshot(
+                surface="FACELESS",
+                logical_mode="T2V",
+                final_prompt_text=prompt,
+                product_id=body.product_id,
+                source_mode="T2V",
+                model="veo_3_1_lite",
+                aspect="9:16",
+                duration_s=8,
+                count=1,
+                execution_identity=execution_identity,
+                execution_profile_context=profile_context,
+                created_by=owner.staff_id,
+            )
+            snapshot = await _eas.approve_snapshot(
+                snapshot["snapshot_id"], approved_by=owner.staff_id
+            )
+        except _eas.ExecutionApprovalError as exc:
+            if snapshot:
+                try:
+                    await _eas.reconcile_pre_provider_failure(
+                        snapshot["snapshot_id"],
+                        reason=f"PROFILE_CERTIFICATION_SNAPSHOT_FAILED:{exc}"[:1000],
+                    )
+                except Exception:  # noqa: BLE001 — preserve the original structured error
+                    logger.exception(
+                        "Faceless snapshot reconciliation failure request_id=%s",
+                        correlation_id,
+                    )
+            raise HTTPException(
+                409,
+                detail={
+                    "error_code": exc.code,
+                    "message": str(exc),
+                    "exception_type": type(exc).__name__,
+                    "request_id": correlation_id,
+                    "details": exc.details,
+                },
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 — no certification/job without a snapshot
+            if snapshot:
+                try:
+                    await _eas.reconcile_pre_provider_failure(
+                        snapshot["snapshot_id"],
+                        reason=f"PROFILE_CERTIFICATION_SNAPSHOT_FAILED:{exc}"[:1000],
+                    )
+                except Exception:
+                    logger.exception(
+                        "Faceless snapshot cleanup failure request_id=%s",
+                        correlation_id,
+                    )
+            raise HTTPException(
+                409,
+                detail={
+                    "error_code": "PROFILE_CERTIFICATION_SNAPSHOT_FAILED",
+                    "message": str(exc),
+                    "exception_type": type(exc).__name__,
+                    "request_id": correlation_id,
+                },
+            ) from exc
+
+        try:
+            reservation, created = await _certifications.reserve_capture(
+                profile=profile,
+                representative_lane="FACELESS",
+                product_id=body.product_id,
+                copy_id=copy_id,
+                product_digest=str(product_digest),
+                copy_digest=copy_digest,
+                snapshot_id=snapshot["snapshot_id"],
+                **authority_digests,
+                runtime_sha=str(runtime["runtime_sha"]),
+            )
+        except _certifications.ProviderCertificationError as exc:
             try:
                 await _eas.reconcile_pre_provider_failure(
                     snapshot["snapshot_id"],
-                    reason=f"PROFILE_CERTIFICATION_SNAPSHOT_FAILED:{exc}"[:1000],
+                    reason=f"PROFILE_CERTIFICATION_RESERVATION_FAILED:{exc}"[:1000],
                 )
             except Exception:  # noqa: BLE001 — preserve the original structured error
                 logger.exception(
                     "Faceless snapshot reconciliation failure request_id=%s",
                     correlation_id,
                 )
-        raise HTTPException(
-            409,
-            detail={
-                "error_code": exc.code,
-                "message": str(exc),
-                "exception_type": type(exc).__name__,
-                "request_id": correlation_id,
-                "details": exc.details,
-            },
-        ) from exc
-    except Exception as exc:  # noqa: BLE001 — no certification/job without a snapshot
-        if snapshot:
+            logger.exception(
+                "Faceless profile certification reservation failure request_id=%s code=%s",
+                correlation_id,
+                exc.code,
+            )
+            raise HTTPException(
+                409,
+                detail={
+                    "error_code": exc.code,
+                    "message": str(exc),
+                    "exception_type": type(exc).__name__,
+                    "request_id": correlation_id,
+                    "details": exc.details,
+                },
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 — preserve a structured boundary
             try:
                 await _eas.reconcile_pre_provider_failure(
                     snapshot["snapshot_id"],
-                    reason=f"PROFILE_CERTIFICATION_SNAPSHOT_FAILED:{exc}"[:1000],
+                    reason=f"PROFILE_CERTIFICATION_PERSISTENCE_FAILED:{exc}"[:1000],
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 — preserve the original structured error
                 logger.exception(
-                    "Faceless snapshot cleanup failure request_id=%s",
+                    "Faceless snapshot reconciliation failure request_id=%s",
                     correlation_id,
                 )
-        raise HTTPException(
-            409,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_SNAPSHOT_FAILED",
-                "message": str(exc),
-                "exception_type": type(exc).__name__,
-                "request_id": correlation_id,
-            },
-        ) from exc
+            logger.exception(
+                "Faceless profile certification persistence failure request_id=%s",
+                correlation_id,
+            )
+            raise HTTPException(
+                500,
+                detail={
+                    "error_code": "PROFILE_CERTIFICATION_PERSISTENCE_FAILED",
+                    "message": str(exc),
+                    "exception_type": type(exc).__name__,
+                    "request_id": correlation_id,
+                },
+            ) from exc
+        if not created:
+            # The unique profile reservation is the no-resubmit guard. The temporary
+            # snapshot is invalidated so an existing reservation cannot inherit it.
+            await _eas.reconcile_pre_provider_failure(
+                snapshot["snapshot_id"],
+                reason="PROFILE_CERTIFICATION_RESERVATION_REUSED",
+            )
+            return {
+                "status": reservation.get("status"),
+                "certification": reservation,
+                "profile": profile,
+                "provider_calls": 0,
+                "credit_spend": 0,
+                "reused_reservation": True,
+            }
 
-    try:
-        reservation, created = await _certifications.reserve_capture(
-            profile=profile,
-            representative_lane="FACELESS",
-            product_id=body.product_id,
-            copy_id=copy_id,
-            product_digest=str(product_digest),
-            copy_digest=copy_digest,
-            snapshot_id=snapshot["snapshot_id"],
-            **authority_digests,
-            runtime_sha=str(runtime["runtime_sha"]),
-        )
-    except _certifications.ProviderCertificationError as exc:
         try:
-            await _eas.reconcile_pre_provider_failure(
-                snapshot["snapshot_id"],
-                reason=f"PROFILE_CERTIFICATION_RESERVATION_FAILED:{exc}"[:1000],
+            result = await _mv.start_generate(
+                "T2V",
+                prompt,
+                aspect="9:16",
+                tier="PAYGATE_TIER_ONE",
+                model="veo_3_1_lite",
+                duration_s=8,
+                num_videos=1,
+                product_id=body.product_id,
+                source_mode="T2V",
+                staff_id=owner.staff_id,
+                staff_display_name_snapshot=owner.display_name,
+                copy_execution_binding=copy_binding,
+                execution_identity=execution_identity,
+                execution_snapshot_id=snapshot["snapshot_id"],
+                profile_certification_id=reservation["certification_id"],
+                provider_target_authorization=target_authorization,
+                editor_binding=editor_binding,
+                execution_profile_context=profile_context,
+                product_visual_custody=custody,
+                request_id=capture_request_id,
+                idempotency_key=capture_request_id,
+                production_recipe="FACELESS",
+                surface_lane="FACELESS",
+                confirm_live_credit_burn=True,
+                maximum_provider_operations=1,
+                max_retry_operations=0,
+                profile_certification_capture=True,
             )
-        except Exception:  # noqa: BLE001 — preserve the original structured error
-            logger.exception(
-                "Faceless snapshot reconciliation failure request_id=%s",
-                correlation_id,
+        except Exception as exc:  # noqa: BLE001 — no provider result is claimed
+            await _certifications.mark_failed(
+                reservation["certification_id"],
+                code="PROFILE_CERTIFICATION_DISPATCH_FAILED",
+                detail=str(exc),
+                snapshot_id=snapshot["snapshot_id"] if snapshot else None,
             )
-        logger.exception(
-            "Faceless profile certification reservation failure request_id=%s code=%s",
-            correlation_id,
-            exc.code,
-        )
-        raise HTTPException(
-            409,
-            detail={
-                "error_code": exc.code,
-                "message": str(exc),
-                "exception_type": type(exc).__name__,
-                "request_id": correlation_id,
-                "details": exc.details,
-            },
-        ) from exc
-    except Exception as exc:  # noqa: BLE001 — preserve a structured boundary
-        try:
-            await _eas.reconcile_pre_provider_failure(
-                snapshot["snapshot_id"],
-                reason=f"PROFILE_CERTIFICATION_PERSISTENCE_FAILED:{exc}"[:1000],
+            if snapshot and snapshot.get("approval_state") in {"APPROVED", "DISPATCHED"}:
+                await _eas.reconcile_pre_provider_failure(
+                    snapshot["snapshot_id"],
+                    reason=f"PROFILE_CERTIFICATION_DISPATCH_FAILED:{exc}"[:1000],
+                )
+            raise HTTPException(
+                409,
+                detail={"error_code": "PROFILE_CERTIFICATION_DISPATCH_FAILED", "message": str(exc)},
+            ) from exc
+        if not isinstance(result, dict) or result.get("status") == "REJECTED" or not result.get("job_id"):
+            await _certifications.mark_failed(
+                reservation["certification_id"],
+                code=(result or {}).get("error", "PROFILE_CERTIFICATION_DISPATCH_REJECTED")
+                if isinstance(result, dict)
+                else "PROFILE_CERTIFICATION_DISPATCH_REJECTED",
+                detail=str(result),
+                snapshot_id=snapshot["snapshot_id"] if snapshot else None,
             )
-        except Exception:  # noqa: BLE001 — preserve the original structured error
-            logger.exception(
-                "Faceless snapshot reconciliation failure request_id=%s",
-                correlation_id,
+            if snapshot and snapshot.get("approval_state") == "APPROVED":
+                await _eas.invalidate_snapshot(
+                    snapshot["snapshot_id"], reason="PROFILE_CERTIFICATION_DISPATCH_REJECTED"
+                )
+            provider_error = (
+                (result or {}).get("error")
+                if isinstance(result, dict)
+                else None
+            ) or "PROFILE_CERTIFICATION_DISPATCH_REJECTED"
+            raise HTTPException(
+                409,
+                detail={
+                    "error_code": provider_error,
+                    "message": (
+                        (result or {}).get("message")
+                        if isinstance(result, dict)
+                        else None
+                    ) or "The provider boundary rejected the certification request.",
+                    "request_id": correlation_id,
+                    "provider_response": result,
+                },
             )
-        logger.exception(
-            "Faceless profile certification persistence failure request_id=%s",
-            correlation_id,
-        )
-        raise HTTPException(
-            500,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_PERSISTENCE_FAILED",
-                "message": str(exc),
-                "exception_type": type(exc).__name__,
-                "request_id": correlation_id,
-            },
-        ) from exc
-    if not created:
-        # The unique profile reservation is the no-resubmit guard. The temporary
-        # snapshot is invalidated so an existing reservation cannot inherit it.
-        await _eas.reconcile_pre_provider_failure(
-            snapshot["snapshot_id"],
-            reason="PROFILE_CERTIFICATION_RESERVATION_REUSED",
-        )
+
         return {
-            "status": reservation.get("status"),
+            "status": result.get("status") or _mv.PROFILE_CERTIFICATION_PRE_PROVIDER_STATUS,
             "certification": reservation,
             "profile": profile,
+            "snapshot": snapshot,
+            "job": result,
+            "editor_binding": editor_binding,
+            "target_authorization": target_authorization,
+            "credit_quote": {"balance_before": balance, "profile_cost_ceiling": 10},
             "provider_calls": 0,
-            "credit_spend": 0,
-            "reused_reservation": True,
+            "credit_spend": "PENDING_ARTIFACT_DELTA",
         }
 
     try:
-        result = await _mv.start_generate(
-            "T2V",
-            prompt,
-            aspect="9:16",
-            tier="PAYGATE_TIER_ONE",
-            model="veo_3_1_lite",
-            duration_s=8,
-            num_videos=1,
-            product_id=body.product_id,
-            source_mode="T2V",
-            staff_id=owner.staff_id,
-            staff_display_name_snapshot=owner.display_name,
-            copy_execution_binding=copy_binding,
-            execution_identity=execution_identity,
-            execution_snapshot_id=snapshot["snapshot_id"],
-            profile_certification_id=reservation["certification_id"],
-            provider_target_authorization=target_authorization,
-            editor_binding=editor_binding,
-            execution_profile_context=profile_context,
-            product_visual_custody=custody,
-            request_id=capture_request_id,
-            idempotency_key=capture_request_id,
-            production_recipe="FACELESS",
-            surface_lane="FACELESS",
-            confirm_live_credit_burn=True,
-            maximum_provider_operations=1,
-            max_retry_operations=0,
-            profile_certification_capture=True,
-        )
-    except Exception as exc:  # noqa: BLE001 — no provider result is claimed
-        await _certifications.mark_failed(
-            reservation["certification_id"],
-            code="PROFILE_CERTIFICATION_DISPATCH_FAILED",
-            detail=str(exc),
-            snapshot_id=snapshot["snapshot_id"] if snapshot else None,
-        )
-        if snapshot and snapshot.get("approval_state") in {"APPROVED", "DISPATCHED"}:
-            await _eas.reconcile_pre_provider_failure(
-                snapshot["snapshot_id"],
-                reason=f"PROFILE_CERTIFICATION_DISPATCH_FAILED:{exc}"[:1000],
-            )
-        raise HTTPException(
-            409,
-            detail={"error_code": "PROFILE_CERTIFICATION_DISPATCH_FAILED", "message": str(exc)},
-        ) from exc
-    if not isinstance(result, dict) or result.get("status") == "REJECTED" or not result.get("job_id"):
-        await _certifications.mark_failed(
-            reservation["certification_id"],
-            code=(result or {}).get("error", "PROFILE_CERTIFICATION_DISPATCH_REJECTED")
-            if isinstance(result, dict)
-            else "PROFILE_CERTIFICATION_DISPATCH_REJECTED",
-            detail=str(result),
-            snapshot_id=snapshot["snapshot_id"] if snapshot else None,
-        )
-        if snapshot and snapshot.get("approval_state") == "APPROVED":
-            await _eas.invalidate_snapshot(
-                snapshot["snapshot_id"], reason="PROFILE_CERTIFICATION_DISPATCH_REJECTED"
-            )
-        provider_error = (
-            (result or {}).get("error")
-            if isinstance(result, dict)
-            else None
-        ) or "PROFILE_CERTIFICATION_DISPATCH_REJECTED"
-        raise HTTPException(
-            409,
-            detail={
-                "error_code": provider_error,
-                "message": (
-                    (result or {}).get("message")
-                    if isinstance(result, dict)
-                    else None
-                ) or "The provider boundary rejected the certification request.",
-                "request_id": correlation_id,
-                "provider_response": result,
-            },
-        )
-
-    return {
-        "status": result.get("status") or _mv.PROFILE_CERTIFICATION_PRE_PROVIDER_STATUS,
-        "certification": reservation,
-        "profile": profile,
-        "snapshot": snapshot,
-        "job": result,
-        "editor_binding": editor_binding,
-        "target_authorization": target_authorization,
-        "credit_quote": {"balance_before": balance, "profile_cost_ceiling": 10},
-        "provider_calls": 0,
-        "credit_spend": "PENDING_ARTIFACT_DELTA",
-    }
+        if _cert_op_lease is not None:
+            with client.activate_operation_lease(_cert_op_lease):
+                return await _run_pinned_certification()
+        return await _run_pinned_certification()
+    finally:
+        if _cert_op_lease is not None:
+            client.release_operation_lease(_cert_op_lease)
 
 
 @router.post("/profile-certification/{job_id}/reconcile-pre-provider")
