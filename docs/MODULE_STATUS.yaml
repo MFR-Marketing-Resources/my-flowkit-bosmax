@@ -1886,3 +1886,21 @@ domains:
       - tests/unit/test_product_intelligence_prepare_service.py
       - docs/AI_PROVIDER_FOUR_LANE_V4.md
       - tests/unit/test_ai_provider_four_lane_v4.py
+      # Benefit-Centric Creative Factory (Round 1): Benefit Registry +
+      # deterministic PI cross-check + audited manual review + Creative Atom
+      # Factory (angle/hook/body/cta) + deterministic capacity engine.
+      - agent/models/creative_factory.py
+      - agent/db/creative_factory_crud.py
+      - agent/services/creative_factory_service.py
+      - agent/api/creative_factory.py
+      - tests/unit/test_creative_factory_service.py
+      - tests/unit/test_creative_factory_provider_contract.py
+      - tests/unit/test_benefit_review_resolution.py
+      - tests/unit/test_provider_adapter_allow_fallback.py
+      - tests/api/test_creative_factory_api.py
+      - dashboard/src/api/creativeFactory.ts
+      - dashboard/src/components/product-intelligence/BenefitRegistryPanel.tsx
+      - dashboard/src/components/product-intelligence/BenefitRegistryPanel.test.tsx
+      - dashboard/src/components/product-intelligence/CreativeFactoryPanel.tsx
+      - dashboard/src/components/product-intelligence/CreativeFactoryPanel.test.tsx
+      - docs/architecture/BENEFIT_CENTRIC_CREATIVE_FACTORY_V1.md
