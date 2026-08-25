@@ -1854,29 +1854,72 @@ class V3CopyRegisterRound2Service:
             master = await self.factory.repository.insert(
                 compile_result.master, actor_id=actor_id, request_id=f"{request_id}:master", source=ROUND2_SOURCE
             )
+            # ---- COMMIT the semantic supply (Phase A boundary) ----------------
+            # Owner amendment 4: the master + components + angle + family are
+            # committed as their OWN transaction BEFORE any duration projection.
+            # close_transaction() is guarded by transaction_open, so every later
+            # except-path call becomes a no-op and can NEVER roll this back — an
+            # 8s projection failure can no longer zero the committed semantic
+            # supply (owner acceptance criterion).
+            await close_transaction()
+            # ---- Phase B: per-duration projection (DECOUPLED, non-fatal) ------
+            # Each requested duration is projected INDEPENDENTLY after the
+            # semantic commit.  A duration that cannot be safely projected
+            # deterministically is BLOCKED for that duration only; the committed
+            # semantic supply is retained and the other durations continue.  No
+            # AI rewrite is invoked here (owner amendment 2).
             projections: list[V3DurationProjection] = []
+            duration_statuses: list[dict[str, Any]] = []
             for duration in plan.target_durations_seconds:
-                projection, issues, details = await self.factory.project_duration(
-                    master.master_id,
-                    master_revision=master.revision,
-                    duration_seconds=duration,
-                    language_profile="Malay",
-                    wps_mode=plan.wps_mode,
-                    persist=False,
-                    actor_id=actor_id,
-                    source=ROUND2_SOURCE,
-                )
+                try:
+                    projection, issues, details = await self.factory.project_duration(
+                        master.master_id,
+                        master_revision=master.revision,
+                        duration_seconds=duration,
+                        language_profile="Malay",
+                        wps_mode=plan.wps_mode,
+                        persist=False,
+                        actor_id=actor_id,
+                        source=ROUND2_SOURCE,
+                    )
+                except V3FactoryError as duration_exc:
+                    projection, issues, details = None, (duration_exc.code,), (str(duration_exc),)
+                except Exception as duration_exc:  # noqa: BLE001 - a duration fault never zeroes committed semantics
+                    projection, issues, details = None, ("DURATION_PROJECTION_FAILED",), (type(duration_exc).__name__,)
                 if projection is None:
-                    raise V3FactoryError("PROJECTION_BLOCKED", "The deterministic WPS projection blocked the AI-authored Master.", status_code=409, details={"issues": issues, "details": details})
+                    codes = tuple(issues) or ("WPS_DURATION_FIT_SHORTFALL",)
+                    duration_statuses.append({
+                        "seconds": int(duration),
+                        "status": "BLOCKED",
+                        "issue_codes": list(codes),
+                        "details": list(details),
+                    })
+                    continue
                 projection = projection.model_copy(update={"derivation_source": "DETERMINISTIC", "authoring_run_id": plan.run_id})
-                if any(item.transform_mode == "COMPRESSED" for item in projection.stage_allocations):
+                review_required = any(item.transform_mode == "COMPRESSED" for item in projection.stage_allocations)
+                if review_required:
                     # Mechanical compression is deterministic and reviewable,
                     # but it is never silently treated as a final projection.
                     projection = projection.model_copy(update={"status": "REVIEW_REQUIRED"})
                 projection = projection.model_copy(update={"exact_projection_digest": projection_content_digest(projection)})
-                projections.append(await self.factory.repository.insert(
-                    projection, actor_id=actor_id, request_id=f"{request_id}:projection:{duration}", source=ROUND2_SOURCE
-                ))
+                try:
+                    inserted = await self.factory.repository.insert(
+                        projection, actor_id=actor_id, request_id=f"{request_id}:projection:{duration}", source=ROUND2_SOURCE
+                    )
+                except Exception as persist_exc:  # noqa: BLE001 - one duration's persistence fault is not a semantic failure
+                    duration_statuses.append({
+                        "seconds": int(duration),
+                        "status": "BLOCKED",
+                        "issue_codes": ["DURATION_PERSIST_FAILED"],
+                        "details": [type(persist_exc).__name__],
+                    })
+                    continue
+                projections.append(inserted)
+                duration_statuses.append({
+                    "seconds": int(duration),
+                    "status": "REVIEW_REQUIRED" if review_required else "READY",
+                    "issue_codes": [],
+                })
             quality = await self.quality_signal(master, projections)
             provider_receipt = V3AIProviderReceipt(
                 mode=provider_mode,
@@ -1913,6 +1956,11 @@ class V3CopyRegisterRound2Service:
                 "token_usage": provider_receipt.usage,
                 "quality": quality.model_dump(mode="json"),
                 "projection_derivation": "DETERMINISTIC_WPS_FROM_AI_AUTHORED_MASTER",
+                # Semantic supply is committed regardless of per-duration outcome.
+                "semantic_committed": True,
+                "duration_statuses": duration_statuses,
+                "ready_durations_seconds": [item["seconds"] for item in duration_statuses if item["status"] in {"READY", "REVIEW_REQUIRED"}],
+                "blocked_durations_seconds": [item["seconds"] for item in duration_statuses if item["status"] == "BLOCKED"],
             }
             await self._persist_run_result(plan.run_id, status="EXECUTED", provider_mode=provider_mode, provider_receipt=provider_receipt.model_dump(mode="json"), result=result, cost_status=cost_status)
             await close_transaction()

@@ -1331,14 +1331,23 @@ class ExactDuplicateValidator:
 
 
 class V3CandidateGateResult(BaseModel):
-    """Provider/DB-free receipt envelope for one computed FAST54 candidate."""
+    """Provider/DB-free receipt envelope for one computed FAST54 candidate.
+
+    Semantic-duration decoupling: ``semantic_valid`` reflects ONLY the semantic
+    validators (master, components, storyline route, evidence, duplicate).  A
+    duration projection failure lands in ``projection_issue_codes`` and flips
+    ``valid`` (the overall verdict, preserved for compatibility) but never
+    ``semantic_valid``.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     candidate_id: str = Field(min_length=1)
     valid: bool
+    semantic_valid: bool = False
     issue_codes: tuple[str, ...] = ()
     details: tuple[str, ...] = ()
+    projection_issue_codes: tuple[str, ...] = ()
     receipts: tuple[V3ValidationResult, ...] = ()
     gate_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -1392,24 +1401,35 @@ class CandidateGateEvaluator:
 
         issue_codes: list[str] = []
         details: list[str] = []
+        semantic_issue_codes: list[str] = []
+        projection_issue_codes: list[str] = []
         for receipt in receipts:
+            is_projection = receipt.validator == DurationProjectionValidator.name
             for code, detail in zip(receipt.issue_codes, receipt.details):
                 if code not in issue_codes:
                     issue_codes.append(code)
                     details.append(detail)
+                bucket = projection_issue_codes if is_projection else semantic_issue_codes
+                if code not in bucket:
+                    bucket.append(code)
         valid = not issue_codes
+        semantic_valid = not semantic_issue_codes
         payload = {
             "candidate_id": candidate_id,
             "valid": valid,
+            "semantic_valid": semantic_valid,
             "issue_codes": issue_codes,
             "details": details,
+            "projection_issue_codes": projection_issue_codes,
             "receipts": [receipt.model_dump(mode="json") for receipt in receipts],
         }
         result = V3CandidateGateResult(
             candidate_id=candidate_id,
             valid=valid,
+            semantic_valid=semantic_valid,
             issue_codes=tuple(issue_codes),
             details=tuple(details),
+            projection_issue_codes=tuple(projection_issue_codes),
             receipts=tuple(receipts),
             gate_digest="0" * 64,
         )
