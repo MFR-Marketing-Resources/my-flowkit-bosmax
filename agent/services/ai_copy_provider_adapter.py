@@ -23,9 +23,11 @@ import time
 from typing import Any
 
 from agent.services.ai_provider_model_catalog import (
+    DEFAULT_CHAT_REQUEST_CONTRACT,
     TRANSPORT_ANTHROPIC_MESSAGES,
     TRANSPORT_OPENAI_COMPATIBLE,
     canonical_lane_id,
+    get_model_request_contract,
     get_provider_transport,
     model_supports_lane,
 )
@@ -273,6 +275,35 @@ def _record_json_parse_result(
         _last_provider_call_receipt = {
             **_last_provider_call_receipt,
             "json_parse_status": status,
+            "diagnostic_category": diagnostic_category,
+            "diagnostic_metadata": dict(diagnostic_metadata or {}),
+        }
+
+
+def _record_provider_diagnostics(
+    call_id: int,
+    *,
+    diagnostic_category: str | None,
+    diagnostic_metadata: dict[str, object] | None,
+) -> None:
+    """Record secret-safe provider diagnostics (e.g. a non-2xx HTTP error body)
+    into the call receipt without altering json_parse_status."""
+    global _last_provider_call_receipt
+    with _provider_call_lock:
+        exact_receipt = _provider_call_receipt_by_id.get(call_id)
+        if exact_receipt is not None:
+            _provider_call_receipt_by_id[call_id] = {
+                **exact_receipt,
+                "diagnostic_category": diagnostic_category,
+                "diagnostic_metadata": dict(diagnostic_metadata or {}),
+            }
+        if (
+            _last_provider_call_receipt is None
+            or _last_provider_call_receipt.get("call_id") != call_id
+        ):
+            return
+        _last_provider_call_receipt = {
+            **_last_provider_call_receipt,
             "diagnostic_category": diagnostic_category,
             "diagnostic_metadata": dict(diagnostic_metadata or {}),
         }
@@ -559,6 +590,92 @@ def _split_system_and_turns(
     return "\n\n".join(system_parts), turns
 
 
+def _sanitize_provider_text(text: object, limit: int = 500) -> str:
+    """Bounded, secret-scrubbed provider text for safe diagnostics."""
+    if not isinstance(text, str):
+        text = str(text or "")
+    # Defensive: never let an accidental key/bearer token survive into diagnostics.
+    text = re.sub(r"(?i)bearer\s+[A-Za-z0-9._\-]+", "Bearer [REDACTED]", text)
+    text = re.sub(r"sk-[A-Za-z0-9._\-]{8,}", "[REDACTED]", text)
+    return text.strip()[:limit]
+
+
+def _provider_request_id(response: Any) -> str | None:
+    """Extract a safe provider request-id header (never a credential)."""
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    for name in (
+        "x-request-id",
+        "x-requestid",
+        "openai-request-id",
+        "request-id",
+        "cf-ray",
+    ):
+        try:
+            value = headers.get(name)
+        except AttributeError:
+            value = None
+        if value:
+            return _sanitize_provider_text(value, 200) or None
+    return None
+
+
+def _raise_for_provider_status(
+    response: Any, *, provider_id: str, model: str
+) -> None:
+    """Raise a secret-safe ``AICopyProviderError`` on a non-2xx provider response.
+
+    Unlike ``response.raise_for_status()`` this first captures the provider's safe
+    error diagnostics (``type``/``code``/``message``/``request_id``) so a failed
+    call leaves durable evidence instead of a bare status code.  Never persists
+    Authorization / API keys / cookies / request headers or the request body; the
+    message is bounded and scrubbed.
+    """
+    status = getattr(response, "status_code", None)
+    if not isinstance(status, int) or status < 400:
+        return
+    provider_error_type = provider_error_code = provider_error_message = None
+    try:
+        body = response.json()
+    except Exception:
+        body = None
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            provider_error_type = error.get("type")
+            provider_error_code = error.get("code")
+            provider_error_message = error.get("message")
+        else:
+            provider_error_message = body.get("message") or body.get("detail")
+    if provider_error_message is None:
+        provider_error_message = _sanitize_provider_text(
+            getattr(response, "text", "") or ""
+        )
+    diagnostic_metadata = {
+        "provider_error_type": (
+            _sanitize_provider_text(provider_error_type, 120)
+            if provider_error_type is not None
+            else None
+        ),
+        "provider_error_code": (
+            _sanitize_provider_text(provider_error_code, 120)
+            if provider_error_code is not None
+            else None
+        ),
+        "provider_error_message": _sanitize_provider_text(provider_error_message, 500)
+        or None,
+        "provider_request_id": _provider_request_id(response),
+    }
+    raise AICopyProviderError(
+        ERR_CALL_FAILED,
+        detail=f"{provider_id} provider returned HTTP {status}",
+        diagnostic_category="PROVIDER_HTTP_ERROR",
+        diagnostic_metadata=diagnostic_metadata,
+        http_status=status,
+    )
+
+
 def _complete_anthropic(
     messages: list[dict[str, str]],
     api_key: str,
@@ -591,7 +708,7 @@ def _complete_anthropic(
         },
         timeout=_TIMEOUT_SECONDS,
     )
-    response.raise_for_status()
+    _raise_for_provider_status(response, provider_id="anthropic", model=model)
     data = response.json()
     blocks = data.get("content") or []
     for block in blocks:
@@ -620,19 +737,36 @@ def _complete_openai_compatible(
     provider_id: str,
     json_output_enabled: bool,
     max_output_tokens: int | None = None,
+    request_contract: dict[str, Any] | None = None,
 ) -> tuple[str, int | None, dict[str, int | float], str | None]:
     """OpenAI-compatible /chat/completions transport (qwen/openai/gemini/deepseek).
-    Mirrors the proven product_knowledge_service httpx pattern."""
+    Mirrors the proven product_knowledge_service httpx pattern.
+
+    ``request_contract`` (resolved from the model catalog) governs the
+    family-specific request shape: which output-token parameter to send and
+    whether to send an explicit temperature.  It defaults to the pre-existing
+    behavior (explicit temperature 0.5, ``max_tokens``) so DeepSeek / Qwen /
+    Gemini / gpt-4o are byte-for-byte unchanged, while GPT-5.x models send
+    ``max_completion_tokens`` and omit temperature per their official contract."""
     import httpx  # local import — only when actually executing a configured call
 
+    contract = request_contract or DEFAULT_CHAT_REQUEST_CONTRACT
     payload: dict[str, object] = {
         "model": model,
-        "temperature": 0.5,
         "messages": messages,
     }
+    # Temperature policy: GPT-5.x reasoning models reject a non-default temperature,
+    # so their contract omits it; every other model keeps the explicit value.
+    if str(contract.get("temperature_policy") or "explicit") == "explicit":
+        payload["temperature"] = contract.get("temperature_value", 0.5)
     if json_output_enabled:
         payload["response_format"] = {"type": "json_object"}
-        payload["max_tokens"] = min(
+        output_token_parameter = str(
+            contract.get("output_token_parameter") or "max_tokens"
+        )
+        if output_token_parameter not in {"max_tokens", "max_completion_tokens"}:
+            output_token_parameter = "max_tokens"
+        payload[output_token_parameter] = min(
             int(max_output_tokens or OPENAI_COMPATIBLE_JSON_MAX_TOKENS),
             OPENAI_COMPATIBLE_JSON_MAX_TOKENS,
         )
@@ -651,7 +785,7 @@ def _complete_openai_compatible(
         json=payload,
         timeout=_TIMEOUT_SECONDS,
     )
-    response.raise_for_status()
+    _raise_for_provider_status(response, provider_id=provider_id, model=model)
     data = response.json()
     usage = _safe_usage(data.get("usage")) if isinstance(data, dict) else {}
     http_status = getattr(response, "status_code", None)
@@ -705,6 +839,7 @@ def _complete(
     base_url = _resolve_base_url(provider_id, canonical)
     model = model_override or _resolve_model(provider_id, canonical)
     transport = get_provider_transport(provider_id)
+    request_contract = get_model_request_contract(provider_id, model) if model else None
     if not api_key or not base_url or not model:
         raise AICopyProviderError(
             ERR_CALL_FAILED, detail=f"{canonical} key/base_url/model unresolved"
@@ -758,6 +893,7 @@ def _complete(
                 provider_id=provider_id,
                 json_output_enabled=json_output_enabled,
                 max_output_tokens=effective_output_tokens,
+                request_contract=request_contract,
             )
         _finish_provider_call(
             call_id,
@@ -783,6 +919,14 @@ def _complete(
             _record_json_parse_result(
                 call_id,
                 status="INVALID",
+                diagnostic_category=exc.diagnostic_category,
+                diagnostic_metadata=exc.diagnostic_metadata,
+            )
+        elif exc.diagnostic_category is not None or exc.diagnostic_metadata:
+            # Non-2xx provider HTTP error (e.g. GPT-5.x 400 unsupported_parameter,
+            # or a 429): persist the safe provider diagnostics into the receipt.
+            _record_provider_diagnostics(
+                call_id,
                 diagnostic_category=exc.diagnostic_category,
                 diagnostic_metadata=exc.diagnostic_metadata,
             )
