@@ -1430,55 +1430,65 @@ async def test_round2_provider_output_budget_stops_before_v3_mutation(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_round2_projection_failure_rolls_back_all_semantic_rows_and_review_events(monkeypatch):
+async def test_round2_projection_failure_keeps_committed_semantic_supply(monkeypatch):
+    # SEMANTIC-DURATION DECOUPLING (owner amendment 4 + acceptance criterion):
+    # a duration projection failure must NOT roll back or reject the otherwise
+    # valid semantic supply.  It blocks ONLY that duration; the committed
+    # master/components/angle/family survive and the run reports EXECUTED with a
+    # truthful per-duration status.  (This replaces the pre-decoupling contract
+    # that expected a full rollback + PROJECTION_BLOCKED raise.)
     monkeypatch.setenv("V3_ROUND2_FAKE_PROVIDER", "1")
-    product_id = "round2-atomic-projection-failure"
+    product_id = "round2-decoupled-projection-block"
     factory, recipe = await _seed_zero_supply_recipe(product_id)
     service = V3CopyRegisterRound2Service(factory=factory)
     plan = await service.plan_assistant(
         product_id,
         recipe.recipe_id,
         mode="CREATE",
-        actor_id="round2-atomic-test",
+        actor_id="round2-decoupled-test",
         request_id=f"{product_id}:plan",
     )
 
     async def fail_projection(*_args, **_kwargs):
+        # Every duration fails to project deterministically (e.g. a claim-bearing
+        # 8s stage) — the strongest case: the semantic supply must still commit.
         return None, ("WPS_DURATION_FIT_SHORTFALL",), ("forced projection failure",)
 
     monkeypatch.setattr(factory, "project_duration", fail_projection)
-    with pytest.raises(Exception) as error:
-        await service.execute_assistant(
-            plan.plan_id,
-            actor_id="round2-atomic-test",
-            request_id=f"{product_id}:execute",
-            provider_mode="FAKE_TEST",
-        )
-    assert error.value.code == "PROJECTION_BLOCKED"
+    result = await service.execute_assistant(
+        plan.plan_id,
+        actor_id="round2-decoupled-test",
+        request_id=f"{product_id}:execute",
+        provider_mode="FAKE_TEST",
+    )
+
+    # The run succeeds semantically; no exception is raised for a duration block.
+    assert result["status"] == "EXECUTED"
+    assert result["semantic_committed"] is True
+    assert result["projections"] == []
+    assert result["blocked_durations_seconds"] == list(plan.target_durations_seconds)
+    assert result["ready_durations_seconds"] == []
+    assert result["duration_statuses"], "per-duration status must be reported"
+    assert all(item["status"] == "BLOCKED" for item in result["duration_statuses"])
+    assert all("WPS_DURATION_FIT_SHORTFALL" in item["issue_codes"] for item in result["duration_statuses"])
 
     db = await get_db()
-    for table in (
-        "angle_v3",
-        "storyline_family_v3",
-        "storyboard_component_v3",
-        "master_storyboard_v3",
-        "duration_projection_v3",
-    ):
+    # Semantic supply is COMMITTED (not rolled back).
+    for table in ("angle_v3", "storyline_family_v3", "master_storyboard_v3"):
         count = await (await db.execute(f"SELECT COUNT(*) FROM {table} WHERE product_id=?", (product_id,))).fetchone()
-        assert count[0] == 0, table
-    events = await (await db.execute(
-        "SELECT COUNT(*) FROM review_event_v3 WHERE product_id=? "
-        "AND entity_type IN ('ANGLE','STORYLINE_FAMILY','STORYBOARD_COMPONENT','MASTER_STORYBOARD','DURATION_PROJECTION')",
-        (product_id,),
-    )).fetchone()
-    assert events[0] == 0
+        assert count[0] > 0, f"{table} must retain committed semantic rows"
+    components = await (await db.execute("SELECT COUNT(*) FROM storyboard_component_v3 WHERE product_id=?", (product_id,))).fetchone()
+    assert components[0] >= 3, "HOOK/BODY_CORE/CTA components must be committed"
+    # No duration projection was persisted for a fully-blocked run.
+    projections = await (await db.execute("SELECT COUNT(*) FROM duration_projection_v3 WHERE product_id=?", (product_id,))).fetchone()
+    assert projections[0] == 0
 
     run = await (await db.execute(
-        "SELECT status, error_code, provider_calls, credit_spend, token_usage_json "
-        "FROM v3_ai_authoring_run WHERE run_id=?",
+        "SELECT status, error_code FROM v3_ai_authoring_run WHERE run_id=?",
         (plan.run_id,),
     )).fetchone()
-    assert tuple(run) == ("FAILED", "PROJECTION_BLOCKED", 0, 0, "{}")
+    assert run["status"] == "EXECUTED"
+    assert run["error_code"] in (None, "")
 
 
 class _CostReportingProvider:

@@ -59,9 +59,11 @@ from agent.models.storyboard_landbank_v3 import (
 )
 from agent.models.storyboard_landbank_v3_round1 import (
     V3CandidateCombination,
+    V3CandidateDurationStatus,
     V3CandidatePage,
     V3CapacitySnapshot,
     V3CompileResult,
+    V3DurationCapacity,
     V3EvidenceSelection,
     V3ExclusionReceipt,
     V3FormulaReadModel,
@@ -532,6 +534,36 @@ def _compress_ordered(text: str, budget: int) -> str | None:
     # claim is introduced. The projection remains reviewable when this path is
     # used because a mechanical subsequence is not treated as final copy.
     return " ".join(tokens[:budget])
+
+
+def _duration_capacity(
+    seconds: int, aggregate: Mapping[str, Any], requested_capacity: int
+) -> V3DurationCapacity:
+    """Build one truthful per-duration capacity from evaluated aggregates.
+
+    ``ready`` is the strict FAST54_<n>S_READY authority: the full requested
+    capacity is valid with no block and no pending review.  It is scoped to one
+    duration and never gates the semantic supply.
+    """
+
+    valid = int(aggregate.get("valid", 0))
+    blocked = int(aggregate.get("blocked", 0))
+    review = int(aggregate.get("review", 0))
+    codes = tuple(dict.fromkeys(str(code) for code in aggregate.get("codes", ())))
+    ready = (
+        requested_capacity > 0
+        and valid >= requested_capacity
+        and blocked == 0
+        and review == 0
+    )
+    return V3DurationCapacity(
+        seconds=int(seconds),
+        valid_capacity=valid,
+        blocked_capacity=blocked,
+        review_required_capacity=review,
+        ready=ready,
+        issue_codes=codes,
+    )
 
 
 def compile_duration_projection(
@@ -2772,6 +2804,12 @@ class V3CopyFactoryService:
         evaluated = 0
         skipped = 0
         more = False
+        # Per-duration aggregates over the evaluated (semantically-valid) set.
+        # Pre-seeded so every requested duration is reported even at zero supply.
+        duration_aggregates: dict[int, dict[str, Any]] = {
+            int(duration): {"valid": 0, "blocked": 0, "review": 0, "codes": []}
+            for duration in requested_durations
+        }
         iterator = combinations()
         for angle, family, hook, body, cta in iterator:
             if skipped < offset:
@@ -2825,9 +2863,14 @@ class V3CopyFactoryService:
                 continue
             selected_fingerprints.add(fingerprint)
             semantic_valid += 1
+            # ---- Duration boundary (DECOUPLED) --------------------------------
+            # Every requested duration is projected INDEPENDENTLY.  A duration
+            # that cannot be safely projected deterministically is BLOCKED for
+            # that duration only — it never excludes the semantically-valid
+            # candidate and never stops the other durations.  No AI rewrite is
+            # invoked (governed AI compression is out of scope for this lane).
             projections: list[V3DurationProjection] = []
-            projection_issue: tuple[str, ...] = ()
-            projection_details: tuple[str, ...] = ()
+            duration_statuses: list[V3CandidateDurationStatus] = []
             if compile:
                 for duration in requested_durations:
                     projection, issue_codes, issue_details = compile_duration_projection(
@@ -2839,37 +2882,44 @@ class V3CopyFactoryService:
                         created_by="round1-enumerator",
                         source=ROUND1_SOURCE,
                     )
+                    agg = duration_aggregates.setdefault(
+                        int(duration), {"valid": 0, "blocked": 0, "review": 0, "codes": []}
+                    )
                     if projection is None:
-                        projection_issue = issue_codes or ("WPS_DURATION_FIT_SHORTFALL",)
-                        projection_details = issue_details
-                        break
+                        codes = tuple(issue_codes) or ("WPS_DURATION_FIT_SHORTFALL",)
+                        duration_statuses.append(
+                            V3CandidateDurationStatus(seconds=int(duration), status="BLOCKED", issue_codes=codes)
+                        )
+                        agg["blocked"] += 1
+                        for code in codes:
+                            if code not in agg["codes"]:
+                                agg["codes"].append(code)
+                        continue
                     projections.append(projection)
-            if projection_issue:
-                if projection_issue[0] in {
-                    "CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION",
-                    "PROJECTION_SEMANTIC_FRAGMENT_INVALID",
-                }:
-                    weak_review_required += 1
-                exclusion = V3ExclusionReceipt(candidate_id=candidate_id, code=projection_issue[0], details=(projection_details[0] if projection_details else "Duration projection rejected candidate"), dimensions={**refs, "durations": ",".join(str(item) for item in requested_durations)})
-                exclusions.append(exclusion)
-                candidates.append(V3CandidateCombination(
-                    candidate_id=candidate_id, recipe=_ref(recipe.recipe_id, recipe.revision), angle=_ref(angle.angle_id, angle.revision),
-                    storyline_family=_ref(family.family_id, family.revision), hook=_ref(hook.component_id, hook.revision), body_core=_ref(body.component_id, body.revision), cta=_ref(cta.component_id, cta.revision),
-                    status="BLOCKED", master=result.master, projections=tuple(projections), exclusion_receipts=(exclusion,), validation_receipts=result.receipts,
-                ))
-                continue
-            duration_valid += 1
-            review_required = any(
-                projection.status == "REVIEW_REQUIRED"
-                or any(item.transform_mode != "IDENTITY" for item in projection.stage_allocations)
-                for projection in projections
-            )
-            if review_required:
+                    review = projection.status == "REVIEW_REQUIRED" or any(
+                        item.transform_mode != "IDENTITY" for item in projection.stage_allocations
+                    )
+                    duration_statuses.append(
+                        V3CandidateDurationStatus(
+                            seconds=int(duration), status="REVIEW_REQUIRED" if review else "READY"
+                        )
+                    )
+                    agg["review" if review else "valid"] += 1
+            blocked_durations = [item for item in duration_statuses if item.status == "BLOCKED"]
+            review_durations = [item for item in duration_statuses if item.status == "REVIEW_REQUIRED"]
+            # LEGACY ``duration_valid``: candidate valid across ALL requested
+            # durations with no block (preserves the exact legacy fast54_ready).
+            if compile and not blocked_durations:
+                duration_valid += 1
+            if review_durations:
                 weak_review_required += 1
+            # The candidate stays SEMANTIC: a duration block never makes it
+            # BLOCKED/EXCLUDED.  Per-duration truth lives in duration_statuses.
             candidates.append(V3CandidateCombination(
                 candidate_id=candidate_id, recipe=_ref(recipe.recipe_id, recipe.revision), angle=_ref(angle.angle_id, angle.revision),
                 storyline_family=_ref(family.family_id, family.revision), hook=_ref(hook.component_id, hook.revision), body_core=_ref(body.component_id, body.revision), cta=_ref(cta.component_id, cta.revision),
-                status="REVIEW_REQUIRED" if review_required else "VALID", master=result.master, projections=tuple(projections), validation_receipts=result.receipts,
+                status="REVIEW_REQUIRED" if review_durations else "VALID", master=result.master, projections=tuple(projections),
+                duration_statuses=tuple(duration_statuses), validation_receipts=result.receipts,
             ))
         if not candidates and setup_reasons:
             exclusions.extend(
@@ -2877,6 +2927,11 @@ class V3CopyFactoryService:
                 for code in setup_reasons
             )
         requested_capacity = int(recipe.target_capacity.get("requested_capacity") or theoretical)
+        duration_capacities = tuple(
+            _duration_capacity(int(duration), agg, requested_capacity)
+            for duration, agg in sorted(duration_aggregates.items())
+        )
+        ready_by_seconds = {item.seconds: item.ready for item in duration_capacities}
         return V3CandidatePage(
             requested_capacity=requested_capacity,
             theoretical_capacity=theoretical,
@@ -2893,7 +2948,16 @@ class V3CopyFactoryService:
             theoretical_raw_capacity=theoretical,
             semantic_valid_capacity=semantic_valid,
             weak_review_required_capacity=weak_review_required,
+            # LEGACY authority — formula preserved EXACTLY (semantic AND every
+            # duration AND no pending review).  Do not read this as semantic-only.
             fast54_ready=semantic_valid >= requested_capacity and duration_valid >= requested_capacity and weak_review_required == 0,
+            # NEW decoupled authorities.  An 8s block leaves fast54_semantic_ready
+            # true while fast54_8s_ready is false.
+            fast54_semantic_ready=semantic_valid >= requested_capacity,
+            fast54_8s_ready=ready_by_seconds.get(8, False),
+            fast54_16s_ready=ready_by_seconds.get(16, False),
+            fast54_24s_ready=ready_by_seconds.get(24, False),
+            duration_capacities=duration_capacities,
         )
 
     async def capacity(
@@ -2923,6 +2987,14 @@ class V3CopyFactoryService:
             code = exclusion.code
             key = "duplicate" if "DUPLICATE" in code else "bridge" if "BRIDGE" in code else "evidence" if "EVIDENCE" in code else "durations" if "WPS" in code or "DURATION" in code else "formula" if "FORMULA" in code else "angle" if "ANGLE" in code else "storyline" if "STORYLINE" in code else "hook" if "HOOK" in code else "body_core" if "BODY" in code else "cta" if "CTA" in code else "formula"
             pressure[key][code] = pressure[key].get(code, 0) + 1
+        # Duration blocks are per-duration outcomes, NOT candidate exclusions, so
+        # they no longer appear in page.exclusions.  Surface their pressure and
+        # shortfalls truthfully from the decoupled per-duration capacities.
+        duration_issue_codes: set[str] = set()
+        for duration_capacity in page.duration_capacities:
+            for code in duration_capacity.issue_codes:
+                pressure["durations"][code] = pressure["durations"].get(code, 0) + duration_capacity.blocked_capacity
+                duration_issue_codes.add(code)
         shortfalls: list[str] = []
         if page.theoretical_capacity < page.requested_capacity:
             shortfalls.append("REQUESTED_CAPACITY_SHORTFALL")
@@ -2933,7 +3005,7 @@ class V3CopyFactoryService:
         if page.weak_review_required_capacity:
             shortfalls.append("REVIEW_REQUIRED_CAPACITY_PRESENT")
         shortfalls.extend(code for code in ("MISSING_HOOK_VARIETY", "MISSING_BODY_CORE_ROUTE", "MISSING_CTA_VARIETY", "MISSING_STORYLINE_FAMILY") if code in exclusion_counts or page.theoretical_capacity == 0)
-        shortfalls.extend(sorted(code for code in exclusion_counts if code in {"BRIDGE_SHORTFALL", "EVIDENCE_SHORTFALL", "WPS_DURATION_FIT_SHORTFALL", "EXACT_DUPLICATE", "MISSING_FORMULA_STAGE", "ROUTE_HOOK_BODY_INCOMPATIBLE", "ROUTE_COMPONENT_ANCHOR_MISMATCH", "ROUTE_USE_CASE_EVIDENCE_REQUIRED", "CLAIM_MODIFIER_UNSUPPORTED", "CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION"}))
+        shortfalls.extend(sorted(code for code in (set(exclusion_counts) | duration_issue_codes) if code in {"BRIDGE_SHORTFALL", "EVIDENCE_SHORTFALL", "WPS_DURATION_FIT_SHORTFALL", "EXACT_DUPLICATE", "MISSING_FORMULA_STAGE", "ROUTE_HOOK_BODY_INCOMPATIBLE", "ROUTE_COMPONENT_ANCHOR_MISMATCH", "ROUTE_USE_CASE_EVIDENCE_REQUIRED", "CLAIM_MODIFIER_UNSUPPORTED", "CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION"}))
         snapshot_payload = {
             "recipe": [recipe.recipe_id, recipe.revision, recipe.config_digest],
             "requested": page.requested_capacity, "theoretical": page.theoretical_capacity,
@@ -2943,6 +3015,17 @@ class V3CopyFactoryService:
             "weak_review_required": page.weak_review_required_capacity,
             "duration": page.duration_valid_capacity,
             "fast54_ready": page.fast54_ready,
+            "fast54_semantic_ready": page.fast54_semantic_ready,
+            "duration_capacities": [
+                {
+                    "seconds": item.seconds,
+                    "valid": item.valid_capacity,
+                    "blocked": item.blocked_capacity,
+                    "review": item.review_required_capacity,
+                    "ready": item.ready,
+                }
+                for item in page.duration_capacities
+            ],
             "exclusions": dict(exclusion_counts),
         }
         return V3CapacitySnapshot(
@@ -2965,7 +3048,14 @@ class V3CopyFactoryService:
             theoretical_raw_capacity=page.theoretical_raw_capacity,
             semantic_valid_capacity=page.semantic_valid_capacity,
             weak_review_required_capacity=page.weak_review_required_capacity,
+            # LEGACY authority — passthrough, unchanged meaning.
             fast54_ready=page.fast54_ready,
+            # NEW decoupled authorities.
+            fast54_semantic_ready=page.fast54_semantic_ready,
+            fast54_8s_ready=page.fast54_8s_ready,
+            fast54_16s_ready=page.fast54_16s_ready,
+            fast54_24s_ready=page.fast54_24s_ready,
+            duration_capacities=page.duration_capacities,
         )
 
     async def compile_master(

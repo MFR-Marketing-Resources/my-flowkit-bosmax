@@ -728,12 +728,19 @@ export default function StoryboardLandbankV3Page() {
 		setError("");
 		setSuccess("");
 		try {
-			await executeV3Assistant(plan.plan_id, generateLane);
-			setSuccess(
+			const execution = await executeV3Assistant(plan.plan_id, generateLane);
+			// Semantic-duration decoupling: a blocked duration never fails the run.
+			// Report the committed semantic copy and the truthful per-duration state.
+			const blockedDurations = execution.blocked_durations_seconds ?? [];
+			const readyDurations = execution.ready_durations_seconds ?? [];
+			const base =
 				generateLane === "FAKE_TEST"
 					? "Copy generated in test mode — review it in step 3. No credits were spent."
-					: "Copy generated — review it in step 3.",
-			);
+					: "Copy generated — review it in step 3.";
+			const durationNote = blockedDurations.length
+				? ` Semantic copy is saved. Duration versions ready: ${readyDurations.length ? readyDurations.map((seconds) => `${seconds}s`).join(" / ") : "none"}; blocked: ${blockedDurations.map((seconds) => `${seconds}s`).join(" / ")}.`
+				: "";
+			setSuccess(base + durationNote);
 			setPlan(null); // recompute the preflight for the next copy.
 			await refreshProductData(selectedProduct.id);
 		} catch (reason) {

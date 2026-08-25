@@ -174,6 +174,12 @@ export interface V3LandbankResponse {
 	full_storyboard_first: true;
 }
 
+export interface V3ExecutionDurationStatus {
+	seconds: number;
+	status: "READY" | "REVIEW_REQUIRED" | "BLOCKED";
+	issue_codes: string[];
+}
+
 export interface V3AssistantExecution {
 	run_id: string;
 	plan_id: string;
@@ -185,6 +191,13 @@ export interface V3AssistantExecution {
 	provider_calls: number;
 	credit_spend: number;
 	projection_derivation: string;
+	// Semantic-duration decoupling: the semantic supply is committed even when a
+	// duration is blocked.  These per-duration outcomes are truthful, additive,
+	// and never gate the committed semantic copy.
+	semantic_committed?: boolean;
+	duration_statuses?: V3ExecutionDurationStatus[];
+	ready_durations_seconds?: number[];
+	blocked_durations_seconds?: number[];
 }
 
 export interface V3ApprovalChecklist {

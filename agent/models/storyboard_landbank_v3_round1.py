@@ -57,6 +57,40 @@ class V3ExclusionReceipt(BaseModel):
     dimensions: dict[str, str] = Field(default_factory=dict)
 
 
+class V3CandidateDurationStatus(BaseModel):
+    """Per-duration outcome for ONE semantic candidate.
+
+    Semantic-duration decoupling: a BLOCKED duration is an independent duration
+    outcome, never a semantic exclusion.  A candidate can be semantically VALID
+    while one duration is BLOCKED and the others are READY.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    seconds: int = Field(gt=0)
+    status: Literal["READY", "REVIEW_REQUIRED", "BLOCKED"]
+    issue_codes: tuple[str, ...] = Field(default_factory=tuple)
+
+
+class V3DurationCapacity(BaseModel):
+    """Truthful per-duration capacity over the evaluated candidate set.
+
+    Reports independent counts (not only a boolean) so an 8s block is visible as
+    ``blocked_capacity`` without collapsing the semantic supply.  ``ready`` is the
+    strict FAST54_<n>S_READY authority: full requested capacity, no block, no
+    pending review — mirroring legacy ``fast54_ready`` but scoped to one duration.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    seconds: int = Field(gt=0)
+    valid_capacity: int = Field(default=0, ge=0)
+    blocked_capacity: int = Field(default=0, ge=0)
+    review_required_capacity: int = Field(default=0, ge=0)
+    ready: bool = False
+    issue_codes: tuple[str, ...] = Field(default_factory=tuple)
+
+
 class V3CandidateCombination(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -70,6 +104,9 @@ class V3CandidateCombination(BaseModel):
     status: Literal["VALID", "REVIEW_REQUIRED", "BLOCKED", "EXCLUDED"]
     master: V3MasterStoryboard | None = None
     projections: tuple[V3DurationProjection, ...] = Field(default_factory=tuple)
+    # Per-duration outcomes attached to a semantically-committed candidate.  A
+    # duration BLOCK lives here and never forces ``status`` to BLOCKED/EXCLUDED.
+    duration_statuses: tuple[V3CandidateDurationStatus, ...] = Field(default_factory=tuple)
     validation_receipts: tuple[V3ValidationReceipt, ...] = Field(default_factory=tuple)
     exclusion_receipts: tuple[V3ExclusionReceipt, ...] = Field(default_factory=tuple)
 
@@ -95,7 +132,15 @@ class V3CandidatePage(BaseModel):
     theoretical_raw_capacity: int = Field(default=0, ge=0)
     semantic_valid_capacity: int = Field(default=0, ge=0)
     weak_review_required_capacity: int = Field(default=0, ge=0)
+    # LEGACY authority — preserved exactly: semantic AND every duration valid AND
+    # no pending review.  New consumers should read the explicit authorities below.
     fast54_ready: bool = False
+    # New decoupled authorities (additive; never redefine ``fast54_ready``).
+    fast54_semantic_ready: bool = False
+    fast54_8s_ready: bool = False
+    fast54_16s_ready: bool = False
+    fast54_24s_ready: bool = False
+    duration_capacities: tuple[V3DurationCapacity, ...] = Field(default_factory=tuple)
 
 
 class V3CapacitySnapshot(BaseModel):
@@ -120,7 +165,14 @@ class V3CapacitySnapshot(BaseModel):
     theoretical_raw_capacity: int = Field(default=0, ge=0)
     semantic_valid_capacity: int = Field(default=0, ge=0)
     weak_review_required_capacity: int = Field(default=0, ge=0)
+    # LEGACY authority — preserved exactly (semantic AND all durations AND no review).
     fast54_ready: bool = False
+    # New decoupled authorities (additive; never redefine ``fast54_ready``).
+    fast54_semantic_ready: bool = False
+    fast54_8s_ready: bool = False
+    fast54_16s_ready: bool = False
+    fast54_24s_ready: bool = False
+    duration_capacities: tuple[V3DurationCapacity, ...] = Field(default_factory=tuple)
 
 
 class V3CompileResult(BaseModel):
@@ -160,6 +212,8 @@ __all__ = [
     "V3FormulaReadModel",
     "V3EvidenceSelection",
     "V3ExclusionReceipt",
+    "V3CandidateDurationStatus",
+    "V3DurationCapacity",
     "V3CandidateCombination",
     "V3CandidatePage",
     "V3CapacitySnapshot",

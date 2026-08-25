@@ -243,6 +243,100 @@ async def test_round1_fast54_real_factory_is_lazy_and_compiles_all_compatible_ca
 
 
 @pytest.mark.asyncio
+async def test_round1_fast54_8s_block_keeps_semantic_supply_and_reports_per_duration(monkeypatch):
+    # ACCEPTANCE CRITERION (semantic-duration decoupling): an 8s projection
+    # failure must NOT zero or reject the otherwise-valid 6x3x3 semantic supply.
+    # 8s is BLOCKED; 16s/24s stay READY; semantic_valid_capacity remains 54 and
+    # FAST54_SEMANTIC_READY is true.  No AI rewrite is invoked.
+    import agent.services.storyboard_landbank_v3_factory as factory_mod
+
+    product_id = "round1-fast54-8s-block"
+    await _seed_round1_truth(product_id, f"{product_id}-snapshot", f"{product_id}-fact")
+    service = V3CopyFactoryService()
+    recipe, *_supply = await _create_supply(service, product_id, f"{product_id}-fact")
+
+    def blocked_8s(master, *, duration_seconds, **kwargs):
+        # Deterministic claim-bearing 8s block; 16s/24s use the REAL projector.
+        if int(duration_seconds) == 8:
+            return (
+                None,
+                ("CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION",),
+                ("claim-bearing 8s stage requires a governed semantic rewrite",),
+            )
+        return compile_duration_projection(master, duration_seconds=duration_seconds, **kwargs)
+
+    monkeypatch.setattr(factory_mod, "compile_duration_projection", blocked_8s)
+    page = await service.enumerate_candidates(recipe.recipe_id, limit=100, durations=(8, 16, 24))
+
+    # --- Semantic supply is intact (NOT zeroed) ---
+    assert page.theoretical_capacity == 54
+    assert page.semantic_valid_capacity == 54
+    assert page.fast54_semantic_ready is True
+    assert len(page.candidates) == 54
+    assert all(candidate.status in {"VALID", "REVIEW_REQUIRED"} for candidate in page.candidates)
+    assert all(candidate.master is not None for candidate in page.candidates)
+    # Only 16s + 24s are projected per candidate; 8s is omitted (blocked).
+    assert all(len(candidate.projections) == 2 for candidate in page.candidates)
+    assert all(
+        {status.seconds: status.status for status in candidate.duration_statuses}
+        == {8: "BLOCKED", 16: "READY", 24: "READY"}
+        for candidate in page.candidates
+    )
+
+    # --- Per-duration truthful capacity ---
+    by_seconds = {item.seconds: item for item in page.duration_capacities}
+    assert by_seconds[8].valid_capacity == 0
+    assert by_seconds[8].blocked_capacity == 54
+    assert by_seconds[8].ready is False
+    assert "CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION" in by_seconds[8].issue_codes
+    assert by_seconds[16].valid_capacity == 54 and by_seconds[16].blocked_capacity == 0 and by_seconds[16].ready is True
+    assert by_seconds[24].valid_capacity == 54 and by_seconds[24].blocked_capacity == 0 and by_seconds[24].ready is True
+
+    # --- Named authorities (new) + legacy preserved ---
+    assert page.fast54_8s_ready is False
+    assert page.fast54_16s_ready is True
+    assert page.fast54_24s_ready is True
+    # LEGACY fast54_ready is NOT redefined: an 8s block keeps it False.
+    assert page.fast54_ready is False
+    assert page.duration_valid_capacity == 0
+    # A per-duration block is not a candidate exclusion.
+    assert not page.exclusions
+
+
+@pytest.mark.asyncio
+async def test_round1_capacity_snapshot_surfaces_decoupled_authorities(monkeypatch):
+    import agent.services.storyboard_landbank_v3_factory as factory_mod
+
+    product_id = "round1-fast54-8s-block-capacity"
+    await _seed_round1_truth(product_id, f"{product_id}-snapshot", f"{product_id}-fact")
+    service = V3CopyFactoryService()
+    recipe, *_supply = await _create_supply(service, product_id, f"{product_id}-fact")
+
+    def blocked_8s(master, *, duration_seconds, **kwargs):
+        if int(duration_seconds) == 8:
+            return None, ("CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION",), ("blocked",)
+        return compile_duration_projection(master, duration_seconds=duration_seconds, **kwargs)
+
+    monkeypatch.setattr(factory_mod, "compile_duration_projection", blocked_8s)
+    snapshot = await service.capacity(recipe.recipe_id)
+
+    assert snapshot.semantic_valid_capacity == 54
+    assert snapshot.fast54_semantic_ready is True
+    assert snapshot.fast54_ready is False
+    assert snapshot.fast54_8s_ready is False
+    assert snapshot.fast54_16s_ready is True
+    assert snapshot.fast54_24s_ready is True
+    by_seconds = {item.seconds: item for item in snapshot.duration_capacities}
+    assert by_seconds[8].blocked_capacity == 54 and by_seconds[8].valid_capacity == 0
+    assert by_seconds[16].valid_capacity == 54
+    assert by_seconds[24].valid_capacity == 54
+    # Semantic supply is sufficient => no semantic shortfall; the 8s block is
+    # surfaced as a duration shortfall, not a semantic one.
+    assert "SEMANTIC_CAPACITY_SHORTFALL" not in snapshot.shortfall_codes
+    assert "CLAIM_STAGE_UNSAFE_DETERMINISTIC_COMPRESSION" in snapshot.shortfall_codes
+
+
+@pytest.mark.asyncio
 async def test_round1_fast54_adversarial_supply_returns_real_bridge_exclusions():
     product_id = f"round1-adversarial-product-{uuid.uuid4().hex}"
     fact_id = f"fact:{product_id}:allowed_claims_json:0"
