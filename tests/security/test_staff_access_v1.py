@@ -7,9 +7,19 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport
 
+from agent.access_control_constants import PERMISSION_CODES, ROLE_PERMISSION_CODES
+from agent.db import crud
 from agent.main import app
-from agent.security.access_control import classify_route, required_permission
+from agent.models.product_intelligence_review_draft import (
+    ProductIntelligenceReviewDraftCreateRequest,
+)
+from agent.security.access_control import (
+    _module_for_path,
+    classify_route,
+    required_permission,
+)
 from agent.services import access_control_service as access
+from agent.services.product_intelligence_review_draft_service import create_review_draft
 from agent.db.schema import get_db
 
 
@@ -36,6 +46,24 @@ async def _csrf(client: httpx.AsyncClient) -> str:
 async def _post(client: httpx.AsyncClient, path: str, body: dict, csrf: str | None = None) -> httpx.Response:
     token = csrf or await _csrf(client)
     return await client.post(path, json=body, headers={"X-CSRF-Token": token})
+
+
+def _safe_product_intelligence_draft_request() -> ProductIntelligenceReviewDraftCreateRequest:
+    return ProductIntelligenceReviewDraftCreateRequest(
+        product_description="Compact 500ml bottle for daily routine storage.",
+        benefits_json=["portable", "compact"],
+        usp_json=["clean bottle format", "easy shelf fit"],
+        usage_text="Use as part of a daily routine.",
+        ingredients_text="Bottle, cap, printed label.",
+        warnings_text="Store away from direct heat.",
+        target_customer_text="Busy adults who prefer compact packaging.",
+        allowed_claims_json=["portable daily carry", "compact shelf storage"],
+        source_urls_json={"source_url": "https://example.com/source"},
+        image_evidence_json={"image_url": "https://example.com/image.jpg"},
+        buyer_persona_snapshot_json={"persona": "busy adults"},
+        copy_strategy_summary_json={"angle": "compact routine convenience"},
+        created_by="owner",
+    )
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -206,6 +234,156 @@ async def test_rbac_denies_direct_api_and_binds_staff_session():
             logout = await _post(editor, "/api/auth/logout", {})
             assert logout.status_code == 200
             assert (await editor.get("/api/auth/current-session")).json()["authenticated"] is False
+
+
+@pytest.mark.asyncio
+async def test_owner_product_intelligence_workflow_passes_real_access_middleware():
+    owner_email = _email("owner")
+    owner_password = _password()
+    async with await _client() as owner:
+        setup = await _post(
+            owner,
+            "/api/auth/setup-owner",
+            {
+                "display_name": "Product Owner",
+                "email": owner_email,
+                "password": owner_password,
+                "password_confirmation": owner_password,
+            },
+        )
+        assert setup.status_code == 200
+
+        session = await owner.get("/api/auth/current-session")
+        assert session.status_code == 200
+        session_user = session.json()["user"]
+        assert session.json()["authenticated"] is True
+        assert session_user["role_codes"] == ["OWNER"]
+        assert "products.create" in session_user["permissions"]
+        assert "products.update" in session_user["permissions"]
+        assert "products.execute" not in session_user["permissions"]
+
+        product = await crud.create_product(
+            raw_product_title="RBAC Product Intelligence Fixture",
+            source="MANUAL",
+            product_display_name="RBAC Product Intelligence Fixture",
+            product_short_name="RBAC Product Intelligence Fixture",
+        )
+        draft = await create_review_draft(
+            product["id"], _safe_product_intelligence_draft_request()
+        )
+        csrf = str(owner.cookies.get(access.CSRF_COOKIE_NAME))
+        headers = {"X-CSRF-Token": csrf}
+
+        save = await owner.patch(
+            f"/api/product-intelligence/review-drafts/{draft.draft_id}",
+            json={"reviewer_note": "Saved through the real middleware."},
+            headers=headers,
+        )
+        assert save.status_code == 200, save.text
+
+        validate = await owner.post(
+            f"/api/product-intelligence/review-drafts/{draft.draft_id}/validate",
+            json={},
+            headers=headers,
+        )
+        assert validate.status_code == 200, validate.text
+
+        approve = await owner.post(
+            f"/api/product-intelligence/review-drafts/{draft.draft_id}/approve",
+            json={"approved_by": "owner"},
+            headers=headers,
+        )
+        assert approve.status_code == 200, approve.text
+        assert approve.json()["status"] == "APPROVED"
+        for response in (save, validate, approve):
+            assert not (
+                response.status_code == 403
+                and response.json().get("permission") == "products.execute"
+            )
+
+
+def test_product_role_boundaries_and_seed_vocabulary_remain_canonical():
+    assert set(ROLE_PERMISSION_CODES["OWNER"]) == set(PERMISSION_CODES)
+    assert {"products.create", "products.update"}.issubset(
+        ROLE_PERMISSION_CODES["EDITOR"]
+    )
+    assert "products.update" not in ROLE_PERMISSION_CODES["OPERATOR"]
+    assert "products.create" not in ROLE_PERMISSION_CODES["OPERATOR"]
+    assert "products.update" not in ROLE_PERMISSION_CODES["VIEWER"]
+    assert "products.create" not in ROLE_PERMISSION_CODES["VIEWER"]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "expected"),
+    (
+        (
+            "PATCH",
+            "/api/product-intelligence/review-drafts/draft-1",
+            "products.update",
+        ),
+        (
+            "POST",
+            "/api/product-intelligence/review-drafts/draft-1/validate",
+            "products.update",
+        ),
+        (
+            "POST",
+            "/api/product-intelligence/review-drafts/draft-1/approve",
+            "products.update",
+        ),
+        (
+            "POST",
+            "/api/product-intelligence/review-drafts/draft-1/reject",
+            "products.update",
+        ),
+        (
+            "POST",
+            "/api/product-intelligence/review-drafts/draft-1/ai-fill-missing",
+            "products.update",
+        ),
+        (
+            "POST",
+            "/api/product-intelligence/review-drafts/draft-1/field-dispositions",
+            "products.update",
+        ),
+        (
+            "POST",
+            "/api/products/product-1/intelligence/revision-drafts",
+            "products.create",
+        ),
+        (
+            "POST",
+            "/api/products/product-1/claim-safe-rewrite-approval",
+            "products.update",
+        ),
+        (
+            "POST",
+            "/api/product-truth/product-1/visual-lock/approve",
+            "products.update",
+        ),
+    ),
+)
+def test_product_intelligence_permission_contract(method: str, path: str, expected: str):
+    actual = required_permission(path, method)
+    assert actual == expected
+    assert actual in PERMISSION_CODES
+
+
+def test_every_registered_product_route_uses_canonical_permission_code():
+    product_routes = []
+    for route in app.routes:
+        methods = getattr(route, "methods", None)
+        if not methods or classify_route(route.path) != "B_AUTHENTICATED_HUMAN":
+            continue
+        if _module_for_path(route.path) != "products":
+            continue
+        for method in sorted(methods):
+            permission = required_permission(route.path, method)
+            product_routes.append((method, route.path, permission))
+            assert permission in PERMISSION_CODES, (
+                f"{method} {route.path} generated phantom permission {permission}"
+            )
+    assert product_routes
 
 
 @pytest.mark.asyncio
