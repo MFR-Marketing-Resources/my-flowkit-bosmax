@@ -7,10 +7,18 @@ from agent.models.request import RequestCreate
 router = APIRouter(prefix="/api/smoke", tags=["smoke"])
 logger = logging.getLogger(__name__)
 
+LEGACY_VIDEO_REQUEST_RETIRED_CODE = (
+    "LEGACY_VIDEO_REQUEST_RETIRED_USE_DURABLE_VIDEO_JOB"
+)
+
 @router.post("/true-f2v")
 async def smoke_test_true_f2v():
     """Trigger a controlled TRUE_F2V smoke test using a real product."""
-    
+    raise HTTPException(
+        status_code=410,
+        detail=LEGACY_VIDEO_REQUEST_RETIRED_CODE,
+    )
+
     # 1. Check if extension is connected
     if not event_bus.extension_connected:
         return {"ok": False, "error": "EXTENSION_OFFLINE", "message": "Flow Kit extension is not connected."}

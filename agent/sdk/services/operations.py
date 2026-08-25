@@ -57,6 +57,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+LEGACY_VIDEO_REQUEST_RETIRED_CODE = (
+    "LEGACY_VIDEO_REQUEST_RETIRED_USE_DURABLE_VIDEO_JOB"
+)
+
 # Entity types that need landscape (wide) reference images
 _LANDSCAPE_ENTITY_TYPES = {"location"}
 
@@ -327,6 +331,8 @@ class OperationService:
     async def generate_scene_video(self, scene: dict, orientation: str,
                                    request_id: str = "") -> dict:
         """Generate video from a scene image (i2v). Submits + polls."""
+        raise RuntimeError(LEGACY_VIDEO_REQUEST_RETIRED_CODE)
+
         prefix = "vertical" if orientation == "VERTICAL" else "horizontal"
         image_media_id = scene.get(f"{prefix}_image_media_id")
         if not image_media_id:
@@ -408,6 +414,8 @@ class OperationService:
         face refs.  Collect all matching entity media_ids and optionally include
         the scene's end_scene image.
         """
+        raise RuntimeError(LEGACY_VIDEO_REQUEST_RETIRED_CODE)
+
         project = await crud.get_project(scene.get("_project_id", "0"))
         aspect = "VIDEO_ASPECT_RATIO_PORTRAIT" if orientation == "VERTICAL" else "VIDEO_ASPECT_RATIO_LANDSCAPE"
         tier = project.get("user_paygate_tier", "PAYGATE_TIER_TWO") if project else "PAYGATE_TIER_TWO"
@@ -520,6 +528,8 @@ class OperationService:
         If a previous attempt already submitted (op_name saved in DB), skip
         submit and just re-poll — avoids duplicate API calls on retry.
         """
+        raise RuntimeError(LEGACY_VIDEO_REQUEST_RETIRED_CODE)
+
         prefix = "vertical" if orientation == "VERTICAL" else "horizontal"
         video_media_id = scene.get(f"{prefix}_video_media_id")
         if not video_media_id:
@@ -716,6 +726,8 @@ class OperationService:
     async def queue_scene_video(self, scene_id: str, project_id: str,
                                 video_id: str, orientation: str | None = None) -> str:
         """Queue a GENERATE_VIDEO request. Returns request id."""
+        raise RuntimeError(LEGACY_VIDEO_REQUEST_RETIRED_CODE)
+
         orientation = await self._resolve_queue_orientation(video_id, orientation)
         row = await crud.create_request(
             req_type="GENERATE_VIDEO", orientation=orientation,
@@ -726,6 +738,8 @@ class OperationService:
     async def queue_scene_video_refs(self, scene_id: str, project_id: str,
                                      video_id: str, orientation: str | None = None) -> str:
         """Queue a GENERATE_VIDEO_REFS request. Returns request id."""
+        raise RuntimeError(LEGACY_VIDEO_REQUEST_RETIRED_CODE)
+
         orientation = await self._resolve_queue_orientation(video_id, orientation)
         row = await crud.create_request(
             req_type="GENERATE_VIDEO_REFS", orientation=orientation,
@@ -736,6 +750,8 @@ class OperationService:
     async def queue_upscale_video(self, scene_id: str, project_id: str,
                                   video_id: str, orientation: str | None = None) -> str:
         """Queue an UPSCALE_VIDEO request. Returns request id."""
+        raise RuntimeError(LEGACY_VIDEO_REQUEST_RETIRED_CODE)
+
         orientation = await self._resolve_queue_orientation(video_id, orientation)
         row = await crud.create_request(
             req_type="UPSCALE_VIDEO", orientation=orientation,
