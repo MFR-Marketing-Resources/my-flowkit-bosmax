@@ -287,6 +287,10 @@ def test_bridge_lease_missing_durable_row_blocks_provider(monkeypatch):
 
 def test_external_runner_cannot_bypass_production_flow_client_lease(monkeypatch):
     class _UnavailableProductionClient(_ProductionTypedLeaseClient):
+        # This partial typed fixture targets the production lease boundary.
+        # Avoid invoking FlowClient's project selector without FlowClient state.
+        bind_flow_session = None
+
         def acquire_operation_lease(self, **_filters):
             raise ConnectionError("ERR_EXTENSION_CONNECTION_NOT_FOUND")
 
