@@ -6,9 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const resolveMock = vi.fn();
 const previewMock = vi.fn();
 const lineageMock = vi.fn();
-const authorizeMock = vi.fn();
-const liveRunMock = vi.fn();
-const materializeMock = vi.fn();
 const candidatesMock = vi.fn();
 const resolveSourceMock = vi.fn();
 const lookupMock = vi.fn();
@@ -21,9 +18,6 @@ vi.mock('../api/nativeExtend', () => ({
   resolveNativeExtend: (...a: unknown[]) => resolveMock(...a),
   previewNativeExtend: (...a: unknown[]) => previewMock(...a),
   fetchNativeExtendLineage: (...a: unknown[]) => lineageMock(...a),
-  requestNativeExtendLiveAuthorization: (...a: unknown[]) => authorizeMock(...a),
-  runNativeExtend: (...a: unknown[]) => liveRunMock(...a),
-  materializeNativeExtendManifest: (...a: unknown[]) => materializeMock(...a),
   fetchNativeExtendSourceCandidates: (...a: unknown[]) => candidatesMock(...a),
   resolveNativeExtendSource: (...a: unknown[]) => resolveSourceMock(...a),
   lookupVideoJob: (...a: unknown[]) => lookupMock(...a),
@@ -32,20 +26,6 @@ vi.mock('../api/nativeExtend', () => ({
   startVideoJob: (...a: unknown[]) => startJobMock(...a),
   getVideoJobStatus: (...a: unknown[]) => jobStatusMock(...a),
 }));
-
-// The approval modal — stubbed to a one-click approve so the live-dispatch test
-// can drive materialize -> approve -> authorize -> run.
-vi.mock('./execution-approval/ManifestApprovalModal', async () => {
-  const React = await import('react');
-  return {
-    ManifestApprovalModal: ({ onApproved }: { onApproved: () => void }) =>
-      React.createElement(
-        'button',
-        { type: 'button', 'data-testid': 'mock-extend-manifest-approve', onClick: () => onApproved() },
-        'approve',
-      ),
-  };
-});
 
 // Import SUT after mocks.
 import NativeExtendPanel from './NativeExtendPanel';
@@ -56,7 +36,6 @@ afterEach(() => {
 });
 
 beforeEach(() => {
-  materializeMock.mockResolvedValue({ manifest_id: 'eam_test', items: [] });
   // Default: no finished clips — existing tests drive ids via props.
   candidatesMock.mockResolvedValue({ candidates: [], count: 0 });
   resolveSourceMock.mockResolvedValue({
@@ -174,7 +153,7 @@ describe('NativeExtendPanel', () => {
     expect(screen.getByTestId('native-extend-preview-btn')).toBeDisabled();
   });
 
-  it('requires explicit bounded confirmation before a live run can be authorized', async () => {
+  it('keeps dry-run preview but exposes no direct-live caller', async () => {
     resolveMock.mockResolvedValue(READY);
     lineageMock.mockResolvedValue({ lineage: [], count: 0 });
     previewMock.mockResolvedValue({
@@ -197,37 +176,12 @@ describe('NativeExtendPanel', () => {
     await waitFor(() => expect(previewMock).toHaveBeenCalledTimes(1));
     expect(await screen.findByTestId('preview-op-count')).toHaveTextContent('2');
     expect(screen.getByTestId('preview-block-2')).toBeInTheDocument();
-    expect(screen.getByTestId('native-extend-live-btn')).toHaveTextContent('2');
+    expect(screen.queryByTestId('native-extend-live-btn')).toBeNull();
     expect(screen.queryByTestId('native-extend-live-confirm')).toBeNull();
-
-    authorizeMock.mockResolvedValue({
-      authorization_token: 'one-shot-token',
-      planned_operation_count: 2,
-      expires_in_seconds: 300,
-    });
-    liveRunMock.mockResolvedValue({
-      dry_run: false,
-      planned_operation_count: 2,
-      block_count: 2,
-      blocks: [],
-    });
-    fireEvent.click(screen.getByTestId('native-extend-live-btn'));
-    expect(await screen.findByTestId('native-extend-live-confirm')).toHaveTextContent('exactly 2');
-    fireEvent.click(screen.getByTestId('native-extend-live-confirm-btn'));
-
-    // Final Prompt Approval Gate: the per-block manifest is materialised, then
-    // approved, BEFORE any authorization / paid dispatch.
-    await waitFor(() => expect(materializeMock).toHaveBeenCalledTimes(1));
-    expect(authorizeMock).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByTestId('mock-extend-manifest-approve'));
-
-    await waitFor(() => expect(authorizeMock).toHaveBeenCalledTimes(1));
-    expect(liveRunMock).toHaveBeenCalledWith(expect.objectContaining({
-      dry_run: false,
-      confirm_live_credit_burn: true,
-      confirmed_extend_operation_count: 2,
-      live_authorization_token: 'one-shot-token',
-    }));
+    expect(screen.queryByTestId('native-extend-live-result')).toBeNull();
+    expect(screen.getByTestId('native-extend-orchestrator-only')).toHaveTextContent(
+      /Use Generate Video above.*durable Full Video job/i,
+    );
   });
 
   it('renders lineage / polling status', async () => {

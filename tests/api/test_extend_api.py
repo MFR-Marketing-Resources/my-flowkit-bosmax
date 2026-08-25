@@ -1,5 +1,4 @@
-"""Native-extend API surface: ONE authoritative path (/extend-run), explicit
-live/dry-run + bounded confirmation, central resolver, no direct-submit bypass."""
+"""Native-extend API: provider-free planning plus durable-job-only execution."""
 import json
 
 import pytest
@@ -8,7 +7,9 @@ from fastapi import HTTPException
 from agent.api import flow
 
 
-def _run(pid="p", *, dry_run=True, confirm=False, count=None, blocks=1, aspect="VIDEO_ASPECT_RATIO_PORTRAIT", source="op1"):
+def _run(pid="p", *, dry_run=True, confirm=False, count=None, blocks=1,
+         aspect="VIDEO_ASPECT_RATIO_PORTRAIT", source="op1",
+         live_authorization_token=None):
     return flow.ExtendRunRequest(
         project_id=pid, scene_id=f"s-{pid}", source_operation_id=source,
         aspect_ratio=aspect,
@@ -16,7 +17,8 @@ def _run(pid="p", *, dry_run=True, confirm=False, count=None, blocks=1, aspect="
                                       prompt=f"b{i+2} {pid}", is_final=(i == blocks - 1))
                 for i in range(blocks)],
         dry_run=dry_run, confirm_live_credit_burn=confirm,
-        confirmed_extend_operation_count=count)
+        confirmed_extend_operation_count=count,
+        live_authorization_token=live_authorization_token)
 
 
 # ── no bypass: the direct-submit endpoint is gone (test req 1) ──────────────
@@ -26,52 +28,87 @@ def test_no_direct_extend_video_bypass_exists():
 
 
 # ── dry-run default ─────────────────────────────────────────────────────────
-async def test_extend_run_dry_run_default_spends_nothing():
+async def test_extend_run_dry_run_default_spends_nothing(monkeypatch):
+    class _NoProviderContact:
+        def __getattr__(self, name):
+            raise AssertionError(f"dry-run touched provider client: {name}")
+
+    monkeypatch.setattr(flow, "get_flow_client", lambda: _NoProviderContact())
     out = await flow.extend_run(_run("p-apidry", dry_run=True))
     assert out["dry_run"] is True
     assert out["planned_operation_count"] == 1
     assert out["blocks"][0]["polling_state"] == "SOURCE_READY"
 
 
-# ── explicit live gates (no silent downgrade) ───────────────────────────────
-async def test_extend_run_live_without_confirm_is_409():
+# ── direct live compatibility surfaces are deterministic tombstones ─────────
+@pytest.mark.parametrize(
+    "body",
+    [
+        _run("p-api-retired-unconfirmed", dry_run=False, confirm=False),
+        _run(
+            "p-api-retired-authorized",
+            dry_run=False,
+            confirm=True,
+            count=1,
+            live_authorization_token="retired-token",
+        ),
+    ],
+)
+async def test_extend_run_live_is_410_before_product_client_or_runtime(
+    monkeypatch, body
+):
+    contacts = []
+
+    async def _product(*_args, **_kwargs):
+        contacts.append("product")
+
+    def _client():
+        contacts.append("client")
+        raise AssertionError("live tombstone reached client")
+
+    def _request(*_args, **_kwargs):
+        contacts.append("request")
+        raise AssertionError("live tombstone built runtime request")
+
+    monkeypatch.setattr(flow, "_require_flow_product", _product)
+    monkeypatch.setattr(flow, "get_flow_client", _client)
+    monkeypatch.setattr(flow, "_native_extend_chain_request", _request)
     with pytest.raises(HTTPException) as exc:
-        await flow.extend_run(_run("p-apiconf", dry_run=False, confirm=False))
-    assert exc.value.status_code == 409
-    assert "LIVE_CREDIT_CONFIRMATION_REQUIRED" in str(exc.value.detail)
+        await flow.extend_run(body)
+    assert exc.value.status_code == 410
+    assert exc.value.detail == "DIRECT_NATIVE_EXTEND_RETIRED_USE_DURABLE_VIDEO_JOB"
+    assert contacts == []
 
 
-async def test_extend_run_live_flag_off_is_409(monkeypatch):
-    monkeypatch.delenv("NATIVE_EXTEND_ENABLED", raising=False)
-    with pytest.raises(HTTPException) as exc:
-        await flow.extend_run(_run("p-apiflag", dry_run=False, confirm=True, count=1))
-    assert exc.value.status_code == 409
-    assert "NATIVE_EXTEND_DISABLED" in str(exc.value.detail)
+async def test_live_authorization_is_410_before_plan_or_token_runtime(monkeypatch):
+    contacts = []
 
+    def _request(*_args, **_kwargs):
+        contacts.append("request")
+        raise AssertionError("authorization tombstone built a plan")
 
-async def test_live_authorization_is_single_use_and_bound_to_planned_count(monkeypatch):
-    monkeypatch.delenv("NATIVE_EXTEND_ENABLED", raising=False)
-    body = _run("p-api-auth", dry_run=False, confirm=True, count=1)
-    authorization = await flow.native_extend_live_authorization(body)
-
-    assert authorization["planned_operation_count"] == 1
-    assert authorization["authorization_token"]
-
-
-async def test_live_authorization_requires_explicit_credit_confirmation():
+    monkeypatch.setattr(flow, "_native_extend_chain_request", _request)
     with pytest.raises(HTTPException) as exc:
         await flow.native_extend_live_authorization(
-            _run("p-api-no-confirm", dry_run=False, confirm=False, count=1))
-    assert exc.value.status_code == 409
-    assert "LIVE_CREDIT_CONFIRMATION_REQUIRED" in str(exc.value.detail)
+            _run("p-api-auth-retired", dry_run=False, confirm=True, count=1)
+        )
+    assert exc.value.status_code == 410
+    assert exc.value.detail == "DIRECT_NATIVE_EXTEND_RETIRED_USE_DURABLE_VIDEO_JOB"
+    assert contacts == []
 
 
-async def test_extend_run_count_mismatch_is_409(monkeypatch):
-    monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
-    with pytest.raises(HTTPException) as exc:
-        await flow.extend_run(_run("p-apicnt", dry_run=False, confirm=True, count=5, blocks=2))
-    assert exc.value.status_code == 409
-    assert "EXTEND_CONFIRMATION_COUNT_MISMATCH" in str(exc.value.detail)
+async def test_native_extend_manifest_materialization_remains_provider_free(monkeypatch):
+    monkeypatch.setattr(
+        flow,
+        "get_flow_client",
+        lambda: (_ for _ in ()).throw(AssertionError("manifest touched provider client")),
+    )
+    manifest = await flow.native_extend_materialize_approval_manifest(
+        _run("p-api-manifest", dry_run=True)
+    )
+    assert manifest["surface"] == "native_extend"
+    assert manifest["state"] == "REVIEW_REQUIRED"
+    assert manifest["item_count"] == 1
 
 
 async def test_extend_run_missing_parent_is_422():

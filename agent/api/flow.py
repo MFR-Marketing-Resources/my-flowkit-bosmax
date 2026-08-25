@@ -211,8 +211,7 @@ class ExtendBlockModel(BaseModel):
 
 
 class ExtendRunRequest(BaseModel):
-    """Native Flow Extend CHAIN — THE single authoritative execution surface.
-    DRY_RUN by default; a live run requires explicit confirm + bounded op count."""
+    """Native Flow Extend preview request plus retired-live compatibility fields."""
     project_id: str
     product_id: Optional[str] = None
     scene_id: str
@@ -224,11 +223,9 @@ class ExtendRunRequest(BaseModel):
     user_paygate_tier: str = "PAYGATE_TIER_ONE"
     dry_run: bool = True
     confirm_live_credit_burn: bool = False
-    # Bounded live-credit authorization: MUST equal the resume-aware planned submit
-    # count (from a prior dry-run's planned_operation_count) or the live run is rejected.
+    # Legacy live-credit fields remain accepted so retired callers receive a stable
+    # 410 response instead of request-shape-dependent validation ambiguity.
     confirmed_extend_operation_count: Optional[int] = None
-    # Process-local, single-use authorization issued only after the operator accepts
-    # the exact planned operation count. It is never persisted or logged.
     live_authorization_token: Optional[str] = None
 
 
@@ -2793,10 +2790,9 @@ def _native_extend_chain_request(body: ExtendRunRequest, runtime):
 @router.post("/native-extend/materialize-approval-manifest")
 async def native_extend_materialize_approval_manifest(body: ExtendRunRequest):
     """Freeze the per-block continuation prompts of a native Extend chain into an
-    Approved Generation Manifest (run_ref = the package id — the key each block
-    dispatch resolves against). The operator reviews + approves before /extend-run;
-    each block then matches its approved item by envelope hash (GAP 4 — no generic
-    Extend exemption). Provider-free: nothing is planned, submitted, or spent."""
+    Approved Generation Manifest for provider-free review and diagnostics. The
+    durable video job remains the sole paid execution owner. Nothing is planned,
+    submitted, or spent by this compatibility endpoint."""
     from agent.services import execution_approval_service as _eas
     from agent.services import google_flow_native_extend_runtime as _nx
 
@@ -2818,57 +2814,23 @@ async def native_extend_materialize_approval_manifest(body: ExtendRunRequest):
 
 @router.post("/native-extend/live-authorization")
 async def native_extend_live_authorization(body: ExtendRunRequest):
-    """Issue one bounded, expiring authorization after explicit operator confirmation.
-
-    This route only resolves the existing chain plan. It never calls Google Flow or
-    spends credits; the resulting token is valid for one matching /extend-run call.
-    """
-    from agent.services import extend_route_planner as _routes
-    from agent.services import google_flow_native_extend_runtime as _nx
-    if body.dry_run or not body.confirm_live_credit_burn:
-        raise HTTPException(409, _nx.LIVE_CREDIT_CONFIRMATION_REQUIRED)
-    try:
-        authorization = await _nx.issue_live_authorization(
-            _native_extend_chain_request(body, _nx),
-            confirmed_operation_count=body.confirmed_extend_operation_count,
-        )
-        return {
-            "authorization_token": authorization["token"],
-            "planned_operation_count": authorization["planned_operation_count"],
-            "expires_in_seconds": authorization["expires_in_seconds"],
-        }
-    except _routes.CapabilityAuthorityMissing as exc:
-        raise HTTPException(403, str(exc))
-    except _nx.NativeExtendError as exc:
-        raise HTTPException(422 if exc.code in {
-            _nx.EXTEND_PARENT_MEDIA_ID_MISSING, _nx.EXTEND_PROJECT_CONTEXT_MISSING,
-            _nx.EXTEND_SCENE_CONTEXT_MISSING, _nx.EXTEND_RUNTIME_CONTRACT_MISSING,
-            _nx.EXTEND_UNSUPPORTED_MODEL, _nx.EXTEND_UNSUPPORTED_DURATION,
-        } else 409, str(exc))
+    """Compatibility tombstone: live Extend is owned by the durable video job."""
+    raise HTTPException(
+        410, "DIRECT_NATIVE_EXTEND_RETIRED_USE_DURABLE_VIDEO_JOB"
+    )
 
 
 @router.post("/extend-run")
 async def extend_run(body: ExtendRunRequest):
-    """Native Flow Extend CHAIN — THE single authoritative execution surface.
-
-    Every production native-extend submission goes through this one path (validation
-    -> capability -> bounded confirmation -> persistence -> idempotency -> submit ->
-    child extraction -> polling -> lineage -> resume). There is NO direct-submit
-    bypass. Explicit live/dry-run contract (caller intent is never silently rewritten):
-      * dry_run=true  -> plan + persist SOURCE_READY, spend nothing.
-      * dry_run=false + no confirm             -> 409 LIVE_CREDIT_CONFIRMATION_REQUIRED
-      * dry_run=false + confirm + flag OFF      -> 409 NATIVE_EXTEND_DISABLED
-      * dry_run=false + confirm + no/!=count    -> 409 (confirmation / count mismatch)
-      * dry_run=false + confirm + flag ON + count==plan -> live execution.
-    """
+    """Provider-free Native Extend preview; direct live execution is retired."""
+    if not body.dry_run:
+        # The durable video-production job is the sole live owner. Reject before
+        # product authority, client/project lookup, request construction, or runtime.
+        raise HTTPException(
+            410, "DIRECT_NATIVE_EXTEND_RETIRED_USE_DURABLE_VIDEO_JOB"
+        )
     from agent.services import extend_route_planner as _routes
     from agent.services import google_flow_native_extend_runtime as _nx
-    if not body.dry_run:
-        await _require_flow_product(body.product_id, lane="NATIVE_EXTEND")
-    # NOTE: no connection pre-check here — the runtime runs ALL fail-closed gates
-    # (capability -> confirm -> flag -> bounded count) FIRST, so an unauthorized live
-    # request is rejected with its precise 4xx regardless of extension state. A genuine
-    # disconnect surfaces from the submit path as EXTEND_REQUEST_REJECTED.
     client = get_flow_client()
     chain_req = _native_extend_chain_request(body, _nx)
     try:
