@@ -99,6 +99,7 @@ class FlowClient:
         self._ws_disconnect_count = 0
         self._ws_connected_at: Optional[float] = None
         self._ws_last_disconnect_at: Optional[float] = None
+        self._last_arbitration_error: Optional[str] = None
         self.last_state = "OFFLINE"
 
     def _connection_record(self, connection) -> Optional[dict]:
@@ -241,6 +242,219 @@ class FlowClient:
             connection_id,
             websocket=record.get("websocket"),
         )
+
+    def clear_extension_socket(self, websocket) -> bool:
+        """Remove only the exact socket; never promote a peer implicitly."""
+        record = self._connection_record(websocket)
+        if record is None:
+            return False
+        return self.unregister_extension_connection(
+            str(record["connection_id"]),
+            websocket=websocket,
+        )
+
+    def register_extension_identity(self, websocket, identity: dict) -> str | None:
+        """Attach immutable worker/install identity to its server-owned socket."""
+        record = self._connection_record(websocket)
+        if record is None:
+            return None
+        identity = identity if isinstance(identity, dict) else {}
+        reported_connection_id = str(identity.get("connection_id") or "").strip()
+        if reported_connection_id and reported_connection_id != record["connection_id"]:
+            return None
+        updates = {
+            "installation_id": str(identity.get("installation_id") or "").strip() or None,
+            "extension_session_id": str(
+                identity.get("extension_session_id") or ""
+            ).strip() or None,
+        }
+        if any(
+            record.get(key) is not None
+            and value is not None
+            and str(record.get(key)) != str(value)
+            for key, value in updates.items()
+        ):
+            return None
+        record.update({key: value for key, value in updates.items() if value})
+        record["ready"] = True
+        record.setdefault("metadata", {}).update({
+            key: value
+            for key, value in identity.items()
+            if key not in {"callback_secret", "flowKey"}
+        })
+        return str(record["connection_id"])
+
+    def _record_session_diagnostics(
+        self,
+        extension_session_id: str | None,
+        payload: dict | None,
+    ) -> None:
+        """Record non-secret diagnostics on the exact worker session."""
+        session_id = str(extension_session_id or "").strip()
+        if not session_id or not isinstance(payload, dict):
+            return
+        for record in self._connections.values():
+            if str(record.get("extension_session_id") or "") != session_id:
+                continue
+            record.setdefault("metadata", {}).update({
+                key: value
+                for key, value in payload.items()
+                if key not in {"callback_secret", "flowKey"}
+            })
+
+    @property
+    def extension_diagnostics(self) -> dict:
+        """Expose project/session arbitration state without transport secrets."""
+        metadata_keys = (
+            "extension_id",
+            "extension_version",
+            "extension_build",
+            "background_build_id",
+            "build_sha",
+            "build_stamped",
+            "build_dirty",
+            "extension_root_url",
+            "extension_protocol_version",
+            "flowKeyPresent",
+            "flow_key_present",
+            "tokenAge",
+            "flow_tab_id",
+            "flow_url",
+            "flow_project_url",
+            "project_id",
+            "flow_project_id",
+            "content_build_id",
+            "content_script_protocol_version",
+            "content_script_loaded",
+            "content_script_alive",
+            "editor_capability_ready",
+            "extension_build_match",
+            "build_match",
+            "runtime_build_match",
+            "challenge_verified",
+            "session_challenge_verified",
+            "same_extension_session",
+            "same_extension_identity",
+            "same_flow_tab",
+            "project_match",
+            "runtime_ready",
+            "flow_tab_found",
+            "last_updated_at",
+        )
+        connections = []
+        sessions_by_id = {}
+        for record in sorted(
+            self._connections.values(),
+            key=lambda item: int(item.get("connection_epoch") or 0),
+        ):
+            metadata = record.get("metadata") or {}
+            entry = {
+                "connection_id": record.get("connection_id"),
+                "connection_epoch": record.get("connection_epoch"),
+                "installation_id": record.get("installation_id"),
+                "extension_session_id": record.get("extension_session_id"),
+                "connected": True,
+                "connected_at": record.get("connected_at"),
+                "ready": record.get("ready") is True,
+                **{
+                    key: metadata.get(key)
+                    for key in metadata_keys
+                    if metadata.get(key) is not None
+                },
+            }
+            if "flow_key_present" in metadata:
+                flow_key_present = bool(metadata["flow_key_present"])
+            elif "flowKeyPresent" in metadata:
+                flow_key_present = bool(metadata["flowKeyPresent"])
+            else:
+                flow_key_present = bool(record.get("flow_key"))
+            entry["flowKeyPresent"] = flow_key_present
+            entry["flow_key_present"] = flow_key_present
+            connections.append(entry)
+            session_id = str(record.get("extension_session_id") or "").strip()
+            if session_id:
+                sessions_by_id[session_id] = dict(entry)
+
+        active_lease = self._operation_leases.get(
+            str(self._active_operation_lease_id.get() or "")
+        )
+        lease_record = (
+            self._connections.get(str(active_lease.get("connection_id") or ""))
+            if active_lease
+            else None
+        )
+        if (
+            active_lease
+            and (
+                lease_record is None
+                or lease_record.get("connection_epoch")
+                != active_lease.get("connection_epoch")
+            )
+        ):
+            active_lease = None
+            lease_record = None
+
+        ready_records = [
+            record
+            for record in self._connections.values()
+            if record.get("ready") is True
+            and record.get("installation_id")
+            and record.get("extension_session_id")
+        ]
+        active_record = lease_record
+        if active_record is None and len(ready_records) == 1:
+            active_record = ready_records[0]
+        active_metadata = (active_record or {}).get("metadata") or {}
+        pinned_binding = {}
+        if active_lease:
+            for key in (
+                "extension_session_id",
+                "extension_id",
+                "extension_build",
+                "content_build_id",
+                "flow_tab_id",
+                "project_id",
+                "flow_project_id",
+                "challenge_verified",
+                "same_flow_tab",
+            ):
+                value = active_lease.get(key)
+                if value is None:
+                    value = active_metadata.get(key)
+                if key == "project_id" and value is None:
+                    value = active_lease.get("flow_project_id")
+                if value is not None:
+                    pinned_binding[key] = value
+        return {
+            "ws_counts": {
+                "connects": self._ws_connect_count,
+                "disconnects": self._ws_disconnect_count,
+            },
+            "connects": self._ws_connect_count,
+            "disconnects": self._ws_disconnect_count,
+            "active_extension_session_id": (
+                active_record.get("extension_session_id") if active_record else None
+            ),
+            "active_installation_id": (
+                active_record.get("installation_id") if active_record else None
+            ),
+            "active_connection_id": (
+                active_record.get("connection_id") if active_record else None
+            ),
+            "active_connection_epoch": (
+                active_record.get("connection_epoch") if active_record else None
+            ),
+            "pinned_extension_session_id": (
+                active_lease.get("extension_session_id") if active_lease else None
+            ),
+            "pinned_binding": pinned_binding,
+            "extension_sessions": list(sessions_by_id.values()),
+            "connection_count": len(connections),
+            "ambiguous": len(connections) > 1,
+            "selection_authority": "OPERATION_LEASE",
+            "last_arbitration_error": self._last_arbitration_error,
+            "connections": connections,
+        }
 
     def _select_connection(
         self,
@@ -390,13 +604,19 @@ class FlowClient:
         uptime = None
         if self._ws_connected_at and self.connected:
             uptime = int(time.time() - self._ws_connected_at)
+        diagnostics = self.extension_diagnostics
         return {
             "connected": self.connected,
             "connects": self._ws_connect_count,
             "disconnects": self._ws_disconnect_count,
             "uptime_s": uptime,
+            **{
+                key: value
+                for key, value in diagnostics.items()
+                if key != "connections"
+            },
+            "connection_details": diagnostics["connections"],
             "connections": len(self._connections),
-            "ambiguous": len(self._connections) > 1,
         }
 
     async def handle_message(self, data: dict, *, connection_id: str | None = None):
@@ -417,6 +637,11 @@ class FlowClient:
 
         if data.get("type") == "token_captured":
             record["flow_key"] = data.get("flowKey")
+            flow_key_present = bool(record["flow_key"])
+            record.setdefault("metadata", {}).update({
+                "flowKeyPresent": flow_key_present,
+                "flow_key_present": flow_key_present,
+            })
             if len(self._connections) == 1:
                 self._flow_key = record.get("flow_key")
             logger.info("Flow key captured from extension connection %s", source_connection_id)
@@ -464,6 +689,11 @@ class FlowClient:
                 return False
             record["ready"] = True
             record.update(identity_updates)
+            record.setdefault("metadata", {}).update({
+                key: value
+                for key, value in data.items()
+                if key not in {"callback_secret", "flowKey", "type"}
+            })
             logger.info(
                 "Extension ready connection=%s flowKey=%s",
                 source_connection_id,
@@ -1528,6 +1758,7 @@ class FlowClient:
                 "flowKeyPresent": False,
                 "manualDisconnect": False,
                 "metrics": {},
+                "bridge_diagnostics": self.extension_diagnostics,
             }
 
         async def _query_selected() -> dict:
@@ -1540,6 +1771,7 @@ class FlowClient:
                     "manualDisconnect": False,
                     "metrics": {},
                     "error": result["error"],
+                    "bridge_diagnostics": self.extension_diagnostics,
                 }
                 if "connection_count" in result:
                     response["connection_count"] = result["connection_count"]
@@ -1565,6 +1797,7 @@ class FlowClient:
                             "manualDisconnect": False,
                             "metrics": {},
                             "error": "ERR_EXTENSION_CONNECTION_IDENTITY_MISMATCH",
+                            "bridge_diagnostics": self.extension_diagnostics,
                         }
                     data["connection_id"] = record["connection_id"]
                     data["connection_epoch"] = record["connection_epoch"]
@@ -1579,6 +1812,7 @@ class FlowClient:
                                 "manualDisconnect": False,
                                 "metrics": {},
                                 "error": "ERR_EXTENSION_CONNECTION_IDENTITY_MISMATCH",
+                                "bridge_diagnostics": self.extension_diagnostics,
                             }
                         if observed:
                             record[key] = observed
@@ -1593,6 +1827,7 @@ class FlowClient:
                 "manualDisconnect": False,
                 "metrics": {},
                 "error": "invalid extension status payload",
+                "bridge_diagnostics": self.extension_diagnostics,
             }
 
         if not self._connections or self._active_operation_lease_id.get():
@@ -1608,6 +1843,7 @@ class FlowClient:
                 "manualDisconnect": False,
                 "metrics": {},
                 "error": error,
+                "bridge_diagnostics": self.extension_diagnostics,
             }
             if error == "ERR_EXTENSION_CONNECTION_AMBIGUOUS":
                 response["connection_count"] = len(self._connections)
@@ -1622,6 +1858,7 @@ class FlowClient:
         self,
         flow_tab_id: int | None = None,
         timeout: float = 15,
+        project_id: str | None = None,
     ) -> dict:
         """Prove that the live extension session owns the live Flow project tab.
 
@@ -1645,12 +1882,14 @@ class FlowClient:
                     "ok": False,
                     "primary_blocker": status["error"],
                     "flow_transport_connected": bool(self._connections),
+                    "bridge_diagnostics": self.extension_diagnostics,
                 }
             if status.get("connected") is not True:
                 return {
                     "ok": False,
                     "primary_blocker": "EXTENSION_BRIDGE_NOT_CONNECTED",
                     "flow_transport_connected": False,
+                    "bridge_diagnostics": self.extension_diagnostics,
                 }
 
             backend_session_id = str(status.get("extension_session_id") or "").strip()
@@ -1660,12 +1899,16 @@ class FlowClient:
                     "primary_blocker": "EXTENSION_SESSION_MISMATCH",
                     "flow_transport_connected": True,
                     "backend_extension_session_id": None,
+                    "bridge_diagnostics": self.extension_diagnostics,
                 }
 
             nonce = secrets.token_urlsafe(24)
             params = {"nonce": nonce}
             if flow_tab_id is not None:
                 params["flow_tab_id"] = int(flow_tab_id)
+            requested_project_id = str(project_id or "").strip() or None
+            if requested_project_id:
+                params["flow_project_id"] = requested_project_id
             response = await self._send(
                 "FLOW_PROVIDER_SESSION_CHALLENGE",
                 params,
@@ -1677,6 +1920,7 @@ class FlowClient:
 
             returned_nonce = str(payload.get("challenge_nonce") or "")
             returned_session_id = str(payload.get("extension_session_id") or "").strip()
+            returned_project_id = str(payload.get("flow_project_id") or "").strip()
             returned_tab_id = payload.get("flow_tab_id")
             try:
                 returned_tab_id = int(returned_tab_id) if returned_tab_id is not None else None
@@ -1687,6 +1931,15 @@ class FlowClient:
             same_extension_session = bool(
                 returned_session_id and returned_session_id == backend_session_id
             )
+            expected_extension_id = str(status.get("extension_id") or "").strip()
+            returned_extension_id = str(
+                payload.get("extension_id") or ""
+            ).strip()
+            same_extension_identity = bool(
+                not expected_extension_id
+                or not returned_extension_id
+                or expected_extension_id == returned_extension_id
+            )
             same_flow_tab = bool(
                 payload.get("same_flow_tab") is True
                 or (
@@ -1696,13 +1949,6 @@ class FlowClient:
                 )
             )
             content_alive = payload.get("content_script_alive") is True
-            challenge_verified = bool(
-                payload.get("ok") is True
-                and nonce_match
-                and same_extension_session
-                and same_flow_tab
-                and content_alive
-            )
             status_build = str(
                 status.get("extension_build")
                 or status.get("background_build_id")
@@ -1712,6 +1958,28 @@ class FlowClient:
             extension_build_match = bool(
                 payload.get("extension_build_match") is True
                 and (not status_build or not result_build or status_build == result_build)
+            )
+            protocol_match = (
+                payload.get("content_script_protocol_version")
+                == "FLOWKIT_DOM_V1"
+            )
+            project_match = bool(
+                returned_project_id
+                and (
+                    requested_project_id is None
+                    or returned_project_id == requested_project_id
+                )
+            )
+            challenge_verified = bool(
+                payload.get("ok") is True
+                and nonce_match
+                and same_extension_session
+                and same_extension_identity
+                and same_flow_tab
+                and content_alive
+                and protocol_match
+                and extension_build_match
+                and project_match
             )
             return {
                 **payload,
@@ -1724,17 +1992,29 @@ class FlowClient:
                 "challenge_nonce_returned": returned_nonce or None,
                 "challenge_nonce_match": nonce_match,
                 "same_extension_session": same_extension_session,
+                "same_extension_identity": same_extension_identity,
                 "same_flow_tab": same_flow_tab,
                 "content_script_alive": content_alive,
+                "content_script_protocol_match": protocol_match,
                 "extension_build_match": extension_build_match,
+                "project_match": project_match,
                 "session_challenge_verified": challenge_verified,
                 "flow_transport_connected": True,
+                "bridge_diagnostics": self.extension_diagnostics,
                 "primary_blocker": (
                     None
                     if challenge_verified
-                    else str(
-                        payload.get("primary_blocker")
-                        or "FLOW_SESSION_CHALLENGE_FAILED"
+                    else (
+                        "FLOW_PROJECT_NOT_FOUND"
+                        if not returned_project_id
+                        else "PROJECT_TAB_MISMATCH"
+                        if not project_match
+                        else "EXTENSION_BUILD_MISMATCH"
+                        if not extension_build_match or not protocol_match
+                        else str(
+                            payload.get("primary_blocker")
+                            or "FLOW_SESSION_CHALLENGE_FAILED"
+                        )
                     )
                 ),
             }
@@ -1753,12 +2033,169 @@ class FlowClient:
                     else "EXTENSION_BRIDGE_NOT_CONNECTED"
                 ),
                 "flow_transport_connected": bool(self._connections),
+                "bridge_diagnostics": self.extension_diagnostics,
             }
         try:
             with self.activate_operation_lease(lease):
                 return await _verify_selected()
         finally:
             self.release_operation_lease(lease)
+
+    async def bind_flow_session(
+        self,
+        project_id: str | None = None,
+        flow_tab_id: int | None = None,
+        timeout: float = 15,
+    ) -> dict:
+        """Select one exact project-aware connection without globally pinning it.
+
+        The returned connection/install/session tuple is a provider-free receipt.
+        Callers must acquire an operation lease for that tuple before any provider
+        work; a later connection can therefore never replace the selected owner.
+        """
+        requested_project_id = str(project_id or "").strip() or None
+        active_lease_id = str(self._active_operation_lease_id.get() or "")
+        active_lease = self._operation_leases.get(active_lease_id)
+        if active_lease_id and (
+            active_lease is None or active_lease.get("released") is True
+        ):
+            self._last_arbitration_error = "ERR_OPERATION_LEASE_NOT_ACTIVE"
+            return {
+                "ok": False,
+                "primary_blocker": self._last_arbitration_error,
+                "flow_transport_connected": bool(self._connections),
+                "candidate_diagnostics": [],
+                "bridge_diagnostics": self.extension_diagnostics,
+            }
+
+        if active_lease is not None:
+            record = self._connections.get(str(active_lease.get("connection_id") or ""))
+            candidates = [record] if record is not None else []
+        else:
+            candidates = [
+                record
+                for record in self._connections.values()
+                if record.get("ready") is True
+                and record.get("installation_id")
+                and record.get("extension_session_id")
+            ]
+
+        if not candidates:
+            blocker = (
+                "EXTENSION_SESSION_ID_MISSING"
+                if self._connections
+                else "EXTENSION_BRIDGE_NOT_CONNECTED"
+            )
+            self._last_arbitration_error = blocker
+            return {
+                "ok": False,
+                "primary_blocker": blocker,
+                "flow_transport_connected": bool(self._connections),
+                "candidate_diagnostics": [],
+                "bridge_diagnostics": self.extension_diagnostics,
+            }
+
+        async def probe(record: dict) -> dict:
+            lease = None
+            try:
+                if active_lease is not None:
+                    result = await self.verify_provider_session_challenge(
+                        flow_tab_id,
+                        timeout=timeout,
+                        project_id=requested_project_id,
+                    )
+                else:
+                    lease = self.acquire_operation_lease(
+                        connection_id=str(record["connection_id"])
+                    )
+                    with self.activate_operation_lease(lease):
+                        result = await self.verify_provider_session_challenge(
+                            flow_tab_id,
+                            timeout=timeout,
+                            project_id=requested_project_id,
+                        )
+            except (ConnectionError, RuntimeError, ValueError) as exc:
+                result = {
+                    "ok": False,
+                    "primary_blocker": str(exc),
+                    "flow_transport_connected": bool(self._connections),
+                }
+            finally:
+                if lease is not None:
+                    self.release_operation_lease(lease)
+            result = result if isinstance(result, dict) else {}
+            result = {
+                **result,
+                "connection_id": record.get("connection_id"),
+                "connection_epoch": record.get("connection_epoch"),
+                "installation_id": record.get("installation_id"),
+                "extension_session_id": record.get("extension_session_id"),
+            }
+            record.setdefault("metadata", {}).update({
+                key: value
+                for key, value in result.items()
+                if key not in {"callback_secret", "flowKey"}
+            })
+            return result
+
+        probes = await asyncio.gather(*(probe(record) for record in candidates))
+        eligible = [result for result in probes if result.get("ok") is True]
+        if len(eligible) > 1:
+            self._last_arbitration_error = "AMBIGUOUS"
+            return {
+                "ok": False,
+                "primary_blocker": "AMBIGUOUS",
+                "flow_transport_connected": True,
+                "candidate_diagnostics": probes,
+                "bridge_diagnostics": self.extension_diagnostics,
+            }
+        if not eligible:
+            blockers = {
+                str(result.get("primary_blocker") or "") for result in probes
+            }
+            if blockers and blockers <= {"FLOW_PROJECT_NOT_FOUND"}:
+                blocker = "NO_OPEN_EDITOR"
+            elif requested_project_id and blockers and blockers <= {
+                "PROJECT_TAB_MISMATCH"
+            }:
+                blocker = "PROJECT_TAB_MISMATCH"
+            elif "EXTENSION_BUILD_MISMATCH" in blockers:
+                blocker = "EXTENSION_BUILD_MISMATCH"
+            else:
+                blocker = "NO_ELIGIBLE_EXTENSION_SESSION"
+            self._last_arbitration_error = blocker
+            return {
+                "ok": False,
+                "primary_blocker": blocker,
+                "flow_transport_connected": True,
+                "candidate_diagnostics": probes,
+                "bridge_diagnostics": self.extension_diagnostics,
+            }
+
+        selected = eligible[0]
+        binding = {
+            "connection_id": selected.get("connection_id"),
+            "connection_epoch": selected.get("connection_epoch"),
+            "installation_id": selected.get("installation_id"),
+            "extension_session_id": selected.get("extension_session_id"),
+            "extension_id": selected.get("extension_id"),
+            "extension_version": selected.get("extension_version"),
+            "extension_build": selected.get("extension_build"),
+            "content_build_id": selected.get("content_build_id"),
+            "content_script_protocol_version": selected.get(
+                "content_script_protocol_version"
+            ),
+            "challenge_verified": True,
+            "same_extension_session": True,
+            "same_flow_tab": True,
+            "flow_tab_id": selected.get("flow_tab_id"),
+            "project_id": selected.get("flow_project_id"),
+            "flow_project_id": selected.get("flow_project_id"),
+            "flow_project_url": selected.get("flow_project_url")
+            or selected.get("flow_url"),
+        }
+        self._last_arbitration_error = None
+        return {**selected, **binding, "ok": True, "binding": binding}
 
     async def validate_media_id(self, media_id: str) -> bool:
         """Check if a mediaId is still valid.

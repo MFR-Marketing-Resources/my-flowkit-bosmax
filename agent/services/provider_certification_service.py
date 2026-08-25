@@ -208,6 +208,7 @@ def _reservation_values(
     compiler_digest: str,
     lane_adapter_digest: str,
     runtime_sha: str,
+    snapshot_id: str,
 ) -> dict[str, Any]:
     canonical = _profiles.canonicalize_profile(profile)
     required = {
@@ -233,6 +234,7 @@ def _reservation_values(
         "compiler_digest": compiler_digest,
         "lane_adapter_digest": lane_adapter_digest,
         "runtime_sha": runtime_sha,
+        "snapshot_id": snapshot_id,
     }
     if any(not _norm(value) for value in required.values()):
         missing = [key for key, value in required.items() if not _norm(value)]
@@ -269,6 +271,7 @@ def _reservation_values(
         "compiler_digest": _norm(compiler_digest),
         "lane_adapter_digest": _norm(lane_adapter_digest),
         "runtime_sha": _norm(runtime_sha),
+        "snapshot_id": _norm(snapshot_id),
         "created_at": _now(),
         "updated_at": _now(),
     }
@@ -336,6 +339,7 @@ async def mark_failed(
     *,
     code: str,
     detail: str = "",
+    snapshot_id: str | None = None,
 ) -> dict[str, Any]:
     row = await _crud.get_by_id(certification_id)
     if row is None:
@@ -345,6 +349,7 @@ async def mark_failed(
     return await _crud.update_certification(
         certification_id,
         status=CERTIFICATION_FAILED,
+        **({"snapshot_id": _norm(snapshot_id)} if _norm(snapshot_id) else {}),
         failure_code=_norm(code)[:160],
         failure_detail=_norm(detail)[:1000],
     )
@@ -356,6 +361,7 @@ async def reconcile_pre_provider_failure(
     job_id: str,
     code: str,
     detail: str = "",
+    snapshot_id: str | None = None,
 ) -> dict[str, Any]:
     """Close a certification whose linked job proved provider-free failure.
 
@@ -375,13 +381,63 @@ async def reconcile_pre_provider_failure(
     if row.get("status") == CERTIFICATION_CERTIFIED:
         raise ProviderCertificationError("CERTIFICATION_ALREADY_CERTIFIED")
     if row.get("status") == CERTIFICATION_FAILED:
+        existing_snapshot_id = _norm(row.get("snapshot_id"))
+        observed_snapshot_id = _norm(snapshot_id)
+        if observed_snapshot_id and existing_snapshot_id not in ("", observed_snapshot_id):
+            raise ProviderCertificationError(
+                "CERTIFICATION_SNAPSHOT_MISMATCH",
+                details={"expected": row.get("snapshot_id"), "observed": snapshot_id},
+            )
+        if observed_snapshot_id and not existing_snapshot_id:
+            return await _crud.update_certification(
+                certification_id,
+                snapshot_id=observed_snapshot_id,
+            )
         return row
+    if snapshot_id and row.get("snapshot_id") not in (None, "", _norm(snapshot_id)):
+        raise ProviderCertificationError(
+            "CERTIFICATION_SNAPSHOT_MISMATCH",
+            details={"expected": row.get("snapshot_id"), "observed": snapshot_id},
+        )
     return await _crud.update_certification(
         certification_id,
         status=CERTIFICATION_FAILED,
         job_id=_norm(row.get("job_id") or job_id),
+        **({"snapshot_id": _norm(snapshot_id)} if snapshot_id else {}),
         failure_code=_norm(code)[:160],
         failure_detail=_norm(detail)[:1000],
+    )
+
+
+async def record_target_acknowledgement(
+    certification_id: str,
+    *,
+    snapshot_id: str,
+    acknowledgement: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Carry the official snapshot acknowledgement onto certification lineage."""
+    row = await _crud.get_by_id(certification_id)
+    if row is None:
+        raise ProviderCertificationError("CERTIFICATION_NOT_FOUND")
+    if row.get("snapshot_id") != _norm(snapshot_id):
+        raise ProviderCertificationError(
+            "CERTIFICATION_SNAPSHOT_MISMATCH",
+            details={"expected": row.get("snapshot_id"), "observed": snapshot_id},
+        )
+    digest = _norm(acknowledgement.get("target_digest"))
+    if not digest or digest != _norm(acknowledgement.get("proposed_target_digest")):
+        raise ProviderCertificationError("CERTIFICATION_TARGET_ACK_DIGEST_MISMATCH")
+    existing_digest = _norm(row.get("target_ack_digest"))
+    if existing_digest and existing_digest != digest:
+        raise ProviderCertificationError(
+            "CERTIFICATION_TARGET_ACK_STALE",
+            details={"expected": existing_digest, "observed": digest},
+        )
+    return await _crud.update_certification(
+        certification_id,
+        target_ack_digest=digest,
+        target_ack_json=_stable_json(dict(acknowledgement)),
+        target_acknowledged_at=_now(),
     )
 
 
@@ -568,6 +624,7 @@ __all__ = [
     "finalize_capture",
     "mark_failed",
     "mark_submitted",
+    "record_target_acknowledgement",
     "reconcile_pre_provider_failure",
     "provider_certification_status",
     "reserve_capture",

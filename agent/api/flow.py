@@ -543,6 +543,7 @@ async def extension_status():
     response = {
         "connected": client.connected,
         "flow_key_present": client._flow_key is not None,
+        "bridge_diagnostics": client.extension_diagnostics,
     }
     for key in safe_fields:
         if key in status:

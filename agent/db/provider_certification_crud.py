@@ -24,6 +24,9 @@ _UPDATE_COLUMNS = {
     "provider_operation_id",
     "job_id",
     "snapshot_id",
+    "target_ack_digest",
+    "target_ack_json",
+    "target_acknowledged_at",
     "artifact_media_id",
     "source_sha256",
     "output_sha256",
@@ -61,6 +64,7 @@ _INSERT_COLUMNS = {
     "compiler_digest",
     "lane_adapter_digest",
     "runtime_sha",
+    "snapshot_id",
     "created_at",
     "updated_at",
 }
@@ -119,6 +123,7 @@ async def create_reservation(values: dict[str, Any]) -> dict[str, Any]:
         "compiler_digest",
         "lane_adapter_digest",
         "runtime_sha",
+        "snapshot_id",
     }
     missing = sorted(required - set(values))
     if missing:
@@ -181,6 +186,7 @@ async def archive_failed_pre_provider_and_create_reservation(
         "compiler_digest",
         "lane_adapter_digest",
         "runtime_sha",
+        "snapshot_id",
     }
     missing = sorted(required - set(values))
     if missing:

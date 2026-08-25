@@ -2503,6 +2503,28 @@ async def init_db():
                 await db.execute("ALTER TABLE execution_approval_snapshot ADD COLUMN manifest_id TEXT")
             if "manifest_item_key" not in _eas_cols:
                 await db.execute("ALTER TABLE execution_approval_snapshot ADD COLUMN manifest_item_key TEXT")
+            for _column, _definition in {
+                "provider_target_digest": "TEXT",
+                "provider_target_ack_json": "TEXT",
+                "provider_target_acknowledged_at": "TEXT",
+                "provider_target_ack_source": "TEXT",
+            }.items():
+                if _column not in _eas_cols:
+                    await db.execute(
+                        f"ALTER TABLE execution_approval_snapshot ADD COLUMN {_column} {_definition}"
+                    )
+        cursor = await db.execute("PRAGMA table_info(provider_execution_certification)")
+        _pec_cols = {row[1] for row in await cursor.fetchall()}
+        if _pec_cols:
+            for _column, _definition in {
+                "target_ack_digest": "TEXT",
+                "target_ack_json": "TEXT",
+                "target_acknowledged_at": "TEXT",
+            }.items():
+                if _column not in _pec_cols:
+                    await db.execute(
+                        f"ALTER TABLE provider_execution_certification ADD COLUMN {_column} {_definition}"
+                    )
         # Migration: add slug column to character table + backfill
         cursor = await db.execute("PRAGMA table_info(character)")
         columns = {row[1] for row in await cursor.fetchall()}
@@ -5747,6 +5769,10 @@ CREATE TABLE IF NOT EXISTS execution_approval_snapshot (
     approved_at                          TEXT,
     approved_prompt_sha256               TEXT,
     approved_execution_envelope_sha256   TEXT,
+    provider_target_digest               TEXT,
+    provider_target_ack_json             TEXT,
+    provider_target_acknowledged_at      TEXT,
+    provider_target_ack_source           TEXT,
     invalidation_reason                  TEXT,
     dispatched_prompt_sha256             TEXT,
     dispatched_execution_envelope_sha256 TEXT,
@@ -5805,6 +5831,9 @@ CREATE TABLE IF NOT EXISTS provider_execution_certification (
     output_sha256                 TEXT,
     credit_delta                  REAL,
     runtime_sha                   TEXT NOT NULL,
+    target_ack_digest             TEXT,
+    target_ack_json               TEXT,
+    target_acknowledged_at        TEXT,
     frame_qc_json                 TEXT NOT NULL DEFAULT '{}',
     failure_code                  TEXT,
     failure_detail                TEXT,

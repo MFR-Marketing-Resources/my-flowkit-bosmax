@@ -517,7 +517,19 @@ async def _bind_editor_session(
     """Bind a video job to the OPEN Flow editor → {project_id, flow_tab_id, flow_project_url}.
     Fail-closed (locked patch A/G): raise if no editor project is open, or if the open editor
     differs from a requested project_id. Never mint a hidden project; never use the wrong tab."""
-    h = await client.harvest_video_urls()
+    selected_binding = None
+    bind_flow_session = getattr(client, "bind_flow_session", None)
+    if callable(bind_flow_session):
+        selected_binding = await bind_flow_session(project_id=requested_project_id)
+        if not isinstance(selected_binding, dict) or selected_binding.get("ok") is not True:
+            blocker = (selected_binding or {}).get("primary_blocker") or "NO_ELIGIBLE_EXTENSION_SESSION"
+            detail = (selected_binding or {}).get("detail") or blocker
+            raise RuntimeError(f"{blocker}: {detail}")
+        h = await client.harvest_video_urls(tab_id=selected_binding.get("flow_tab_id"))
+    else:
+        # Provider-free/frozen unit clients predate the identity-aware bridge;
+        # retain their harvest contract while the real FlowClient is strict.
+        h = await client.harvest_video_urls()
     inner = h.get("result", h) if isinstance(h, dict) else {}
     if (not isinstance(inner, dict) or inner.get("error") == "NO_FLOW_TAB"
             or inner.get("flow_tab_found") is False):
@@ -783,6 +795,15 @@ async def _bind_editor_session(
                 details={"lease_id": bridge_lease.get("lease_id")},
             ) from exc
         binding["bridge_lease"] = bound_lease
+    if isinstance(selected_binding, dict):
+        for key in (
+            "connection_id", "connection_epoch", "installation_id",
+            "extension_session_id", "extension_id", "extension_version",
+            "extension_build", "content_build_id", "content_script_protocol_version",
+            "challenge_verified", "same_extension_session", "same_flow_tab",
+        ):
+            if selected_binding.get(key) is not None:
+                binding[key] = selected_binding[key]
     return binding
 
 
@@ -911,7 +932,23 @@ async def ensure_editor_binding(
     binding = None
     released = False
     try:
-        lease = client.acquire_operation_lease()
+        acquire_filters = {}
+        if isinstance(client, FlowClient):
+            selection = await client.bind_flow_session(
+                project_id=requested_project_id,
+            )
+            if selection.get("ok") is not True or not selection.get(
+                "connection_id"
+            ):
+                blocker = selection.get("primary_blocker") or (
+                    "NO_ELIGIBLE_EXTENSION_SESSION"
+                )
+                raise FlowEditorBindingError(
+                    f"{blocker}: project-aware bridge selection failed",
+                    details={"selection": selection},
+                )
+            acquire_filters["connection_id"] = selection["connection_id"]
+        lease = client.acquire_operation_lease(**acquire_filters)
         with client.activate_operation_lease(lease):
             binding = await _bind_editor_session(
                 client,
@@ -2087,6 +2124,7 @@ async def _reconcile_profile_certification_task(job: dict | None) -> None:
                 job_id=str(job.get("job_id")),
                 code=code,
                 detail=message,
+                snapshot_id=str(snapshot_id or "") or None,
             )
         except Exception as exc:  # noqa: BLE001
             job["pre_provider_certification_reconciliation_error"] = str(exc)
@@ -2149,6 +2187,21 @@ async def _run_generate_task(job_id: str, runner, *args) -> None:
             if required_installation_id
             else {}
         )
+        if not acquire_filters and isinstance(client, FlowClient):
+            selection = await client.bind_flow_session(
+                project_id=job.get("project_id"),
+            )
+            if selection.get("ok") is not True or not selection.get(
+                "connection_id"
+            ):
+                blocker = selection.get("primary_blocker") or (
+                    "NO_ELIGIBLE_EXTENSION_SESSION"
+                )
+                raise FlowEditorBindingError(
+                    f"{blocker}: project-aware bridge selection failed",
+                    details={"selection": selection},
+                )
+            acquire_filters = {"connection_id": selection["connection_id"]}
         lease = client.acquire_operation_lease(**acquire_filters)
         job["bridge_lease"] = dict(lease)
         job["bridge_lease_state"] = "ACQUIRED"
@@ -3168,7 +3221,8 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          profile_certification_capture: bool = False,
                          execution_snapshot_id: str | None = None,
                          profile_certification_id: str | None = None,
-                         editor_binding: dict | None = None) -> dict:
+                         editor_binding: dict | None = None,
+                         provider_target_authorization: dict | None = None) -> dict:
     """THE one door. mode = IMG | T2V | I2V | F2V. Returns a job_id; poll get_job.
     num_videos is the USER's count setting (1–4) — honoured end-to-end: the
     negotiation demands exactly that many and retrieval collects them all.
@@ -3701,6 +3755,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                       "profile_certification_capture": profile_certification_capture_requested,
                       "profile_certification_id": profile_certification_id,
                       "execution_snapshot_id": execution_snapshot_id,
+                      "provider_target_authorization": provider_target_authorization,
                       "editor_binding_preflight": editor_binding,
                       "bridge_lease_required": True,
                       "required_extension_installation_id": required_extension_installation_id,
@@ -5950,10 +6005,43 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         job["stage"] = (f"negotiating (approve {num_videos} video"
                         f"{'s' if num_videos > 1 else ''}, "
                         f"{video_models.resolve(model)['ui_label']})")
+
+        target_authorization = job.get("provider_target_authorization")
+
+        async def _persist_target_acknowledgement(acknowledgement):
+            if not target_authorization:
+                raise RuntimeError("PROVIDER_TARGET_AUTHORIZATION_REQUIRED")
+            snapshot_id = str(job.get("execution_snapshot_id") or "")
+            if not snapshot_id:
+                raise RuntimeError("PROVIDER_TARGET_ACK_SNAPSHOT_REQUIRED")
+            from agent.services import execution_approval_service as _eas
+            from agent.services import provider_certification_service as _certifications
+
+            snapshot = await _eas.record_provider_target_acknowledgement(
+                snapshot_id,
+                target_authorization=target_authorization,
+                acknowledgement=acknowledgement,
+            )
+            certification_id = job.get("profile_certification_id")
+            if certification_id:
+                await _certifications.record_target_acknowledgement(
+                    str(certification_id),
+                    snapshot_id=snapshot_id,
+                    acknowledgement=acknowledgement,
+                )
+            job["provider_target_acknowledgement"] = dict(acknowledgement)
+            job["provider_target_acknowledgement_snapshot_id"] = snapshot_id
+            return snapshot
+
         nres = await agent_video.negotiate_and_generate(
             client, project_id, sid, prompt, refs,
             target_model=model, target_duration_s=duration_s,
-            desired_num=num_videos)
+            desired_num=num_videos,
+            target_authorization=target_authorization,
+            on_target_acknowledged=_persist_target_acknowledgement
+            if target_authorization
+            else None,
+        )
         job["approved"] = nres.get("approved")
         job["negotiation_state"] = nres.get("negotiation_state") or {}
         if job.get("capture_only"):

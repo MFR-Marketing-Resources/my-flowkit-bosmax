@@ -103,12 +103,14 @@ domains:
       - agent/db/provider_certification_crud.py
       - agent/services/provider_certification_service.py
       - tests/unit/test_provider_certification_service.py
+      - tests/unit/test_provider_target_acknowledgement.py
       - .ai/audits/DURATION_PROFILE_CERTIFICATION_REFACTOR_2026-08-24.md
       # Shared provider-free video continuity, SweetWPS timing, mascot identity,
       # and deterministic exact-product compositor authority.
       - agent/services/video_continuity_contract.py
       - tests/unit/test_video_continuity_contract.py
       - agent/services/flow_client.py
+      - tests/unit/test_flow_client_extension_arbitration.py
       - agent/main.py
       - scripts/verify-gate.ps1
       - agent/services/bulk_generation_service.py

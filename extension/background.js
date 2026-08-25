@@ -4162,6 +4162,13 @@ async function handleFlowProviderSessionChallenge(params = {}) {
 		);
 		flowTab = editorTabs[0] || flowTab;
 	}
+	const requestedProjectId = String(params?.flow_project_id || "").trim();
+	if (!requestedTabId && requestedProjectId) {
+		const matchingEditorTab = (await getFlowTabs()).find(
+			(tab) => extractFlowProjectId(String(tab?.url || "")) === requestedProjectId,
+		);
+		if (matchingEditorTab) flowTab = matchingEditorTab;
+	}
 	const manifest = chrome.runtime.getManifest();
 	const identity = {
 		installation_id: extensionInstallationId,
@@ -6117,7 +6124,9 @@ function connectToAgent() {
 						extension_id: chrome.runtime.id,
 						extension_version: manifest.version || null,
 						extension_build: BUILD_ID,
+						background_build_id: BUILD_ID,
 						build_sha: BOSMAX_BUILD_PROOF.sha ?? null,
+						extension_protocol_version: EXTENSION_PROTOCOL_VERSION,
 						flowKeyPresent: !!flowKey,
 						tokenAge:
 							flowKey && metrics.tokenCapturedAt

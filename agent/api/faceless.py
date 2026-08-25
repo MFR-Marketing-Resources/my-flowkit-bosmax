@@ -396,62 +396,25 @@ async def faceless_profile_certification(
             },
         ) from exc
 
-    try:
-        reservation, created = await _certifications.reserve_capture(
-            profile=profile,
-            representative_lane="FACELESS",
-            product_id=body.product_id,
-            copy_id=copy_id,
-            product_digest=str(product_digest),
-            copy_digest=copy_digest,
-            **authority_digests,
-            runtime_sha=str(runtime["runtime_sha"]),
-        )
-    except _certifications.ProviderCertificationError as exc:
-        logger.exception(
-            "Faceless profile certification reservation failure request_id=%s code=%s",
-            correlation_id,
-            exc.code,
-        )
-        raise HTTPException(
-            409,
-            detail={
-                "error_code": exc.code,
-                "message": str(exc),
-                "exception_type": type(exc).__name__,
-                "request_id": correlation_id,
-                "details": exc.details,
-            },
-        ) from exc
-    except Exception as exc:  # noqa: BLE001 — preserve a structured boundary
-        logger.exception(
-            "Faceless profile certification persistence failure request_id=%s",
-            correlation_id,
-        )
-        raise HTTPException(
-            500,
-            detail={
-                "error_code": "PROFILE_CERTIFICATION_PERSISTENCE_FAILED",
-                "message": str(exc),
-                "exception_type": type(exc).__name__,
-                "request_id": correlation_id,
-            },
-        ) from exc
-    if not created:
-        # The unique profile reservation is the no-resubmit guard. A completed
-        # proof is reusable; every other state is returned for reconciliation.
-        return {
-            "status": reservation.get("status"),
-            "certification": reservation,
-            "profile": profile,
-            "provider_calls": 0,
-            "credit_spend": 0,
-            "reused_reservation": True,
-        }
-
     snapshot = None
     capture_request_id = correlation_id
     try:
+        target_authorization = _eas.build_provider_target_authorization(
+            lane="FACELESS_VIDEO",
+            route="EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+            model="veo_3_1_lite",
+            duration_s=8,
+            aspect_ratio="9:16",
+            product_id=body.product_id,
+            copy_id=copy_id,
+            profile_digest=str(profile["profile_digest"]),
+            sweetwps_digest=authority_digests["sweetwps_digest"],
+            compositor_digest=authority_digests["compositor_digest"],
+            compiler_digest=authority_digests["compiler_digest"],
+            owner_credit_ceiling=(profile.get("credits_cost_rule") or {}).get(
+                "profile_cost_ceiling"
+            ),
+        )
         snapshot = await _eas.create_review_snapshot(
             surface="FACELESS",
             logical_mode="T2V",
@@ -469,6 +432,129 @@ async def faceless_profile_certification(
         snapshot = await _eas.approve_snapshot(
             snapshot["snapshot_id"], approved_by=owner.staff_id
         )
+    except _eas.ExecutionApprovalError as exc:
+        if snapshot:
+            try:
+                await _eas.reconcile_pre_provider_failure(
+                    snapshot["snapshot_id"],
+                    reason=f"PROFILE_CERTIFICATION_SNAPSHOT_FAILED:{exc}"[:1000],
+                )
+            except Exception:  # noqa: BLE001 — preserve the original structured error
+                logger.exception(
+                    "Faceless snapshot reconciliation failure request_id=%s",
+                    correlation_id,
+                )
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": exc.code,
+                "message": str(exc),
+                "exception_type": type(exc).__name__,
+                "request_id": correlation_id,
+                "details": exc.details,
+            },
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 — no certification/job without a snapshot
+        if snapshot:
+            try:
+                await _eas.reconcile_pre_provider_failure(
+                    snapshot["snapshot_id"],
+                    reason=f"PROFILE_CERTIFICATION_SNAPSHOT_FAILED:{exc}"[:1000],
+                )
+            except Exception:
+                logger.exception(
+                    "Faceless snapshot cleanup failure request_id=%s",
+                    correlation_id,
+                )
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "PROFILE_CERTIFICATION_SNAPSHOT_FAILED",
+                "message": str(exc),
+                "exception_type": type(exc).__name__,
+                "request_id": correlation_id,
+            },
+        ) from exc
+
+    try:
+        reservation, created = await _certifications.reserve_capture(
+            profile=profile,
+            representative_lane="FACELESS",
+            product_id=body.product_id,
+            copy_id=copy_id,
+            product_digest=str(product_digest),
+            copy_digest=copy_digest,
+            snapshot_id=snapshot["snapshot_id"],
+            **authority_digests,
+            runtime_sha=str(runtime["runtime_sha"]),
+        )
+    except _certifications.ProviderCertificationError as exc:
+        try:
+            await _eas.reconcile_pre_provider_failure(
+                snapshot["snapshot_id"],
+                reason=f"PROFILE_CERTIFICATION_RESERVATION_FAILED:{exc}"[:1000],
+            )
+        except Exception:  # noqa: BLE001 — preserve the original structured error
+            logger.exception(
+                "Faceless snapshot reconciliation failure request_id=%s",
+                correlation_id,
+            )
+        logger.exception(
+            "Faceless profile certification reservation failure request_id=%s code=%s",
+            correlation_id,
+            exc.code,
+        )
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": exc.code,
+                "message": str(exc),
+                "exception_type": type(exc).__name__,
+                "request_id": correlation_id,
+                "details": exc.details,
+            },
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 — preserve a structured boundary
+        try:
+            await _eas.reconcile_pre_provider_failure(
+                snapshot["snapshot_id"],
+                reason=f"PROFILE_CERTIFICATION_PERSISTENCE_FAILED:{exc}"[:1000],
+            )
+        except Exception:  # noqa: BLE001 — preserve the original structured error
+            logger.exception(
+                "Faceless snapshot reconciliation failure request_id=%s",
+                correlation_id,
+            )
+        logger.exception(
+            "Faceless profile certification persistence failure request_id=%s",
+            correlation_id,
+        )
+        raise HTTPException(
+            500,
+            detail={
+                "error_code": "PROFILE_CERTIFICATION_PERSISTENCE_FAILED",
+                "message": str(exc),
+                "exception_type": type(exc).__name__,
+                "request_id": correlation_id,
+            },
+        ) from exc
+    if not created:
+        # The unique profile reservation is the no-resubmit guard. The temporary
+        # snapshot is invalidated so an existing reservation cannot inherit it.
+        await _eas.reconcile_pre_provider_failure(
+            snapshot["snapshot_id"],
+            reason="PROFILE_CERTIFICATION_RESERVATION_REUSED",
+        )
+        return {
+            "status": reservation.get("status"),
+            "certification": reservation,
+            "profile": profile,
+            "provider_calls": 0,
+            "credit_spend": 0,
+            "reused_reservation": True,
+        }
+
+    try:
         result = await _mv.start_generate(
             "T2V",
             prompt,
@@ -485,6 +571,7 @@ async def faceless_profile_certification(
             execution_identity=execution_identity,
             execution_snapshot_id=snapshot["snapshot_id"],
             profile_certification_id=reservation["certification_id"],
+            provider_target_authorization=target_authorization,
             editor_binding=editor_binding,
             execution_profile_context=profile_context,
             product_visual_custody=custody,
@@ -502,6 +589,7 @@ async def faceless_profile_certification(
             reservation["certification_id"],
             code="PROFILE_CERTIFICATION_DISPATCH_FAILED",
             detail=str(exc),
+            snapshot_id=snapshot["snapshot_id"] if snapshot else None,
         )
         if snapshot and snapshot.get("approval_state") in {"APPROVED", "DISPATCHED"}:
             await _eas.reconcile_pre_provider_failure(
@@ -519,6 +607,7 @@ async def faceless_profile_certification(
             if isinstance(result, dict)
             else "PROFILE_CERTIFICATION_DISPATCH_REJECTED",
             detail=str(result),
+            snapshot_id=snapshot["snapshot_id"] if snapshot else None,
         )
         if snapshot and snapshot.get("approval_state") == "APPROVED":
             await _eas.invalidate_snapshot(
@@ -550,6 +639,7 @@ async def faceless_profile_certification(
         "snapshot": snapshot,
         "job": result,
         "editor_binding": editor_binding,
+        "target_authorization": target_authorization,
         "credit_quote": {"balance_before": balance, "profile_cost_ceiling": 10},
         "provider_calls": 0,
         "credit_spend": "PENDING_ARTIFACT_DELTA",
@@ -617,6 +707,7 @@ async def reconcile_faceless_profile_certification(
             job_id=job_id,
             code=body.error_code,
             detail=body.error_detail,
+            snapshot_id=body.snapshot_id,
         )
         snapshot = await _eas.reconcile_pre_provider_failure(
             body.snapshot_id,

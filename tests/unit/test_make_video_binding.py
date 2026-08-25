@@ -666,6 +666,11 @@ def test_restart_cancellation_releases_lease_without_reclassifying_handle(monkey
     }
 
     class _CancelledRecoveryClient(_ProductionTypedLeaseClient):
+        # This deliberately partial FlowClient-typed fixture exercises lease
+        # cleanup, not project arbitration. Keep it on the documented legacy
+        # fixture binding seam rather than invoking uninitialized FlowClient state.
+        bind_flow_session = None
+
         async def check_video_status(self, _operations):
             raise asyncio.CancelledError()
 

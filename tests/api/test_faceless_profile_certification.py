@@ -192,8 +192,8 @@ def _install_common(monkeypatch, *, start_result=None, profile_error=None, prepa
             "snapshot_id": snapshot_id,
         }
 
-    async def mark_failed(certification_id, *, code, detail=""):
-        calls["failed"].append((certification_id, code, detail))
+    async def mark_failed(certification_id, *, code, detail="", snapshot_id=None):
+        calls["failed"].append((certification_id, code, detail, snapshot_id))
         return {"certification_id": certification_id, "status": "FAILED"}
 
     monkeypatch.setattr(certifications, "reserve_capture", reserve)
@@ -215,9 +215,14 @@ def _install_common(monkeypatch, *, start_result=None, profile_error=None, prepa
         calls["invalidated"].append((snapshot_id, reason))
         return {"snapshot_id": snapshot_id, "approval_state": "INVALIDATED"}
 
+    async def reconcile_snapshot(snapshot_id, *, reason):
+        calls["invalidated"].append((snapshot_id, reason))
+        return {"snapshot_id": snapshot_id, "approval_state": "INVALIDATED"}
+
     monkeypatch.setattr(eas, "create_review_snapshot", create_snapshot)
     monkeypatch.setattr(eas, "approve_snapshot", approve_snapshot)
     monkeypatch.setattr(eas, "invalidate_snapshot", invalidate_snapshot)
+    monkeypatch.setattr(eas, "reconcile_pre_provider_failure", reconcile_snapshot)
 
     async def start_generate(mode, prompt, **kwargs):
         calls["start"] = {"mode": mode, "prompt": prompt, "kwargs": kwargs}
@@ -255,6 +260,9 @@ async def test_success_builds_exact_provider_free_certification_payload(monkeypa
     assert calls["start"]["kwargs"]["execution_profile_context"]["duration_model_profile"] == profile
     assert calls["start"]["kwargs"]["execution_snapshot_id"] == "snap_test"
     assert calls["start"]["kwargs"]["profile_certification_id"] == "pec_test"
+    assert calls["reservation"]["snapshot_id"] == "snap_test"
+    assert calls["start"]["kwargs"]["provider_target_authorization"]["target"]["model"] == "veo_3_1_lite"
+    assert calls["start"]["kwargs"]["provider_target_authorization"]["target_digest"]
 
 
 @pytest.mark.asyncio
@@ -361,7 +369,8 @@ async def test_persistence_failure_is_structured_and_stops_before_dispatch(monke
     assert raised.value.status_code == 409
     assert detail["error_code"] == "CERTIFICATION_RESERVATION_FAILED"
     assert detail["request_id"] == "corr-persistence"
-    assert calls["snapshot"] is None
+    assert calls["snapshot"] is not None
+    assert calls["invalidated"]
     assert calls["start"] is None
 
 
@@ -401,3 +410,91 @@ async def test_unexpected_preprovider_exception_never_returns_unstructured_error
     assert raised.value.detail["request_id"] == "corr-prepare"
     assert calls["reservation"] is None
     assert calls["start"] is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_route_carries_snapshot_linkage_into_certification(monkeypatch):
+    owner = SimpleNamespace(
+        staff_id="staff_test_owner",
+        display_name="Test Owner",
+        role_codes=("OWNER",),
+        permission_codes=("production.execute",),
+    )
+    observed = {}
+
+    monkeypatch.setattr(api, "_require_profile_certification_owner", lambda: owner)
+    certification_crud = __import__(
+        "agent.db.provider_certification_crud", fromlist=["unused"]
+    )
+    monkeypatch.setattr(
+        certification_crud,
+        "get_by_id",
+        _async_value(
+            {
+                "certification_id": "pec_old",
+                "job_id": "g_old",
+                "snapshot_id": None,
+                "status": "FAILED",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        make_video,
+        "get_job",
+        lambda _job_id: {
+            "job_id": "g_old",
+            "status": "FAILED",
+            "error": "agent did not approve a video: PRE_APPROVAL_SETTINGS_ACK_REQUIRED",
+        },
+    )
+    monkeypatch.setattr(
+        make_video,
+        "reconcile_pre_provider_failure",
+        _async_capture(observed, "job", {"job_id": "g_old", "status": "FAILED"}),
+    )
+    monkeypatch.setattr(
+        certifications,
+        "reconcile_pre_provider_failure",
+        _async_capture(
+            observed,
+            "certification",
+            {
+                "certification_id": "pec_old",
+                "status": "FAILED",
+                "snapshot_id": "eas_old",
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        eas,
+        "reconcile_pre_provider_failure",
+        _async_capture(
+            observed,
+            "snapshot",
+            {"snapshot_id": "eas_old", "approval_state": "INVALIDATED"},
+        ),
+    )
+
+    result = await api.reconcile_faceless_profile_certification(
+        "g_old",
+        api.FacelessProfileCertificationReconcileRequest(
+            certification_id="pec_old",
+            snapshot_id="eas_old",
+            error_code="PRE_APPROVAL_SETTINGS_ACK_REQUIRED",
+            error_detail="agent did not approve a video: PRE_APPROVAL_SETTINGS_ACK_REQUIRED",
+            request_id="reconcile-test",
+        ),
+    )
+
+    assert observed["job"]["args"] == ("g_old",)
+    assert observed["certification"]["kwargs"]["snapshot_id"] == "eas_old"
+    assert observed["snapshot"]["args"][0] == "eas_old"
+    assert result["certification"]["snapshot_id"] == "eas_old"
+
+
+def _async_capture(observed, key, result):
+    async def capture(*args, **kwargs):
+        observed[key] = {"args": args, "kwargs": kwargs}
+        return result
+
+    return capture

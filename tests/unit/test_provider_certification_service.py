@@ -156,6 +156,7 @@ async def test_pre_provider_failure_allows_one_new_archived_reservation(monkeypa
         compiler_digest="compiler-digest",
         lane_adapter_digest="adapter-digest",
         runtime_sha="runtime-sha",
+        snapshot_id="snapshot-1",
     )
     existing = dict(values, status="FAILED", failure_code="FLOW_EDITOR_BINDING_REQUIRED")
     replacement = dict(values, certification_id="pec_new", status="RESERVED")
@@ -177,6 +178,7 @@ async def test_pre_provider_failure_allows_one_new_archived_reservation(monkeypa
         compiler_digest="compiler-digest",
         lane_adapter_digest="adapter-digest",
         runtime_sha="runtime-sha",
+        snapshot_id="snapshot-1",
     )
     assert created is True
     assert row["certification_id"] == "pec_new"
@@ -197,6 +199,7 @@ async def test_provider_failure_is_not_reopened(monkeypatch):
         compiler_digest="compiler-digest",
         lane_adapter_digest="adapter-digest",
         runtime_sha="runtime-sha",
+        snapshot_id="snapshot-1",
     )
     existing = dict(values, status="FAILED", failure_code="PROVIDER_REJECTED")
     monkeypatch.setattr(service._crud, "get_by_profile_digest", lambda _digest: _async(existing))
@@ -212,6 +215,7 @@ async def test_provider_failure_is_not_reopened(monkeypatch):
         compiler_digest="compiler-digest",
         lane_adapter_digest="adapter-digest",
         runtime_sha="runtime-sha",
+        snapshot_id="snapshot-1",
     )
     assert created is False
     assert row["failure_code"] == "PROVIDER_REJECTED"
