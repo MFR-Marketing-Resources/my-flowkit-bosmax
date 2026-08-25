@@ -28,6 +28,9 @@ _ERROR_CODE_RE = re.compile(r"\b(ERR_[A-Z0-9_]+)\b")
 _UPLOAD_STAGING_DIR = Path(tempfile.gettempdir()) / "flowkit-upload-staging"
 _MAX_REMOTE_IMAGE_BYTES = 20 * 1024 * 1024
 _MAX_LOCAL_UPLOAD_BYTES = 20 * 1024 * 1024
+LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB = (
+    "LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB"
+)
 
 
 async def _require_flow_product(product_id: str | None, *, lane: str) -> dict:
@@ -756,11 +759,15 @@ class AgentNegotiateRequest(BaseModel):
 
 @router.post("/agent-negotiate")
 async def agent_negotiate(body: AgentNegotiateRequest):
-    """Drive the full flowCreationAgent negotiation (AI start frame for now).
+    """Retain dry negotiation only; paid compatibility approval is retired.
 
     dry=True  → negotiate to the correct config WITHOUT approving (no credits).
-    dry=False → approve → the agent generates the video (~10 credits, Veo 3.1 Lite).
+    dry=False → HTTP 410; submit through the durable canonical video job.
     """
+    if body.dry is not True:
+        raise HTTPException(
+            410, LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB
+        )
     from agent.services import agent_video
     await _require_flow_product(body.product_id, lane="FLOW_AGENT_NEGOTIATE")
     client = get_flow_client()
@@ -885,7 +892,10 @@ class MakeVideoRequest(BaseModel):
 
 @router.post("/make-video")
 async def make_video(body: MakeVideoRequest):
-    """Full auto pipeline (negotiate → approve → render → harvest → download). → job_id."""
+    """Retired paid compatibility endpoint; use the durable canonical video job."""
+    raise HTTPException(
+        410, LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB
+    )
     from agent.services import make_video as _mv
     await _require_flow_product(body.product_id, lane="FLOW_MAKE_VIDEO")
     client = get_flow_client()
@@ -2687,6 +2697,10 @@ class NegotiateJobRequest(BaseModel):
 @router.post("/negotiate-job")
 async def negotiate_job(body: NegotiateJobRequest):
     """Async negotiation (captures full transcript). dry=True → 0 video credits."""
+    if body.dry is not True:
+        raise HTTPException(
+            410, LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB
+        )
     from agent.services import make_video as _mv
     from agent.services import video_models as _vm
     # Fail-closed model+duration validation BEFORE start (matches /generate + /make-video-
@@ -2734,6 +2748,9 @@ async def create_project_raw(body: CreateProjectRawRequest):
 @router.post("/generate-video")
 async def generate_video(body: GenerateVideoRequest):
     """Submit video generation (returns operations for polling)."""
+    raise HTTPException(
+        410, LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB
+    )
     await _require_flow_product(body.product_id, lane="FLOW_GENERATE_VIDEO")
     client = get_flow_client()
     if not client.connected:
@@ -2749,6 +2766,9 @@ async def generate_video(body: GenerateVideoRequest):
 @router.post("/generate-video-refs")
 async def generate_video_refs(body: GenerateVideoRefsRequest):
     """Submit r2v video generation from reference images."""
+    raise HTTPException(
+        410, LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB
+    )
     await _require_flow_product(body.product_id, lane="FLOW_GENERATE_VIDEO_REFS")
     client = get_flow_client()
     if not client.connected:
@@ -2764,6 +2784,9 @@ async def generate_video_refs(body: GenerateVideoRefsRequest):
 @router.post("/upscale-video")
 async def upscale_video(body: UpscaleVideoRequest):
     """Submit video upscale (returns operations for polling)."""
+    raise HTTPException(
+        410, LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB
+    )
     await _require_flow_product(body.product_id, lane="FLOW_UPSCALE_VIDEO")
     client = get_flow_client()
     if not client.connected:
@@ -3016,10 +3039,11 @@ async def ui_driver_open_video_probe(body: UiOpenVideoProbeRequest):
 
 @router.post("/ui-driver/extend-block")
 async def ui_driver_extend_block(body: UiExtendBlockRequest):
-    """Owner timeline-Extend for ONE block. dry_run walks to
-    EXTEND_READY_TO_SUBMIT and stops (zero credit). Live requires the
-    FLOW_UI_DRIVER_ENABLED kill switch AND explicit confirmation AND the
-    per-block route lock shared with direct-RPC (no double submit ever)."""
+    """Retain the zero-credit Extend preview; live UI submission is retired."""
+    if body.dry_run is not True:
+        raise HTTPException(
+            410, LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB
+        )
     from agent.services import google_flow_ui_driver as _ui
     client = get_flow_client()
     if not client.connected:
@@ -4069,7 +4093,10 @@ class ShootOneshotRequest(BaseModel):
 
 @router.post("/shoot-oneshot")
 async def shoot_oneshot(body: ShootOneshotRequest):
-    """Async one-shot video: envelope -> job_id. Poll GET /flow/job/{id}. Contract §4.1."""
+    """Retired paid compatibility endpoint; use the durable canonical video job."""
+    raise HTTPException(
+        410, LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB
+    )
     from agent.services import shoot_oneshot as _os
     await _require_flow_product(body.product_id, lane="FLOW_SHOOT_ONESHOT")
     client = get_flow_client()
@@ -4495,6 +4522,10 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     """ADR-007 API-first lane for manual workspace jobs: resolve the start asset to a
     Flow media id (existing id, or API upload of the materialized local file), then run
     the proven unified pipeline (make_video.start_generate). No DOM automation."""
+    if body.get("_direct_capture") is True:
+        raise HTTPException(
+            410, LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB
+        )
     import asyncio
     from agent.services import make_video as _mv
     client = get_flow_client()
@@ -4767,15 +4798,11 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     slot_assets = ordered_ref_slots(start_asset, body.get("refs"),
                                     end_asset=body.get("endAsset"))
     refs = []
-    local_paths = []
     official_provider_media_id = None
     for slot_label, asset in slot_assets:
         resolved = await _resolve_asset_to_media_id(client, asset, slot_label, request_id)
         if resolved and resolved not in refs:
             refs.append(resolved)
-            lp = asset.get("localFilePath") or asset.get("local_file_path")
-            if lp:
-                local_paths.append(str(lp))
         asset_source = str(
             asset.get("assetSource") or asset.get("asset_source") or asset.get("source") or ""
         ).upper()
@@ -4956,74 +4983,6 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         f"aspect={aspect} count={count} model={model_key or 'default'} "
         f"duration_s={duration_s or 'default'}", "backend")
 
-    # ── Owner Phase-2B: composer-driven initial lane (mutually exclusive) ───
-    from agent.services import google_flow_ui_driver as _ui_drv
-    if (_ui_drv.ui_driver_enabled() and mode in ("T2V", "I2V", "F2V")
-            and body.get("_direct_capture") is not True):
-        try:
-            ui_initial = await _ui_drv.run_initial_block1_via_composer(
-                client,
-                prompt=prompt,
-                media_ids=refs,
-                local_file_paths=local_paths,
-                expected_count=len(refs),
-                dry_run=body.get("confirm_live_credit_burn") is not True,
-                confirm_live_credit_burn=bool(body.get("confirm_live_credit_burn")),
-                request_id=request_id,
-                intercept_submit=body.get("confirm_live_credit_burn") is not True,
-            )
-            await crud.add_stage_event(
-                request_id, "UI_COMPOSER_INITIAL_READY", "WAITING_FLOW",
-                f"lane=UI_COMPOSER_INITIAL count={len(refs)} mode={mode}",
-                "backend")
-            return {
-                "ok": True,
-                "accepted": True,
-                "lane": "UI_COMPOSER_INITIAL",
-                "request_id": request_id,
-                "mode": mode,
-                "status": "READY_FOR_NEGOTIATION",
-                "ui_driver": ui_initial,
-            }
-        except _ui_drv.FlowUiDriverError as exc:
-            await _fail_manual_request(
-                request_id, "API_LANE_REJECTED",
-                f"{exc.code}: {exc.detail}", exc.code)
-
-    # ── LIVE-CAPTURE GATE (owner-fired, DIRECT_VIDEO_CAPTURE_ENABLED): fire ONE
-    # direct batchAsync submit with the resolved refs/project/settings and return
-    # the RAW submit response so the real contract (operation handles, accepted
-    # videoModelKey/aspect shape) is captured; poll+retrieve+persist continue in
-    # the background so the spent credit still yields an artifact.  An explicit
-    # capture request is terminal: it must never fall through to normal
-    # start_generate when disabled, unconfirmed, or otherwise ineligible.
-    if body.get("_direct_capture") is True:
-        capture_project_id = created_project_id or (
-            diag.get("projectId") if isinstance(diag, dict) else None)
-        cap = await _mv.start_direct_capture(
-            mode, prompt, capture_project_id, refs, aspect=aspect, tier=tier,
-            source_mode=_authority_source_mode, model=model_key,
-            duration_s=duration_s,
-            production_recipe=_manual_recipe or None,
-            staff_id=body.get("staff_id"),
-            staff_display_name_snapshot=body.get("staff_display_name_snapshot"),
-            confirm_live_credit_burn=bool(body.get("confirm_live_credit_burn")),
-            product_visual_custody=body.get("product_visual_custody"),
-            execution_identity=body.get("execution_identity"),
-            request_id=request_id,
-        )
-        await crud.add_stage_event(
-            request_id,
-            "API_DIRECT_CAPTURE_FIRED" if cap.get("ok")
-            else "API_DIRECT_CAPTURE_REJECTED",
-            "WAITING_FLOW" if cap.get("ok") else "FAILED",
-            f"ok={cap.get('ok')} error={cap.get('error')} job={cap.get('job_id')} "
-            f"fired={json.dumps(cap.get('fired') or {})[:400]} "
-            f"operations={cap.get('operations')}", "backend")
-        return {"ok": bool(cap.get("ok")), "lane": "DIRECT_CAPTURE",
-                "request_id": request_id, "mode": mode,
-                "source_mode": _authority_source_mode, **cap}
-
     res = await _mv.start_generate(
         mode, prompt, project_id=created_project_id,
         image_media_ids=refs or None,
@@ -5119,7 +5078,25 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
 
 @router.post("/execute-flow-job")
 async def execute_flow_job(body: dict):
-    """Trigger manual DOM automation in the extension for a generation job."""
+    """Dispatch canonical jobs API-first and retain submit-free smoke probes."""
+    if body.get("_direct_capture") is True:
+        raise HTTPException(
+            410, LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB
+        )
+    _entry_mode = str(body.get("mode") or "").strip().upper()
+    _entry_source_mode = str(body.get("source_mode") or "").strip().upper()
+    _entry_canonical_modes = {"IMG", "T2V", "I2V", "F2V"}
+    _entry_canonical_source_modes = {
+        "IMG", "T2V", "I2V", "F2V", "HYBRID", "FRAMES", "INGREDIENTS"
+    }
+    if (
+        body.get("smoke_test") is not True
+        and _entry_mode not in _entry_canonical_modes
+        and _entry_source_mode not in _entry_canonical_source_modes
+    ):
+        raise HTTPException(
+            410, LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB
+        )
     _raw_recipe = str(body.get("production_recipe") or "").strip().upper()
     if not _raw_recipe:
         _raw_source = str(body.get("source_mode") or "").strip().upper()
@@ -5369,10 +5346,13 @@ async def execute_flow_job(body: dict):
     # The GFV2/F2V DOM-clicking lane is DEAD (fail-closed root_shell_no_project,
     # live: manual_c2560a76). Manual workspace jobs for the four canonical modes
     # now run through the proven unified pipeline (make_video.start_generate);
-    # the extension stays transport-only. The DOM dispatch below survives only
-    # for any legacy non-mode payloads and will be deleted with the frozen lane.
+    # the extension stays transport-only. Only explicit submit-free smoke probes
+    # may reach the bridge below; non-smoke compatibility payloads were retired.
     _api_mode = str(body.get("mode") or "").upper()
-    if _api_mode in ("IMG", "T2V", "I2V", "F2V"):
+    if (
+        not body.get("smoke_test")
+        and _api_mode in ("IMG", "T2V", "I2V", "F2V")
+    ):
         return await _run_manual_job_via_generate(
             body, _api_mode, _start_asset if _start_asset_present else None)
 
@@ -5381,8 +5361,8 @@ async def execute_flow_job(body: dict):
     # closed for any canonical/source-canonical payload that slipped past it
     # (e.g. an aliased/missing transport mode carrying only a source_mode),
     # turning a silent DOM-lane JOB_PROMPT_EMPTY into a loud, actionable error
-    # instead of a DOM dispatch. Genuinely legacy non-mode payloads (no canonical
-    # mode AND no canonical source_mode) still fall through to the frozen lane.
+    # instead of a DOM dispatch. Noncanonical non-smoke payloads are already
+    # retired by the pre-contact boundary at the start of this handler.
     _src_mode = str(body.get("source_mode") or "").upper()
     _CANONICAL_SOURCE_MODES = {
         "IMG", "T2V", "I2V", "F2V", "HYBRID", "FRAMES", "INGREDIENTS",

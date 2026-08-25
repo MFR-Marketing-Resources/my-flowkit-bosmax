@@ -2496,6 +2496,8 @@ def _deep(obj, *keys):
 
 
 async def start(prompt: str, image_prompt: str, product_id: str | None = None) -> dict:
+    """Retired paid compatibility entrypoint; use the durable video job."""
+    raise RuntimeError("LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB")
     job_id = "v_" + uuid4().hex[:12]
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "stage": "queued",
                      "project_id": None, "product_id": product_id,
@@ -2517,6 +2519,8 @@ async def start_negotiate(prompt: str, image_prompt: str = None, dry: bool = Tru
     skips the start frame (pure T2V dry capture). Existing reference_media_ids are passed
     through unchanged so a dry negotiation can audit the real reference contract without
     creating or uploading a new media target."""
+    if dry is not True:
+        raise RuntimeError("LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB")
     job_id = "n_" + uuid4().hex[:12]
     refs = [str(media_id) for media_id in (reference_media_ids or []) if media_id]
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "stage": "queued",
@@ -2539,8 +2543,9 @@ async def start_on_existing(project_id: str, image_media_id: str, prompt: str) -
     endpoint now routes through the guarded one door; this legacy path has NO single-flight
     lane, bound-session, or drift invariants. Do not call it for new work.
 
-    Generate a video in an EXISTING project using an EXISTING (user-uploaded) image,
-    then retrieve the real new video and save it. The Flow tab must be on this project."""
+    The historical implementation is retained below for forensic context, but
+    invocation is retired; /make-video-existing already uses start_generate."""
+    raise RuntimeError("LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB")
     job_id = "x_" + uuid4().hex[:12]
     _JOBS[job_id] = {"job_id": job_id, "status": "SUBMITTED", "stage": "queued",
                      "project_id": project_id, "image_media_id": image_media_id,
@@ -5407,12 +5412,10 @@ async def start_direct_capture(mode: str, prompt: str, project_id: str,
                                staff_id: str | None = None,
                                staff_display_name_snapshot: str | None = None,
                                production_recipe: str | None = None) -> dict:
-    """LIVE-CAPTURE GATE (owner-authorized, DIRECT_VIDEO_CAPTURE_ENABLED): fire
-    ONE direct batchAsync submit, return the RAW submit response for contract
-    capture, and poll/retrieve/persist in the background so the spent credit
-    still yields a real artifact. Single-flight like every video job. The
-    confirmation flag is mandatory; explicit model and duration settings are
-    forwarded and fail closed when their direct contract is unproven."""
+    """Retired compatibility capture; canonical certification uses start_generate.
+
+    The historical implementation remains below as contract archaeology."""
+    raise RuntimeError("LEGACY_PAID_VIDEO_ENTRYPOINT_RETIRED_USE_DURABLE_VIDEO_JOB")
     global _VIDEO_LANE_JOB
     production_recipe = str(production_recipe or "").strip().upper() or None
     from agent.security.access_control import get_current_auth_context, resolve_request_staff
