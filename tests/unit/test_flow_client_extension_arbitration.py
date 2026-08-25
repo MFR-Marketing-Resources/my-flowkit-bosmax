@@ -845,3 +845,67 @@ async def test_project_arbitration_is_provider_free():
         method not in {"generate_video", "generate_video_extend"}
         for method in methods
     )
+
+
+@pytest.mark.asyncio
+async def test_faceless_certification_style_operation_pins_target_and_never_touches_other():
+    """Certification session-pin invariant proven at the FlowClient level.
+
+    Mirrors what ``faceless_profile_certification`` now does: bind ONE
+    project-aware owner, then run every provider-affecting call under a single
+    operation lease so the non-selected connection is never touched, and fail
+    closed (no provider spend) when no lease uniquely resolves the target.
+    """
+    client = FlowClient()
+    socket_a = _ProjectSocket(
+        client,
+        "session-a",
+        project_id=PROJECT_A,
+        tab_id=11,
+    )
+    socket_b = _ProjectSocket(
+        client,
+        "session-b",
+        project_id=PROJECT_B,
+        tab_id=22,
+    )
+    connection_a = _register_project_socket(client, socket_a)
+    _register_project_socket(client, socket_b)
+
+    # 1) Project-aware selection binds exactly the target owner A.
+    sel = await client.bind_flow_session(project_id=PROJECT_A)
+    assert sel["ok"] is True
+    assert sel["connection_id"] == connection_a
+    assert sel["flow_project_id"] == PROJECT_A
+
+    # 2) Under A's single lease a representative provider call reaches ONLY A;
+    #    the other connection never receives it.
+    before_b = len(socket_b.messages)
+    lease = client.acquire_operation_lease(connection_id=sel["connection_id"])
+    try:
+        with client.activate_operation_lease(lease):
+            result = await client._send(
+                "upload_image",
+                {"payload": "cert-representative"},
+                timeout=0.1,
+            )
+    finally:
+        client.release_operation_lease(lease)
+
+    assert isinstance(result, dict)
+    assert any(
+        message.get("method") == "upload_image" for message in socket_a.messages
+    )
+    assert len(socket_b.messages) == before_b
+
+    # 3) Fail closed: with both connections and no lease that uniquely resolves,
+    #    the un-leased provider path refuses to pick one (no provider spend).
+    a_before = len(socket_a.messages)
+    b_before = len(socket_b.messages)
+    ambiguous = await client._send("get_status", {}, timeout=1)
+    assert ambiguous == {
+        "error": "ERR_EXTENSION_CONNECTION_AMBIGUOUS",
+        "connection_count": 2,
+    }
+    assert len(socket_a.messages) == a_before
+    assert len(socket_b.messages) == b_before
