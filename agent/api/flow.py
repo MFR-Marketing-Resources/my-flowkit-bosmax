@@ -2465,6 +2465,21 @@ async def retry_generate_artifact_delivery(job_id: str):
         raise HTTPException(409, str(exc)) from exc
 
 
+@router.post("/generate-job/{job_id}/reretrieve-media")
+async def reretrieve_generate_media_delivery(job_id: str):
+    """Re-fetch already-rendered provider media bytes for a job whose ORIGINAL
+    local delivery failed, then complete delivery. Session-pinned, bytes-only;
+    never resubmits or re-generates in Flow."""
+    from agent.services import make_video as _mv
+
+    try:
+        return await _mv.reretrieve_provider_media_delivery(job_id)
+    except KeyError as exc:
+        raise HTTPException(404, "job not found") from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.post("/direct-capture/recover")
 async def recover_direct_capture(body: dict):
     """Recover an already-submitted direct media target without resubmitting it."""

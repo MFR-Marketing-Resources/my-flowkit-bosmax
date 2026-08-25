@@ -2675,6 +2675,207 @@ async def retry_artifact_delivery(job_id: str) -> dict:
     return _durable_single_snapshot(job)
 
 
+def _reretrieve_media_targets(job: dict) -> list[dict]:
+    """Collect the ALREADY-CAPTURED provider media targets to re-fetch.
+
+    Each target carries the rendered ``media_id`` plus optional
+    ``media_generation_id``/``fife_url`` retrieval hints.  This reads only
+    provider identity the job already recorded (artifacts -> output_correlation
+    -> direct_media_targets); it never derives a NEW media id and never submits a
+    generation.  Ordered de-dupe keeps the first occurrence.
+    """
+    targets: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(media_id, media_generation_id=None, fife_url=None):
+        mid = str(media_id or "").strip()
+        if not mid or mid in seen:
+            return
+        seen.add(mid)
+        targets.append({
+            "media_id": mid,
+            "media_generation_id": (
+                str(media_generation_id).strip() if media_generation_id else None
+            ),
+            "fife_url": str(fife_url).strip() if fife_url else None,
+        })
+
+    for art in job.get("artifacts") or []:
+        if not isinstance(art, dict):
+            continue
+        corr = art.get("correlation") if isinstance(art.get("correlation"), dict) else {}
+        _add(
+            art.get("media_id") or corr.get("media_id"),
+            art.get("media_generation_id") or corr.get("media_generation_id"),
+            art.get("fife_url") or corr.get("fife_url") or art.get("url"),
+        )
+    if not targets:
+        corr = job.get("output_correlation")
+        if isinstance(corr, dict):
+            _add(
+                corr.get("media_id"),
+                corr.get("media_generation_id"),
+                corr.get("fife_url"),
+            )
+    if not targets:
+        for tgt in job.get("direct_media_targets") or []:
+            if isinstance(tgt, dict):
+                _add(
+                    tgt.get("name") or tgt.get("media_id"),
+                    tgt.get("media_generation_id"),
+                    tgt.get("fife_url"),
+                )
+    return targets
+
+
+async def reretrieve_provider_media_delivery(job_id: str) -> dict:
+    """Session-pinned RE-RETRIEVAL recovery for a job whose provider media was
+    RENDERED but whose ORIGINAL local delivery never persisted the bytes.
+
+    Unlike ``retry_artifact_delivery`` (which only re-registers bytes already on
+    disk), this RE-FETCHES the existing provider media for a KNOWN media id from
+    the pinned Flow project and writes it to the CURRENT ``config.OUTPUT_DIR``
+    retrieved path, ignoring any stale stored ``local_path``.  It NEVER submits
+    or retries a generation -- recovery is bytes-only.
+
+    Invariants (mirroring the normal generation lane):
+      * acquire the durable SINGLE video lane before any provider-affecting call;
+      * pin exactly ONE Flow session to the job's project via
+        ``ensure_editor_binding`` (bind_flow_session -> acquire/activate/release
+        operation lease); fail closed, provider-free, if it cannot be pinned;
+      * reuse the SAME atomic delivery seam (``_record_artifacts`` ->
+        ``generated_artifact`` + readback + ``generation_result``).
+
+    Idempotent: if every media already has current-path bytes on disk AND a
+    ``generation_result`` row, it returns COMPLETE without re-fetching.
+    """
+    from agent.db import crud
+
+    job = _JOBS.get(job_id)
+    if job is None:
+        row = await crud.get_video_production_job(job_id)
+        if not row:
+            raise KeyError(job_id)
+        try:
+            job = json.loads(row.get("stage_state_json") or "{}")
+        except (TypeError, ValueError):
+            job = {}
+        if not isinstance(job, dict):
+            job = {}
+        job["job_id"] = job_id
+
+    mode = str(job.get("mode") or "F2V").upper()
+    project_id = str(job.get("project_id") or "").strip()
+    if not project_id:
+        raise RuntimeError("RERETRIEVE_PROJECT_MISSING")
+    targets = _reretrieve_media_targets(job)
+    if not targets:
+        raise RuntimeError("RERETRIEVE_MEDIA_TARGET_MISSING")
+
+    outdir = OUTPUT_DIR / "retrieved"
+
+    # Idempotency: already-persisted bytes + recorded result -> COMPLETE, no
+    # re-fetch and no session/provider touch.
+    already_complete = True
+    for target in targets:
+        path = outdir / f"{target['media_id']}.mp4"
+        result_row = await crud.get_generation_result(target["media_id"])
+        if not (path.exists() and path.stat().st_size > 0 and result_row):
+            already_complete = False
+            break
+    if already_complete:
+        job["reretrieve_recovery"] = {
+            "state": "ALREADY_COMPLETE",
+            "provider_generation_submits": 0,
+            "media_ids": [t["media_id"] for t in targets],
+        }
+        if job.get("status") not in {"DONE", "PRODUCT_FIDELITY_REVIEW_REQUIRED"}:
+            job.update(status="DONE", stage="done")
+        if job_id in _JOBS:
+            _JOBS[job_id].update(job)
+        await _sync_durable_single_job(job)
+        return _durable_single_snapshot(job)
+
+    client = get_flow_client()
+
+    # Durable single-flight guard -- the same cross-process lease the normal
+    # generation lane holds, so re-retrieval never races a live generation.
+    lane_lease = await crud.acquire_video_generation_lane_lease(job_id)
+    if not lane_lease.get("acquired"):
+        owner = (lane_lease.get("row") or {}).get("job_id")
+        raise RuntimeError(
+            f"VIDEO_JOB_IN_FLIGHT:{owner}" if owner else "VIDEO_JOB_IN_FLIGHT"
+        )
+    try:
+        # Pin exactly ONE Flow session to the job's project.  A failed bind is a
+        # structured, provider-free ``FlowEditorBindingError`` (a RuntimeError):
+        # no bytes are fetched and no generation is submitted.
+        binding = await ensure_editor_binding(
+            client, requested_project_id=project_id, mode=mode
+        )
+        job["binding"] = binding
+
+        outdir.mkdir(parents=True, exist_ok=True)
+        collected: list[dict] = []
+        for target in targets:
+            media_id = target["media_id"]
+            data_bytes, source = await _download_video_bytes(
+                client,
+                media_id,
+                target.get("fife_url"),
+                media_generation_id=target.get("media_generation_id"),
+            )
+            path = outdir / f"{media_id}.mp4"
+            path.write_bytes(data_bytes)
+            if not path.exists() or path.stat().st_size <= 0:
+                raise RuntimeError(f"RERETRIEVE_WRITE_VERIFY_FAILED:{media_id}")
+            collected.append({
+                "media_id": media_id,
+                "local_path": str(path),
+                "size_mb": round(len(data_bytes) / 1024 / 1024, 2),
+                "measured_duration_s": _measure_video_duration(str(path)),
+                "correlation": {
+                    "media_id": media_id,
+                    "matched_on": "reretrieve_known_media_id",
+                    "retrieval_source": source,
+                    "media_generation_id": target.get("media_generation_id"),
+                },
+            })
+
+        first = collected[0]
+        # Set DONE BEFORE registration so the shared delivery seam runs its
+        # ARTIFACT_PERSISTING -> DONE (or ARTIFACT_PERSISTENCE_FAILED) transition,
+        # exactly as the normal retrieval path does.
+        job.update(
+            status="DONE", stage="done",
+            media_id=first["media_id"], local_path=first["local_path"],
+            size_mb=first["size_mb"], artifact="video",
+            artifacts=list(collected),
+            strict_artifact_delivery=True,
+        )
+        job["reretrieve_recovery"] = {
+            "state": "RERETRIEVED",
+            "provider_generation_submits": 0,
+            "media_ids": [t["media_id"] for t in targets],
+        }
+        await _record_artifacts(job, mode, collected)
+        if job.get("artifact_delivery_failed"):
+            raise RuntimeError(
+                "RERETRIEVE_DELIVERY_REGISTRATION_FAILED:"
+                + str(job.get("artifact_record_error") or "")
+            )
+    finally:
+        try:
+            await crud.release_video_generation_lane_lease(job_id)
+        except Exception:  # noqa: BLE001 -- cleanup must not mask recovery evidence
+            pass
+
+    if job_id in _JOBS:
+        _JOBS[job_id].update(job)
+    await _sync_durable_single_job(job)
+    return _durable_single_snapshot(job)
+
+
 def _pid(obj) -> str:
     m = re.search(r'"projectId"\s*:\s*"([^"]+)"', json.dumps(obj))
     return m.group(1) if m else ""
