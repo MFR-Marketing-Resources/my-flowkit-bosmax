@@ -137,8 +137,22 @@ def _action_for_path(path: str, method: str, module: str) -> str:
     if method in {"GET", "HEAD", "OPTIONS"}:
         return "read"
     lower_path = path.casefold()
-    if any(marker in lower_path for marker in ("/approve", "/approval", "/publish")):
-        return "approve" if module in {"copy", "production", "poster"} else "execute"
+    # Product review and authoring mutations remain within the Product Truth
+    # authority.  They are updates to an existing product/draft, not product
+    # execution, even when their URL contains a review or approval marker.
+    if module == "products" and any(
+        marker in lower_path for marker in ("/review-drafts/", "/review/")
+    ):
+        return "update"
+    if any(
+        marker in lower_path
+        for marker in ("/approve", "/approval", "-approval", "/publish")
+    ):
+        if module in {"copy", "production", "poster"}:
+            return "approve"
+        if module == "products":
+            return "update"
+        return "execute"
     if "/unarchive" in lower_path:
         return "archive"
     if any(marker in lower_path for marker in ("/archive", "/delete", "/retire", "/remove")):

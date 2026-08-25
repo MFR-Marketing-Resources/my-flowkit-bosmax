@@ -62,6 +62,52 @@ LANE_TRANSPORT_SUPPORT: dict[str, frozenset[str]] = {
     "video": frozenset({TRANSPORT_ANTHROPIC_MESSAGES}),
 }
 
+# --- per-model chat request contract -------------------------------------
+# OpenAI-compatible providers do not all accept the same Chat Completions request
+# shape.  The GPT-4o / DeepSeek / Qwen / Gemini family accepts an explicit
+# `temperature` and caps output with `max_tokens`.  The GPT-5.x reasoning family
+# rejects `max_tokens` (requires `max_completion_tokens`) and accepts only the
+# default temperature.  Making the shape a per-model catalog capability keeps the
+# adapter from hardcoding one family's assumptions.  The DEFAULT preserves the
+# exact pre-existing behavior for every model that does not declare a contract, so
+# DeepSeek/Qwen/Gemini/gpt-4o are unchanged.  Anthropic ignores this (native
+# transport).
+CHAT_REQUEST_OUTPUT_TOKEN_PARAMS: frozenset[str] = frozenset(
+    {"max_tokens", "max_completion_tokens"}
+)
+CHAT_REQUEST_TEMPERATURE_POLICIES: frozenset[str] = frozenset(
+    {"explicit", "omit", "default_only"}
+)
+DEFAULT_CHAT_REQUEST_CONTRACT: dict[str, Any] = {
+    "output_token_parameter": "max_tokens",
+    "temperature_policy": "explicit",
+    "temperature_value": 0.5,
+}
+
+
+def _normalize_chat_request(raw: Any) -> dict[str, Any] | None:
+    """Validate a seed/operator chat_request contract; drop unknown fields.
+
+    Returns only recognized, in-range fields (or None). Never trusts arbitrary
+    keys onto the request payload.
+    """
+    if not isinstance(raw, dict):
+        return None
+    result: dict[str, Any] = {}
+    output_token_parameter = str(raw.get("output_token_parameter") or "").strip()
+    if output_token_parameter in CHAT_REQUEST_OUTPUT_TOKEN_PARAMS:
+        result["output_token_parameter"] = output_token_parameter
+    temperature_policy = str(raw.get("temperature_policy") or "").strip()
+    if temperature_policy in CHAT_REQUEST_TEMPERATURE_POLICIES:
+        result["temperature_policy"] = temperature_policy
+    if "temperature_value" in raw:
+        try:
+            result["temperature_value"] = float(raw["temperature_value"])
+        except (TypeError, ValueError):
+            pass
+    return result or None
+
+
 # provider_id -> seed provider block. `models[].lanes` are the lanes the seed model
 # is intended for (still transport-gated at validation time).
 SEED_CATALOG: dict[str, dict[str, Any]] = {
@@ -93,7 +139,19 @@ SEED_CATALOG: dict[str, dict[str, Any]] = {
             {"model_id": "gpt-4o", "label": "GPT-4o", "lanes": ["text", "structure", "image"]},
             # Owner-requested model.  The current local adapter contract proves
             # text/strict JSON only; no image/video capability is invented here.
-            {"model_id": "gpt-5.6-luna", "label": "GPT-5.6 Luna", "lanes": ["text", "structure"]},
+            # GPT-5.x reasoning family: verified against the official OpenAI Chat
+            # Completions contract — `max_tokens` is rejected (use
+            # `max_completion_tokens`) and only the default temperature is accepted
+            # (so omit an explicit temperature).
+            {
+                "model_id": "gpt-5.6-luna",
+                "label": "GPT-5.6 Luna",
+                "lanes": ["text", "structure"],
+                "chat_request": {
+                    "output_token_parameter": "max_completion_tokens",
+                    "temperature_policy": "omit",
+                },
+            },
         ],
     },
     "gemini": {
@@ -152,13 +210,17 @@ def _normalize_lanes(lanes: Any) -> list[str]:
 
 
 def _seed_model(entry: dict[str, Any]) -> dict[str, Any]:
-    return {
+    model: dict[str, Any] = {
         "model_id": str(entry["model_id"]),
         "label": str(entry.get("label") or entry["model_id"]),
         "enabled": True,
         "lanes": _normalize_lanes(entry.get("lanes")),
         "source": "seed",
     }
+    chat_request = _normalize_chat_request(entry.get("chat_request"))
+    if chat_request:
+        model["chat_request"] = chat_request
+    return model
 
 
 def _seed_provider(provider_id: str) -> dict[str, Any]:
@@ -193,13 +255,17 @@ def _normalize_model(raw: Any) -> dict[str, Any] | None:
     source = str(raw.get("source") or "custom")
     if source not in {"seed", "custom"}:
         source = "custom"
-    return {
+    model: dict[str, Any] = {
         "model_id": model_id,
         "label": str(raw.get("label") or model_id),
         "enabled": bool(raw.get("enabled", True)),
         "lanes": _normalize_lanes(raw.get("lanes")),
         "source": source,
     }
+    chat_request = _normalize_chat_request(raw.get("chat_request"))
+    if chat_request:
+        model["chat_request"] = chat_request
+    return model
 
 
 def _normalize_provider(provider_id: str, raw: Any) -> dict[str, Any]:
@@ -326,6 +392,37 @@ def _load_catalog() -> dict[str, Any]:
 
 def get_model_catalog() -> dict[str, Any]:
     return _load_catalog()
+
+
+def get_model_request_contract(provider_id: str, model_id: str) -> dict[str, Any]:
+    """Resolve the OpenAI-compatible Chat Completions request contract for a model.
+
+    Layered so it is correct even when the deployed mutable catalog predates the
+    contract field: DEFAULT < seed-declared < mutable operator override.  The
+    seed layer is read directly from ``SEED_CATALOG`` so a known model (e.g.
+    ``gpt-5.6-luna``) gets its contract without depending on catalog migration.
+    Only consumed by the openai_compatible_chat transport; anthropic ignores it.
+    """
+    pid = str(provider_id or "").strip().lower()
+    mid = str(model_id or "").strip()
+    contract = dict(DEFAULT_CHAT_REQUEST_CONTRACT)
+    seed = SEED_CATALOG.get(pid)
+    if seed:
+        for entry in seed.get("models", []):
+            if str(entry.get("model_id")) == mid:
+                seed_contract = _normalize_chat_request(entry.get("chat_request"))
+                if seed_contract:
+                    contract.update(seed_contract)
+                break
+    provider_entry = _load_catalog()["providers"].get(pid)
+    if provider_entry:
+        for entry in provider_entry.get("models", []):
+            if entry.get("model_id") == mid:
+                mutable_contract = _normalize_chat_request(entry.get("chat_request"))
+                if mutable_contract:
+                    contract.update(mutable_contract)
+                break
+    return contract
 
 
 def summarize_model_catalog() -> dict[str, Any]:
