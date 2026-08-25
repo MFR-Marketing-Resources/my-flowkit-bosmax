@@ -1038,31 +1038,22 @@ async def advance_job(
         prompt = cont["prompt"]
         idem = _stage_key(
             job, "EXTEND", f"{parent_op}|{_nx._prompt_hash(prompt)}|pos{position}")
-        if await _needs_stage_gate(idem):
+        existing_extend = await _crud.get_video_job_side_effect(idem)
+        claimable_extend = (
+            not existing_extend
+            or (
+                not existing_extend.get("operation_ref")
+                and existing_extend.get("submission_state") == SUB_NOT_ATTEMPTED
+                and existing_extend.get("credit_state") == CR_NOT_SPENT
+                and existing_extend.get("retry_safety") == RS_SAFE
+            )
+        )
+        if claimable_extend:
             if resume_only:
                 return await get_job_status(job_id)
             if _gate_stage_start(job, authorization_token, now) == _AUTH_EXPIRED:
                 return await _stop_auth_expired(job_id)
-        r = await _reserve_or_resume(idem, job_id, "EXTEND")
-        # retry_safety=SAFE contract: a pre-submit fail-closed error leaves the
-        # row NOT_ATTEMPTED / NOT_SPENT with no operation_ref — provably zero
-        # provider side effect. That is the ONE retryable state; without this,
-        # the stale row holds the idempotency key forever and the job can never
-        # resume (live: vj_2502426e7791 stuck AUTHORIZED after
-        # EXTEND_UNSUPPORTED_MODEL). UNCERTAIN/SUBMITTED rows stay non-retryable.
-        _row = r["row"] or {}
-        _safe_retry = (
-            not r["reserved"]
-            and not _row.get("operation_ref")
-            and _row.get("submission_state") == SUB_NOT_ATTEMPTED
-            and _row.get("retry_safety") == RS_SAFE
-        )
-        if r["reserved"] or _safe_retry:
-            await _crud.update_video_production_job_full(job_id, status=S_EXTEND_SUBMITTING)
-            await _crud.increment_side_effect_submit_count(idem)
-            await _crud.update_video_job_side_effect(
-                idem, submission_state=SUB_SUBMITTED, credit_state=CR_MAY_HAVE_SPENT,
-                retry_safety=RS_RESUME_ONLY)
+        if claimable_extend:
             blocks = [_nx.ExtendBlock(block_index=position + 1, position=position,
                                       prompt=prompt, is_final=bool(cont.get("is_final")))]
             req = _nx.ExtendChainRequest(
@@ -1070,8 +1061,24 @@ async def advance_job(
                 scene_id=job["scene_id"],
                 source_operation_id=parent_op, blocks=blocks,
                 aspect_ratio=extend_aspect_ratio(job.get("aspect_ratio")))
+            claimed_here = False
             try:
                 async def _run_extend(_binding):
+                    nonlocal claimed_here
+                    claim = await _crud.claim_safe_video_job_side_effect_submission(
+                        idem,
+                        job_id=job_id,
+                        stage="EXTEND",
+                        expected_submit_count=int(
+                            (existing_extend or {}).get("effective_submit_count") or 0
+                        ),
+                    )
+                    if not claim["claimed"]:
+                        return {"_side_effect_claimed": False}
+                    claimed_here = True
+                    await _crud.update_video_production_job_full(
+                        job_id, status=S_EXTEND_SUBMITTING
+                    )
                     return await _nx.run_native_extend_chain(
                         client, req, dry_run=False, confirm_live_credit_burn=True,
                         confirmed_extend_operation_count=1)
@@ -1090,15 +1097,26 @@ async def advance_job(
                     _code in _EXTEND_POST_RPC_CODES
                     or "SUBMIT" in str(exc).upper() or "TIMEOUT" in str(exc).upper()
                 )
-                await _crud.update_video_job_side_effect(
-                    idem,
-                    submission_state=(SUB_UNCERTAIN if provider_touched else SUB_NOT_ATTEMPTED),
-                    credit_state=(CR_MAY_HAVE_SPENT if provider_touched else CR_NOT_SPENT),
-                    retry_safety=(RS_BLOCKED if provider_touched else RS_SAFE),
-                    detail=str(exc)[:200])
-                await _crud.update_video_production_job_full(
-                    job_id, status=F_EXTEND, error_code=F_EXTEND)
+                if claimed_here:
+                    await _crud.update_video_job_side_effect(
+                        idem,
+                        submission_state=(
+                            SUB_UNCERTAIN if provider_touched else SUB_NOT_ATTEMPTED
+                        ),
+                        credit_state=(
+                            CR_MAY_HAVE_SPENT if provider_touched else CR_NOT_SPENT
+                        ),
+                        retry_safety=(RS_BLOCKED if provider_touched else RS_SAFE),
+                        detail=str(exc)[:200],
+                    )
+                    await _crud.update_video_production_job_full(
+                        job_id, status=F_EXTEND, error_code=F_EXTEND
+                    )
                 raise OrchestratorError(F_EXTEND, str(exc)[:200]) from exc
+            if result.get("_side_effect_claimed") is False:
+                # Another caller crossed the exact SAFE→SUBMITTED boundary.
+                # It owns provider progress; this caller never submits or mutates it.
+                return await get_job_status(job_id)
             child = (result.get("blocks") or [{}])[-1]
             child_op = child.get("child_operation_id")
             if not child_op:
@@ -1119,7 +1137,7 @@ async def advance_job(
                 retry_safety=RS_RESUME_ONLY, operation_ref=child_op)
             job = await _crud.get_video_production_job(job_id)
         else:
-            row = r["row"] or {}
+            row = existing_extend or {}
             if row.get("operation_ref"):
                 segs = segments
                 if row["operation_ref"] not in segs:

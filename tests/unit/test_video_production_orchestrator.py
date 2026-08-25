@@ -700,6 +700,125 @@ async def test_concurrent_advance_single_concat(monkeypatch, tmp_path):
     assert client.extend_submits == 1
     assert client.concat_submits == 1
 
+    # The same race against an existing SAFE retry row must also have one owner.
+    retry_plan, _ = await _drive_to_initial(monkeypatch, tmp_path, "conc-safe")
+    retry_job = await crud.get_video_production_job(retry_plan["job_id"])
+    retry_cont = json.loads(retry_job["continuation_prompts_json"])[0]
+    retry_key = orch._stage_key(
+        retry_job,
+        "EXTEND",
+        "init-conc-safe|"
+        f"{orch._nx._prompt_hash(retry_cont['prompt'])}|pos1",
+    )
+    await crud.reserve_video_job_side_effect(
+        retry_key, job_id=retry_job["job_id"], stage="EXTEND"
+    )
+    await crud.increment_side_effect_submit_count(retry_key)
+    await crud.update_video_job_side_effect(
+        retry_key,
+        submission_state=orch.SUB_NOT_ATTEMPTED,
+        credit_state=orch.CR_NOT_SPENT,
+        retry_safety=orch.RS_SAFE,
+        detail="provider-free SAFE retry fixture",
+    )
+    await crud.update_video_production_job_full(
+        retry_job["job_id"], status=orch.F_EXTEND, error_code=orch.F_EXTEND
+    )
+    retry_auth = await orch.authorize_job(
+        retry_job["job_id"],
+        confirmed_plan_fingerprint=retry_plan["plan_fingerprint"],
+    )
+    retry_client = FakeClient("conc-safe")
+    retry_args = dict(
+        authorization_token=retry_auth["authorization_token"],
+        generate_initial=_initial_gen([], "conc-safe"),
+        out_dir=tmp_path,
+        poll_interval_s=0,
+    )
+    await asyncio.gather(
+        orch.advance_job(retry_client, retry_job["job_id"], **retry_args),
+        orch.advance_job(retry_client, retry_job["job_id"], **retry_args),
+    )
+    retry_row = await crud.get_video_job_side_effect(retry_key)
+    assert retry_client.extend_submits == 1
+    assert retry_client.concat_submits == 1
+    assert retry_row["submission_state"] == orch.SUB_TERMINAL
+    assert int(retry_row["effective_submit_count"]) == 2
+
+    # A caller that read a fresh candidate but then fails rooted binding must
+    # not downgrade the concurrent winner's active SUBMITTED ownership.
+    race_plan, race_auth = await _drive_to_initial(
+        monkeypatch, tmp_path, "conc-preclaim-fail"
+    )
+    race_job = await crud.get_video_production_job(race_plan["job_id"])
+    race_cont = json.loads(race_job["continuation_prompts_json"])[0]
+    race_key = orch._stage_key(
+        race_job,
+        "EXTEND",
+        "init-conc-preclaim-fail|"
+        f"{orch._nx._prompt_hash(race_cont['prompt'])}|pos1",
+    )
+    first_entered = asyncio.Event()
+    second_entered = asyncio.Event()
+    winner_active = asyncio.Event()
+    release_winner = asyncio.Event()
+    original_phase = orch.bridge_lineage_phase
+    extend_entries = 0
+
+    class _BlockingExtend(FakeClient):
+        async def generate_video_extend(self, **kwargs):
+            result = await super().generate_video_extend(**kwargs)
+            winner_active.set()
+            await release_winner.wait()
+            return result
+
+    async def controlled_phase(client_arg, job_id, phase, action):
+        nonlocal extend_entries
+        if job_id == race_job["job_id"] and phase == "EXTEND_1":
+            extend_entries += 1
+            if extend_entries == 1:
+                first_entered.set()
+                await second_entered.wait()
+                return await action(None)
+            second_entered.set()
+            await winner_active.wait()
+            raise RuntimeError("provider-free preclaim binding failure")
+        return await original_phase(client_arg, job_id, phase, action)
+
+    monkeypatch.setattr(orch, "bridge_lineage_phase", controlled_phase)
+    race_client = _BlockingExtend("conc-preclaim-fail")
+    race_args = dict(
+        authorization_token=race_auth["authorization_token"],
+        generate_initial=_initial_gen([], "conc-preclaim-fail"),
+        out_dir=tmp_path,
+        poll_interval_s=0,
+    )
+    winner = asyncio.create_task(
+        orch.advance_job(race_client, race_job["job_id"], **race_args)
+    )
+    await first_entered.wait()
+    loser = asyncio.create_task(
+        orch.advance_job(race_client, race_job["job_id"], **race_args)
+    )
+    await winner_active.wait()
+    with pytest.raises(orch.OrchestratorError, match="preclaim binding failure"):
+        await loser
+
+    active_row = await crud.get_video_job_side_effect(race_key)
+    assert active_row["submission_state"] == orch.SUB_SUBMITTED
+    assert active_row["credit_state"] == orch.CR_MAY_HAVE_SPENT
+    assert active_row["retry_safety"] == orch.RS_RESUME_ONLY
+    assert int(active_row["effective_submit_count"]) == 1
+    assert race_client.extend_submits == 1
+
+    release_winner.set()
+    completed = await winner
+    final_row = await crud.get_video_job_side_effect(race_key)
+    assert completed["complete"] is True
+    assert race_client.extend_submits == 1
+    assert final_row["submission_state"] == orch.SUB_TERMINAL
+    assert int(final_row["effective_submit_count"]) == 1
+
 
 # ── restart / resume: resume_only never fresh-submits ───────────────────────
 async def test_resume_only_waits_before_fresh_submit(monkeypatch, tmp_path):
