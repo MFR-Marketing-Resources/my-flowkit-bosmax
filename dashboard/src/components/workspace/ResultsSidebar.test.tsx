@@ -1,12 +1,14 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ResultsSidebar from "./ResultsSidebar";
 
 afterEach(() => {
 	cleanup();
 	vi.unstubAllGlobals();
 });
+
+beforeEach(() => window.sessionStorage.clear());
 
 describe("ResultsSidebar video lane", () => {
 	it("uses video wording and renders one canonical Video Library link", () => {
@@ -32,16 +34,15 @@ describe("ResultsSidebar video lane", () => {
 		);
 	});
 
-	it("discovers a video registered during the mounted session", async () => {
+	it("queries durable identity and does not globally recover recent artifacts", async () => {
 		const fetchMock = vi.fn().mockResolvedValue({
 			ok: true,
 			json: async () => ({
-				artifacts: [
+				results: [
 					{
 						media_id: "14482c9d-1972-4df3-9fa2-1fdbaa1964a7",
-						artifact_kind: "video",
 						size_mb: 1.54,
-						created_at: new Date(Date.now() + 1000).toISOString(),
+						retrieved_url: "/api/flow/retrieved/14482c9d-1972-4df3-9fa2-1fdbaa1964a7",
 					},
 				],
 			}),
@@ -53,6 +54,9 @@ describe("ResultsSidebar video lane", () => {
 				libraryHref="/library/videos"
 				mediaKind="video"
 				results={[]}
+				requestId="req-session"
+				staffId="staff-session"
+				surfaceLane="FACELESS"
 			/>,
 		);
 
@@ -62,7 +66,10 @@ describe("ResultsSidebar video lane", () => {
 			"/api/flow/retrieved/14482c9d-1972-4df3-9fa2-1fdbaa1964a7",
 		);
 		expect(fetchMock).toHaveBeenCalledWith(
-			"/api/flow/artifacts?limit=20&kind=video",
+			"/api/results/recover?request_id=req-session&staff_id=staff-session&surface_lane=FACELESS",
+		);
+		expect(fetchMock).not.toHaveBeenCalledWith(
+			expect.stringContaining("/api/flow/artifacts"),
 		);
 	});
 });

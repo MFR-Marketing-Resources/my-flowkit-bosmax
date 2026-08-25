@@ -211,6 +211,120 @@ def _owner_authorized_shared_reference_8s_bootstrap(
     )
 
 
+def _server_derived_video_profiles(
+    *,
+    mode: str,
+    source_mode: str | None,
+    model: str | None,
+    duration_s: int | None,
+    aspect: str | None,
+    ref_count: int,
+    num_videos: int,
+) -> tuple[dict, dict]:
+    """Derive the exact WEP/PEP tuple from provider-affecting request fields.
+
+    Surface and client-authored profile receipts are intentionally absent. A
+    supplied receipt can only be compared with these server-derived profiles;
+    it never chooses the tuple certified for paid dispatch.
+    """
+    from agent.services import video_execution_profile_service as _profiles
+
+    # Durable Extend packages historically persist the captured provider model
+    # key for their continuation blocks. Its request-model authority is still
+    # Veo 3.1 Lite; keep the provider key below unchanged.
+    request_model = (
+        "veo_3_1_lite"
+        if str(model or "").strip().lower() == "veo_3_1_extension_lite"
+        else model
+    )
+    spec = video_models.resolve(request_model)
+    duration = int(duration_s or spec["default_duration_s"])
+    normalized_mode = str(mode or "").strip().upper()
+    normalized_source = str(source_mode or "").strip().upper() or (
+        "T2V" if normalized_mode == "T2V" else None
+    )
+    normalized_aspect = _profiles.normalize_aspect_ratio(aspect or "9:16")
+    exact_omni_10 = hybrid_reference_omni10_route_matches(
+        normalized_mode, normalized_source, spec["key"], duration, normalized_aspect,
+        ref_count, num_videos,
+    )
+    profile_kwargs = {
+        "model": spec["key"],
+        "duration_s": duration,
+        "aspect_ratio": normalized_aspect,
+        "logical_mode": normalized_mode,
+        "source_mode": normalized_source,
+        "reference_count": ref_count,
+    }
+    if exact_omni_10:
+        profile_kwargs.update(
+            transport_route=HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE,
+            provider_transport_key_provenance=(
+                "captured_flow_agent_contract[abra_r2v_10s]"
+            ),
+        )
+    duration_profile = _profiles.resolve_duration_model_profile(**profile_kwargs)
+
+    if duration in (16, 24):
+        reference_topology = "SOURCE_AGNOSTIC"
+        generation_type = "native_extend"
+        execution_transport = "google_flow_native_extend"
+        provider_model_key = "veo_3_1_extension_lite"
+        contract_version = "google-flow-native-extend-v1"
+        provider_tool = None
+        provider_rpc = "batchAsyncGenerateVideoExtendVideo"
+    elif ref_count:
+        reference_topology = (
+            "ONE_REFERENCE" if ref_count == 1 else f"MULTI_REFERENCE_{ref_count}"
+        )
+        generation_type = "reference_frame_2_video"
+        execution_transport = "flow_creation_agent"
+        provider_model_key = None
+        contract_version = _pep.PROVIDER_EXECUTION_PROFILE_VERSION
+        provider_tool = None
+        provider_rpc = None
+        if (
+            duration == 8
+            and normalized_mode == "F2V"
+            and normalized_source == "HYBRID"
+            and spec["key"] == "veo_3_1_lite"
+            and ref_count == 1
+            and int(num_videos) == 1
+        ):
+            execution_transport = "google_flow_reference"
+            provider_model_key = SHARED_REFERENCE_VEO_8S_PROVIDER_MODEL_KEY
+            contract_version = SHARED_REFERENCE_VEO_8S_CONTRACT_VERSION
+    else:
+        reference_topology = "NONE"
+        generation_type = "text_to_video"
+        execution_transport = "flow_creation_agent"
+        provider_model_key = None
+        contract_version = _pep.PROVIDER_EXECUTION_PROFILE_VERSION
+        provider_tool = None
+        provider_rpc = None
+    if exact_omni_10:
+        provider_model_key = HYBRID_REFERENCE_OMNI_10S_PROVIDER_MODEL_KEY
+        contract_version = HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION
+        provider_tool = HYBRID_REFERENCE_OMNI_10S_PROVIDER_TOOL
+        provider_rpc = "agent_stream_chat"
+    provider_profile = _pep.resolve_provider_execution_profile(
+        provider="GOOGLE_FLOW",
+        model=spec["key"],
+        duration_seconds=duration,
+        prompt_block_count=duration_profile["prompt_block_count"],
+        aspect_ratio=normalized_aspect,
+        output_count=num_videos,
+        reference_topology=reference_topology,
+        generation_type=generation_type,
+        execution_transport=execution_transport,
+        provider_model_key=provider_model_key,
+        capability_contract_version=contract_version,
+        provider_tool=provider_tool,
+        provider_rpc=provider_rpc,
+    )
+    return duration_profile, provider_profile
+
+
 def hybrid_reference_omni10_capture_enabled() -> bool:
     return os.environ.get("HYBRID_REFERENCE_OMNI_10S_CAPTURE_ENABLED", "0").strip().lower() in (
         "1", "true", "yes", "on"
@@ -1041,6 +1155,7 @@ async def _prepare_durable_single_job(
             product_id=job.get("product_id"),
             staff_id=job.get("staff_id"),
             staff_display_name_snapshot=job.get("staff_display_name_snapshot"),
+            execution_package_id=job.get("workspace_execution_package_id"),
             engine="GOOGLE_FLOW_API_FIRST",
             model=job.get("model"),
             aspect_ratio=job.get("aspect"),
@@ -1056,6 +1171,19 @@ async def _prepare_durable_single_job(
                         or [],
                         "model": job.get("model"),
                         "duration_s": job.get("duration_s"),
+                        "requested_profile_duration_s": job.get(
+                            "requested_profile_duration_s"
+                        ),
+                        "workspace_execution_package_id": job.get(
+                            "workspace_execution_package_id"
+                        ),
+                        "execution_profile_context": job.get(
+                            "execution_profile_context"
+                        ),
+                        "provider_profile": job.get("provider_profile"),
+                        "product_visual_custody": job.get(
+                            "product_visual_custody"
+                        ),
                     },
                     sort_keys=True,
                     separators=(",", ":"),
@@ -1065,14 +1193,32 @@ async def _prepare_durable_single_job(
                 {
                     "execution_mode": "SINGLE",
                     "lane": "MAKE_VIDEO_ONE_DOOR",
-                    "request_id": idempotency_key,
+                    "request_id": job.get("request_id") or idempotency_key,
+                    "stable_request_identity": (
+                        job.get("request_id") or idempotency_key
+                    ),
+                    "workspace_execution_package_id": job.get(
+                        "workspace_execution_package_id"
+                    ),
                     "mode": job.get("mode"),
                     "source_mode": job.get("source_mode"),
                     "production_recipe": job.get("production_recipe"),
+                    "surface_lane": job.get("surface_lane"),
                     "product_id": job.get("product_id"),
                     "project_id": job.get("project_id"),
                     "staff_id": job.get("staff_id"),
                     "staff_display_name": job.get("staff_display_name_snapshot"),
+                    "requested_profile_duration_s": job.get(
+                        "requested_profile_duration_s"
+                    ),
+                    "execution_identity": job.get("execution_identity"),
+                    "execution_profile_context": job.get(
+                        "execution_profile_context"
+                    ),
+                    "provider_profile": job.get("provider_profile"),
+                    "product_visual_custody": job.get(
+                        "product_visual_custody"
+                    ),
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -3204,8 +3350,10 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                          copy_execution_binding: dict | None = None,
                          manifest_id: str | None = None,
                          asset_fingerprints: list[str] | None = None,
+                         workspace_execution_package_id: str | None = None,
                          execution_identity: dict | None = None,
                          execution_profile_context: dict | None = None,
+                         requested_profile_duration_s: int | None = None,
                          provider_profile: dict | None = None,
                          product_visual_custody: dict | None = None,
                          request_id: str | None = None,
@@ -3425,14 +3573,71 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 "blocker_code": _violation.split(":", 1)[0],
             },
         }
+    _duration_model_profile = None
+    _provider_profile_certification = None
     _submitted_provider_profile = None
-    if provider_profile is not None:
+    if mode in _VIDEO_MODES:
         try:
-            _submitted_provider_profile = _resolve_submitted_provider_profile(
-                provider_profile
+            _duration_model_profile, _derived_provider_profile = (
+                _server_derived_video_profiles(
+                    mode=mode,
+                    source_mode=source_mode,
+                    model=model,
+                    duration_s=(requested_profile_duration_s or duration_s),
+                    aspect=aspect,
+                    ref_count=_ref_count,
+                    num_videos=num_videos,
+                )
             )
-        except ValueError as exc:
-            _code = str(exc).split(":", 1)[0]
+            if provider_profile is not None:
+                _submitted_provider_profile = _resolve_submitted_provider_profile(
+                    provider_profile
+                )
+                if (
+                    _submitted_provider_profile["provider_profile_digest"]
+                    != _derived_provider_profile["provider_profile_digest"]
+                ):
+                    raise ValueError("PROVIDER_PROFILE_CONTEXT_MISMATCH")
+            if execution_profile_context is not None:
+                from agent.services import video_execution_profile_service as _profiles
+
+                _expected_context = dict(execution_profile_context)
+                _expected_profile = (
+                    execution_profile_context.get("duration_model_profile")
+                    if isinstance(execution_profile_context, dict)
+                    else None
+                )
+                _expected_profile = _profiles.canonicalize_profile(
+                    _expected_profile or {}
+                )
+                if (
+                    _expected_profile["profile_digest"]
+                    != _duration_model_profile["profile_digest"]
+                ):
+                    raise ValueError("EXECUTION_PROFILE_CONTEXT_MISMATCH")
+                _approval_digest_fields = (
+                    "lane_adapter_digest",
+                    "product_digest",
+                    "copy_digest",
+                    "sweetwps_digest",
+                    "compositor_digest",
+                    "compiler_digest",
+                )
+                if any(_expected_context.get(key) for key in _approval_digest_fields):
+                    execution_profile_context = _profiles.normalize_approval_context(
+                        _expected_context
+                    )
+                else:
+                    execution_profile_context = {
+                        "duration_model_profile": _expected_profile,
+                        "lane": str(_expected_context.get("lane") or "")
+                        .strip()
+                        .upper()
+                        .replace("-", "_"),
+                    }
+            provider_profile = _derived_provider_profile
+        except (TypeError, ValueError) as exc:
+            _code = getattr(exc, "code", None) or str(exc).split(":", 1)[0]
             return {
                 "status": "REJECTED",
                 "error": _code,
@@ -3444,7 +3649,6 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                     "blocker_code": _code,
                 },
             }
-        provider_profile = _submitted_provider_profile
     _shared_8s_profile = _resolve_shared_reference_8s_profile(
         mode=mode,
         source_mode=source_mode,
@@ -3455,13 +3659,39 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
         num_videos=num_videos,
         provider_profile=provider_profile,
     )
-    _shared_8s_bootstrap_authorized = _owner_authorized_shared_reference_8s_bootstrap(
+    _shared_8s_capture_authorized = _owner_authorized_shared_reference_8s_bootstrap(
         profile=_shared_8s_profile,
         confirm_live_credit_burn=confirm_live_credit_burn,
         maximum_provider_operations=maximum_provider_operations,
         max_retry_operations=max_retry_operations,
     )
-    if _shared_8s_profile and not _shared_8s_bootstrap_authorized:
+    _exact_profile_certified = bool(
+        isinstance(provider_profile, dict)
+        and provider_profile.get("certification_status") == _pep.PROFILE_CERTIFIED
+    )
+    if mode in _VIDEO_MODES and not _exact_profile_certified:
+        try:
+            from agent.services import provider_certification_service as _certifications
+
+            _provider_profile_certification = (
+                await _certifications.provider_certification_status(
+                    _duration_model_profile
+                )
+            )
+            _exact_profile_certified = bool(
+                _provider_profile_certification.get("certified")
+            )
+        except Exception as exc:  # noqa: BLE001 - fail closed before provider
+            _provider_profile_certification = {
+                "certified": False,
+                "status": "NOT_CERTIFIED",
+                "reason": "PROFILE_CERTIFICATION_LOOKUP_FAILED",
+                "detail": str(exc),
+            }
+    _shared_8s_route_authorized = bool(
+        _exact_profile_certified or _shared_8s_capture_authorized
+    )
+    if _shared_8s_profile and not _shared_8s_route_authorized:
         return {
             "status": "REJECTED",
             "error": "SHARED_8S_BOOTSTRAP_AUTHORIZATION_REQUIRED",
@@ -3477,7 +3707,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 "blocker_code": "SHARED_8S_BOOTSTRAP_AUTHORIZATION_REQUIRED",
             },
         }
-    if _shared_8s_profile and not str(manifest_id or "").strip():
+    if _shared_8s_capture_authorized and not str(manifest_id or "").strip():
         return {
             "status": "REJECTED",
             "error": "SHARED_8S_EXECUTION_MANIFEST_REQUIRED",
@@ -3489,19 +3719,27 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 "blocker_code": "SHARED_8S_EXECUTION_MANIFEST_REQUIRED",
             },
         }
-    if provider_profile is not None and not _shared_8s_profile:
+    if (
+        mode in _VIDEO_MODES
+        and not _exact_profile_certified
+        and not capture_requested
+        and not profile_certification_capture_requested
+        and not _shared_8s_capture_authorized
+    ):
         return {
             "status": "REJECTED",
-            "error": "PROVIDER_PROFILE_NOT_AUTHORIZED_FOR_ROUTE",
+            "error": "DURATION_PROFILE_NOT_CERTIFIED",
             "detail": (
-                "Explicit provider profiles are accepted here only for the exact "
-                "shared 8s bootstrap tuple."
+                "Provider proof is missing for the exact server-derived "
+                "duration/model/transport profile."
             ),
+            "provider_profile": provider_profile,
+            "provider_certification": _provider_profile_certification,
             "pre_provider": {
                 "classification": "BLOCKED",
                 "provider_calls": 0,
                 "credit_spend": False,
-                "blocker_code": "PROVIDER_PROFILE_NOT_AUTHORIZED_FOR_ROUTE",
+                "blocker_code": "DURATION_PROFILE_NOT_CERTIFIED",
             },
         }
     # A replay must resolve to the existing logical job before the process-local
@@ -3561,7 +3799,7 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                 ref_count=_ref_count, num_videos=num_videos,
                 surface_lane=surface_lane,
                 provider_profile=provider_profile,
-                shared_8s_bootstrap_authorized=_shared_8s_bootstrap_authorized,
+                shared_8s_bootstrap_authorized=_shared_8s_route_authorized,
             )
             _routing_receipt = _build_reference_routing_receipt(
                 mode, source_mode, image_media_ids, _direct_plan,
@@ -3723,7 +3961,12 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                       **_surface_provenance,
                       "transport_mode": _surface_provenance["transport_mode"] or mode,
                       "direct_plan": _direct_plan,
+                      "workspace_execution_package_id": workspace_execution_package_id,
                       "execution_identity": execution_identity,
+                      "execution_profile_context": execution_profile_context,
+                      "requested_profile_duration_s": requested_profile_duration_s,
+                      "duration_model_profile": _duration_model_profile,
+                      "provider_profile_certification": _provider_profile_certification,
                       "provider_profile": provider_profile,
                       "provider_profile_id": (
                           provider_profile.get("profile_id")
@@ -3736,13 +3979,11 @@ async def start_generate(mode: str, prompt: str, project_id: str = None,
                           else None
                       ),
                       "provider_profile_status": (
-                          provider_profile.get("certification_status")
-                          if isinstance(provider_profile, dict)
-                          else None
+                          "CERTIFIED" if _exact_profile_certified else "NOT_CERTIFIED"
                       ),
                       "provider_certification_bootstrap": (
                           "OWNER_AUTHORIZED_SHARED_8_TO_24_CHAIN"
-                          if _shared_8s_bootstrap_authorized
+                          if _shared_8s_capture_authorized
                           else None
                       ),
                       "provider_operation_budget": maximum_provider_operations,

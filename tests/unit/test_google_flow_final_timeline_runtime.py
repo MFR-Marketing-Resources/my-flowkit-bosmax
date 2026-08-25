@@ -249,7 +249,7 @@ def test_finalize_live_requires_kill_switch(monkeypatch):
     assert exc.value.code == ft.FINAL_TIMELINE_DISABLED
 
 
-def test_finalize_live_happy_path_saves_and_validates(monkeypatch, tmp_path):
+def test_final_timeline_bytes_end_delivery_pending_not_complete(monkeypatch, tmp_path):
     monkeypatch.setenv("NATIVE_EXTEND_ENABLED", "1")
     store = _patch_job_store(monkeypatch)
     encoded = base64.b64encode(_real_mp4_bytes(16.0)).decode()
@@ -262,13 +262,13 @@ def test_finalize_live_happy_path_saves_and_validates(monkeypatch, tmp_path):
         client, job_id="vj_live", segment_media_ids=SEGS, requested_seconds=16,
         out_dir=tmp_path, dry_run=False, confirm_live_credit_burn=True,
         poll_interval_s=0))
-    assert out["status"] == ft.JOB_COMPLETE
+    assert out["status"] == ft.JOB_DELIVERY_PENDING
     assert out["measured_duration_s"] == pytest.approx(16.0, abs=0.01)
     assert out["final_media_id"] == "final_vj_live"
     assert len(client.submits) == 1
     assert store["job"]["final_concat_job_name"].endswith(
         "/jobs/b5eaf875-0405-4d3f-85d6-8156d8b5661f")
-    assert store["job"]["status"] == ft.JOB_COMPLETE
+    assert store["job"]["status"] == ft.JOB_DELIVERY_PENDING
 
 
 def test_finalize_resumes_existing_job_without_resubmitting(monkeypatch, tmp_path):

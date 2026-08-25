@@ -2563,7 +2563,11 @@ async def list_artifacts(
     from datetime import datetime, timedelta, timezone
     purged = await crud.purge_expired_artifacts(ARTIFACT_RETENTION_HOURS)
     items = await crud.list_generated_artifacts(
-        limit=limit, mode=mode, kind=kind, surface_lane=surface_lane
+        limit=limit,
+        mode=mode,
+        kind=kind,
+        surface_lane=surface_lane,
+        final_only=(not kind or str(kind).strip().lower() == "video"),
     )
     from agent.services.video_surface_provenance import surface_display_label
     for item in items:
@@ -3180,6 +3184,13 @@ class VideoJobPlanRequest(BaseModel):
     initial_reference_media_ids: Optional[list] = None
     initial_prompt_text: Optional[str] = None
     continuation_prompts: Optional[list] = None
+    staff_id: Optional[str] = None
+    staff_display_name_snapshot: Optional[str] = None
+    faceless_execution_identity: Optional[dict[str, Any]] = None
+    execution_profile_context: Optional[dict[str, Any]] = None
+    provider_profile: Optional[dict[str, Any]] = None
+    product_visual_custody: Optional[dict[str, Any]] = None
+    stable_request_identity: Optional[str] = None
 
 
 class VideoJobAuthorizeRequest(BaseModel):
@@ -3203,6 +3214,13 @@ def _job_intent(body: "VideoJobPlanRequest") -> dict:
         "initial_reference_media_ids": body.initial_reference_media_ids,
         "initial_prompt_text": body.initial_prompt_text,
         "continuation_prompts": body.continuation_prompts,
+        "staff_id": body.staff_id,
+        "staff_display_name_snapshot": body.staff_display_name_snapshot,
+        "faceless_execution_identity": body.faceless_execution_identity,
+        "execution_profile_context": body.execution_profile_context,
+        "provider_profile": body.provider_profile,
+        "product_visual_custody": body.product_visual_custody,
+        "stable_request_identity": body.stable_request_identity,
     }
 
 
@@ -3565,10 +3583,6 @@ async def _production_initial_generator(job: dict) -> dict:
     import asyncio as _asyncio
     prompt, mode, refs, aspect = _initial_gen_preconditions(job)
 
-    client = get_flow_client()
-    if not getattr(client, "connected", False):
-        raise InitialGenerationError("Extension not connected")
-
     preflight = job.get("_bridge_lineage_preflight")
     if not isinstance(preflight, dict):
         raise InitialGenerationError(
@@ -3600,17 +3614,58 @@ async def _production_initial_generator(job: dict) -> dict:
     except ProductOperationalVisibilityError as exc:
         raise InitialGenerationError(f"{exc.code}:{exc}") from exc
 
+    try:
+        whole_plan = json.loads(job.get("whole_plan_json") or "{}")
+    except (TypeError, ValueError):
+        whole_plan = {}
+    if not isinstance(whole_plan, dict):
+        whole_plan = {}
+    surface_lane = str(
+        whole_plan.get("surface_lane") or job.get("surface_lane") or ""
+    ).strip().upper() or None
+    stable_request_identity = str(
+        whole_plan.get("stable_request_identity") or ""
+    ).strip() or None
+    workspace_execution_package_id = (
+        whole_plan.get("workspace_execution_package_id")
+        or job.get("execution_package_id")
+    )
+
     submit = await _mv.start_generate(
         mode=mode, prompt=prompt, project_id=observed_root["flow_project_id"],
         image_media_ids=refs or None,
         aspect=aspect, model=job.get("model"), duration_s=8, num_videos=1,
-        product_id=job.get("product_id"), editor_binding=preflight)
+        product_id=job.get("product_id"),
+        source_mode=job.get("initial_source_mode"),
+        staff_id=whole_plan.get("staff_id") or job.get("staff_id"),
+        staff_display_name_snapshot=(
+            whole_plan.get("staff_display_name_snapshot")
+            or job.get("staff_display_name_snapshot")
+        ),
+        workspace_execution_package_id=workspace_execution_package_id,
+        execution_identity=whole_plan.get("faceless_execution_identity"),
+        execution_profile_context=whole_plan.get("execution_profile_context"),
+        requested_profile_duration_s=job.get("requested_duration_seconds"),
+        provider_profile=whole_plan.get("provider_profile"),
+        product_visual_custody=whole_plan.get("product_visual_custody"),
+        request_id=stable_request_identity,
+        idempotency_key=stable_request_identity,
+        production_recipe="FACELESS" if surface_lane == "FACELESS" else None,
+        surface_lane=surface_lane,
+        editor_binding=preflight,
+    )
     if not isinstance(submit, dict) or submit.get("status") == "REJECTED":
         raise InitialGenerationError(
             f"one-door lane rejected initial: {submit.get('error') if isinstance(submit, dict) else submit}")
     lane_job_id = submit.get("job_id")
     if not lane_job_id:
         raise InitialGenerationError("one-door lane returned no job id")
+
+    # The exact server-derived profile gate above must finish before the Flow
+    # transport object (or any credit probe) is touched.
+    client = get_flow_client()
+    if not getattr(client, "connected", False):
+        raise InitialGenerationError("Extension not connected")
 
     # DURABLE HANDLE (Mission 1): persist the lane identity NOW — before the minutes-
     # long poll — so a crash after submit never loses the job. Resume polls this, never

@@ -326,15 +326,20 @@ async def test_start_generate_blocks_unapproved_video_when_enforced(monkeypatch)
 
     monkeypatch.setattr(make_video, "_VIDEO_LANE_JOB", None)
     # A credit-bearing VIDEO dispatch with no approval is rejected BEFORE any
-    # job/lane/provider work (the gate runs before the lane claim).
+    # job/lane/provider work. Exact provider-profile/route proof now runs in
+    # FRONT of the WYSIWYG approval gate, so an unapproved *and* unproven video
+    # is blocked at the first pre-provider safety gate. The security invariant
+    # the enforced gate guarantees is unchanged and asserted directly here:
+    # REJECTED before the lane claim, with zero provider calls and zero credits.
     result = await make_video.start_generate(
         mode="F2V", prompt="P_wire_block — an unapproved video prompt",
         image_media_ids=["550e8400-e29b-41d4-a716-446655440000"],
         aspect="9:16", num_videos=1, model="Veo 3.1 Lite", duration_s=8,
     )
     assert result["status"] == "REJECTED"
-    assert result["error"] == make_video.ERR_REFERENCE_ROUTE_NOT_PROVEN_PRE_APPROVAL
-    assert result["routing_receipt"]["TEXT_ONLY_TOOL_ALLOWED"] is False
+    assert result["pre_provider"]["classification"] == "BLOCKED"
+    assert result["pre_provider"]["provider_calls"] == 0
+    assert result["pre_provider"]["credit_spend"] is False
 
 
 async def test_start_generate_img_blocks_unapproved_when_enforced(monkeypatch):

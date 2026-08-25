@@ -50,6 +50,7 @@ JOB_FINALIZING = "FINALIZING_TIMELINE"
 JOB_POLLING_FINAL = "POLLING_FINAL_RENDER"
 JOB_RETRIEVING = "RETRIEVING_FINAL_VIDEO"
 JOB_SAVING = "SAVING_FINAL_ASSET"
+JOB_DELIVERY_PENDING = "DELIVERY_PENDING"
 JOB_COMPLETE = "COMPLETE"
 
 FAIL_SOURCE_CONTEXT = "SOURCE_CONTEXT_FAILED"
@@ -480,19 +481,19 @@ async def finalize_timeline(client, *, job_id: str, segment_media_ids: list[str]
 
     await _crud.update_video_production_job(job_id, status=JOB_RETRIEVING)
     saved = save_final_video(last["encoded_video"], out_dir, job_id)
-    # Honesty gate — a COMPLETE row must never point at a missing/empty file or a
+    # Honesty gate — a delivery-pending row must never point at a missing/empty file or a
     # header-only "declares 16s but carries no media data" blob. Both raise BEFORE
-    # the COMPLETE write, leaving the row at JOB_RETRIEVING and never minting a
+    # the delivery write, leaving the row at JOB_RETRIEVING and never minting a
     # final_media_id — so a fake render can never be reported as delivered.
     final_path = Path(saved["local_path"])
     if not final_path.is_file() or final_path.stat().st_size <= 0:
         raise FinalTimelineError(
             FAIL_FINAL_NO_MEDIA_PAYLOAD,
-            f"final artifact absent at COMPLETE: {final_path}")
+            f"final artifact absent before delivery: {final_path}")
     mdat_bytes = verify_final_media_payload(final_path, requested_seconds)
     measured = validate_final_duration(saved["local_path"], requested_seconds)
     await _crud.update_video_production_job(
-        job_id, status=JOB_COMPLETE,
+        job_id, status=JOB_DELIVERY_PENDING,
         final_media_id=saved["final_media_id"],
         final_local_path=saved["local_path"],
         final_sha256=saved["sha256"],
@@ -503,5 +504,5 @@ async def finalize_timeline(client, *, job_id: str, segment_media_ids: list[str]
         **saved, "measured_duration_s": measured,
         "final_mdat_bytes": mdat_bytes,
         "segment_preflight": preflight,
-        "status": JOB_COMPLETE,
+        "status": JOB_DELIVERY_PENDING,
     }

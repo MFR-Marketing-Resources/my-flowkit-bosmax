@@ -71,7 +71,7 @@ import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectu
 import CopySupplyPanel, {
 	type CopySupplyProduct,
 } from "../components/production-studio/CopySupplyPanel";
-import { collectProductionSessionResults } from "../utils/videoSessionResults";
+import { collectCreativeProductionSessionResults } from "../utils/videoSessionResults";
 import { useStaffIdentity } from "../hooks/useStaffIdentity";
 
 const splitValues = (value: string) =>
@@ -317,7 +317,7 @@ export default function CreativeProductionStudioPage() {
 		});
 	}, [poolAuthority]);
 	const sessionResults = useMemo(
-		() => collectProductionSessionResults(detail),
+		() => collectCreativeProductionSessionResults(detail),
 		[detail],
 	);
 
@@ -3307,6 +3307,9 @@ export default function CreativeProductionStudioPage() {
 								}
 								mediaKind="video"
 								libraryHref="/library/videos"
+								staffId={staffIdentity.staffId}
+								surfaceLane="PRODUCTION_STUDIO_P6"
+								requestId={detail?.plan.request_id ?? null}
 							/>
 						</div>
 					</aside>

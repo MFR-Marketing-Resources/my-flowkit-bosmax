@@ -617,6 +617,9 @@ async def _build_recipe_execution_payload(
             "montage_run_id": run_id,
             "workspace_execution_package_id": execution_package_id or None,
             "montage_status": state.get("status"),
+            "treatment_block_plan": (state.get("config") or {}).get(
+                "treatment_block_plan"
+            ),
             "source_mode": str(first_scene.get("source_mode") or "").strip().upper() or None,
             "product_id": montage_product_id,
             "project_id": str(package.get("project_id") or "").strip() or None,
@@ -1500,6 +1503,9 @@ async def _fire_montage_recipe(
         staff_id=staff_id,
         staff_display_name_snapshot=staff_display_name,
         manifest_id=manifest_id,
+        origin_surface_lane="PRODUCTION_STUDIO_P6",
+        origin_request_id_prefix=f"p6:{attempt['attempt_id']}:montage",
+        origin_project_id=payload.get("project_id"),
     )
     if not authorized.get("ok"):
         raise CreativeProductionError(
@@ -1539,9 +1545,6 @@ async def _fire_montage_recipe(
         if existing:
             effective_job_id = str(existing["job_id"])
         else:
-            # Create the durable lifecycle owner before the final concat boundary,
-            # matching the canonical Montage API path. A retry must resume the
-            # same logical run and never create a second final-timeline job.
             effective_job_id = f"montage-final-{run_id}"
             await crud.create_video_production_job_full(
                 effective_job_id,
@@ -1569,8 +1572,6 @@ async def _fire_montage_recipe(
                     }
                 ),
             )
-            # INSERT OR IGNORE is the database-level race guard; use the winner's
-            # job id if another worker created the logical owner first.
             existing = await crud.get_video_production_job_by_logical_key(logical_key)
             if existing:
                 effective_job_id = str(existing["job_id"])
@@ -1615,9 +1616,7 @@ async def _fire_montage_recipe(
                 raise
         return result
 
-    from agent.services.montage_run_service import assemble_from_montage_run
-
-    assembly = await assemble_from_montage_run(
+    assembly = await montage_run_service.assemble_from_montage_run(
         run_id,
         concat_fn=_concat_boundary,
         dry_run=False,
@@ -1630,6 +1629,39 @@ async def _fire_montage_recipe(
         "assembly": assembly,
         "status": "COMPLETED" if assembly.get("final_media_id") else "SUBMITTED",
     }
+
+
+async def resume_p6_montage_assembly(run_id: str) -> dict[str, Any]:
+    """Resume one all-bound P6 Montage attempt from its durable owner."""
+
+    provider_job_id = f"montage:{run_id}"
+    attempts = await p6db.list_attempts_for_reconciliation(limit=200)
+    attempt = next(
+        (
+            row
+            for row in attempts
+            if str(row.get("provider_job_id") or "") == provider_job_id
+        ),
+        None,
+    )
+    if attempt is None:
+        return {
+            "status": "ASSEMBLY_OWNER_NOT_FOUND",
+            "final_media_id": None,
+        }
+    item = await p6db.get_item(str(attempt["item_id"]))
+    payload = _loads(attempt.get("payload_snapshot_json"), {})
+    if item is None or not isinstance(payload, dict):
+        return {
+            "status": "ASSEMBLY_OWNER_NOT_FOUND",
+            "final_media_id": None,
+        }
+    return await _fire_montage_recipe(
+        item,
+        payload,
+        credit_confirmation=str(attempt.get("credit_confirmation") or ""),
+        attempt=attempt,
+    )
 
 
 async def _dispatch_attempt(
@@ -2240,6 +2272,16 @@ async def transition_attempt(
                 "ARTIFACT_MEDIA_ID_REQUIRED",
                 "REGISTERED requires artifact_media_id.",
             )
+        artifact, generation_result = await asyncio.gather(
+            crud.get_generated_artifact(body.artifact_media_id),
+            crud.get_generation_result(body.artifact_media_id),
+        )
+        if artifact is None or generation_result is None:
+            raise CreativeProductionError(
+                "FINAL_DELIVERY_PAIR_REQUIRED",
+                "REGISTERED requires both generated_artifact and generation_result readback.",
+                status_code=409,
+            )
         timestamp_fields.update(
             {
                 "registered_at": now,
@@ -2342,19 +2384,42 @@ async def reconcile_attempt(attempt_id: str) -> dict[str, Any]:
             assembly = (montage_state.get("config") or {}).get("assembly") or {}
             final_media_id = str(assembly.get("final_media_id") or "").strip()
             run_status = str(montage_state.get("status") or "").upper()
-            live_job = {
-                "job_id": provider_job_id,
-                "status": (
-                    "COMPLETED"
-                    if final_media_id
-                    else "FAILED"
-                    if run_status in {"PARTIAL", "FAILED"}
-                    else "SUBMITTED"
-                ),
-                "media_id": final_media_id or None,
-                "montage_run_id": montage_run_id,
-                "error": montage_state.get("detail"),
+            scene_statuses = {
+                str(scene.get("status") or "").upper()
+                for scene in montage_state.get("scenes") or []
             }
+            if (
+                not final_media_id
+                and scene_statuses
+                and scene_statuses.issubset({"RESULT_BOUND", "VIDEO_READY"})
+            ):
+                item = await p6db.get_item(str(attempt["item_id"]))
+                payload = _loads(attempt.get("payload_snapshot_json"), {})
+                if item is None or not isinstance(payload, dict):
+                    live_job = None
+                else:
+                    live_job = await _fire_montage_recipe(
+                        item,
+                        payload,
+                        credit_confirmation=str(
+                            attempt.get("credit_confirmation") or ""
+                        ),
+                        attempt=attempt,
+                    )
+            else:
+                live_job = {
+                    "job_id": provider_job_id,
+                    "status": (
+                        "COMPLETED"
+                        if final_media_id
+                        else "FAILED"
+                        if run_status in {"PARTIAL", "FAILED"}
+                        else "SUBMITTED"
+                    ),
+                    "media_id": final_media_id or None,
+                    "montage_run_id": montage_run_id,
+                    "error": montage_state.get("detail"),
+                }
         job_source = "MONTAGE_ORCHESTRATOR"
     elif provider_job_id.startswith("vj_"):
         from agent.services import video_production_orchestrator as video_jobs
@@ -2395,6 +2460,24 @@ async def reconcile_attempt(attempt_id: str) -> dict[str, Any]:
         if artifact is not None:
             media_id = str(artifact["media_id"])
             now = _now()
+            generation_result = await crud.get_generation_result(media_id)
+            if generation_result is None:
+                attempt = await p6db.update_attempt(
+                    attempt_id,
+                    attempt_state=AttemptState.RETRIEVED_NOT_REGISTERED.value,
+                    artifact_media_id=media_id,
+                    generated_at=attempt.get("generated_at") or now,
+                    retrieved_at=now,
+                    recovery_class="FINAL_DELIVERY_PAIR_INCOMPLETE",
+                    updated_at=now,
+                )
+                return {
+                    "attempt": _decode_row(attempt),
+                    "provider_state": "ARTIFACT_LEDGER_DELIVERY_INCOMPLETE",
+                    "provider_state_source": "GENERATED_ARTIFACT_LEDGER",
+                    "resubmission_allowed": False,
+                    "recovery_action": "LOCAL_FINAL_DELIVERY_REPAIR_REQUIRED",
+                }
             attempt = await p6db.update_attempt(
                 attempt_id,
                 attempt_state=AttemptState.REGISTERED.value,
@@ -2483,9 +2566,12 @@ async def reconcile_attempt(attempt_id: str) -> dict[str, Any]:
 
     if status in {"DONE", "COMPLETED"} and media_ids:
         media_id = media_ids[0]
-        artifact = await crud.get_generated_artifact(media_id)
+        artifact, generation_result = await asyncio.gather(
+            crud.get_generated_artifact(media_id),
+            crud.get_generation_result(media_id),
+        )
         now = _now()
-        if artifact is not None:
+        if artifact is not None and generation_result is not None:
             state = AttemptState.REGISTERED.value
             await p6db.update_item(
                 attempt["item_id"],
@@ -2521,11 +2607,12 @@ async def reconcile_attempt(attempt_id: str) -> dict[str, Any]:
             completed_at=now if state == AttemptState.REGISTERED.value else None,
             updated_at=now,
         )
-        await p6db.release_lease(
-            attempt_id,
-            released_at=now,
-            release_reason=state,
-        )
+        if state == AttemptState.REGISTERED.value:
+            await p6db.release_lease(
+                attempt_id,
+                released_at=now,
+                release_reason=state,
+            )
     elif status == "GENERATED_BUT_UNRETRIEVED":
         now = _now()
         attempt = await p6db.update_attempt(

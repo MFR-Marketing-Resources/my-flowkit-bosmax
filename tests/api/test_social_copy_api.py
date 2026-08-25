@@ -190,3 +190,29 @@ async def test_profiles_cover_all_five_platforms():
     assert set(prof["platforms"]) == {"tiktok", "facebook", "instagram", "threads", "x"}
     for p in prof["platforms"]:
         assert "tone" in prof["profiles"][p]
+
+
+async def test_retained_final_result_can_save_caption_after_artifact_expiry():
+    media_id = "retained-final-social-copy"
+    job_id = "retained-final-social-job"
+    await crud.create_video_production_job_full(
+        job_id, logical_job_key="retained-final-social-key", status="COMPLETE"
+    )
+    await crud.update_video_production_job_full(job_id, final_media_id=media_id)
+    await crud.insert_generation_result(
+        media_id, job_id=job_id, mode="F2V", artifact_kind="video",
+        product_name="Retained Final", final_prompt_text="final retained creative",
+    )
+    await crud.insert_generated_artifact(
+        media_id, job_id=job_id, mode="F2V", artifact_kind="video",
+    )
+    assert (await crud.delete_generated_artifact(media_id))["deleted"] == 1
+    assert await crud.get_generated_artifact(media_id) is None
+
+    package = await api.generate(GenerateRequest(
+        artifact_media_id=media_id,
+        platform="tiktok",
+        caption="Final ni masih boleh diterbitkan tanpa jana video semula.",
+    ))
+    assert package["artifact_media_id"] == media_id
+    assert package["status"] == "READY"

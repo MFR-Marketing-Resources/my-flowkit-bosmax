@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CREATIVE_LANE_SETTINGS_UNAVAILABLE } from "../api/creativeLaneSettings";
-import { collectMontageSessionResults } from "../utils/videoSessionResults";
+import {
+	collectMontageSessionResults,
+	rehydrateMontageRun,
+	rememberMontageRunId,
+} from "../utils/videoSessionResults";
+
+beforeEach(() => window.sessionStorage.clear());
 
 describe("montage settings SSOT", () => {
 	it("does not ship a local full Hook/Background vocabulary fallback", () => {
@@ -12,22 +18,33 @@ describe("montage settings SSOT", () => {
 });
 
 describe("montage session results", () => {
-	it("hydrates the final and scene videos once each", () => {
+	it("hydrates only the authoritative final video", () => {
 		expect(
 			collectMontageSessionResults(
-				{
+				({
 					scenes: [
 						{ video_media_id: "clip-1" },
 						{ video_media_id: "clip-2" },
 						{ video_media_id: "clip-1" },
 					],
-				},
+				} as never),
 				{ concat: { final_media_id: "montage-final" } },
 			),
 		).toEqual([
 			{ media_id: "montage-final", kind: "video" },
-			{ media_id: "clip-1", kind: "video" },
-			{ media_id: "clip-2", kind: "video" },
 		]);
+	});
+});
+
+describe("montage durable run hydration", () => {
+	it("rehydrates the existing run after reload without submitting", async () => {
+		rememberMontageRunId("montage-existing");
+		const readRun = vi.fn().mockResolvedValue({ montage_run_id: "montage-existing" });
+
+		await expect(rehydrateMontageRun(readRun)).resolves.toEqual({
+			montage_run_id: "montage-existing",
+		});
+		expect(readRun).toHaveBeenCalledOnce();
+		expect(readRun).toHaveBeenCalledWith("montage-existing");
 	});
 });

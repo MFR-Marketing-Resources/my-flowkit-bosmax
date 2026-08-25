@@ -270,6 +270,7 @@ def resolve_native_extend_execution(
     planned_block_count: int = 0,
     planned_operation_count: int | None = None,
     total_duration_seconds: int | None = None,
+    surface_lane: str | None = None,
 ) -> dict[str, Any]:
     """THE single deterministic resolver for "can native extend run, and what blocks
     apply?". One truth for the UI, the API and the planner — so they can never
@@ -307,7 +308,6 @@ def resolve_native_extend_execution(
     final_concat_available = (
         capability_authority("GOOGLE_FLOW_FINAL_CONCAT_EXPORT") == AUTHORIZED)
 
-    route_executable = not blockers
     provider_profile = None
     if total_duration_seconds in (16, 24) and block_plan:
         provider_profile = _pep.resolve_provider_execution_profile(
@@ -323,6 +323,11 @@ def resolve_native_extend_execution(
             provider_model_key="veo_3_1_extension_lite",
             capability_contract_version="google-flow-native-extend-v1",
         )
+        # Capability and block-plan support are not provider proof. Surface
+        # labels are excluded from the shared provider-profile identity.
+        if provider_profile.get("certification_status") != _pep.PROFILE_CERTIFIED:
+            blockers.append("PROVIDER_PROFILE_NOT_CERTIFIED")
+    route_executable = not blockers
     return {
         "route_id": NATIVE_EXTEND_ROUTE_ID,
         "transport_proven": transport_proven,

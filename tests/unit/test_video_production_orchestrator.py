@@ -16,6 +16,7 @@ import base64
 import json
 import struct
 from contextlib import contextmanager
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -57,7 +58,7 @@ def _intent(nonce, duration=16):
         "execution_package_id": "wep_1", "approved_asset_id": "product-image:6483d624:subject",
         "approved_asset_sha256": "hashA", "initial_asset_media_id": f"asset-{nonce}",
         "requested_duration_seconds": duration, "engine": "GOOGLE_FLOW",
-        "model": "veo_3_1_extension_lite", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "model": "veo_3_1_lite", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
         "initial_mode": "I2V",
         "initial_prompt_text": f"block-1 product-truth prompt for {nonce}",
         "continuation_prompts": _continuations(nonce, duration),
@@ -535,6 +536,131 @@ async def test_bridge_lineage_cas_preserves_concurrent_stage_state(
     assert state["owner_recovery_hold"] == {"version": 1}
     assert state["bridge_lineage_v1"] == root
     assert state["concurrent_audit"] == {"writer": "b"}
+
+
+async def test_initial_result_merge_preserves_bridge_lineage(monkeypatch):
+    planned, _auth = await _plan_authorize(monkeypatch, "initial-stage-merge")
+    root = {"version": 1, "installation_id": "installation-stage-merge"}
+    await crud.update_video_production_job_full(
+        planned["job_id"],
+        stage_state_json=json.dumps({"bridge_lineage_v1": root}),
+    )
+    job = await crud.get_video_production_job(planned["job_id"])
+    idem = orch._stage_key(job, "INITIAL", job["logical_job_key"])
+
+    await orch._persist_initial_result(
+        planned["job_id"],
+        idem,
+        {
+            "operation_id": "initial-stage-merge-media",
+            "media_id": "initial-stage-merge-media",
+            "workflow_id": "workflow-stage-merge",
+            "project_id": "project-stage-merge",
+            "scene_id": "scene-stage-merge",
+        },
+        bal_before=None,
+        client=FakeClient("initial-stage-merge"),
+    )
+
+    persisted = await crud.get_video_production_job(planned["job_id"])
+    state = json.loads(persisted["stage_state_json"])
+    assert state["bridge_lineage_v1"] == root
+    assert state["stable_request_identity"]
+    assert state["provider_profile_digest"]
+
+
+async def test_exact_final_adapter_runs_once_then_startup_repairs_locally(
+    monkeypatch, tmp_path
+):
+    from agent.services import exact_product_video_compositor_service as exact_video
+    from agent.services import video_artifact_delivery_service as delivery
+
+    product = await crud.create_product("Exact Final Adapter Test")
+    source_path = tmp_path / "source-final.mp4"
+    adapted_path = tmp_path / "adapted-final.mp4"
+    source_path.write_bytes(b"source-final-bytes")
+    adapted_path.write_bytes(b"adapted-final-bytes")
+    job_id = f"vj_exact_once_{product['id'][:8]}"
+    custody = {
+        "product_id": product["id"],
+        "exact_product_required": True,
+        "provider_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+        "exact_product_video": {
+            "selected_execution_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+            "generate_eligibility": True,
+        },
+    }
+    await crud.create_video_production_job_full(
+        job_id,
+        logical_job_key=f"logical-{job_id}",
+        status=orch.S_FINAL_SAVING,
+        product_id=product["id"],
+        requested_duration_seconds=16,
+        whole_plan_json=json.dumps({
+            "surface_lane": "FACELESS",
+            "stable_request_identity": f"request-{job_id}",
+            "workspace_execution_package_id": f"wep-{job_id}",
+            "product_visual_custody": custody,
+        }),
+    )
+    await crud.update_video_production_job_full(
+        job_id,
+        final_media_id=f"scene-{job_id}",
+        final_local_path=str(source_path),
+        final_sha256="source-sha",
+        final_duration_s=16,
+    )
+
+    compose_calls = []
+
+    def compose(**kwargs):
+        compose_calls.append(kwargs["scene_artifact"]["media_id"])
+        return {
+            "media_id": f"final-{job_id}",
+            "local_path": str(adapted_path),
+            "output_sha256": "adapted-sha",
+            "exact_product_lineage": {"adapter": "exact-test"},
+            "product_visual_custody": {
+                **custody,
+                "exact_video_composite": {"adapter": "exact-test"},
+            },
+        }
+
+    monkeypatch.setattr(exact_video, "compose_exact_product_video_artifact", compose)
+    real_register = delivery.register_final_video_artifact
+    delivery_attempts = 0
+
+    async def fail_first_delivery(*args, **kwargs):
+        nonlocal delivery_attempts
+        delivery_attempts += 1
+        if delivery_attempts == 1:
+            raise RuntimeError("forced local delivery interruption")
+        return await real_register(*args, **kwargs)
+
+    monkeypatch.setattr(delivery, "register_final_video_artifact", fail_first_delivery)
+    job = await crud.get_video_production_job(job_id)
+    with pytest.raises(RuntimeError, match="forced local delivery interruption"):
+        await orch._register_and_bind_final_delivery(
+            job, orch._final_result_from_job(job)
+        )
+
+    repair_job = await crud.get_video_production_job(job_id)
+    monkeypatch.setattr(
+        crud,
+        "list_incomplete_final_video_deliveries",
+        AsyncMock(return_value=[repair_job]),
+    )
+    summary = await orch.reconcile_incomplete_final_deliveries()
+
+    assert summary["repaired"] == 1
+    assert summary["provider_calls"] == 0
+    assert summary["provider_submits"] == 0
+    assert compose_calls == [f"scene-{job_id}"]
+    completed = await crud.get_video_production_job(job_id)
+    assert completed["status"] == orch.S_COMPLETE
+    pair = await crud.get_final_video_delivery(f"final-{job_id}")
+    assert pair["complete"] is True
+    assert await crud.is_final_video_media_id(f"final-{job_id}") is True
 
 
 @pytest.mark.parametrize(

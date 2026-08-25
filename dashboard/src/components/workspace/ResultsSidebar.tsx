@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { deleteImageArtifact } from "../../api/imgFactory";
 import {
 	forgetGenerationJob,
@@ -27,19 +27,11 @@ interface ResultsSidebarProps {
 	libraryHref?: string;
 	/** What this surface produces — drives the "Generating…" placeholder wording. Defaults to image. */
 	mediaKind?: "image" | "video";
-}
-
-function sessionStartFor(kind: "image" | "video"): number {
-	const key = `bosmax.results-session-started.${kind}`;
-	try {
-		const existing = Number(window.sessionStorage.getItem(key));
-		if (Number.isFinite(existing) && existing > 0) return existing;
-		const now = Date.now();
-		window.sessionStorage.setItem(key, String(now));
-		return now;
-	} catch {
-		return Date.now();
-	}
+	/** Durable server-side correlation used to recover only this operator session. */
+	staffId?: string | null;
+	surfaceLane?: string | null;
+	jobId?: string | null;
+	requestId?: string | null;
 }
 
 /**
@@ -55,17 +47,18 @@ export default function ResultsSidebar({
 	title = "This session's results",
 	libraryHref = "/library/images",
 	mediaKind = "image",
+	staffId = null,
+	surfaceLane = null,
+	jobId = null,
+	requestId = null,
 }: ResultsSidebarProps) {
 	const [busyId, setBusyId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [recoveredResults, setRecoveredResults] = useState<SessionResult[]>([]);
-	const sessionStartedAtRef = useRef<number>(sessionStartFor(mediaKind));
 	const primaryIsVideoLibrary = libraryHref.startsWith("/library/videos");
 
-	// A retrieval recovery may register the video after the original job poll has
-	// already stopped. Discover only videos created while this sidebar is mounted:
-	// historical clips stay in Video Library/Results, while an out-of-band recovery
-	// still appears here without a page refresh or another paid generation.
+	// Recover by durable job/request identity only. A mount timestamp plus a global
+	// artifact scan can leak another surface or operator's concurrently-finished video.
 	useEffect(() => {
 		if (mediaKind !== "video") {
 			setRecoveredResults([]);
@@ -77,51 +70,17 @@ export default function ResultsSidebar({
 			if (!alive || inFlight || document.hidden) return;
 			inFlight = true;
 			try {
-				const response = await fetch("/api/flow/artifacts?limit=20&kind=video");
-				const payload = response.ok ? await response.json() : { artifacts: [] };
-				const sessionFloor = sessionStartedAtRef.current - 1000;
-				const current = (Array.isArray(payload.artifacts) ? payload.artifacts : [])
-					.filter((item: { media_id?: unknown; created_at?: unknown }) => {
-						const createdAt = Date.parse(String(item.created_at ?? ""));
-						return Boolean(item.media_id) && Number.isFinite(createdAt) && createdAt >= sessionFloor;
-					})
-					.map((item: { media_id: string; size_mb?: number | null }) => ({
-						media_id: String(item.media_id),
-						kind: "video" as const,
-						size_mb: item.size_mb ?? null,
-					}));
-
 				const durableRecovered: SessionResult[] = [];
-				for (const tracked of readGenerationJobs()) {
-					if (String(tracked.mode || "").toUpperCase() === "IMG") continue;
-					let jobResponse = await fetch(
-						`/api/flow/generate-job/${encodeURIComponent(tracked.job_id)}`,
-					);
-					if (jobResponse.ok) {
-						const job = await jobResponse.json();
-						const status = String(job.status || "").toUpperCase();
-						const mediaId = String(job.media_id || job.video_media_id || "").trim();
-						if (mediaId && status === "DONE") {
-							durableRecovered.push({
-								media_id: mediaId,
-								kind: "video",
-								size_mb: job.size_mb ?? null,
-							});
-							forgetGenerationJob(tracked.job_id);
-						} else if (["FAILED", "REJECTED", "GENERATED_BUT_UNRETRIEVED"].includes(status)) {
-							forgetGenerationJob(tracked.job_id);
-						}
-						continue;
-					}
-					if (jobResponse.status !== 404) continue;
-					// The process-local map may be gone after a restart. Query the
-					// durable Results Hub by job id; this is read-only and contains
-					// no regex extraction from telemetry text.
-					jobResponse = await fetch(
-						`/api/results/recover?job_id=${encodeURIComponent(tracked.job_id)}`,
-					);
-					if (!jobResponse.ok) continue;
-					const durable = await jobResponse.json();
+				const recover = async (identity: { jobId?: string | null; requestId?: string | null }) => {
+					if (!identity.jobId && !identity.requestId) return false;
+					const params = new URLSearchParams();
+					if (identity.jobId) params.set("job_id", identity.jobId);
+					if (identity.requestId) params.set("request_id", identity.requestId);
+					if (staffId) params.set("staff_id", staffId);
+					if (surfaceLane) params.set("surface_lane", surfaceLane);
+					const response = await fetch(`/api/results/recover?${params.toString()}`);
+					if (!response.ok) return false;
+					const durable = await response.json();
 					for (const result of Array.isArray(durable.results) ? durable.results : []) {
 						const mediaId = String(result.media_id || "").trim();
 						if (mediaId) {
@@ -133,11 +92,22 @@ export default function ResultsSidebar({
 							});
 						}
 					}
-					if (Array.isArray(durable.results) && durable.results.length) {
+					return Array.isArray(durable.results) && durable.results.length > 0;
+				};
+
+				await recover({ jobId, requestId });
+				for (const tracked of readGenerationJobs()) {
+					if (String(tracked.mode || "").toUpperCase() === "IMG") continue;
+					// The durable Results Hub survives both page and backend restarts;
+					// process-local generation maps are never used as result authority.
+					if (await recover({
+						jobId: tracked.job_id,
+						requestId: tracked.request_id,
+					})) {
 						forgetGenerationJob(tracked.job_id);
 					}
 				}
-				if (alive) setRecoveredResults([...current, ...durableRecovered]);
+				if (alive) setRecoveredResults(durableRecovered);
 			} catch {
 				// Best-effort discovery only; the normal prop-driven completion path remains primary.
 			} finally {
@@ -153,7 +123,7 @@ export default function ResultsSidebar({
 			window.clearInterval(timer);
 			document.removeEventListener("visibilitychange", onVisibility);
 		};
-	}, [mediaKind]);
+	}, [jobId, mediaKind, requestId, staffId, surfaceLane]);
 
 	const visibleResults = useMemo(() => {
 		const seen = new Set<string>();

@@ -11,8 +11,8 @@ sources by Flow media_id — WITHOUT changing the proven generation lane:
 
 Video files expire at 48h; image files and the record + captions do not — so
 the manual fallback + caption never silently vanish. Artifacts that have a file
-but no durable record (older rows / direct programmatic lane) still appear
-(thin), so nothing disappears from the hub.
+   but no durable record appear only when an existing lane binding proves that
+   media id is final; ambiguous history remains hidden.
 
 Endpoints (registered under /api):
   GET /api/results             list (kind/mode filter) + file status + caption rollup
@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException
 
 from agent.db import crud
+from agent.security.access_control import get_current_auth_context
 from agent.services.video_surface_provenance import surface_display_label
 
 router = APIRouter(prefix="/results", tags=["results"])
@@ -34,6 +35,18 @@ router = APIRouter(prefix="/results", tags=["results"])
 ARTIFACT_RETENTION_HOURS = 48
 _RETRIEVED_URL = "/api/flow/retrieved/{}"
 _CAPTION_JSON_COLUMNS = ("hashtags_json", "blockers_json", "warnings_json")
+
+
+def _staff_scope(requested_staff_id: str | None = None) -> str | None:
+    """Bind human result reads to the authenticated StaffProfile."""
+    context = get_current_auth_context()
+    if context is None:
+        return requested_staff_id
+    if {"OWNER", "MANAGER"} & {str(role).upper() for role in context.role_codes}:
+        return requested_staff_id
+    if requested_staff_id and requested_staff_id != context.staff_id:
+        raise HTTPException(status_code=403, detail="RESULT_STAFF_SCOPE_DENIED")
+    return context.staff_id
 
 
 def _expiry(
@@ -130,17 +143,45 @@ async def list_results(
     mode: str | None = None,
     kind: str | None = None,
     surface_lane: str | None = None,
+    request_id: str | None = None,
+    job_id: str | None = None,
+    staff_id: str | None = None,
 ):
     """Newest-first deliverable list. Runs the lazy video 48h purge first (so
-    file availability is accurate), then merges durable records with any
-    file-only artifacts, and attaches a one-query caption rollup per media id."""
+    file availability is accurate), then merges durable records with only
+    correlation-compatible file artifacts, and attaches a one-query caption
+    rollup per media id. A request filter can never discover file-only history
+    because generated_artifact has no request_id authority."""
     limit = max(1, min(200, int(limit or 60)))
     purged = await crud.purge_expired_artifacts(ARTIFACT_RETENTION_HOURS)
+    effective_staff_id = _staff_scope(staff_id)
     records = await crud.list_generation_results(
-        limit=limit, mode=mode, kind=kind, surface_lane=surface_lane
+        limit=limit, mode=mode, kind=kind, surface_lane=surface_lane,
+        request_id=request_id, job_id=job_id, staff_id=effective_staff_id,
+        final_only=True,
     )
     artifacts = await crud.list_generated_artifacts(
-        limit=max(limit, 200), mode=mode, kind=kind, surface_lane=surface_lane)
+        limit=max(limit, 200), mode=mode, kind=kind, surface_lane=surface_lane,
+        final_only=True)
+    record_ids = {str(row["media_id"]) for row in records}
+    artifacts = [
+        artifact
+        for artifact in artifacts
+        if (
+            not effective_staff_id
+            or artifact.get("staff_id") == effective_staff_id
+            or str(artifact.get("media_id") or "") in record_ids
+        )
+        and (
+            not job_id
+            or artifact.get("job_id") == job_id
+            or str(artifact.get("media_id") or "") in record_ids
+        )
+        and (
+            not request_id
+            or str(artifact.get("media_id") or "") in record_ids
+        )
+    ]
     artifact_map = {a["media_id"]: a for a in artifacts}
 
     entries: list[dict] = []
@@ -174,6 +215,8 @@ async def list_results(
 async def recover_results(
     request_id: str | None = None,
     job_id: str | None = None,
+    surface_lane: str | None = None,
+    staff_id: str | None = None,
     limit: int = 60,
 ):
     """Reload-safe lookup for a generation request/job.
@@ -188,6 +231,9 @@ async def recover_results(
         limit=max(1, min(200, int(limit or 60))),
         request_id=request_id,
         job_id=job_id,
+        surface_lane=surface_lane,
+        staff_id=_staff_scope(staff_id),
+        final_only=True,
     )
     entries = []
     for row in rows:
@@ -230,6 +276,12 @@ async def get_result(media_id: str):
     record = await crud.get_generation_result(media_id)
     artifact = await crud.get_generated_artifact(media_id)
     if not record and not artifact:
+        raise HTTPException(status_code=404, detail="RESULT_NOT_FOUND")
+    kind = str((record or artifact or {}).get("artifact_kind") or "video").lower()
+    if kind == "video" and not await crud.is_final_video_media_id(media_id):
+        raise HTTPException(status_code=404, detail="RESULT_NOT_FOUND")
+    scoped_staff = _staff_scope()
+    if scoped_staff and (record or artifact or {}).get("staff_id") != scoped_staff:
         raise HTTPException(status_code=404, detail="RESULT_NOT_FOUND")
 
     captions = await crud.list_social_copy_packages(artifact_media_id=media_id)

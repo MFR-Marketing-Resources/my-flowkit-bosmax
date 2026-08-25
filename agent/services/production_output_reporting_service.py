@@ -15,6 +15,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from agent.db import crud
 from agent.db.schema import get_db
 
 REPORTING_TIMEZONE = "Asia/Kuala_Lumpur"
@@ -269,6 +270,7 @@ async def _load_product_names() -> dict[str, str]:
 
 
 async def _production_studio_records(start: str, end: str, product_names: dict[str, str]) -> list[dict[str, Any]]:
+    final_media_ids = set(await crud.list_final_video_media_ids())
     rows = await _rows(
         """SELECT a.attempt_id, a.item_id, a.attempt_number, a.attempt_state,
                   a.provider, a.engine, a.model_key, a.last_actor_id,
@@ -320,8 +322,16 @@ async def _production_studio_records(start: str, end: str, product_names: dict[s
         )
         state = str(row.get("attempt_state") or "").upper()
         item_status = str(row.get("item_status") or "").upper()
-        artifact = row.get("artifact_media_id") or row.get("output_media_id")
         failed = state in _FAILED_STATES or item_status == "FAILED"
+        attempt_artifact = row.get("artifact_media_id")
+        artifact = attempt_artifact if attempt_artifact in final_media_ids else None
+        if (
+            artifact is None
+            and not failed
+            and state == "REGISTERED"
+            and row.get("output_media_id") in final_media_ids
+        ):
+            artifact = row.get("output_media_id")
         success = bool(artifact) and state not in {"FAILED", "CANCELLED", "SUPERSEDED", "QA_REJECTED"} and item_status not in {"FAILED", "CANCELLED", "SUPERSEDED", "QA_REJECTED"}
         records.append(
             _base_record(
@@ -340,7 +350,7 @@ async def _production_studio_records(start: str, end: str, product_names: dict[s
                 provider=row.get("provider"),
                 model_key=model,
                 status="FAILED" if failed else ("SUCCESS" if success else state or item_status or "UNKNOWN"),
-                artifact_media_id=artifact,
+                artifact_media_id=artifact if success else None,
                 qa_status=row.get("qa_status") or ("QA_APPROVED" if item_status == "QA_APPROVED" else "UNKNOWN"),
                 created_at=row.get("created_at"),
                 completed_at=row.get("completed_at") or row.get("registered_at") or row.get("retrieved_at"),
@@ -537,9 +547,12 @@ _STANDALONE_SELECT = """SELECT gr.media_id, ga.media_id AS artifact_media_id,
 
 
 async def _standalone_success_records(start: str, end: str, product_names: dict[str, str]) -> list[dict[str, Any]]:
+    final_media_ids = set(await crud.list_final_video_media_ids())
     rows = await _rows(_STANDALONE_SELECT, (start, end))
     records: list[dict[str, Any]] = []
     for row in rows:
+        if row.get("media_id") not in final_media_ids:
+            continue
         record = _standalone_record(
             {**row, "created_at": row.get("gr_created_at") or row.get("artifact_created_at")},
             product_names,
@@ -562,6 +575,8 @@ async def _standalone_success_records(start: str, end: str, product_names: dict[
     )
     existing = {record.get("output_id") for record in records}
     for row in artifact_rows:
+        if (row.get("media_id") or row.get("artifact_media_id")) not in final_media_ids:
+            continue
         if (row.get("media_id") or row.get("artifact_media_id")) in existing:
             continue
         row["gr_created_at"] = row.get("artifact_created_at") or row.get("actual_created_at")
@@ -613,6 +628,16 @@ async def _standalone_failed_records(start: str, end: str, product_names: dict[s
 
 
 async def _montage_records(start: str, end: str, product_names: dict[str, str]) -> list[dict[str, Any]]:
+    final_media_ids = set(await crud.list_final_video_media_ids())
+    p6_montage_finals = {
+        row["output_media_id"]
+        for row in await _rows(
+            """SELECT output_media_id FROM creative_production_item
+                 WHERE media_type='VIDEO' AND production_recipe='MONTAGE'
+                    AND output_media_id IS NOT NULL AND output_media_id!=''"""
+        )
+        if row["output_media_id"] in final_media_ids
+    }
     rows = await _rows(
         """SELECT r.bulk_run_id, r.status AS run_status, r.config_json,
                   r.staff_id AS run_staff_id,
@@ -632,6 +657,7 @@ async def _montage_records(start: str, end: str, product_names: dict[str, str]) 
         (start, end),
     )
     records: list[dict[str, Any]] = []
+    seen_finals: set[str] = set()
     for row in rows:
         config = _json(row.get("config_json"))
         payload = _json(row.get("payload_json"))
@@ -648,18 +674,22 @@ async def _montage_records(start: str, end: str, product_names: dict[str, str]) 
             continue
         assembly = config.get("assembly") if isinstance(config.get("assembly"), dict) else {}
         concat = assembly.get("concat") if isinstance(assembly.get("concat"), dict) else {}
-        artifact = (
-            row.get("media_id")
-            or payload.get("video_media_id")
-            or payload.get("artifact_media_id")
-            or assembly.get("final_media_id")
-            or concat.get("final_media_id")
-        )
+        artifact = assembly.get("final_media_id") or concat.get("final_media_id")
+        if artifact not in final_media_ids:
+            artifact = None
+        if artifact in p6_montage_finals:
+            continue
         failed = status in _FAILED_STATES or bool(row.get("error"))
         success = bool(artifact) and (
             status in _MONTAGE_SUCCESS_STATUSES
             or (not row.get("bulk_item_id") and run_status in {"COMPLETE", "ASSEMBLY_READY"})
         ) and not failed
+        if not failed and not success:
+            continue
+        if success and artifact in seen_finals:
+            continue
+        if success:
+            seen_finals.add(str(artifact))
         staff_id, staff_name = _resolve_staff(
             (row.get("run_staff_id"), row.get("run_staff_name")),
             (row.get("item_staff_id"), row.get("item_staff_name")),
@@ -691,7 +721,7 @@ async def _montage_records(start: str, end: str, product_names: dict[str, str]) 
                 provider=config.get("provider") or "GOOGLE_FLOW",
                 model_key=model,
                 status="FAILED" if failed else ("SUCCESS" if success else status or "UNKNOWN"),
-                artifact_media_id=artifact,
+                artifact_media_id=artifact if success else None,
                 qa_status="UNKNOWN",
                 created_at=row.get("item_created_at") or row.get("run_created_at"),
                 completed_at=row.get("completed_at") or row.get("run_updated_at"),

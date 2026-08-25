@@ -55,6 +55,9 @@ def _job():
     }
     return {
         "job_id": "vj_test", "product_id": "6483d624",
+        "execution_package_id": "wep-initial-test",
+        "staff_id": "staff-initial-test",
+        "staff_display_name_snapshot": "Initial Test Staff",
         "approved_asset_id": "product-image:6483d624:subject",
         "approved_asset_sha256": "hashA", "initial_asset_media_id": "media-start-1",
         "initial_mode": "I2V", "model": "veo_3_1_extension_lite",
@@ -63,6 +66,18 @@ def _job():
         "initial_prompt_text": "block-1 product-truth prompt: MWTCB held in palm, "
                                "label facing camera, UGC iPhone raw",
         "project_id": "proj-77",
+        "surface_lane": "FACELESS",
+        "whole_plan_json": json.dumps({
+            "surface_lane": "FACELESS",
+            "staff_id": "staff-initial-test",
+            "staff_display_name_snapshot": "Initial Test Staff",
+            "workspace_execution_package_id": "wep-initial-test",
+            "faceless_execution_identity": {"identity": "faceless-initial"},
+            "execution_profile_context": {"profile": "persisted-context"},
+            "provider_profile": {"profile_id": "persisted-provider"},
+            "product_visual_custody": {"custody": "persisted"},
+            "stable_request_identity": "stable-initial-test",
+        }),
         "stage_state_json": json.dumps({"bridge_lineage_v1": root}),
         "_bridge_lineage_preflight": binding,
     }
@@ -117,6 +132,19 @@ async def test_adapter_calls_one_door_with_exact_authority(monkeypatch):
     assert captured["num_videos"] == 1
     assert captured["editor_binding"] is job["_bridge_lineage_preflight"]
     assert captured["project_id"] == "proj-77"
+    assert captured["source_mode"] is None
+    assert captured["staff_id"] == "staff-initial-test"
+    assert captured["staff_display_name_snapshot"] == "Initial Test Staff"
+    assert captured["workspace_execution_package_id"] == "wep-initial-test"
+    assert captured["execution_identity"] == {"identity": "faceless-initial"}
+    assert captured["execution_profile_context"] == {"profile": "persisted-context"}
+    assert captured["provider_profile"] == {"profile_id": "persisted-provider"}
+    assert captured["product_visual_custody"] == {"custody": "persisted"}
+    assert captured["requested_profile_duration_s"] == 16
+    assert captured["request_id"] == "stable-initial-test"
+    assert captured["idempotency_key"] == "stable-initial-test"
+    assert captured["production_recipe"] == "FACELESS"
+    assert captured["surface_lane"] == "FACELESS"
     # identities mapped from the real lane result
     assert out["operation_id"] == "clip-op-1"
     assert out["media_id"] == "clip-op-1"
@@ -159,6 +187,25 @@ async def test_adapter_rejects_when_extension_disconnected(monkeypatch):
     monkeypatch.setattr(flow, "get_flow_client", lambda: _Disconnected())
     with pytest.raises(flow.InitialGenerationError):
         await flow._production_initial_generator(_job())
+
+
+async def test_uncertified_initial_rejects_before_flow_client_contact(monkeypatch):
+    _wire(monkeypatch)
+    contacts = []
+
+    def forbidden_client():
+        contacts.append("flow-client")
+        raise AssertionError("FlowClient must not be resolved for a profile rejection")
+
+    async def reject_profile(**_kwargs):
+        return {"status": "REJECTED", "error": "DURATION_PROFILE_NOT_CERTIFIED"}
+
+    monkeypatch.setattr(flow, "get_flow_client", forbidden_client)
+    monkeypatch.setattr(mv, "start_generate", reject_profile)
+
+    with pytest.raises(flow.InitialGenerationError, match="DURATION_PROFILE_NOT_CERTIFIED"):
+        await flow._production_initial_generator(_job())
+    assert contacts == []
 
 
 # ── deterministic scene attach when the clip is not yet a scene member (item 5) ─

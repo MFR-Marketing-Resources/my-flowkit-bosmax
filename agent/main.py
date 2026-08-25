@@ -350,7 +350,20 @@ async def lifespan(app: FastAPI):
 
     async def _resume_durable_video_jobs():
         # Restart recovery: RESUME (poll only) any in-flight authorized full-video
-        # job — never a fresh credit submit. Best-effort; boot never blocks on it.
+        # job — never a fresh credit submit. Repair already-retrieved final delivery
+        # pairs locally first. Best-effort; boot never blocks on either sweep.
+        try:
+            from agent.services import video_production_orchestrator as _orch
+            repaired = await _orch.reconcile_incomplete_final_deliveries()
+            if repaired.get("selected"):
+                logger.info(
+                    "Final-video delivery repair after restart: selected=%d repaired=%d failed=%d",
+                    repaired.get("selected", 0),
+                    repaired.get("repaired", 0),
+                    repaired.get("failed", 0),
+                )
+        except Exception:  # noqa: BLE001 — recovery must never crash startup
+            logger.debug("final-video delivery repair sweep skipped", exc_info=True)
         try:
             from agent.services import video_production_orchestrator as _orch
             from agent.api.flow import (_production_initial_generator,

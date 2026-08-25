@@ -154,6 +154,8 @@ def compute_plan_fingerprint(intent: dict[str, Any]) -> str:
         "engine", "model", "aspect_ratio", "execution_package_id",
         "initial_prompt_fingerprint", "continuation_prompt_fingerprints",
         "segment_plan", "operation_counts", "execution_mode", "surface_lane",
+        "staff_id", "faceless_execution_identity", "execution_profile_context",
+        "provider_profile", "product_visual_custody", "stable_request_identity",
     )
     material = {k: intent.get(k) for k in keys}
     return hashlib.sha256(_canonical(material).encode()).hexdigest()
@@ -167,6 +169,8 @@ def compute_logical_job_key(intent: dict[str, Any]) -> str:
         "execution_package_id", "product_id", "approved_asset_sha256",
         "requested_duration_seconds", "initial_prompt_fingerprint",
         "execution_mode", "surface_lane", "client_request_nonce",
+        "faceless_execution_identity", "execution_profile_context",
+        "provider_profile", "product_visual_custody", "stable_request_identity",
     )
     material = {k: intent.get(k) for k in keys}
     return "ljk_" + hashlib.sha256(_canonical(material).encode()).hexdigest()[:24]
@@ -224,6 +228,13 @@ async def plan_job(intent: dict[str, Any], *,
             f"requested {duration}s is not a valid Native-Extend plan "
             "(must be a multiple of 8s and at least 16s, e.g. 16=[8,8], 24=[8,8,8])")
 
+    # The logical job key is a client-intent identity used for create-or-reuse and
+    # for the READ-ONLY page-mount lookup (/video-jobs/lookup), which cannot resolve
+    # authority. It MUST therefore be computed from the same client intent in both
+    # paths — never from resolved-authority values, or mount-restore diverges and a
+    # reload can fork a duplicate job. Lineage/provider identity is bound where it is
+    # enforced instead: the plan fingerprint (recomputed server-side) and the stored
+    # job columns.
     logical_key = compute_logical_job_key(intent)
     existing = await _crud.get_video_production_job_by_logical_key(logical_key)
 
@@ -231,7 +242,7 @@ async def plan_job(intent: dict[str, Any], *,
         authority = await _resolver.resolve_production_authority(
             intent, trust_client_authority=trust_client_authority)
     except _resolver.AuthorityMismatchError as exc:
-        raise OrchestratorError(_resolver.FINGERPRINT_MISMATCH, exc.detail) from exc
+        raise OrchestratorError(exc.code, exc.detail) from exc
     missing = authority.get("missing") or []
     if missing and not existing:
         raise OrchestratorError(
@@ -239,6 +250,17 @@ async def plan_job(intent: dict[str, Any], *,
             "missing production authority: " + ", ".join(sorted(set(missing))))
 
     plan = build_whole_plan(int(authority["requested_duration_seconds"]))
+    plan.update({
+        "surface_lane": authority.get("surface_lane") or intent.get("surface_lane"),
+        "staff_id": authority.get("staff_id"),
+        "staff_display_name_snapshot": authority.get("staff_display_name_snapshot"),
+        "workspace_execution_package_id": authority.get("execution_package_id"),
+        "faceless_execution_identity": authority.get("faceless_execution_identity"),
+        "execution_profile_context": authority.get("execution_profile_context"),
+        "provider_profile": authority.get("provider_profile"),
+        "product_visual_custody": authority.get("product_visual_custody"),
+        "stable_request_identity": authority.get("stable_request_identity"),
+    })
     conts = authority.get("continuation_prompts") or []
     from agent.services.video_surface_provenance import (
         VideoSurfaceProvenanceError,
@@ -267,12 +289,22 @@ async def plan_job(intent: dict[str, Any], *,
         "segment_plan": plan["segment_count"],
         "operation_counts": plan["operation_counts"],
         "surface_lane": surface_lane,
+        "staff_id": authority.get("staff_id"),
+        "faceless_execution_identity": authority.get("faceless_execution_identity"),
+        "execution_profile_context": authority.get("execution_profile_context"),
+        "provider_profile": authority.get("provider_profile"),
+        "product_visual_custody": authority.get("product_visual_custody"),
+        "stable_request_identity": authority.get("stable_request_identity"),
     }
     fingerprint = compute_plan_fingerprint(intent_for_fp)
 
     if existing:
+        try:
+            persisted_plan = json.loads(existing.get("whole_plan_json") or "{}")
+        except (TypeError, ValueError):
+            persisted_plan = plan
         return {"job_id": existing["job_id"], "status": existing["status"],
-                "logical_job_key": logical_key, "plan": plan,
+                "logical_job_key": logical_key, "plan": persisted_plan,
                 "plan_fingerprint": existing.get("plan_fingerprint") or fingerprint,
                 "surface_lane": existing.get("surface_lane") or surface_lane,
                 "reused": True}
@@ -282,6 +314,8 @@ async def plan_job(intent: dict[str, Any], *,
         job_id, logical_job_key=logical_key, status=S_CREATED,
         requested_duration_seconds=plan["requested_seconds"],
         product_id=authority.get("product_id"), product_name=intent.get("product_name"),
+        staff_id=authority.get("staff_id"),
+        staff_display_name_snapshot=authority.get("staff_display_name_snapshot"),
         execution_package_id=authority.get("execution_package_id"),
         approved_asset_id=authority.get("approved_asset_id"),
         approved_asset_sha256=authority.get("approved_asset_sha256"),
@@ -755,6 +789,19 @@ async def _persist_initial_result(job_id: str, idem: str, seg: dict, *,
     bal_after = seg.get("credit_balance_after")
     if bal_after is None:
         bal_after = await _safe_credits(client)
+    job = await _crud.get_video_production_job(job_id) or {}
+    try:
+        durable_plan = json.loads(job.get("whole_plan_json") or "{}")
+    except (TypeError, ValueError):
+        durable_plan = {}
+    stage_state = {
+        "stable_request_identity": durable_plan.get("stable_request_identity"),
+        "provider_profile_digest": (
+            (durable_plan.get("provider_profile") or {}).get(
+                "provider_profile_digest"
+            )
+        ),
+    }
     await _crud.update_video_production_job_full(
         job_id, status=S_INITIAL_READY,
         initial_operation_id=seg["operation_id"],
@@ -763,6 +810,7 @@ async def _persist_initial_result(job_id: str, idem: str, seg: dict, *,
         project_id=seg.get("project_id"), scene_id=seg.get("scene_id"),
         initial_correlation_json=json.dumps(seg.get("correlation") or None),
         segment_media_ids_json=json.dumps([seg["operation_id"]]))
+    await merge_video_production_job_stage_state(job_id, stage_state)
     if seg.get("media_id") and seg.get("scene_id"):
         try:
             await _crud.set_artifact_scene(seg["media_id"], seg["scene_id"])
@@ -804,6 +852,252 @@ async def _safe_credits(client) -> Optional[float]:
             if isinstance(v, (int, float)):
                 return float(v)
     return None
+
+
+def _durable_whole_plan(job: dict) -> dict:
+    try:
+        plan = json.loads(job.get("whole_plan_json") or "{}")
+    except (TypeError, ValueError):
+        plan = {}
+    return plan if isinstance(plan, dict) else {}
+
+
+def _final_result_from_job(job: dict) -> dict:
+    return {
+        "final_media_id": job.get("final_media_id"),
+        "media_id": job.get("final_media_id"),
+        "local_path": job.get("final_local_path"),
+        "sha256": job.get("final_sha256"),
+        "measured_duration_s": job.get("final_duration_s"),
+        "duration_s": job.get("final_duration_s"),
+        "final_concat_job_name": job.get("final_concat_job_name"),
+    }
+
+
+def _exact_product_final_required(job: dict) -> bool:
+    custody = _durable_whole_plan(job).get("product_visual_custody")
+    return bool(
+        isinstance(custody, dict)
+        and custody.get("exact_product_required")
+        and custody.get("provider_route")
+        == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+    )
+
+
+def _persisted_exact_product_final(job: dict) -> dict | None:
+    receipt = _decode_stage_state(job.get("stage_state_json")).get(
+        "exact_product_final_adapter_v1"
+    )
+    if not isinstance(receipt, dict):
+        return None
+    adapted = receipt.get("adapted_result")
+    if not isinstance(adapted, dict):
+        return None
+    media_id = str(
+        adapted.get("final_media_id") or adapted.get("media_id") or ""
+    ).strip()
+    local_path = str(adapted.get("local_path") or "").strip()
+    if not media_id or not local_path or not Path(local_path).is_file():
+        return None
+    return receipt
+
+
+async def _apply_exact_product_final_adapter(
+    job: dict, result: dict
+) -> tuple[dict, dict]:
+    """Apply the existing local compositor once and durably reuse its receipt."""
+    plan = _durable_whole_plan(job)
+    custody = plan.get("product_visual_custody")
+    if not _exact_product_final_required(job):
+        return result, custody if isinstance(custody, dict) else {}
+
+    persisted = _persisted_exact_product_final(job)
+    if persisted is not None:
+        adapted = dict(persisted["adapted_result"])
+        adapted_custody = persisted.get("product_visual_custody")
+        media_id = adapted.get("final_media_id") or adapted.get("media_id")
+        await _crud.update_video_production_job_full(
+            job["job_id"],
+            final_media_id=media_id,
+            final_local_path=adapted.get("local_path"),
+            final_sha256=adapted.get("sha256") or adapted.get("output_sha256"),
+            final_duration_s=(
+                adapted.get("measured_duration_s")
+                or adapted.get("duration_s")
+                or job.get("final_duration_s")
+            ),
+        )
+        return adapted, (
+            adapted_custody if isinstance(adapted_custody, dict) else custody
+        )
+
+    from agent.services import exact_product_video_compositor_service as _exact_video
+
+    product_id = str(custody.get("product_id") or job.get("product_id") or "").strip()
+    product = await _crud.get_product(product_id)
+    if not product:
+        raise OrchestratorError(
+            F_FINAL_ARTIFACT,
+            "exact final adapter could not resolve the server product row",
+        )
+    exact_plan = custody.get("exact_product_video")
+    if not isinstance(exact_plan, dict):
+        raise OrchestratorError(
+            F_FINAL_ARTIFACT, "exact final adapter has no compositor plan"
+        )
+    source_media_id = str(
+        result.get("final_media_id")
+        or result.get("media_id")
+        or job.get("final_media_id")
+        or ""
+    ).strip()
+    source_path = str(
+        result.get("local_path") or job.get("final_local_path") or ""
+    ).strip()
+    composed = _exact_video.compose_exact_product_video_artifact(
+        product=product,
+        plan=exact_plan,
+        scene_artifact={
+            **result,
+            "media_id": source_media_id,
+            "local_path": source_path,
+            "sha256": (
+                result.get("sha256")
+                or result.get("output_sha256")
+                or job.get("final_sha256")
+            ),
+        },
+        product_visual_custody=custody,
+        job_id=job.get("job_id"),
+        foreground_masks=(
+            result.get("foreground_masks")
+            or exact_plan.get("foreground_masks")
+            or []
+        ),
+        transform_track=(
+            result.get("transform_track")
+            or result.get("frame_transform_track")
+            or exact_plan.get("transform_track")
+        ),
+    )
+    adapted = {
+        **composed,
+        "final_media_id": composed.get("media_id"),
+        "sha256": composed.get("output_sha256"),
+        "measured_duration_s": (
+            result.get("measured_duration_s")
+            or result.get("duration_s")
+            or job.get("final_duration_s")
+        ),
+        "final_concat_job_name": (
+            result.get("final_concat_job_name")
+            or job.get("final_concat_job_name")
+        ),
+    }
+    adapted_custody = composed.get("product_visual_custody") or {
+        **custody,
+        "exact_video_composite": composed.get("exact_product_lineage"),
+    }
+    receipt = {
+        "version": 1,
+        "source_media_id": source_media_id,
+        "source_local_path": source_path,
+        "adapted_result": adapted,
+        "product_visual_custody": adapted_custody,
+    }
+    # Persist the adapter receipt before rebinding the outer final identity. A
+    # local delivery retry reuses this exact output instead of recompositing it.
+    await merge_video_production_job_stage_state(
+        job["job_id"], {"exact_product_final_adapter_v1": receipt}
+    )
+    await _crud.update_video_production_job_full(
+        job["job_id"],
+        final_media_id=adapted["final_media_id"],
+        final_local_path=adapted.get("local_path"),
+        final_sha256=adapted.get("sha256"),
+        final_duration_s=adapted.get("measured_duration_s"),
+    )
+    return adapted, adapted_custody
+
+
+async def _register_and_bind_final_delivery(job: dict, result: dict) -> dict:
+    """Local final adapter + atomic pair; COMPLETE is the final read-back."""
+    from agent.services.video_artifact_delivery_service import (
+        register_final_video_artifact,
+    )
+
+    adapted, custody = await _apply_exact_product_final_adapter(job, result)
+    refreshed = await _crud.get_video_production_job(job["job_id"]) or job
+    plan = _durable_whole_plan(refreshed)
+    media_id = str(
+        adapted.get("final_media_id") or adapted.get("media_id") or ""
+    ).strip()
+    await register_final_video_artifact(
+        adapted,
+        job_id=job["job_id"],
+        mode="EXTEND",
+        surface_lane=plan.get("surface_lane") or refreshed.get("surface_lane"),
+        transport_mode=refreshed.get("transport_mode"),
+        source_mode=(
+            refreshed.get("source_mode") or refreshed.get("initial_source_mode")
+        ),
+        provider_generation_type=refreshed.get("provider_generation_type"),
+        project_id=refreshed.get("project_id"),
+        request_id=plan.get("stable_request_identity"),
+        product_id=refreshed.get("product_id"),
+        prompt=refreshed.get("initial_prompt_text") or "",
+        aspect_ratio=refreshed.get("aspect_ratio"),
+        staff_id=plan.get("staff_id") or refreshed.get("staff_id"),
+        staff_display_name_snapshot=(
+            plan.get("staff_display_name_snapshot")
+            or refreshed.get("staff_display_name_snapshot")
+        ),
+        product_name=refreshed.get("product_name"),
+        model_label=refreshed.get("model"),
+        count_setting=1,
+        workspace_generation_package_id=(
+            plan.get("workspace_execution_package_id")
+            or refreshed.get("execution_package_id")
+        ),
+        product_visual_custody=custody,
+    )
+    pair = await _crud.get_final_video_delivery(media_id)
+    lane_bound = await _crud.is_final_video_media_id(media_id)
+    if not pair.get("complete") or not lane_bound:
+        raise OrchestratorError(
+            F_FINAL_ARTIFACT,
+            "final delivery requires artifact/result readbacks and authoritative lane binding",
+        )
+    await _crud.update_video_production_job_full(
+        job["job_id"], status=S_COMPLETE, error_code=None
+    )
+    return {"media_id": media_id, "pair": pair, "lane_bound": True}
+
+
+async def reconcile_incomplete_final_deliveries() -> dict:
+    """Repair persisted final files locally; this branch has no submit callback."""
+    rows = await _crud.list_incomplete_final_video_deliveries()
+    repaired = 0
+    failed = 0
+    failures: list[dict[str, str]] = []
+    for job in rows:
+        try:
+            await _register_and_bind_final_delivery(job, _final_result_from_job(job))
+            repaired += 1
+        except Exception as exc:  # noqa: BLE001 - keep each row locally retryable
+            failed += 1
+            failures.append({"job_id": str(job.get("job_id")), "error": str(exc)[:200]})
+            await _crud.update_video_production_job_full(
+                job["job_id"], status=F_FINAL_ARTIFACT, error_code=F_FINAL_ARTIFACT
+            )
+    return {
+        "selected": len(rows),
+        "repaired": repaired,
+        "failed": failed,
+        "failures": failures,
+        "provider_calls": 0,
+        "provider_submits": 0,
+    }
 
 
 async def _needs_stage_gate(idem: str) -> bool:
@@ -878,37 +1172,31 @@ async def advance_job(
     job = await _crud.get_video_production_job(job_id)
     if not job:
         raise OrchestratorError("VIDEO_JOB_NOT_FOUND", job_id)
-    # A final render can be durable while the local library write was
-    # interrupted. Repair only that local delivery boundary; never re-enter a
-    # provider submit just because the artifact row is missing.
+    # A final render can be durable while either half of local delivery was
+    # interrupted. Repair only that local boundary; never re-enter a provider
+    # submit. Exact-product jobs must also prove the durable final adapter receipt.
     if job.get("final_media_id") and job.get("final_local_path"):
-        existing_artifact = await _crud.get_generated_artifact(job["final_media_id"])
-        if existing_artifact is None:
-            try:
-                from agent.services.video_artifact_delivery_service import (
-                    register_final_video_artifact,
-                )
-
-                await register_final_video_artifact(
-                    {
-                        "final_media_id": job["final_media_id"],
-                        "local_path": job["final_local_path"],
-                        "measured_duration_s": job.get("final_duration_s"),
-                    },
-                    job_id=job_id,
-                    mode="EXTEND",
-                    project_id=job.get("project_id"),
-                    product_id=job.get("product_id"),
-                )
+        try:
+            pair = await _crud.get_final_video_delivery(job["final_media_id"])
+            lane_bound = await _crud.is_final_video_media_id(job["final_media_id"])
+            exact_adapter_ready = (
+                not _exact_product_final_required(job)
+                or _persisted_exact_product_final(job) is not None
+            )
+            if pair.get("complete") and lane_bound and exact_adapter_ready:
                 await _crud.update_video_production_job_full(
                     job_id, status=S_COMPLETE, error_code=None
                 )
-                job = await _crud.get_video_production_job(job_id)
-            except Exception as exc:  # noqa: BLE001 — remain retryable, not green
-                await _crud.update_video_production_job_full(
-                    job_id, status=F_FINAL_ARTIFACT, error_code=F_FINAL_ARTIFACT
+            else:
+                await _register_and_bind_final_delivery(
+                    job, _final_result_from_job(job)
                 )
-                return await get_job_status(job_id)
+            job = await _crud.get_video_production_job(job_id)
+        except Exception:  # noqa: BLE001 — remain retryable, not green
+            await _crud.update_video_production_job_full(
+                job_id, status=F_FINAL_ARTIFACT, error_code=F_FINAL_ARTIFACT
+            )
+            return await get_job_status(job_id)
     if job.get("status") == S_COMPLETE:
         return await get_job_status(job_id)
 
@@ -1265,17 +1553,8 @@ async def advance_job(
             idem, submission_state=SUB_TERMINAL, credit_state=CR_UNKNOWN,
             retry_safety=RS_RESUME_ONLY, operation_ref=done.get("final_concat_job_name"))
         try:
-            from agent.services.video_artifact_delivery_service import (
-                register_final_video_artifact,
-            )
-
-            await register_final_video_artifact(
-                done,
-                job_id=job_id,
-                mode="EXTEND",
-                project_id=job.get("project_id"),
-                product_id=job.get("product_id"),
-            )
+            delivery_job = await _crud.get_video_production_job(job_id) or job
+            await _register_and_bind_final_delivery(delivery_job, done)
         except Exception as exc:  # noqa: BLE001 — provider output is not delivery
             await _crud.update_video_production_job_full(
                 job_id, status=F_FINAL_ARTIFACT, error_code=F_FINAL_ARTIFACT

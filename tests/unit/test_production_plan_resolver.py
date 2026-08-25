@@ -17,7 +17,7 @@ async def test_explicit_authority_is_complete():
         "product_id": "p1", "execution_package_id": "wep1",
         "approved_asset_id": "product-image:p1:subject", "approved_asset_sha256": "sha1",
         "initial_asset_media_id": "m1", "initial_mode": "I2V",
-        "engine": "GOOGLE_FLOW", "model": "veo", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "engine": "GOOGLE_FLOW", "model": "veo_3_1_lite", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
         "requested_duration_seconds": 16,
         "initial_prompt_text": "the reviewed block-1 prompt",
         "continuation_prompts": [{"position": 1, "block_index": 2,
@@ -63,7 +63,7 @@ async def test_supplied_fingerprint_mismatch_is_rejected():
         "product_id": "p1", "execution_package_id": "wep1",
         "approved_asset_id": "product-image:p1:subject", "approved_asset_sha256": "sha1",
         "initial_asset_media_id": "m1", "initial_mode": "I2V", "engine": "GOOGLE_FLOW",
-        "model": "veo", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "model": "veo_3_1_lite", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
         "requested_duration_seconds": 16,
         "initial_prompt_text": "the real prompt B",
         "initial_prompt_fingerprint": resolver._fp("a DIFFERENT prompt A"),  # lie
@@ -177,7 +177,7 @@ async def test_maps_compile_door_block_prompts(monkeypatch):
         "product_id": "6483d624", "execution_package_id": "wep_stub",
         "approved_asset_id": "product-image:6483d624:subject",
         "approved_asset_sha256": "sha", "initial_asset_media_id": "m", "initial_mode": "I2V",
-        "engine": "GOOGLE_FLOW", "model": "veo", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "engine": "GOOGLE_FLOW", "model": "veo_3_1_lite", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
         "requested_duration_seconds": 24,
     }, trust_client_authority=True)
     assert out["initial_prompt_text"] == "INIT block prompt"
@@ -213,7 +213,7 @@ async def test_dispatch_never_ships_a_multi_block_document_as_the_initial(monkey
         "product_id": "6483d624", "execution_package_id": "wep_stub",
         "approved_asset_id": "product-image:6483d624:subject",
         "approved_asset_sha256": "sha", "initial_asset_media_id": "m", "initial_mode": "I2V",
-        "engine": "GOOGLE_FLOW", "model": "veo", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "engine": "GOOGLE_FLOW", "model": "veo_3_1_lite", "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
         "requested_duration_seconds": 16,
     }, trust_client_authority=True)
     assert out["initial_prompt_text"] == b1                       # reviewed block-1 initial
@@ -341,7 +341,7 @@ async def test_recovery_path_still_recompiles_when_it_has_no_execution_package(m
         "product_id": "6483d624", "execution_package_id": "",
         "approved_asset_id": "product-image:6483d624:subject",
         "approved_asset_sha256": "sha", "initial_asset_media_id": "m", "initial_mode": "I2V",
-        "engine": "GOOGLE_FLOW", "model": "veo",
+        "engine": "GOOGLE_FLOW", "model": "veo_3_1_lite",
         "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
         "requested_duration_seconds": 16,
     }, trust_client_authority=True)

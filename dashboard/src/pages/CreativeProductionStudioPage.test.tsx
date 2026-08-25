@@ -161,7 +161,7 @@ vi.mock("../components/production-studio/CopySupplyPanel", () => ({
 	default: () => <div data-testid="copy-supply-panel-mock">Copy supply</div>,
 }));
 
-import { collectProductionSessionResults } from "../utils/videoSessionResults";
+import { collectCreativeProductionSessionResults } from "../utils/videoSessionResults";
 import type { Product } from "../types";
 import CreativeProductionStudioPage from "./CreativeProductionStudioPage";
 
@@ -726,7 +726,7 @@ describe("P6.3-R2 production plan state isolation", () => {
 		);
 	});
 
-	it("collects unique video outputs from item and attempt ledgers", () => {
+	it("collects authoritative item finals and excludes attempt artifacts", () => {
 		const videoItem = {
 			...DETAILS["plan-b"].items[0],
 			media_type: "VIDEO" as const,
@@ -753,12 +753,11 @@ describe("P6.3-R2 production plan state isolation", () => {
 				{ ...attempt, artifact_media_id: "p6-video-2" },
 			],
 		} as unknown as NonNullable<
-			Parameters<typeof collectProductionSessionResults>[0]
+			Parameters<typeof collectCreativeProductionSessionResults>[0]
 		>;
 
-		expect(collectProductionSessionResults(detail)).toEqual([
+		expect(collectCreativeProductionSessionResults(detail)).toEqual([
 			{ media_id: "p6-video-1", kind: "video" },
-			{ media_id: "p6-video-2", kind: "video" },
 		]);
 	});
 

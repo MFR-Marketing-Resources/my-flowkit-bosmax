@@ -138,16 +138,32 @@ async def test_resolve_reports_blockers_when_context_missing():
     assert out["transport_proven"] is True
 
 
-async def test_resolve_executable_when_context_ready():
+async def test_resolve_executable_when_context_ready_and_profile_certified():
+    # 16s Native Extend has an artifact-backed CERTIFIED provider profile, so a
+    # ready context resolves executable with no blockers.
+    out = await flow.native_extend_resolve(
+        flow.ExtendResolveRequest(project_id="p", scene_id="s",
+                                  source_operation_id="op1", planned_block_count=1,
+                                  total_duration_seconds=16))
+    assert out["route_executable"] is True
+    assert out["blockers"] == []
+    assert out["route_id"] == "GOOGLE_FLOW_NATIVE_EXTEND"
+    assert out["block_plan"] == [8, 8]
+    assert out["final_concat_export_available"] is True   # captured; execution stays confirm-gated
+
+
+async def test_resolve_blocks_when_provider_profile_uncertified():
+    # 24s has a valid block plan and authorized capability, but its exact provider
+    # profile is not yet artifact-backed/certified — capability is never provider
+    # proof, so the route must fail closed until certification exists.
     out = await flow.native_extend_resolve(
         flow.ExtendResolveRequest(project_id="p", scene_id="s",
                                   source_operation_id="op1", planned_block_count=2,
                                   total_duration_seconds=24))
-    assert out["route_executable"] is True
-    assert out["blockers"] == []
+    assert out["route_executable"] is False
+    assert "PROVIDER_PROFILE_NOT_CERTIFIED" in out["blockers"]
     assert out["route_id"] == "GOOGLE_FLOW_NATIVE_EXTEND"
     assert out["block_plan"] == [8, 8, 8]
-    assert out["final_concat_export_available"] is True   # captured; execution stays confirm-gated
 
 
 async def test_native_extend_lineage_endpoint_empty():
@@ -287,7 +303,7 @@ def _complete_body(nonce, *, duration=16):
         product_id="p1", product_name="MWTCB", execution_package_id="wep_x",
         approved_asset_id="product-image:p1:subject", approved_asset_sha256="hashZ",
         initial_asset_media_id=f"asset-{nonce}", initial_mode="I2V",
-        engine="GOOGLE_FLOW", model="veo", aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
+        engine="GOOGLE_FLOW", model="veo_3_1_lite", aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT",
         requested_total_duration_seconds=duration,
         initial_prompt_text=f"reviewed initial {nonce}", continuation_prompts=conts,
         client_request_nonce=nonce)

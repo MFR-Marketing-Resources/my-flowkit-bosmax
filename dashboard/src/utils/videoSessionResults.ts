@@ -9,6 +9,7 @@ export interface PersistedGenerationJob {
 }
 
 const GENERATION_JOBS_STORAGE_KEY = "bosmax.generation-jobs.v1";
+const MONTAGE_RUN_STORAGE_KEY = "bosmax.montage-run-id:v1";
 
 function readStoredJobs(): PersistedGenerationJob[] {
 	try {
@@ -51,6 +52,40 @@ export function forgetGenerationJob(jobId: string): void {
 	writeStoredJobs(readStoredJobs().filter((item) => item.job_id !== jobId));
 }
 
+export function rememberMontageRunId(runId: string): void {
+	try {
+		window.sessionStorage.setItem(MONTAGE_RUN_STORAGE_KEY, runId.trim());
+	} catch {
+		// Storage-disabled mode keeps the current in-memory run usable.
+	}
+}
+
+export function forgetMontageRunId(): void {
+	try {
+		window.sessionStorage.removeItem(MONTAGE_RUN_STORAGE_KEY);
+	} catch {
+		// Best effort only.
+	}
+}
+
+export async function rehydrateMontageRun<T>(
+	readRun: (runId: string) => Promise<T>,
+): Promise<T | null> {
+	let runId = "";
+	try {
+		runId = window.sessionStorage.getItem(MONTAGE_RUN_STORAGE_KEY)?.trim() ?? "";
+	} catch {
+		return null;
+	}
+	if (!runId) return null;
+	try {
+		return await readRun(runId);
+	} catch {
+		forgetMontageRunId();
+		return null;
+	}
+}
+
 function uniqueVideoResults(candidates: string[]): SessionResult[] {
 	const seen = new Set<string>();
 	return candidates.flatMap((candidate) => {
@@ -62,36 +97,29 @@ function uniqueVideoResults(candidates: string[]): SessionResult[] {
 }
 
 export function collectMontageSessionResults(
-	run: { scenes?: Array<{ video_media_id?: string | null }> } | null,
+	run: { config?: Record<string, unknown> } | null,
 	assembly: { concat?: Record<string, unknown> } | null,
 ): SessionResult[] {
+	const persistedAssembly =
+		run?.config?.assembly && typeof run.config.assembly === "object"
+			? (run.config.assembly as Record<string, unknown>)
+			: null;
 	const finalMediaId =
 		typeof assembly?.concat?.final_media_id === "string"
 			? assembly.concat.final_media_id
-			: "";
-	return uniqueVideoResults([
-		finalMediaId,
-		...(run?.scenes ?? []).map((scene) =>
-			String(scene.video_media_id || ""),
-		),
-	]);
+			: typeof persistedAssembly?.final_media_id === "string"
+				? persistedAssembly.final_media_id
+				: "";
+	return uniqueVideoResults([finalMediaId]);
 }
 
-export function collectProductionSessionResults(
+export function collectCreativeProductionSessionResults(
 	detail: PlanDetail | null,
 ): SessionResult[] {
 	if (!detail) return [];
-	const videoItemIds = new Set(
+	return uniqueVideoResults(
 		detail.items
 			.filter((item) => item.media_type === "VIDEO")
-			.map((item) => item.item_id),
-	);
-	return uniqueVideoResults([
-		...detail.items
-			.filter((item) => item.media_type === "VIDEO")
 			.map((item) => String(item.output_media_id || "")),
-		...detail.attempts
-			.filter((attempt) => videoItemIds.has(attempt.item_id))
-			.map((attempt) => String(attempt.artifact_media_id || "")),
-	]);
+	);
 }

@@ -6,6 +6,7 @@ construct a Flow client or call a provider.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -59,7 +60,13 @@ def test_hybrid_omni_flash_10s_readiness_uses_certified_agent_route() -> None:
         make_video.HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE
     )
     assert readiness["live_capture_required"] is False
-    assert readiness["ten_second"] == {
+    assert {
+        key: readiness["ten_second"][key]
+        for key in (
+            "duration_s", "status", "blocker_code", "provider_calls",
+            "selected_route", "contract_version",
+        )
+    } == {
         "duration_s": 10,
         "status": "READY",
         "blocker_code": None,
@@ -67,6 +74,9 @@ def test_hybrid_omni_flash_10s_readiness_uses_certified_agent_route() -> None:
         "selected_route": make_video.HYBRID_REFERENCE_OMNI_10S_CERTIFIED_ROUTE,
         "contract_version": make_video.HYBRID_REFERENCE_OMNI_10S_CONTRACT_VERSION,
     }
+    assert readiness["ten_second"]["provider_profile_status"] == "CERTIFIED"
+    assert readiness["ten_second"]["provider_profile_id"]
+    assert readiness["ten_second"]["provider_profile_digest"]
 
 
 @pytest.mark.asyncio
@@ -183,6 +193,43 @@ async def test_final_delivery_wrapper_requires_bytes_and_registers_readback(tmp_
     assert result["provider_calls"] == 0
     assert result["readback_verified"] is True
     assert (await crud.get_generated_artifact("round1-final"))["file_sha256"] == result["sha256"]
+
+
+@pytest.mark.asyncio
+async def test_final_delivery_preserves_persisted_plan_aliases(tmp_path: Path) -> None:
+    custody = {
+        "official_visual_media_id": "official-visual-1",
+        "official_visual_sha256": "b" * 64,
+        "custody_state": "LOCKED",
+    }
+    await crud.create_video_production_job_full(
+        "vj_round1_lineage",
+        logical_job_key="round1-lineage-key",
+        status=video_jobs.S_FINAL_SAVING,
+        execution_package_id="wep-column-fallback",
+        whole_plan_json=json.dumps({
+            "request_id": "request-from-plan",
+            "workspace_execution_package_id": "wep-from-plan",
+            "product_visual_custody": custody,
+        }),
+    )
+    final_path = tmp_path / "lineage-final.mp4"
+    final_path.write_bytes(b"final-video-with-plan-lineage")
+
+    await register_final_video_artifact(
+        {
+            "final_media_id": "round1-lineage-final",
+            "local_path": str(final_path),
+            "duration_s": 16,
+        },
+        job_id="vj_round1_lineage",
+    )
+
+    result = await crud.get_generation_result("round1-lineage-final")
+    assert result is not None
+    assert result["request_id"] == "request-from-plan"
+    assert result["workspace_generation_package_id"] == "wep-from-plan"
+    assert json.loads(result["product_visual_custody_json"]) == custody
 
 
 @pytest.mark.asyncio
