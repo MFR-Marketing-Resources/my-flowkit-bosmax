@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Query
 from agent.models.copy_render_v1 import (
     CreateCopyRenderSessionRequest,
     GenerateSuggestionsRequest,
+    SetVisualConfigRequest,
     UpdateTargetRequest,
 )
 from agent.security.access_control import get_current_auth_context
@@ -69,8 +70,22 @@ async def create_session(req: CreateCopyRenderSessionRequest) -> dict[str, Any]:
             product_id=req.product_id, benefit_id=req.benefit_id, lane=req.lane,
             target_count=req.target_count, duration_seconds=req.duration_seconds,
             target_language=req.target_language, formula_id=req.formula_id,
-            created_by=actor.user_id,
+            created_by=actor.user_id, avatar_id=req.avatar_id,
         )
+    except svc.CopyRenderError as exc:
+        _raise(exc)
+
+
+@router.patch("/sessions/{session_id}/visual-config")
+async def set_visual_config(session_id: str, req: SetVisualConfigRequest) -> dict[str, Any]:
+    """Bind the governed presenter identity (Avatar Registry avatar) for HYBRID.
+
+    Visual config only: provider-free, never triggers a copy provider call and
+    never mutates generated copy text or lineage. FACELESS is avatar-exempt.
+    """
+    _require_mutation_actor()
+    try:
+        return await svc.set_visual_config(session_id, avatar_id=req.avatar_id)
     except svc.CopyRenderError as exc:
         _raise(exc)
 

@@ -55,9 +55,11 @@ _SESSION_COLS = (
     "target_language", "wps_mode", "wps_authority_version", "wps_authority_digest",
     "formula_id", "formula_version", "renderer_prompt_version", "safety_policy_version",
     "word_budget", "target_count", "suggestion_batch_size", "locked_count", "status",
-    "lineage_json", "created_by",
+    "lineage_json", "created_by", "avatar_id",
 )
-_SESSION_UPDATABLE = {"target_count", "locked_count", "status", "lineage_json", "finalized_at"}
+# avatar_id is a visual setting (governed presenter identity); it is updatable
+# WITHOUT touching any copy-lineage column, so a presenter change never stales copy.
+_SESSION_UPDATABLE = {"target_count", "locked_count", "status", "lineage_json", "finalized_at", "avatar_id"}
 
 
 # --------------------------------------------------------------------------

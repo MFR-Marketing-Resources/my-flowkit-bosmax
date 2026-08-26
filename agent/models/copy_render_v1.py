@@ -84,6 +84,17 @@ class CreateCopyRenderSessionRequest(BaseModel):
     duration_seconds: int = Field(ge=1, le=600)
     target_language: str = Field(default=DEFAULT_TARGET_LANGUAGE, min_length=1, max_length=16)
     formula_id: str | None = Field(default=None, max_length=40)
+    # Governed presenter identity (Avatar Registry AvatarCode). Optional at
+    # creation; required for HYBRID before prepare-selected. FACELESS is exempt.
+    avatar_id: str | None = Field(default=None, max_length=64)
+
+
+class SetVisualConfigRequest(BaseModel):
+    """Bind the governed presenter identity to a session. Visual config only —
+    never triggers a copy provider call and never mutates copy text."""
+
+    model_config = ConfigDict(extra="forbid")
+    avatar_id: str | None = Field(default=None, max_length=64)
 
 
 class GenerateSuggestionsRequest(BaseModel):
