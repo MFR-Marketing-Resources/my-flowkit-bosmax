@@ -478,6 +478,58 @@ def _sweet_target_for_duration(canonical: Any, duration_seconds: int, target_lan
     )
 
 
+def resolve_dialogue_occupancy_targets(
+    total_duration_seconds: int,
+    target_language: str,
+    *,
+    wps_mode: str = "SWEET",
+    engine: str = "GOOGLE_FLOW",
+) -> dict[str, Any]:
+    """Public, provider-free dialogue-occupancy authority.
+
+    Derives the per-block SweetWPS dialogue word targets and the required TOTAL
+    dialogue word count for a total duration's canonical block plan. It shares the
+    SAME ``_sweet_target_for_duration`` + block-plan authority that the final
+    ``build_temporal_occupancy_receipt`` validator uses — there is exactly ONE
+    target calculation, never a second independently-maintained table. Consumers
+    (Copy Render authoring + the final video validator) both bind to this.
+
+    Example (16s BM_MS SweetWPS): blocks [8→22, 8→22], required_total 44.
+    """
+    if _token(wps_mode) != "SWEET":
+        raise VideoContinuityContractError(
+            ERR_DIALOGUE_WPS_MODE_REQUIRED,
+            "Dialogue-bearing occupancy targets require explicit SWEET mode.",
+        )
+    from agent.services import canonical_prompt_compiler as canonical
+
+    block_plan = [int(b) for b in canonical.resolve_block_plan(
+        engine, int(total_duration_seconds), preferred_lane="8s")]
+    blocks = [
+        {
+            "duration_seconds": seconds,
+            "required_word_count": int(_sweet_target_for_duration(canonical, seconds, target_language)),
+        }
+        for seconds in block_plan
+    ]
+    required_total = sum(b["required_word_count"] for b in blocks)
+    payload = {
+        "total_duration_seconds": int(total_duration_seconds),
+        "engine": str(engine),
+        "target_language": str(target_language),
+        "wps_mode": "SWEET",
+        "generation_mode": "EXTEND" if len(block_plan) > 1 else "SINGLE",
+        "block_plan_seconds": list(block_plan),
+        "blocks": blocks,
+        "required_total_word_count": required_total,
+        "contract_version": VIDEO_CONTINUITY_CONTRACT_VERSION,
+    }
+    payload["authority_digest"] = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
+    ).hexdigest()
+    return payload
+
+
 def build_temporal_occupancy_receipt(
     *,
     blocks: Sequence[Mapping[str, Any]],
