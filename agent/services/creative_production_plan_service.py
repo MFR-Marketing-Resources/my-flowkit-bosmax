@@ -192,6 +192,50 @@ async def _v2_copy_authority_record(product_id: str, lane: str) -> dict[str, Any
     }
 
 
+async def _benefit_copy_authority_record(
+    product_id: str, candidate_id: str, lane: str
+) -> dict[str, Any]:
+    """Project a finalized request-scoped BENEFIT_COPY_RENDER_V1 rendered-copy
+    candidate into P6's copy DNA dimensions — the Round-3 alternative to the
+    product-global V2 authority. Provider-free (deterministic read of the rendered
+    artifact); NEVER reads or mutates the Copy Register V2 binding, so five selected
+    copy artifacts remain five independent request-scoped identities."""
+    from agent.services.copy_execution_resolver import CopyExecutionResolutionError
+    from agent.services.copy_render_execution_resolver import (
+        resolve_rendered_copy_execution,
+    )
+
+    try:
+        resolution = await resolve_rendered_copy_execution(product_id, lane, candidate_id)
+    except CopyExecutionResolutionError as exc:
+        raise CreativeProductionError(
+            exc.code, str(exc), status_code=getattr(exc, "status_code", 409),
+            details={"product_id": product_id, "candidate_id": candidate_id,
+                     "lane": lane, "upstream": getattr(exc, "details", {})},
+        ) from exc
+    cci = getattr(resolution, "compiler_copy_intelligence", None) or {}
+    return {
+        # A stable per-candidate identity — NOT a copy_set row and NOT a V2 binding.
+        "copy_set_id": f"benefit_copy_render:{candidate_id}",
+        "copy_binding_id": None,
+        "blueprint_id": None,
+        "candidate_id": candidate_id,
+        "product_id": product_id,
+        "angle": str(cci.get("angle") or ""),
+        "hook": str(cci.get("hook") or ""),
+        "subhook": str(cci.get("subhook") or ""),
+        "usp_set_json": _stable_json(list(cci.get("usps") or [])),
+        "cta": str(cci.get("cta") or ""),
+        "formula_family": str(cci.get("formula_id") or ""),
+        "formula_version": str(cci.get("formula_version") or ""),
+        "usage_count": 0,
+        "copy_architecture_v2": resolution.to_metadata(),
+        # The per-item request-scoped selection compile/dispatch re-prove against.
+        "benefit_copy_render": {"candidate_id": candidate_id,
+                                "authority_kind": "BENEFIT_COPY_RENDER_V1", "lane": lane},
+    }
+
+
 def _sha(value: Any) -> str:
     return hashlib.sha256(_stable_json(value).encode("utf-8")).hexdigest()
 
@@ -2248,15 +2292,28 @@ async def _load_approved_pools(plan: dict[str, Any]) -> dict[str, Any]:
                 continue
             poster_copy_sets[product_id].append(row)
     else:
+        # Round 3: a plan may supply finalized BENEFIT_COPY_RENDER_V1 candidates as
+        # the video copy authority (per product_id, or "*" for all). When present the
+        # request-scoped rendered copy is used; otherwise the product-global V2
+        # authority is the default (unchanged behaviour). Never a legacy CopySet.
+        benefit_render = pool.get("benefit_copy_render") if isinstance(pool, dict) else None
+        benefit_render = benefit_render if isinstance(benefit_render, dict) else {}
         for product_id in products:
             try:
                 if int(plan.get("target_video_count") or 0) > 0:
-                    copy_sets[product_id].append(
-                        await _v2_copy_authority_record(
-                            product_id,
-                            "PRODUCTION_STUDIO_P6",
+                    _cands = benefit_render.get(product_id) or benefit_render.get("*") or []
+                    if _cands:
+                        for _cid in _cands:
+                            copy_sets[product_id].append(
+                                await _benefit_copy_authority_record(
+                                    product_id, str(_cid), "FACELESS"))
+                    else:
+                        copy_sets[product_id].append(
+                            await _v2_copy_authority_record(
+                                product_id,
+                                "PRODUCTION_STUDIO_P6",
+                            )
                         )
-                    )
                 if int(plan.get("target_image_count") or 0) > 0:
                     image_copy_authorities[product_id].append(
                         await _v2_copy_authority_record(product_id, "IMAGE_GEN")

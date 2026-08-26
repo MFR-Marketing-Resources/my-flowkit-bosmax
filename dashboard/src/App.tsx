@@ -116,13 +116,11 @@ const ALL_NAV_GROUPS = [
 			},
 		],
 	},
-	{
-		label: "COPYWRITING",
-		permissions: ["copy.read"],
-		items: [
-			{ to: "/creative/storyboard-landbank-v3", icon: Sparkles, label: "Copywriting Landbank" },
-		],
-	},
+	// Round 3: FAST54 / Storyboard V3 authoring ("Copywriting Landbank") is hidden
+	// from the live nav (HIDE_FROM_NAV_KEEP_ROUTE). The <Route> stays live and is NOT
+	// added to the deactivated-surface redirect map, because Production Studio's Copy
+	// Supply deep-links (/creative/storyboard-landbank-v3?product_id=…) still resolve
+	// to the real page.
 	{
 		label: "LIBRARY",
 		permissions: ["assets.read"],

@@ -2793,6 +2793,84 @@ CREATE TABLE IF NOT EXISTS copy_render_candidate_package (
 """
 
 
+CREATIVE_EXECUTION_RECIPE_SCHEMA = """
+-- ==========================================================================
+-- Creative Execution Recipe (Round 3)
+-- SYSTEM OWNS VISUAL VARIATION SELECTION / RECIPE LINEAGE / PROMPT SNAPSHOTS.
+-- The durable, IMMUTABLE execution unit that binds one immutable rendered-copy
+-- identity (BENEFIT_COPY_RENDER_V1) + a production recipe (HYBRID/FACELESS/
+-- MONTAGE) + one deterministic visual-variation identity + duration + product
+-- truth lineage, and (after compile) an immutable prompt-snapshot reference to
+-- an existing workspace_execution_package. Provider-free to create/compile.
+-- Same copy + new visual = REMIX (a new recipe row, no text-provider call).
+-- Additive only; never mutates copy_render_* or the Copy Register V2 binding.
+-- ==========================================================================
+
+CREATE TABLE IF NOT EXISTS creative_execution_recipe_v1 (
+    recipe_id                        TEXT PRIMARY KEY,
+    recipe_identity_digest           TEXT NOT NULL UNIQUE,
+    product_id                       TEXT NOT NULL,
+    production_recipe                TEXT NOT NULL
+        CHECK (production_recipe IN ('HYBRID','FACELESS','MONTAGE')),
+    -- immutable rendered-copy identity (request-scoped BENEFIT_COPY_RENDER_V1)
+    benefit_id                       TEXT,
+    benefit_digest                   TEXT,
+    copy_session_id                  TEXT NOT NULL,
+    candidate_id                     TEXT NOT NULL,
+    artifact_id                      TEXT NOT NULL,
+    copy_text_digest                 TEXT NOT NULL,
+    copy_source                      TEXT NOT NULL,
+    formula_id                       TEXT,
+    formula_version                  TEXT,
+    atom_recipe_fingerprint          TEXT,
+    angle_id                         TEXT,
+    hook_id                          TEXT,
+    body_id                          TEXT,
+    cta_id                           TEXT,
+    -- duration / orchestration
+    requested_total_duration_seconds INTEGER NOT NULL,
+    generation_mode                  TEXT NOT NULL,
+    orchestration_digest             TEXT,
+    -- deterministic visual identity
+    visual_variation_fingerprint     TEXT NOT NULL,
+    visual_resolver_version          TEXT NOT NULL,
+    avatar_id                        TEXT,
+    scene_template_id                TEXT,
+    camera_preset_code               TEXT,
+    wardrobe                         TEXT,
+    environment                      TEXT,
+    treatment_id                     TEXT,
+    faceless_actor_profile           TEXT,
+    montage_mascot_media_id          TEXT,
+    visual_config_json               TEXT NOT NULL DEFAULT '{}',
+    -- product truth lineage
+    pi_snapshot_id                   TEXT,
+    pi_snapshot_version              INTEGER,
+    product_truth_digest             TEXT,
+    official_visual_sha256           TEXT,
+    -- system authority versions
+    compiler_version                 TEXT,
+    recipe_schema_version            TEXT NOT NULL,
+    -- immutable prompt-snapshot binding (set once on compile)
+    status                           TEXT NOT NULL DEFAULT 'DRAFT'
+        CHECK (status IN ('DRAFT','FINALIZED')),
+    workspace_execution_package_id   TEXT,
+    prompt_fingerprint               TEXT,
+    prompt_snapshot_json             TEXT,
+    lineage_json                     TEXT NOT NULL DEFAULT '{}',
+    created_at                       TEXT NOT NULL
+        DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    finalized_at                     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cer_product
+    ON creative_execution_recipe_v1 (product_id, production_recipe, status);
+CREATE INDEX IF NOT EXISTS idx_cer_candidate
+    ON creative_execution_recipe_v1 (candidate_id);
+CREATE INDEX IF NOT EXISTS idx_cer_visual_fp
+    ON creative_execution_recipe_v1 (visual_variation_fingerprint);
+"""
+
+
 async def init_db():
     """Initialize database with schema and run migrations."""
     async with aiosqlite.connect(str(DB_PATH)) as db:
@@ -7024,6 +7102,12 @@ END;
         # immutable rendered-copy cache, and request-scoped BENEFIT_COPY_RENDER_V1.
         # Additive and idempotent; never mutates Copy Register V2 or production.
         await db.executescript(COPY_RENDER_SCHEMA)
+        await db.commit()
+
+        # Creative Execution Recipe (Round 3): the immutable durable execution unit
+        # binding rendered-copy identity + production recipe + deterministic visual
+        # variation + prompt-snapshot reference. Additive and idempotent.
+        await db.executescript(CREATIVE_EXECUTION_RECIPE_SCHEMA)
         await db.commit()
 
         # Round 3 P6 per-item copy selection: real production items durably carry

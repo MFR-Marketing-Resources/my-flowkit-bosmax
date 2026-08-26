@@ -18,9 +18,10 @@ function allItems() {
 	return NAV_GROUPS.flatMap((group) => group.items.map((item) => ({ group: group.label, ...item })));
 }
 
-// The normal operator navigation must present Copywriting Landbank as the single
-// primary copywriting door. Copy Authority is a deep-link-only V2 detail route;
-// cross-product governance is owned by the queue.
+// Round 3: the Copywriting Landbank authoring door is hidden from the live nav
+// (HIDE_FROM_NAV_KEEP_ROUTE) while its route stays live for Copy Supply deep-links.
+// Copy Authority is a deep-link-only V2 detail route; cross-product governance is
+// owned by the queue.
 describe("Task B — navigation surface (Test A)", () => {
 	it("exposes only active production video surfaces in the live nav", () => {
 		const video = groupByLabel("VIDEO PRODUCTION");
@@ -48,11 +49,17 @@ describe("Task B — navigation surface (Test A)", () => {
 		expect(allItems().some((item) => item.to === "/operator/i2v")).toBe(false);
 	});
 
-	it("presents Copywriting Landbank as the primary copywriting door", () => {
-		const copywriting = groupByLabel("COPYWRITING");
-		expect(copywriting).toBeDefined();
-		expect(copywriting?.items[0]?.label).toBe("Copywriting Landbank");
-		expect(copywriting?.items[0]?.to).toBe("/creative/storyboard-landbank-v3");
+	it("hides the Copywriting Landbank authoring door from the live nav (HIDE_FROM_NAV_KEEP_ROUTE)", () => {
+		// Round 3: FAST54 / Storyboard V3 authoring leaves the sidebar but the route
+		// stays live — it must NOT enter the deactivated-surface redirect map, so
+		// Production Studio's Copy Supply deep-links keep resolving to the real page.
+		expect(groupByLabel("COPYWRITING")).toBeUndefined();
+		expect(allItems().some((item) => item.to === "/creative/storyboard-landbank-v3")).toBe(false);
+		expect(allItems().some((item) => item.label === "Copywriting Landbank")).toBe(false);
+		expect(isDeactivatedSurfacePath("/creative/storyboard-landbank-v3")).toBe(false);
+		expect(Object.keys(DEACTIVATED_SURFACE_REDIRECTS)).not.toContain(
+			"/creative/storyboard-landbank-v3",
+		);
 	});
 
 	it("does not place a V2 copy authority door beside Landbank in the normal group", () => {
@@ -73,21 +80,18 @@ describe("Task B — navigation surface (Test A)", () => {
 		expect(queueDoors.map((door) => door.label)).toEqual(["Copy Governance Queue"]);
 	});
 
-	it("presents exactly one normal copy-generation door (Landbank), avoiding two doors", () => {
-		const landbankDoors = allItems().filter((item) => item.to === "/creative/storyboard-landbank-v3");
-		expect(landbankDoors.map((door) => door.group)).toEqual(["COPYWRITING"]);
+	it("keeps copy-generation authoring doors out of the live nav (Landbank + legacy registry)", () => {
+		// Round 3: the Landbank authoring door is hidden (HIDE_FROM_NAV_KEEP_ROUTE),
+		// so no storyboard-landbank-v3 nav door remains.
+		expect(allItems().some((item) => item.to === "/creative/storyboard-landbank-v3")).toBe(false);
 		// The legacy copy-registry route must never appear as a live nav door.
 		expect(allItems().some((item) => item.to === "/creative/copy-registry")).toBe(false);
 	});
 
 	// Copy Intelligence declutter — owner decision HIDE_FROM_NAV_KEEP_ROUTE.
-	it("removes Copy Intelligence from the normal COPYWRITING navigation", () => {
-		const copywriting = groupByLabel("COPYWRITING");
-		const labels = (copywriting?.items ?? []).map((item) => item.label);
-		expect(labels).not.toContain("Copy Intelligence");
-		// Copywriting Landbank stays the single primary door.
-		expect(copywriting?.items).toHaveLength(1);
+	it("removes Copy Intelligence from the live navigation", () => {
 		// The Copy Intelligence surface must not appear as a nav door in ANY group.
+		expect(allItems().some((item) => item.label === "Copy Intelligence")).toBe(false);
 		expect(allItems().some((item) => item.to === "/creative/copy-intelligence")).toBe(false);
 	});
 
