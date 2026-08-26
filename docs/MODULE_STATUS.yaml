@@ -1930,6 +1930,10 @@ domains:
       - dashboard/src/components/copywriting/OnDemandCopyRendererPanel.tsx
       - dashboard/src/components/copywriting/OnDemandCopyRendererPanel.test.tsx
       - dashboard/src/components/copywriting/BenefitCopySourceSection.tsx
+      # Round 4: request-scoped BENEFIT_COPY_RENDER_V1 identity handoff into compile+generate
+      - dashboard/src/components/copywriting/BenefitCopySourceSection.test.tsx
+      - dashboard/src/utils/benefitCopyRequestContext.ts
+      - dashboard/src/utils/benefitCopyRequestContext.test.ts
       - docs/architecture/BENEFIT_ON_DEMAND_COPY_RENDERER_V1.md
       # Creative Execution Recipe + Auto Visual Variation (Round 3)
       - agent/services/auto_visual_variation_service.py

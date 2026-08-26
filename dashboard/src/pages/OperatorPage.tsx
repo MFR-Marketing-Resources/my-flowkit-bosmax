@@ -37,7 +37,10 @@ import BackendVersionBanner from "../components/BackendVersionBanner";
 import StaffIdentityBar from "../components/StaffIdentityBar";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import CopywritingSourceSelector from "../components/copywriting/CopywritingSourceSelector";
-import BenefitCopySourceSection from "../components/copywriting/BenefitCopySourceSection";
+import BenefitCopySourceSection, {
+	type BenefitCopyExecutionContext,
+} from "../components/copywriting/BenefitCopySourceSection";
+import { benefitCopyRequestContext } from "../utils/benefitCopyRequestContext";
 import NativeExtendPanel from "../components/NativeExtendPanel";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
@@ -707,6 +710,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	// (which stays the Copy Register V2 readiness signal — never overloaded).
 	const [selectedCopySource, setSelectedCopySource] = useState<"BENEFIT_RENDER" | "COPY_V2">("BENEFIT_RENDER");
 	const [benefitRenderReady, setBenefitRenderReady] = useState(false);
+	// Request-scoped Benefit On-Demand execution identity (BENEFIT_COPY_RENDER_V1).
+	// Carried into compile + generate so resolve_execution_copy resolves this exact
+	// rendered candidate instead of the persisted product-global Copy V2 binding.
+	const [selectedBenefitCopy, setSelectedBenefitCopy] = useState<BenefitCopyExecutionContext | null>(null);
 	// HYBRID anchor is auto-locked from the product's official image, so the
 	// canonical reference picker is collapsed by default and only revealed when
 	// the operator explicitly chooses to override the anchor.
@@ -1666,7 +1673,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						data.mode === "IMG"
 							? undefined
 							: capabilityMatrix?.capability_matrix_version,
-					copy_v2_context: data.copy_v2_context,
+					// Same authority as preview (Round 4): re-send the request-scoped benefit
+					// copy so Generate never flips to Copy V2 after an 8s preview.
+					copy_v2_context: benefitCopyRequestContext(selectedCopySource, selectedBenefitCopy) ?? data.copy_v2_context,
 					staff_id: staffIdentity.staffId,
 					production_recipe: productionRecipe,
 				}),
@@ -1939,6 +1948,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 					creativeDirection.recipes[0]?.scene_template_id ?? null,
 				camera_preset_code:
 					creativeDirection.recipes[0]?.camera_preset_code ?? null,
+				// Honest source selection (Round 4): when Benefit On-Demand is the chosen
+				// source, carry the request-scoped rendered candidate so resolve_execution_copy
+				// binds BENEFIT_COPY_RENDER_V1 — never a silent fall-through to Copy V2.
+				copy_v2_context: benefitCopyRequestContext(selectedCopySource, selectedBenefitCopy),
 			});
 			setPreviewPackage(preview);
 			setNotice({
@@ -2530,7 +2543,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										<button
 											type="button"
 											data-testid="copy-source-existing-v2"
-											onClick={() => setSelectedCopySource("COPY_V2")}
+											onClick={() => { setSelectedCopySource("COPY_V2"); setSelectedBenefitCopy(null); }}
 											className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${selectedCopySource === "COPY_V2" ? "border border-blue-500/40 bg-blue-600/20 text-blue-100" : "border border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
 										>
 											Existing Approved Copy V2
@@ -2543,6 +2556,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										lane="HYBRID"
 										durationSeconds={videoDurationSeconds}
 										onReadyChange={(ready) => { setBenefitRenderReady(ready); if (ready) setWorkspacePackage(null); }}
+										onSelectedCopyChange={(ctx) => { setSelectedBenefitCopy(ctx); setWorkspacePackage(null); }}
 									/>
 								) : (
 									<>

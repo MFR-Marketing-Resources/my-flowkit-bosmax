@@ -7,6 +7,19 @@ import { getProductCapacity, type BenefitCapacity } from '../../api/creativeFact
 import type { CopyRenderLane } from '../../api/copyRender'
 import OnDemandCopyRendererPanel from './OnDemandCopyRendererPanel'
 
+/** Immutable request-scoped execution identity of a finalized Benefit On-Demand
+ * selection. This is a DISTINCT authority (BENEFIT_COPY_RENDER_V1) — never a Copy
+ * Register V2 binding. The host page threads `candidate_id` into the compile and
+ * generate request context so `resolve_execution_copy` resolves this exact rendered
+ * copy instead of falling back to the persisted product-global Copy V2 binding. */
+export interface BenefitCopyExecutionContext {
+  authority_kind: 'BENEFIT_COPY_RENDER_V1'
+  lane: CopyRenderLane
+  session_id: string
+  candidate_id: string
+  duration_seconds: number
+}
+
 export interface BenefitCopySourceSectionProps {
   productId?: string | null
   lane: CopyRenderLane
@@ -15,16 +28,22 @@ export interface BenefitCopySourceSectionProps {
   /** Neutral readiness signal — TRUE once a finalized rendered selection exists.
    * This is NOT the Copy Register V2 readiness signal. */
   onReadyChange?: (ready: boolean) => void
+  /** Propagate (or clear) the selected finalized execution identity so the host
+   * operator carries `benefit_copy_render.candidate_id` into compile/generate.
+   * Emitted `null` whenever the selection is not/no-longer valid. Without this the
+   * operator would only know `copyReady=true` and silently fall back to Copy V2. */
+  onSelectedCopyChange?: (context: BenefitCopyExecutionContext | null) => void
 }
 
 export function BenefitCopySourceSection(props: BenefitCopySourceSectionProps) {
-  const { productId, lane, durationSeconds, targetLanguage = 'BM_MS', onReadyChange } = props
+  const { productId, lane, durationSeconds, targetLanguage = 'BM_MS', onReadyChange, onSelectedCopyChange } = props
   const [benefits, setBenefits] = useState<BenefitCapacity[]>([])
   const [benefitId, setBenefitId] = useState<string>('')
   const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     onReadyChange?.(false)
+    onSelectedCopyChange?.(null)
     setBenefitId('')
     if (!productId) {
       setBenefits([])
@@ -65,7 +84,7 @@ export function BenefitCopySourceSection(props: BenefitCopySourceSectionProps) {
         </label>
         <select
           id="cr-benefit" value={benefitId}
-          onChange={(e) => { setBenefitId(e.target.value); onReadyChange?.(false) }}
+          onChange={(e) => { setBenefitId(e.target.value); onReadyChange?.(false); onSelectedCopyChange?.(null) }}
           className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-200"
         >
           <option value="">Choose an atom-ready benefit…</option>
@@ -92,7 +111,26 @@ export function BenefitCopySourceSection(props: BenefitCopySourceSectionProps) {
           lane={lane}
           durationSeconds={durationSeconds}
           targetLanguage={targetLanguage}
-          onCopySelected={() => onReadyChange?.(true)}
+          onCopySelected={({ session, prepared }) => {
+            // Carry the finalized selection identity up so the operator sends
+            // benefit_copy_render.candidate_id (never collapse it to copyReady=true).
+            const pkg =
+              (prepared.packages || []).find((p) => p.status === 'READY' && p.candidate_id) ??
+              (prepared.packages || []).find((p) => p.candidate_id)
+            if (pkg?.candidate_id) {
+              onSelectedCopyChange?.({
+                authority_kind: 'BENEFIT_COPY_RENDER_V1',
+                lane,
+                session_id: session.session_id,
+                candidate_id: pkg.candidate_id,
+                duration_seconds: session.duration_seconds,
+              })
+              onReadyChange?.(true)
+            } else {
+              onSelectedCopyChange?.(null)
+              onReadyChange?.(false)
+            }
+          }}
         />
       ) : null}
     </div>
