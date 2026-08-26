@@ -2650,11 +2650,29 @@ async def get_retrieved_artifact(media_id: str):
         if local:
             path = Path(local)
             if path.exists() and path.is_file():
-                # path must remain under OUTPUT_DIR
+                resolved = path.resolve()
+                # Registered paths normally live under the canonical state
+                # output root. During the one-time state relocation, existing
+                # image rows may still point at the source checkout's
+                # output/retrieved byte store. Allow only the exact media file
+                # in that known legacy directory; arbitrary outside-root paths
+                # remain forbidden.
                 try:
-                    path.resolve().relative_to(OUTPUT_DIR.resolve())
+                    resolved.relative_to(OUTPUT_DIR.resolve())
                 except ValueError as exc:
-                    raise HTTPException(403, "artifact path outside output root") from exc
+                    from agent import runtime_release
+
+                    legacy_retrieved = (
+                        runtime_release.dev_root() / "output" / "retrieved"
+                    ).resolve()
+                    suffix = resolved.suffix.lower()
+                    if (
+                        resolved.parent != legacy_retrieved
+                        or resolved.stem != mid
+                        or suffix not in {".mp4", ".jpg", ".jpeg", ".png", ".webp"}
+                    ):
+                        raise HTTPException(403, "artifact path outside output root") from exc
+                path = resolved
                 suffix = path.suffix.lower()
                 mime = {
                     ".mp4": "video/mp4",

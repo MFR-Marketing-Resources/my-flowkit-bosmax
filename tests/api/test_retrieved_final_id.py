@@ -10,6 +10,7 @@ import agent.config as cfg
 from agent.api import flow as api
 import pytest
 from fastapi import HTTPException
+from unittest.mock import AsyncMock
 
 
 def _seed_retrieved(tmp_path, monkeypatch, name: str) -> None:
@@ -50,3 +51,45 @@ async def test_path_traversal_and_garbage_rejected():
         with pytest.raises(HTTPException) as exc:
             await api.get_retrieved_artifact(bad)
         assert exc.value.status_code == 422, bad
+
+
+async def test_registered_legacy_image_path_is_served(tmp_path, monkeypatch):
+    media_id = "69051c7b-1a50-4560-89a8-50795e12ff5c"
+    state_output = tmp_path / "state-output"
+    monkeypatch.setattr(cfg, "OUTPUT_DIR", state_output)
+    legacy_root = tmp_path / "legacy-checkout"
+    legacy_retrieved = legacy_root / "output" / "retrieved"
+    legacy_retrieved.mkdir(parents=True)
+    image = legacy_retrieved / f"{media_id}.jpg"
+    image.write_bytes(b"legacy-image")
+    monkeypatch.setenv("BOSMAX_DEV_ROOT", str(legacy_root))
+    monkeypatch.setattr(
+        api.crud,
+        "get_generated_artifact",
+        AsyncMock(return_value={"media_id": media_id, "local_path": str(image)}),
+    )
+
+    response = await api.get_retrieved_artifact(media_id)
+
+    assert response.media_type == "image/jpeg"
+    assert response.path == image.resolve()
+
+
+async def test_registered_unknown_outside_path_remains_forbidden(tmp_path, monkeypatch):
+    media_id = "69051c7b-1a50-4560-89a8-50795e12ff5c"
+    state_output = tmp_path / "state-output"
+    monkeypatch.setattr(cfg, "OUTPUT_DIR", state_output)
+    outside = tmp_path / "untrusted" / f"{media_id}.jpg"
+    outside.parent.mkdir(parents=True)
+    outside.write_bytes(b"outside-image")
+    monkeypatch.setenv("BOSMAX_DEV_ROOT", str(tmp_path / "different-checkout"))
+    monkeypatch.setattr(
+        api.crud,
+        "get_generated_artifact",
+        AsyncMock(return_value={"media_id": media_id, "local_path": str(outside)}),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await api.get_retrieved_artifact(media_id)
+
+    assert exc.value.status_code == 403
