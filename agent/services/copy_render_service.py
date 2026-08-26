@@ -151,6 +151,21 @@ async def _product_row(product_id: str) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+def _resolve_execution_duration_plan(total_seconds: int) -> dict[str, Any]:
+    """Map a copy TOTAL duration to the canonical video execution plan via the
+    EXISTING model-duration authority (``video_models.resolve_orchestration``): a
+    total that is a governed single-shot duration resolves to SINGLE; a governed
+    EXTEND total resolves to EXTEND, letting the canonical compiler derive the block
+    chain (e.g. 16s -> 8+8). Raises ``ValueError`` for a total the canonical planner
+    cannot represent. Copy Render never hardcodes a block table or a duration
+    registry — it reuses the same authority the video lanes use. Provider-free."""
+    from agent.services import video_models
+    from agent.services.workspace_execution_package_service import _default_model_for_mode
+    model = _default_model_for_mode("F2V")  # HYBRID + FACELESS share the F2V transport
+    orchestration = video_models.resolve_orchestration(model, int(total_seconds))
+    return {"model": model, **orchestration}
+
+
 async def create_session(
     *, product_id: str, benefit_id: str, lane: str, target_count: int,
     duration_seconds: int, target_language: str = DEFAULT_TARGET_LANGUAGE,
@@ -198,6 +213,18 @@ async def create_session(
     if not word_budget or word_budget < 1:
         raise CopyRenderError(422, "COPY_RENDER_DURATION_UNSUPPORTED",
                               details={"duration_seconds": duration_seconds, "target_language": target_language})
+    # The copy TOTAL duration must also be representable by the canonical video
+    # execution-duration authority (SINGLE or governed EXTEND), so a later paid
+    # render never yields copy that cannot be materialized. This is NOT
+    # "duration in ALLOWED_BLOCK_DURATIONS_SECONDS" — a governed EXTEND total
+    # (e.g. 16s) is supported; an unrepresentable total fails closed here, before
+    # any provider call.
+    try:
+        _resolve_execution_duration_plan(duration_seconds)
+    except ValueError as exc:
+        raise CopyRenderError(422, "COPY_RENDER_DURATION_NOT_REPRESENTABLE",
+                              "This total duration is not representable by the canonical video execution planner.",
+                              details={"duration_seconds": duration_seconds, "reason": str(exc)})
     benefit = await cfc.get_benefit(benefit_id)
     session_id = db.new_id("CRS")
     row = {
@@ -688,6 +715,20 @@ async def prepare_selected(session_id: str) -> dict[str, Any]:
     from agent.services.workspace_execution_package_service import create_workspace_execution_package
 
     character_presence = fl.FACELESS_CHARACTER_PRESENCE if s["lane"] == "FACELESS" else "VISIBLE_CREATOR"
+    # Reconcile the copy TOTAL duration into the canonical video execution plan
+    # (SINGLE or governed EXTEND). The existing canonical compiler derives the block
+    # chain (16s -> EXTEND 8+8); Copy Render passes only the governed mode + base
+    # block + requested total, never a manual block array.
+    try:
+        _plan = _resolve_execution_duration_plan(int(s["duration_seconds"]))
+    except ValueError as exc:
+        raise CopyRenderError(422, "COPY_RENDER_DURATION_NOT_REPRESENTABLE",
+                              "This session's total duration is not representable by the canonical video execution planner.",
+                              details={"duration_seconds": s["duration_seconds"], "reason": str(exc)})
+    exec_model = _plan["model"]
+    generation_mode = _plan["generation_mode"]
+    block_duration = int(_plan["engine_block_duration_seconds"])
+    requested_total = int(_plan["requested_total_duration_seconds"]) if generation_mode == "EXTEND" else None
     existing_by_candidate = {r["candidate_id"]: r for r in await db.list_candidate_packages(session_id)}
     packages: list[dict[str, Any]] = []
     for cand in finalized:
@@ -700,14 +741,17 @@ async def prepare_selected(session_id: str) -> dict[str, Any]:
             pkg = await create_workspace_execution_package(
                 product_id=s["product_id"],
                 mode=fl.FACELESS_TRANSPORT_MODE,          # "F2V" internal transport for both lanes
-                duration_seconds=int(s["duration_seconds"]),
+                duration_seconds=block_duration,          # canonical block base (== total for SINGLE)
                 aspect_ratio="9:16",
-                model="",                                  # → _default_model_for_mode
+                model=exec_model,                          # governed model (matches the plan authority)
                 manual_override=False,
+                generation_mode=generation_mode,           # SINGLE or governed EXTEND
                 character_presence=character_presence,
                 source_mode=fl.FACELESS_SOURCE_MODE,       # "HYBRID" product-anchor lineage
                 target_language=s["target_language"],
                 wps_mode=s["wps_mode"],
+                engine_duration_target="GOOGLE_FLOW",
+                requested_total_duration_seconds=requested_total,  # EXTEND total -> compiler derives blocks
                 copy_fallback_confirmed=False,
                 copy_v2_context={"lane": s["lane"],
                                  "benefit_copy_render": {"candidate_id": cand["candidate_id"]}},
