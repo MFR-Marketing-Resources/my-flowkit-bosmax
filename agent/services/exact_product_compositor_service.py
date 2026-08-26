@@ -1447,6 +1447,7 @@ def prepare_layer(
     max_w = max(1, round(cw * (x1 - x0)))
     max_h = max(1, round(ch * (y1 - y0)))
     with Image.open(cutout) as cutout_image:
+        frame_w, frame_h = cutout_image.size
         rgba = cutout_image.convert("RGBA")
         try:
             alpha_bbox = rgba.getchannel("A").getbbox()
@@ -1460,26 +1461,42 @@ def prepare_layer(
             )
         crop_x0, crop_y0, crop_x1, crop_y1 = alpha_bbox
         iw, ih = crop_x1 - crop_x0, crop_y1 - crop_y0
-    desired_scale = min(max_w / iw, max_h / ih) * max(0.01, min(float(fill), 1.0))
-    scale = max(float(validation["min_scale"]), min(desired_scale, float(validation["max_scale"])))
+    # GEOMETRY LOCK (shared product-geometry custody): the product SCALE is governed
+    # by the official visual's own canonical frame mapped aspect-preserving onto the
+    # target canvas.  It is IDENTICAL for the same product regardless of lane -- the
+    # lane safe_region (max_w/max_h) informs PLACEMENT ONLY, never scale.  We never
+    # rescale the product to a per-lane occupancy (the old SAFE_REGION_FILL x
+    # lane_region behaviour); when the governed product needs more room the CANVAS is
+    # expanded by the caller, the product is never shrunk to fit a lane.
+    governed_scale = min(cw / max(1, frame_w), ch / max(1, frame_h))
+    scale = max(float(validation["min_scale"]), min(governed_scale, float(validation["max_scale"])))
     w, h = max(1, round(iw * scale)), max(1, round(ih * scale))
-    if w > max_w or h > max_h:
+    if w > cw or h > ch:
         raise ExactProductCompositeError(
             "PRODUCT_TRUTH_SCALE_INVALID",
-            "Approved minimum scale cannot fit inside the allowed product bbox.",
+            "Governed product scale exceeds the target canvas; expand the canvas rather than shrink the product.",
             status_code=422,
         )
     anchor = validation["anchor_point"]
     anchor_x = float(anchor["x"])
     anchor_y = float(anchor["y"])
-    x_min, y_min = round(cw * x0), round(ch * y0)
-    x_max, y_max = round(cw * x1) - w, round(ch * y1) - h
+    # Placement: centre the governed-scale product on the lane region's centre (lane
+    # informs position only) and clamp to the CANVAS, never to the lane region.
     x = round(cw * (x0 + (x1 - x0) / 2.0) - w * anchor_x)
     y = round(ch * (y0 + (y1 - y0) / 2.0) - h * anchor_y)
-    x = max(x_min, min(x, x_max))
-    y = max(y_min, min(y, y_max))
+    x = max(0, min(x, cw - w))
+    y = max(0, min(y, ch - h))
+    from agent.services.product_geometry_contract import (
+        build_official_product_visual_contract,
+    )
+
+    geometry_contract = build_official_product_visual_contract(
+        validation,
+        product_bbox_px={"x": crop_x0, "y": crop_y0, "w": iw, "h": ih},
+    ).to_dict()
     return {
         "asset_ref": str(cutout),
+        "geometry_contract": geometry_contract,
         "product_id": validation.get("product_id") or str(product.get("id") or product.get("product_id") or ""),
         "source_sha256": validation["source_sha256"],
         "cutout_sha256": validation["cutout_sha256"],
