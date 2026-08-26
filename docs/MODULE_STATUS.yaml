@@ -1918,6 +1918,7 @@ domains:
       - tests/unit/test_copy_render_cache.py
       - tests/unit/test_copy_render_execution_resolver.py
       - tests/unit/test_copy_render_idempotency.py
+      - tests/unit/test_copy_render_occupancy.py
       - tests/api/test_copy_render_api.py
       - dashboard/src/api/copyRender.ts
       - dashboard/src/components/copywriting/OnDemandCopyRendererPanel.tsx

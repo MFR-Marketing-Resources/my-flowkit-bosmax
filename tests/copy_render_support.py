@@ -51,29 +51,64 @@ class StitchFake:
     per-recipe stage text (so distinct recipes yield distinct full-copy text)."""
 
     def __init__(self, stages: tuple[str, ...] = PAS_STAGES, *, force_duplicate: bool = False,
-                 corrupt_stage: bool = False) -> None:
+                 corrupt_stage: bool = False, word_override: int | None = None) -> None:
         self.stages = list(stages)
         self.calls = 0
         self.last_kwargs: dict[str, Any] | None = None
         self._force_duplicate = force_duplicate
         self._corrupt_stage = corrupt_stage
+        # When set, emit this many total words instead of the prompt's REQUIRED
+        # EXACT count — used to exercise occupancy underrun/overrun rejection.
+        self._word_override = word_override
+
+    _FILLER = ("dan", "juga", "untuk", "anda", "hari", "ini", "serta", "dengan",
+               "boleh", "kini", "segera", "rutin", "mudah", "selesa", "lega")
+
+    def _fit_exact(self, stages: list[dict[str, str]], target: int) -> list[dict[str, str]]:
+        """Emit EXACTLY ``target`` total words as BALANCED per-stage sentences, each
+        ending in a full stop, so the script divides cleanly into equal per-block
+        parts (materializable under the temporal-occupancy contract). Per-recipe
+        uniqueness is preserved by the atom fragments."""
+        n = len(stages)
+        base, extra = divmod(int(target), n)
+        out = []
+        for i, st in enumerate(stages):
+            want = base + (1 if i >= n - extra else 0)
+            words = st["text"].split()[:want]
+            words += [self._FILLER[j % len(self._FILLER)] for j in range(want - len(words))]
+            text = " ".join(words).strip()
+            if text and text[-1] not in ".!?":
+                text += "."  # sentence boundary — adds punctuation, not a word
+            out.append({"stage_key": st["stage_key"], "text": text})
+        return out
 
     def complete_json_with_receipt(self, system: str, user: str, **kwargs: Any):
         self.calls += 1
         self.last_kwargs = dict(kwargs)
         assert kwargs.get("allow_fallback") is False
         assert kwargs.get("lane") == "structure"
+        m = re.search(r"REQUIRED EXACT total words per complete script:\s*(\d+)", user)
+        required_total = int(m.group(1)) if m else 0
+        target = self._word_override if self._word_override is not None else required_total
         slots = re.findall(
             r"- (S\d+): angle=\[(.*?)\] hook=\[(.*?)\] body=\[(.*?)\] cta=\[(.*?)\]", user)
         suggestions = []
         for slot, angle, hook, body, cta in slots:
             role = {"problem": hook, "agitate": body, "solution": angle, "cta": cta}
             if self._force_duplicate:
-                role = {k: "kulit lembap segar sepanjang hari" for k in self.stages}
+                # Same full script for EVERY slot (to exercise the cross-slot text
+                # uniqueness gate) — yet distinct per stage so it still splits into
+                # the exact per-block occupancy (identical sentences would collapse).
+                role = {k: f"ayat nombor {i} untuk kulit lembap segar sepanjang hari"
+                        for i, k in enumerate(self.stages)}
             stages = []
             for i, key in enumerate(self.stages):
                 out_key = "WRONG_STAGE" if (self._corrupt_stage and i == 0) else key
                 stages.append({"stage_key": out_key, "text": role.get(key, f"{slot} {key}")})
+            # Fit to the EXACT required occupancy (skip when deliberately corrupting
+            # the stage key — that failure is asserted before the word count).
+            if target and not self._corrupt_stage:
+                stages = self._fit_exact(stages, target)
             suggestions.append({"slot": slot, "stages": stages})
         return ({"suggestions": suggestions},
                 {"provider": "fake", "model": "fake-model", "call_id": "c", "usage": {"total_tokens": 7}})
