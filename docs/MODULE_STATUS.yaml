@@ -1914,6 +1914,7 @@ domains:
       - tests/copy_render_support.py
       - tests/unit/test_copy_render_combination.py
       - tests/unit/test_copy_render_service.py
+      - tests/unit/test_copy_render_duration_plan.py
       - tests/unit/test_copy_render_cache.py
       - tests/unit/test_copy_render_execution_resolver.py
       - tests/unit/test_copy_render_idempotency.py
