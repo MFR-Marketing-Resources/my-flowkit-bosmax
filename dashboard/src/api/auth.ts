@@ -55,6 +55,31 @@ export function login(email: string, password: string): Promise<AuthSessionRespo
   return postAPI<AuthSessionResponse>('/api/auth/login', { email, password })
 }
 
+export function completePasswordTokenFlow(
+  path: '/api/auth/activate-account' | '/api/auth/reset-password',
+  token: string,
+  password: string,
+  password_confirmation: string,
+): Promise<AuthSessionResponse> {
+  return postAPI<AuthSessionResponse>(path, { token, password, password_confirmation })
+}
+
+export function activateAccount(
+  token: string,
+  password: string,
+  password_confirmation: string,
+): Promise<AuthSessionResponse> {
+  return completePasswordTokenFlow('/api/auth/activate-account', token, password, password_confirmation)
+}
+
+export function resetPassword(
+  token: string,
+  password: string,
+  password_confirmation: string,
+): Promise<AuthSessionResponse> {
+  return completePasswordTokenFlow('/api/auth/reset-password', token, password, password_confirmation)
+}
+
 export function setupOwner(
   display_name: string,
   email: string,

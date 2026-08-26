@@ -43,6 +43,10 @@ export default function LoginPage() {
         <button type="submit" disabled={busy} className="w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white disabled:opacity-50">{busy ? 'Signing in…' : 'Sign in'}</button>
       </form>
       {auth.setupRequired ? <Link to="/setup-owner" className="mt-5 block text-center text-xs font-semibold text-cyan-300">No owner yet? Start first-owner setup</Link> : null}
+      <div className="mt-5 flex flex-wrap justify-center gap-x-4 gap-y-2 text-center text-xs font-semibold">
+        <Link to="/activate-account" className="text-cyan-300">Have a setup token? Activate account</Link>
+        <Link to="/reset-password" className="text-slate-400 hover:text-slate-200">Have a reset token? Set new password</Link>
+      </div>
     </AuthCard>
   )
 }

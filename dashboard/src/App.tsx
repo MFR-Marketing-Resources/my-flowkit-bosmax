@@ -81,6 +81,7 @@ import PromptSopLibraryPage from "./pages/PromptSopLibraryPage";
 import LoginPage from "./pages/LoginPage";
 import SetupOwnerPage from "./pages/SetupOwnerPage";
 import StaffAccessPage from "./pages/StaffAccessPage";
+import PasswordTokenPage from "./pages/PasswordTokenPage";
 import ProductReleaseControlPage from "./pages/ProductReleaseControlPage";
 import type { TelemetrySummary } from "./types";
 import {
@@ -773,6 +774,12 @@ function AuthBoundary() {
 	const auth = useAuth();
 	if (auth.loading) {
 		return <div className="flex min-h-screen items-center justify-center bg-slate-950 text-sm text-slate-400">Checking staff session…</div>;
+	}
+	if (location.pathname === "/activate-account") {
+		return <PasswordTokenPage mode="activate" />;
+	}
+	if (location.pathname === "/reset-password") {
+		return <PasswordTokenPage mode="reset" />;
 	}
 	if (auth.setupRequired) {
 		if (location.pathname === "/setup-owner") return <SetupOwnerPage />;

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getAPI, postAPI } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { buildTokenLink } from './passwordTokenLinks'
 
 type Tab = 'staff' | 'roles' | 'sessions' | 'audit'
+type OneTimeTokenKind = 'activation' | 'reset'
 
 interface StaffRow {
   user_id: string
@@ -65,6 +67,8 @@ export default function StaffAccessPage() {
   const [email, setEmail] = useState('')
   const [inviteRole, setInviteRole] = useState('VIEWER')
   const [oneTimeToken, setOneTimeToken] = useState('')
+  const [oneTimeTokenKind, setOneTimeTokenKind] = useState<OneTimeTokenKind | null>(null)
+  const [copiedLink, setCopiedLink] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -89,10 +93,27 @@ export default function StaffAccessPage() {
 
   useEffect(() => { void load() }, [load])
 
+  const oneTimeLink = oneTimeToken && oneTimeTokenKind
+    ? buildTokenLink(oneTimeTokenKind === 'activation' ? '/activate-account' : '/reset-password', oneTimeToken)
+    : ''
+
+  const copyOneTimeLink = async () => {
+    if (!oneTimeLink || !navigator.clipboard) return
+    try {
+      await navigator.clipboard.writeText(oneTimeLink)
+      setCopiedLink(true)
+      window.setTimeout(() => setCopiedLink(false), 2000)
+    } catch {
+      setError('The one-time link could not be copied. Copy it from the field instead.')
+    }
+  }
+
   const invite = async () => {
     setBusy(true)
     setError('')
     setOneTimeToken('')
+    setOneTimeTokenKind(null)
+    setCopiedLink(false)
     try {
       const result = await postAPI<{ user: StaffRow; setup_token: string }>('/api/system/staff-access/staff', {
         display_name: displayName,
@@ -100,6 +121,7 @@ export default function StaffAccessPage() {
         role_codes: [inviteRole],
       })
       setOneTimeToken(result.setup_token)
+      setOneTimeTokenKind('activation')
       setDisplayName('')
       setEmail('')
       await load()
@@ -118,6 +140,8 @@ export default function StaffAccessPage() {
       if (action === 'reset') {
         const result = await postAPI<{ reset_token: string }>(`/api/system/staff-access/staff/${userId}/reset`, {})
         setOneTimeToken(result.reset_token)
+        setOneTimeTokenKind('reset')
+        setCopiedLink(false)
       } else {
         await postAPI(`/api/system/staff-access/staff/${userId}/${action}`, { reason: `OWNER_${action.toUpperCase()}` })
       }
@@ -173,12 +197,24 @@ export default function StaffAccessPage() {
       </div>
 
       {error ? <p role="alert" className="mb-4 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</p> : null}
-      {oneTimeToken ? <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100"><p className="font-bold">One-time setup/reset token — copy it now</p><p className="mt-2 break-all font-mono text-xs">{oneTimeToken}</p><p className="mt-2 text-xs text-amber-200/70">It is shown once, expires, and is stored server-side only as a hash. It is not written to the access audit.</p></div> : null}
+      {oneTimeToken && oneTimeTokenKind ? <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
+        <p className="font-bold">{oneTimeTokenKind === 'activation' ? 'Staff account created' : 'Password reset issued'}</p>
+        <p className="mt-2 text-xs text-amber-200">ACCOUNT: INVITED · STAFF PROFILE: ACTIVE</p>
+        <p className="mt-1 text-xs text-amber-200">Activation required before sign-in. The account cannot sign in until this one-time flow is completed.</p>
+        <p className="mt-3 font-semibold">One-time {oneTimeTokenKind} token — copy it now</p>
+        <p className="mt-2 break-all font-mono text-xs">{oneTimeToken}</p>
+        {oneTimeLink ? <>
+          <label className="mt-3 block text-[10px] font-semibold uppercase tracking-wider text-amber-200/80">Private link</label>
+          <input aria-label={oneTimeTokenKind === 'activation' ? 'Activation link' : 'Reset link'} readOnly value={oneTimeLink} className="mt-1 w-full rounded border border-amber-200/20 bg-slate-950/60 px-2 py-2 font-mono text-[10px] text-amber-100" />
+          <button type="button" onClick={() => void copyOneTimeLink()} className="mt-2 rounded border border-cyan-300/40 px-3 py-2 text-xs font-bold text-cyan-100">{copiedLink ? 'Copied' : oneTimeTokenKind === 'activation' ? 'Copy Activation Link' : 'Copy Reset Link'}</button>
+        </> : null}
+        <p className="mt-2 text-xs text-amber-200/70">It is shown once, expires, and is stored server-side only as a hash. It is not written to the access audit.</p>
+      </div> : null}
 
       {tab === 'staff' ? (
         <div className="space-y-5">
           {auth.hasPermission('staff.manage') ? <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5"><h2 className="text-sm font-bold">Invite staff account</h2><div className="mt-3 grid gap-3 md:grid-cols-4"><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Display name" className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" type="email" className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm">{roles.map((role) => <option key={role.role_code} value={role.role_code}>{role.role_code}</option>)}</select><button type="button" disabled={busy || !displayName.trim() || !email.trim()} onClick={() => void invite()} className="rounded-lg bg-cyan-600 px-3 py-2 text-xs font-bold disabled:opacity-50">Create invite</button></div></section> : null}
-          <section className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/40"><table className="w-full min-w-[920px] text-left text-xs"><thead className="border-b border-slate-800 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="p-4">Staff</th><th className="p-4">Email</th><th className="p-4">Role</th><th className="p-4">Account / staff</th><th className="p-4">Last login</th><th className="p-4">Actions</th></tr></thead><tbody>{staff.map((item) => <tr key={item.user_id} className="border-b border-slate-800/70"><td className="p-4"><p className="font-semibold text-slate-100">{item.display_name}</p><p className="mt-1 font-mono text-[10px] text-slate-500">{item.staff_id}</p></td><td className="p-4 text-slate-300">{item.email}</td><td className="p-4"><select value={item.role_codes[0] ?? 'VIEWER'} disabled={!auth.hasPermission('roles.manage') || busy} onChange={(event) => void assignRole(item.user_id, event.target.value)} className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs">{roles.map((role) => <option key={role.role_code} value={role.role_code}>{role.role_code}</option>)}</select></td><td className="p-4"><span className={item.account_status === 'ACTIVE' ? 'text-emerald-300' : 'text-amber-300'}>{item.account_status}</span><span className="mx-1 text-slate-600">·</span><span className={item.staff_active ? 'text-emerald-300' : 'text-rose-300'}>{item.staff_active ? 'STAFF ACTIVE' : 'STAFF INACTIVE'}</span></td><td className="p-4 text-slate-400">{displayDate(item.last_login_at)}</td><td className="p-4"><div className="flex flex-wrap gap-2">{auth.hasPermission('staff.manage') ? <>{item.account_status === 'ACTIVE' ? <><button type="button" onClick={() => void accountAction(item.user_id, 'suspend')} disabled={busy} className="rounded border border-amber-500/40 px-2 py-1 text-[10px] text-amber-200 disabled:opacity-50">Suspend</button><button type="button" onClick={() => void accountAction(item.user_id, 'disable')} disabled={busy} className="rounded border border-orange-500/40 px-2 py-1 text-[10px] text-orange-200 disabled:opacity-50">Disable</button></> : item.account_status !== 'TERMINATED' ? <button type="button" onClick={() => void accountAction(item.user_id, 'reactivate')} disabled={busy} className="rounded border border-emerald-500/40 px-2 py-1 text-[10px] text-emerald-200 disabled:opacity-50">Reactivate</button> : null}<button type="button" onClick={() => void accountAction(item.user_id, 'reset')} disabled={busy || item.account_status === 'TERMINATED'} className="rounded border border-cyan-500/40 px-2 py-1 text-[10px] text-cyan-200 disabled:opacity-50">Reset</button><button type="button" onClick={() => void accountAction(item.user_id, 'terminate')} disabled={busy || item.account_status === 'TERMINATED'} className="rounded border border-rose-500/40 px-2 py-1 text-[10px] text-rose-200 disabled:opacity-50">Terminate</button></> : null}</div></td></tr>)}</tbody></table></section>
+          <section className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/40"><table className="w-full min-w-[920px] text-left text-xs"><thead className="border-b border-slate-800 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="p-4">Staff</th><th className="p-4">Email</th><th className="p-4">Role</th><th className="p-4">Account / staff</th><th className="p-4">Last login</th><th className="p-4">Actions</th></tr></thead><tbody>{staff.map((item) => <tr key={item.user_id} className="border-b border-slate-800/70"><td className="p-4"><p className="font-semibold text-slate-100">{item.display_name}</p><p className="mt-1 font-mono text-[10px] text-slate-500">{item.staff_id}</p></td><td className="p-4 text-slate-300">{item.email}</td><td className="p-4"><select value={item.role_codes[0] ?? 'VIEWER'} disabled={!auth.hasPermission('roles.manage') || busy} onChange={(event) => void assignRole(item.user_id, event.target.value)} className="rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs">{roles.map((role) => <option key={role.role_code} value={role.role_code}>{role.role_code}</option>)}</select></td><td className="p-4"><div className="space-y-1"><p><span className="text-[10px] uppercase tracking-wider text-slate-500">ACCOUNT:</span> <span className={item.account_status === 'ACTIVE' ? 'text-emerald-300' : 'text-amber-300'}>{item.account_status}</span></p><p><span className="text-[10px] uppercase tracking-wider text-slate-500">STAFF PROFILE:</span> <span className={item.staff_active ? 'text-emerald-300' : 'text-rose-300'}>{item.staff_active ? 'ACTIVE' : 'INACTIVE'}</span></p>{item.account_status === 'INVITED' ? <p className="text-[10px] font-semibold text-amber-200">Activation required before sign-in</p> : null}</div></td><td className="p-4 text-slate-400">{displayDate(item.last_login_at)}</td><td className="p-4"><div className="flex flex-wrap gap-2">{auth.hasPermission('staff.manage') ? <>{item.account_status === 'ACTIVE' ? <><button type="button" onClick={() => void accountAction(item.user_id, 'suspend')} disabled={busy} className="rounded border border-amber-500/40 px-2 py-1 text-[10px] text-amber-200 disabled:opacity-50">Suspend</button><button type="button" onClick={() => void accountAction(item.user_id, 'disable')} disabled={busy} className="rounded border border-orange-500/40 px-2 py-1 text-[10px] text-orange-200 disabled:opacity-50">Disable</button></> : item.account_status !== 'TERMINATED' ? <button type="button" onClick={() => void accountAction(item.user_id, 'reactivate')} disabled={busy} className="rounded border border-emerald-500/40 px-2 py-1 text-[10px] text-emerald-200 disabled:opacity-50">Reactivate</button> : null}<button type="button" onClick={() => void accountAction(item.user_id, 'reset')} disabled={busy || item.account_status === 'TERMINATED'} className="rounded border border-cyan-500/40 px-2 py-1 text-[10px] text-cyan-200 disabled:opacity-50">Reset</button><button type="button" onClick={() => void accountAction(item.user_id, 'terminate')} disabled={busy || item.account_status === 'TERMINATED'} className="rounded border border-rose-500/40 px-2 py-1 text-[10px] text-rose-200 disabled:opacity-50">Terminate</button></> : null}</div></td></tr>)}</tbody></table></section>
         </div>
       ) : null}
 
