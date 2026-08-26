@@ -51,6 +51,10 @@ ERR_OFFICIAL_PRODUCT_VISUAL_BYTES_UNREADABLE = (
 ERR_OFFICIAL_PRODUCT_VISUAL_HASH_MISMATCH = (
     "ERR_OFFICIAL_PRODUCT_VISUAL_HASH_MISMATCH"
 )
+ERR_PROVIDER_REFERENCE_NOT_TRACEABLE = "ERR_PROVIDER_REFERENCE_NOT_TRACEABLE"
+ERR_PROVIDER_REFERENCE_SHA_DRIFT = "ERR_PROVIDER_REFERENCE_SHA_DRIFT"
+
+PRODUCT_FIDELITY_FAILURE = "PRODUCT_FIDELITY_FAILURE"
 
 
 class ProductVisualCustodyError(ValueError):
@@ -235,14 +239,23 @@ def build_product_visual_custody_receipt(
     provider_route: str | None = None,
     generation_type: str | None = None,
     execution_identity: dict[str, Any] | None = None,
+    prepared_reference: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build the provider-affecting receipt before any provider operation."""
+    """Build the provider-affecting receipt before any provider operation.
+
+    ``prepared_reference`` is the output of
+    ``official_provider_reference_service.prepare_official_provider_reference``.
+    When supplied it carries the geometry contract + governed prepared-reference
+    SHA into the receipt so the provider payload can be traced back to the
+    current official chosen visual and the product is provably never rescaled.
+    """
 
     product_id = str(product.get("id") or product.get("product_id") or "").strip()
     official = validate_official_reference_asset(product, official_asset)
     truth = _truth_lock_snapshot(product_id)
     product_lock, lock_fingerprint = _product_lock_snapshot(product)
     exact_required = exact_product_required(product)
+    prepared = prepared_reference if isinstance(prepared_reference, dict) else {}
     receipt: dict[str, Any] = {
         "receipt_version": PRODUCT_VISUAL_CUSTODY_VERSION,
         "product_id": product_id,
@@ -256,7 +269,21 @@ def build_product_visual_custody_receipt(
         "product_lock_version": PRODUCT_LOCK_VERSION,
         "product_lock_fingerprint": lock_fingerprint,
         "product_lock": product_lock,
+        # Governed official provider reference (shared boundary output).  The
+        # geometry contract and prepared-reference SHA make the product's
+        # official geometry provable and the provider payload traceable.
+        "official_provider_reference_source_type": prepared.get("official_source_type"),
+        "official_provider_reference_media_id": prepared.get("official_media_id"),
+        "geometry_contract": prepared.get("geometry_contract"),
+        "geometry_contract_digest": prepared.get("geometry_contract_digest"),
+        "prepared_reference_sha256": prepared.get("prepared_reference_sha256"),
+        "product_bbox": prepared.get("product_bbox"),
+        "product_pixel_dimensions": prepared.get("product_pixel_dimensions"),
+        "canvas_padding": prepared.get("canvas_padding"),
+        "product_rescaled": prepared.get("product_rescaled", False) if prepared else None,
+        "pixel_fidelity_verified": prepared.get("pixel_fidelity_verified") if prepared else None,
         "uploaded_reference_media_id": None,
+        "uploaded_reference_sha256": None,
         "provider_reference_media_ids": [],
         "reference_transport": "NOT_DISPATCHED",
         "reference_bytes_sha256_verified": True,
@@ -282,11 +309,30 @@ def bind_provider_reference_transport(
     official_provider_media_id: str | None,
     provider_route: str | None = None,
     generation_type: str | None = None,
+    uploaded_local_sha256: str | None = None,
 ) -> dict[str, Any]:
-    """Attach observed provider ids only after local official bytes were resolved."""
+    """Attach observed provider ids only after local official bytes were resolved.
+
+    When ``uploaded_local_sha256`` (the SHA of the exact local bytes handed to the
+    provider upload) is supplied, it must equal the governed
+    ``prepared_reference_sha256`` recorded on the receipt.  A mismatch means the
+    bytes sent to the provider are not the governed official reference, which
+    fails closed.
+    """
 
     updated = copy.deepcopy(receipt)
     ids = [str(value) for value in provider_reference_media_ids if value]
+    if uploaded_local_sha256 is not None:
+        uploaded = str(uploaded_local_sha256).strip().lower()
+        prepared = str(updated.get("prepared_reference_sha256") or "").strip().lower()
+        if prepared and uploaded != prepared:
+            raise ProductVisualCustodyError(
+                ERR_PROVIDER_REFERENCE_SHA_DRIFT,
+                "The bytes uploaded to the provider do not match the governed official "
+                "prepared reference SHA-256.",
+                details={"prepared_reference_sha256": prepared, "uploaded_sha256": uploaded},
+            )
+        updated["uploaded_reference_sha256"] = uploaded
     updated["provider_reference_media_ids"] = ids
     updated["uploaded_reference_media_id"] = official_provider_media_id
     updated["reference_transport"] = "LOCAL_OFFICIAL_BYTES_UPLOADED"
@@ -296,6 +342,109 @@ def bind_provider_reference_transport(
         updated["generation_type"] = generation_type
     updated["receipt_sha256"] = _receipt_hash(updated)
     return updated
+
+
+def assert_official_provider_reference_traceable(receipt: dict[str, Any] | None) -> None:
+    """Fail closed unless the provider reference traces to the current official visual.
+
+    Required before any product-conditioned provider video dispatch that sends a
+    product reference: the official SHA, the governed prepared-reference SHA and
+    the geometry contract must all be present and the product must be provably
+    not rescaled.  Exact-product receipts that forbid a provider reference are
+    exempt (they send no reference at all).
+    """
+
+    if not isinstance(receipt, dict):
+        raise ProductVisualCustodyError(
+            ERR_PROVIDER_REFERENCE_NOT_TRACEABLE,
+            "A product visual custody receipt is required before provider dispatch.",
+        )
+    if str(receipt.get("reference_transport") or "").upper() == "NOT_DISPATCHED" and receipt.get(
+        "exact_product_required"
+    ):
+        # Exact-product route intentionally sends no provider reference.
+        return
+    official_sha = str(receipt.get("official_visual_sha256") or "").strip().lower()
+    prepared_sha = str(receipt.get("prepared_reference_sha256") or "").strip().lower()
+    contract = receipt.get("geometry_contract")
+    missing = [
+        name
+        for name, value in (
+            ("official_visual_sha256", official_sha),
+            ("prepared_reference_sha256", prepared_sha),
+            ("geometry_contract", contract),
+            ("official_provider_reference_media_id", receipt.get("official_provider_reference_media_id")),
+        )
+        if not value
+    ]
+    if missing:
+        raise ProductVisualCustodyError(
+            ERR_PROVIDER_REFERENCE_NOT_TRACEABLE,
+            "The provider reference cannot be traced back to the official chosen visual.",
+            details={"missing": missing, "product_id": receipt.get("product_id")},
+        )
+    if receipt.get("product_rescaled") is True or receipt.get("pixel_fidelity_verified") is False:
+        raise ProductVisualCustodyError(
+            ERR_PROVIDER_REFERENCE_NOT_TRACEABLE,
+            "The governed provider reference reports a rescaled or pixel-altered product.",
+            details={
+                "product_rescaled": receipt.get("product_rescaled"),
+                "pixel_fidelity_verified": receipt.get("pixel_fidelity_verified"),
+            },
+        )
+
+
+_GENERIC_BOTTLE_FAILURE_DIMENSIONS = (
+    ("identity", "IDENTITY_UNPROVABLE_OR_CHANGED"),
+    ("silhouette_geometry", "SILHOUETTE_CHANGED"),
+    ("cap_components", "CAP_BODY_BASE_PROPORTION_CHANGED"),
+    ("scale", "APPARENT_CAPACITY_CHANGED"),
+    ("label_field_layout", "LABEL_BRANDING_LOST"),
+    ("printed_text", "PRINTED_TEXT_LOST"),
+)
+
+
+def classify_product_fidelity_failure(
+    evidence: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Classify a provider output as a PRODUCT_FIDELITY_FAILURE (never certify).
+
+    A reference-conditioned provider can return a generic/re-rendered bottle even
+    from a perfect reference.  This maps structured per-dimension evidence to the
+    owner's generic-bottle failure taxonomy so the operation is preserved and
+    classified, not blindly retried.  Absent or non-passing evidence is a failure
+    (fidelity is never inferred from a prompt or a media id).
+    """
+
+    ev = dict(evidence or {})
+    dimensions = ev.get("dimensions") if isinstance(ev.get("dimensions"), dict) else {}
+    reasons: list[str] = []
+    for key, reason in _GENERIC_BOTTLE_FAILURE_DIMENSIONS:
+        if key in dimensions and not _dimension_pass(dimensions.get(key)):
+            reasons.append(reason)
+    identity_unprovable = not dimensions or str(ev.get("status") or "").strip().upper() not in {
+        PRODUCT_FIDELITY_QC_PASS,
+        "PASS",
+    }
+    is_failure = bool(reasons) or identity_unprovable or ev.get("generic_bottle") is True
+    if ev.get("generic_bottle") is True and "GENERIC_BOTTLE" not in reasons:
+        reasons.insert(0, "GENERIC_BOTTLE_SUBSTITUTED")
+    if identity_unprovable and "IDENTITY_UNPROVABLE_OR_CHANGED" not in reasons:
+        reasons.append("REFERENCE_IDENTITY_NOT_PROVEN")
+    return {
+        "classification": PRODUCT_FIDELITY_FAILURE if is_failure else PRODUCT_FIDELITY_QC_PASS,
+        "is_product_fidelity_failure": is_failure,
+        "certifiable": not is_failure,
+        "reasons": reasons,
+        "retry_safe": False,
+        "note": (
+            "Provider output is a product-fidelity failure; preserve the operation, "
+            "do not certify, do not blindly retry. Deterministic exact-composite is the "
+            "only fidelity-guaranteeing route."
+            if is_failure
+            else "Structured evidence indicates product fidelity was preserved."
+        ),
+    }
 
 
 def validate_pre_dispatch_route(

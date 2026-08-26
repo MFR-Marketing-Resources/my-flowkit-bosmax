@@ -2174,6 +2174,7 @@ async def generate(body: GenerateRequest):
         if _package_exact_route and isinstance(_package_exact_custody, dict)
         else None
     )
+    _prepared_official_reference = None
     if (
         mode in ("I2V", "F2V")
         and body.product_id
@@ -2184,6 +2185,10 @@ async def generate(body: GenerateRequest):
             build_product_visual_custody_receipt,
             exact_product_required,
             validate_pre_dispatch_route,
+        )
+        from agent.services.official_provider_reference_service import (
+            OfficialProviderReferenceError,
+            prepare_official_provider_reference,
         )
 
         product_row = await crud.get_product(str(body.product_id))
@@ -2198,12 +2203,27 @@ async def generate(body: GenerateRequest):
                     "ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED",
                     "The product row is unavailable for product-visual custody.",
                 )
+            # Shared OFFICIAL provider-reference boundary: resolves the
+            # registration-selected official visual (fail-closed on any
+            # non-official/thumbnail/stale source), attaches the geometry contract,
+            # and never rescales the product.  Exact-product routes carry their own
+            # forbidden-reference custody and skip this (no provider reference sent).
+            if not (_package_exact_route or exact_product_required(product_row)):
+                try:
+                    _prepared_official_reference = prepare_official_provider_reference(
+                        product_row, official_asset
+                    )
+                except OfficialProviderReferenceError as _oe:
+                    raise ProductVisualCustodyError(
+                        _oe.code, _oe.message, details=_oe.details
+                    ) from _oe
             product_visual_custody = build_product_visual_custody_receipt(
                 product_row,
                 official_asset,
                 mode=mode,
                 source_mode=effective_source_mode,
                 prompt=body.prompt,
+                prepared_reference=_prepared_official_reference,
                 provider_route=_mv.hybrid_reference_omni10_provider_route(
                     mode,
                     effective_source_mode,
@@ -2345,6 +2365,8 @@ async def generate(body: GenerateRequest):
             ) from exc
     elif product_visual_custody is not None:
         from agent.services.product_visual_custody_service import (
+            ProductVisualCustodyError,
+            assert_official_provider_reference_traceable,
             bind_provider_reference_transport,
         )
 
@@ -2356,22 +2378,45 @@ async def generate(body: GenerateRequest):
                     "message": "The official product visual did not produce an observed provider reference id.",
                 },
             )
-        product_visual_custody = bind_provider_reference_transport(
-            product_visual_custody,
-            provider_reference_media_ids=resolved_ids,
-            official_provider_media_id=official_provider_media_id,
-            provider_route=_mv.hybrid_reference_omni10_provider_route(
-                mode,
-                effective_source_mode,
-                body.model,
-                body.duration_s,
-                body.aspect,
-                ref_count=len(resolved_ids),
-                num_videos=body.count,
-                surface_lane=effective_surface_lane,
-            ),
-            generation_type="reference_frame_2_video",
-        )
+        # Independent at-dispatch re-hash of the governed reference bytes handed to
+        # the provider upload.  If the official visual changed since preparation the
+        # SHA drifts and dispatch fails closed (owner rule 5/test J).
+        _uploaded_local_sha256 = None
+        if isinstance(_prepared_official_reference, dict):
+            try:
+                _ref_path = Path(str(_prepared_official_reference.get("reference_path") or ""))
+                if _ref_path.is_file():
+                    _uploaded_local_sha256 = hashlib.sha256(_ref_path.read_bytes()).hexdigest()
+            except OSError:
+                _uploaded_local_sha256 = None
+        try:
+            product_visual_custody = bind_provider_reference_transport(
+                product_visual_custody,
+                provider_reference_media_ids=resolved_ids,
+                official_provider_media_id=official_provider_media_id,
+                provider_route=_mv.hybrid_reference_omni10_provider_route(
+                    mode,
+                    effective_source_mode,
+                    body.model,
+                    body.duration_s,
+                    body.aspect,
+                    ref_count=len(resolved_ids),
+                    num_videos=body.count,
+                    surface_lane=effective_surface_lane,
+                ),
+                generation_type="reference_frame_2_video",
+                uploaded_local_sha256=_uploaded_local_sha256,
+            )
+            # Only enforce the governed-reference trace when the shared boundary
+            # prepared one (reference-conditioned product video).  Lanes without a
+            # prepared reference keep their existing custody contract unchanged.
+            if _prepared_official_reference is not None:
+                assert_official_provider_reference_traceable(product_visual_custody)
+        except ProductVisualCustodyError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"error_code": exc.code, "message": exc.message, "details": exc.details},
+            ) from exc
 
     tier = "PAYGATE_TIER_ONE"
     if mode in ("T2V", "I2V", "F2V"):  # video modes need Pro/Ultra
@@ -4704,6 +4749,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                 stale_prompt_error,
             )
 
+    _prepared_official_reference = None
     if mode in ("I2V", "F2V") and body.get("product_id"):
         # Apply the same server-owned visual authority used by /generate.  The
         # package path normally already carries this asset; this guard also
@@ -4733,6 +4779,10 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                 exact_product_required,
                 validate_pre_dispatch_route,
             )
+            from agent.services.official_provider_reference_service import (
+                OfficialProviderReferenceError,
+                prepare_official_provider_reference,
+            )
 
             product_row = await crud.get_product(str(body["product_id"]))
             official_asset = (
@@ -4746,12 +4796,24 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                         "ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED",
                         "The product row is unavailable for product-visual custody.",
                     )
+                # Shared OFFICIAL provider-reference boundary (fail-closed on any
+                # non-official/thumbnail/stale source; product never rescaled).
+                if not exact_product_required(product_row):
+                    try:
+                        _prepared_official_reference = prepare_official_provider_reference(
+                            product_row, official_asset
+                        )
+                    except OfficialProviderReferenceError as _oe:
+                        raise ProductVisualCustodyError(
+                            _oe.code, _oe.message, details=_oe.details
+                        ) from _oe
                 receipt = build_product_visual_custody_receipt(
                     product_row,
                     official_asset,
                     mode=mode,
                     source_mode=effective_source_mode,
                     prompt=prompt,
+                    prepared_reference=_prepared_official_reference,
                     provider_route=_mv.hybrid_reference_omni10_provider_route(
                         mode,
                         effective_source_mode,
@@ -4942,6 +5004,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     if body.get("product_visual_custody") is not None:
         from agent.services.product_visual_custody_service import (
             ProductVisualCustodyError,
+            assert_official_provider_reference_traceable,
             bind_provider_reference_transport,
         )
 
@@ -4952,6 +5015,14 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                 "The official product visual did not produce an observed provider reference id.",
                 "ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED",
             )
+        _uploaded_local_sha256 = None
+        if isinstance(_prepared_official_reference, dict):
+            try:
+                _ref_path = Path(str(_prepared_official_reference.get("reference_path") or ""))
+                if _ref_path.is_file():
+                    _uploaded_local_sha256 = hashlib.sha256(_ref_path.read_bytes()).hexdigest()
+            except OSError:
+                _uploaded_local_sha256 = None
         try:
             body["product_visual_custody"] = bind_provider_reference_transport(
                 body["product_visual_custody"],
@@ -4968,7 +5039,10 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                     surface_lane=body.get("surface_lane"),
                 ),
                 generation_type="reference_frame_2_video",
+                uploaded_local_sha256=_uploaded_local_sha256,
             )
+            if _prepared_official_reference is not None:
+                assert_official_provider_reference_traceable(body["product_visual_custody"])
         except (KeyError, TypeError, ProductVisualCustodyError) as exc:
             await _fail_manual_request(
                 request_id,

@@ -1845,6 +1845,30 @@ async def _dispatch_attempt(
                 str(item["plan_id"]),
                 surface="production_studio",
             )
+            # Owner provider-reference custody rule: a product-conditioned provider
+            # VIDEO must carry product-visual custody (official visual + geometry
+            # contract + traceable prepared reference).  The generic P6 fire lane
+            # builds no custody receipt, so product video must run through the
+            # custody-bearing FACELESS/MONTAGE recipes (which route via flow.generate)
+            # rather than dispatch an uncustodied product reference here.
+            _p6_generic_mode = str(runtime_payload.get("mode") or "").upper()
+            if (
+                _p6_generic_mode in {"F2V", "I2V"}
+                and (item.get("product_id") or payload.get("product_id"))
+                and runtime_payload.get("image_media_ids")
+            ):
+                raise CreativeProductionError(
+                    "ERR_PRODUCT_VIDEO_CUSTODY_REQUIRED",
+                    "Product-conditioned P6 video must run via a custody-bearing recipe "
+                    "(FACELESS/MONTAGE); the generic lane cannot dispatch an uncustodied "
+                    "product reference.",
+                    details={
+                        "mode": _p6_generic_mode,
+                        "product_id": str(
+                            item.get("product_id") or payload.get("product_id")
+                        ),
+                    },
+                )
             result = await make_video.start_generate(
                 mode=runtime_payload["mode"],
                 prompt=runtime_payload["prompt"],
