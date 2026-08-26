@@ -29,7 +29,10 @@ import NativeExtendPanel from "../components/NativeExtendPanel";
 import StaffIdentityBar from "../components/StaffIdentityBar";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import CopywritingSourceSelector from "../components/copywriting/CopywritingSourceSelector";
-import BenefitCopySourceSection from "../components/copywriting/BenefitCopySourceSection";
+import BenefitCopySourceSection, {
+	type BenefitCopyExecutionContext,
+} from "../components/copywriting/BenefitCopySourceSection";
+import { benefitCopyRequestContext } from "../utils/benefitCopyRequestContext";
 import CanonicalReferenceBindingControls, {
 	EMPTY_BINDING,
 	type CanonicalReferenceBinding,
@@ -113,6 +116,8 @@ export default function FacelessVideoPage() {
 	// Round 2: neutral copy-source selection (Faceless lane). BENEFIT_RENDER copy
 	// readiness comes from a finalized rendered selection, never from v2CopyReady.
 	const [selectedCopySource, setSelectedCopySource] = useState<"BENEFIT_RENDER" | "COPY_V2">("BENEFIT_RENDER");
+	// Request-scoped Benefit On-Demand execution identity (BENEFIT_COPY_RENDER_V1).
+	const [selectedBenefitCopy, setSelectedBenefitCopy] = useState<BenefitCopyExecutionContext | null>(null);
 	const [benefitRenderReady, setBenefitRenderReady] = useState(false);
 	const [isPreparing, setIsPreparing] = useState(false);
 	const [isExecuting, setIsExecuting] = useState(false);
@@ -395,7 +400,7 @@ export default function FacelessVideoPage() {
 						? binding.endFrameAssetId
 						: null,
 				copy_fallback_confirmed: false,
-				copy_v2_context: { lane: "FACELESS" },
+				copy_v2_context: benefitCopyRequestContext(selectedCopySource, selectedBenefitCopy) ?? { lane: "FACELESS" },
 				actor_profile: actorProfile,
 				staff_id: staffIdentity.staffId,
 			});
@@ -764,7 +769,7 @@ export default function FacelessVideoPage() {
 								<button
 									type="button"
 									data-testid="copy-source-existing-v2"
-									onClick={() => setSelectedCopySource("COPY_V2")}
+									onClick={() => { setSelectedCopySource("COPY_V2"); setSelectedBenefitCopy(null); }}
 									className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${selectedCopySource === "COPY_V2" ? "border border-blue-500/40 bg-blue-600/20 text-blue-100" : "border border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
 								>
 									Existing Approved Copy V2
@@ -776,6 +781,7 @@ export default function FacelessVideoPage() {
 									lane="FACELESS"
 									durationSeconds={durationSec}
 									onReadyChange={(ready) => { setBenefitRenderReady(ready); if (ready) setWorkspacePackage(null); }}
+									onSelectedCopyChange={(ctx) => { setSelectedBenefitCopy(ctx); setWorkspacePackage(null); }}
 								/>
 							) : (
 								<>

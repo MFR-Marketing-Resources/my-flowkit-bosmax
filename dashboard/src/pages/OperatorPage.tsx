@@ -40,6 +40,7 @@ import CopywritingSourceSelector from "../components/copywriting/CopywritingSour
 import BenefitCopySourceSection, {
 	type BenefitCopyExecutionContext,
 } from "../components/copywriting/BenefitCopySourceSection";
+import { benefitCopyRequestContext } from "../utils/benefitCopyRequestContext";
 import NativeExtendPanel from "../components/NativeExtendPanel";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
@@ -1674,10 +1675,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							: capabilityMatrix?.capability_matrix_version,
 					// Same authority as preview (Round 4): re-send the request-scoped benefit
 					// copy so Generate never flips to Copy V2 after an 8s preview.
-					copy_v2_context:
-						selectedCopySource === "BENEFIT_RENDER" && selectedBenefitCopy
-							? { lane: selectedBenefitCopy.lane, benefit_copy_render: { candidate_id: selectedBenefitCopy.candidate_id } }
-							: data.copy_v2_context,
+					copy_v2_context: benefitCopyRequestContext(selectedCopySource, selectedBenefitCopy) ?? data.copy_v2_context,
 					staff_id: staffIdentity.staffId,
 					production_recipe: productionRecipe,
 				}),
@@ -1953,10 +1951,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				// Honest source selection (Round 4): when Benefit On-Demand is the chosen
 				// source, carry the request-scoped rendered candidate so resolve_execution_copy
 				// binds BENEFIT_COPY_RENDER_V1 — never a silent fall-through to Copy V2.
-				copy_v2_context:
-					selectedCopySource === "BENEFIT_RENDER" && selectedBenefitCopy
-						? { lane: selectedBenefitCopy.lane, benefit_copy_render: { candidate_id: selectedBenefitCopy.candidate_id } }
-						: undefined,
+				copy_v2_context: benefitCopyRequestContext(selectedCopySource, selectedBenefitCopy),
 			});
 			setPreviewPackage(preview);
 			setNotice({
