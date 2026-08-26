@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from agent.services.video_continuity_contract import (
+    ERR_DIALOGUE_REQUIRED_MISSING,
     ERR_DIALOGUE_SWEETWPS_OVERRUN,
     ERR_DIALOGUE_SWEETWPS_UNDERRUN,
     ERR_DIALOGUE_TIMELINE_INVALID,
@@ -133,15 +134,18 @@ def test_sweetwps_targets_use_authoritative_block_sums(duration: int, words: int
     assert block["requires_reauthoring"] is False
 
 
-def test_sweetwps_immutable_text_under_and_overfill_fail_before_side_effects():
-    with pytest.raises(VideoContinuityContractError) as under:
-        build_temporal_occupancy_receipt(
-            blocks=[_occupancy_block(8, 21)],
-            target_language="BM_MS",
-            wps_mode="SWEET",
-        )
-    assert under.value.code == ERR_DIALOGUE_SWEETWPS_UNDERRUN
-    assert under.value.details["requires_reauthoring"] is True
+def test_sweetwps_is_a_ceiling_not_an_exact_target():
+    # Round 2.3: SweetWPS is a hard maximum. A shorter-than-max script is VALID —
+    # the remaining block time is explicit visual occupancy, never an underrun.
+    receipt = build_temporal_occupancy_receipt(
+        blocks=[_occupancy_block(8, 21)],
+        target_language="BM_MS",
+        wps_mode="SWEET",
+    )
+    block = receipt["blocks"][0]
+    assert block["status"] == "PASS"
+    assert block["max_dialogue_word_count"] == 22 and block["actual_dialogue_word_count"] == 21
+    # Over the ceiling still fails closed.
     with pytest.raises(VideoContinuityContractError) as over:
         build_temporal_occupancy_receipt(
             blocks=[_occupancy_block(8, 23)],

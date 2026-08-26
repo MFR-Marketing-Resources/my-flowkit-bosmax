@@ -2863,14 +2863,10 @@ def compile_prompt_set(
                 "exact_dialogue_slice": dialogue_text,
                 "actual_dialogue_word_count": len(dialogue_text.split()) if dialogue_text else 0,
             }
-            if dialogue_text and not (allocation.get("assigned_dialogue_utterances") or []):
-                item["assigned_dialogue_utterances"] = [{
-                    "utterance_id": f"direct-block-{index}",
-                    "start_s": cursor,
-                    "end_s": cursor + float(seconds or duration_seconds) - float(terminal_hold_seconds),
-                    "text": dialogue_text,
-                    "word_count": len(dialogue_text.split()),
-                }]
+            # The shared temporal-occupancy authority derives the natural speech
+            # window + explicit visual occupancy from the immutable dialogue text
+            # (SweetWPS is a ceiling; short scripts are valid). No synthesized
+            # full-block utterance — that would stretch speech to fill the block.
             occupancy_inputs.append(item)
             cursor += float(seconds or duration_seconds)
         temporal_occupancy_receipt = build_temporal_occupancy_receipt(
