@@ -78,9 +78,42 @@ function Get-CdpVersionObject {
 
 function Get-LoopbackListeners {
   param([int]$Port)
-  $items = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-  if ($null -eq $items) { return @() }
-  return @($items)
+  $items = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+  if ($items.Count -gt 0) { return $items }
+
+  # Some managed Windows environments expose the listener through netstat but
+  # return no rows from Get-NetTCPConnection. Keep the health gate fail-closed
+  # for non-loopback rows, while retaining an OS-level fallback for the exact
+  # loopback listener that Chrome exposes.
+  $fallback = @()
+  try {
+    foreach ($line in @(netstat.exe -ano -p tcp 2>$null)) {
+      $parts = ([string]$line).Trim() -split '\s+'
+      if ($parts.Count -lt 5 -or $parts[0] -ne 'TCP' -or $parts[3] -ne 'LISTENING') { continue }
+
+      $localEndpoint = [string]$parts[1]
+      $separator = $localEndpoint.LastIndexOf(':')
+      if ($separator -lt 1) { continue }
+
+      $address = $localEndpoint.Substring(0, $separator).Trim('[', ']')
+      $localPort = 0
+      $processId = 0
+      if (-not [int]::TryParse($localEndpoint.Substring($separator + 1), [ref]$localPort)) { continue }
+      if (-not [int]::TryParse($parts[4], [ref]$processId)) { continue }
+      if ($localPort -ne $Port) { continue }
+
+      $fallback += [pscustomobject]@{
+        LocalAddress  = $address
+        LocalPort     = $localPort
+        State         = 'Listen'
+        OwningProcess = $processId
+      }
+    }
+  } catch {
+    return @()
+  }
+
+  return @($fallback)
 }
 
 function Get-Count {

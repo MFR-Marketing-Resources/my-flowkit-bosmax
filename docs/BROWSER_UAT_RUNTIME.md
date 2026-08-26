@@ -13,8 +13,10 @@ Before claiming browser UAT is unavailable / NOT_VERIFIED / "Chrome consent requ
    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/browser-uat/start-browser-uat.ps1
    ```
 3. Prefer **Chrome DevTools MCP** attached to the existing CDP endpoint  
-   `http://127.0.0.1:9222`  
-   (`npx -y chrome-devtools-mcp@latest --browser-url=http://127.0.0.1:9222`).
+   `http://127.0.0.1:9222` through the checked-in launcher
+   `scripts/browser-uat/claude-chrome-devtools-wrapper.cmd`. The launcher runs
+   the health preflight with stdin disconnected, then starts the pinned global
+   `chrome-devtools-mcp@1.8.0` entry point so MCP stdio framing is preserved.
 4. If MCP is unavailable in this agent, use the **Playwright/CDP shell fallback**:
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/browser-uat/run-browser-uat.ps1 smoke
@@ -60,10 +62,13 @@ Server name: **`chrome-devtools`**
 
 ```json
 {
-  "command": "npx",
-  "args": ["-y", "chrome-devtools-mcp@latest", "--browser-url=http://127.0.0.1:9222"]
+  "command": "C:\\Users\\USER\\Desktop\\_ref_flowkit\\scripts\\browser-uat\\claude-chrome-devtools-wrapper.cmd",
+  "args": []
 }
 ```
+
+The direct `npx` command is a fallback for environments without the launcher;
+do not use it for the managed Claude Desktop or Claude Code configuration.
 
 Do **not** launch a second random Chrome profile per agent (`--isolated` is not the BOSMAX UAT default).
 
