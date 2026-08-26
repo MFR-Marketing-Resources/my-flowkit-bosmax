@@ -1282,14 +1282,11 @@ def compile_ugc_video_prompt(
                     else len(dialogue_text.split())
                 ),
             }
-            if dialogue_text and not (allocation.get("assigned_dialogue_utterances") or []):
-                item["assigned_dialogue_utterances"] = [{
-                    "utterance_id": f"ugc-block-{block['block_index']}",
-                    "start_s": float(block.get("start_s") or 0.0),
-                    "end_s": float(block.get("end_s") or block["duration_seconds"]) - 0.25,
-                    "text": dialogue_text,
-                    "word_count": len(dialogue_text.split()),
-                }]
+            # No synthesized full-block utterance: the shared temporal-occupancy
+            # authority derives the natural speech window + explicit visual occupancy
+            # from the immutable dialogue text (SweetWPS as a ceiling, never padded to
+            # fill the block). Real scene-allocated utterances, when present, are still
+            # passed through and validated.
             occupancy_inputs.append(item)
         temporal_occupancy_receipt = build_temporal_occupancy_receipt(
             blocks=occupancy_inputs,

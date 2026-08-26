@@ -29,8 +29,9 @@ CUSTODY_STATES = (
 ERR_SHOT_HANDLING_UNMAPPED = "SHOT_HANDLING_UNMAPPED"
 ERR_PRODUCT_CUSTODY_INVALID = "PRODUCT_CUSTODY_INVALID"
 ERR_PRODUCT_CUSTODY_TRANSITION_INVALID = "PRODUCT_CUSTODY_TRANSITION_INVALID"
-ERR_DIALOGUE_SWEETWPS_UNDERRUN = "DIALOGUE_SWEETWPS_UNDERRUN"
+ERR_DIALOGUE_SWEETWPS_UNDERRUN = "DIALOGUE_SWEETWPS_UNDERRUN"  # legacy — no longer raised (SweetWPS is a ceiling)
 ERR_DIALOGUE_SWEETWPS_OVERRUN = "DIALOGUE_SWEETWPS_OVERRUN"
+ERR_DIALOGUE_REQUIRED_MISSING = "DIALOGUE_REQUIRED_MISSING"
 ERR_DIALOGUE_TIMELINE_INVALID = "DIALOGUE_TIMELINE_INVALID"
 ERR_DIALOGUE_WPS_MODE_REQUIRED = "DIALOGUE_SWEETWPS_REQUIRED"
 
@@ -516,7 +517,7 @@ def build_temporal_occupancy_receipt(
                     "actual_start_s": start,
                 },
             )
-        target = _sweet_target_for_duration(canonical, int(duration), target_language) if dialogue_enabled else 0
+        max_words = _sweet_target_for_duration(canonical, int(duration), target_language) if dialogue_enabled else 0
         allocation = block.get("allocation") if isinstance(block.get("allocation"), Mapping) else block
         dialogue = _clean(block.get("dialogue") or block.get("exact_dialogue_slice") or allocation.get("exact_dialogue_slice"))
         measured_actual = _word_count(dialogue)
@@ -562,16 +563,42 @@ def build_temporal_occupancy_receipt(
             if dialogue_enabled
             else 0.0
         )
-        estimated_speech_duration = actual / sweet_wps if dialogue_enabled else 0.0
-        if strict and dialogue_enabled and actual < target:
-            _occupancy_error(ERR_DIALOGUE_SWEETWPS_UNDERRUN, {"block_index": position, "required_target": target, "actual_count": actual, "estimated_speech_duration_seconds": estimated_speech_duration, "requires_reauthoring": True})
-        if strict and dialogue_enabled and actual > target:
-            _occupancy_error(ERR_DIALOGUE_SWEETWPS_OVERRUN, {"block_index": position, "required_target": target, "actual_count": actual, "estimated_speech_duration_seconds": estimated_speech_duration, "requires_reauthoring": True})
-        first_start = float(utterances[0].get("start_s") or 0.0) if utterances else None
-        final_end = float(utterances[-1].get("end_s") or 0.0) if utterances else None
-        expected_first_start = start if position == 1 else start + 0.5
-        if strict and dialogue_enabled and (first_start is None or abs(first_start - expected_first_start) > 0.02):
-            raise VideoContinuityContractError(ERR_DIALOGUE_TIMELINE_INVALID, "The first utterance is not at the declared block entry window.", details={"block_index": position, "first_utterance_start_s": first_start, "required_start_s": expected_first_start})
+        # SweetWPS is a per-block CEILING (hard maximum), never a minimum or exact
+        # target. A shorter-than-max script is valid: the remaining block time is
+        # explicit visual/action occupancy, not a dead dialogue gap. Only two
+        # word-count failures remain — dialogue required but absent, and more words
+        # than the ceiling. There is NO underrun for actual < max.
+        if strict and dialogue_enabled and actual == 0:
+            _occupancy_error(ERR_DIALOGUE_REQUIRED_MISSING,
+                             {"block_index": position, "max_dialogue_word_count": max_words,
+                              "actual_dialogue_word_count": 0})
+        if strict and dialogue_enabled and actual > max_words:
+            _occupancy_error(ERR_DIALOGUE_SWEETWPS_OVERRUN,
+                             {"block_index": position, "max_dialogue_word_count": max_words,
+                              "actual_dialogue_word_count": actual, "requires_reauthoring": True})
+        # Derive a NATURAL speech window from the immutable dialogue at the governed
+        # SweetWPS rate, then model the block as one explicit contiguous occupancy:
+        #   [continuation seam-in visual][speech at natural rate][visual/action][terminal hold].
+        # Never stretch the speaker to fill the block; never require speech to run to
+        # the boundary; the post-speech interval is explicit visual occupancy.
+        min_terminal = max(0.20, float(required_terminal_hold_seconds))
+        seam_in = 0.0 if position == 1 else 0.5
+        speech_start = start + seam_in
+        available_speech = max(0.0, duration - seam_in - min_terminal)
+        natural_speech = (actual / sweet_wps) if (dialogue_enabled and sweet_wps > 0) else 0.0
+        # The word ceiling (actual <= max_words == round(duration * sweet_wps)) is the
+        # governed rate protection: at or below it the script is sayable within the
+        # block at or under SweetWPS. Reserve the terminal hold, then fit the natural
+        # speech window into the remaining time (a ceiling-length script compresses
+        # only into the reserved terminal beat, never faster than the word ceiling).
+        speech_window = min(natural_speech, available_speech)
+        effective_wps = (actual / speech_window) if speech_window > 1e-6 else 0.0
+        speech_end = speech_start + speech_window
+        terminal_start = (end - min_terminal) if dialogue_enabled else end
+        terminal_hold_seconds = max(0.0, end - terminal_start)
+        visual_start = speech_end
+        visual_occupancy_seconds = max(0.0, terminal_start - visual_start)
+        # Internal gaps between real multi-utterance rows must still be occupied.
         internal_gaps: list[float] = []
         for previous, current in zip(utterances, utterances[1:]):
             gap = float(current.get("start_s") or 0.0) - float(previous.get("end_s") or 0.0)
@@ -579,41 +606,43 @@ def build_temporal_occupancy_receipt(
         max_gap = max(internal_gaps or [0.0])
         if strict and max_gap > 0.25 + 1e-6:
             raise VideoContinuityContractError(ERR_DIALOGUE_TIMELINE_INVALID, "An internal speech gap is not explicitly occupied.", details={"block_index": position, "max_internal_gap_seconds": max_gap})
-        terminal_hold_start = final_end if final_end is not None else start
-        terminal_hold_seconds = max(0.0, end - terminal_hold_start)
-        if strict and dialogue_enabled and final_end is not None:
-            boundary_gap = end - final_end
-            if boundary_gap < 0.20 - 1e-6 or boundary_gap > 0.50 + 1e-6:
-                raise VideoContinuityContractError(ERR_DIALOGUE_TIMELINE_INVALID, "Final speech does not end inside the required terminal hold window.", details={"block_index": position, "speech_end_s": final_end, "block_end_s": end, "terminal_hold_seconds": boundary_gap})
-        if strict and dialogue_enabled and terminal_hold_seconds < max(0.20, float(required_terminal_hold_seconds)) - 1e-6:
-            raise VideoContinuityContractError(ERR_DIALOGUE_TIMELINE_INVALID, "Terminal visual hold is too short.", details={"block_index": position, "terminal_hold_seconds": terminal_hold_seconds})
+        # Explicit, contiguous timeline assignment covering the whole block.
         assignment: list[dict[str, Any]] = []
-        if start < terminal_hold_start:
-            assignment.append({"start_s": start, "end_s": terminal_hold_start, "role": "DIALOGUE_OR_EXPLICIT_SPEECH_WINDOW"})
-        if terminal_hold_seconds > 0:
-            assignment.append({"start_s": terminal_hold_start, "end_s": end, "role": "TERMINAL_PRODUCT_CUSTODY_HOLD", "product_position_unchanged": True, "grip_or_support_fixed": True, "label_orientation_preserved": True, "final_gesture_completed": True, "camera_locked_or_ambience_continuous": True})
+        if not dialogue_enabled:
+            assignment.append({"start_s": start, "end_s": end, "role": "TERMINAL_PRODUCT_CUSTODY_HOLD", "product_position_unchanged": True, "grip_or_support_fixed": True, "label_orientation_preserved": True, "final_gesture_completed": True, "camera_locked_or_ambience_continuous": True})
+        else:
+            if seam_in > 1e-6:
+                assignment.append({"start_s": start, "end_s": speech_start, "role": "CONTINUATION_SEAM_IN_VISUAL"})
+            if speech_window > 1e-6:
+                assignment.append({"start_s": speech_start, "end_s": speech_end, "role": "SPEECH_WINDOW"})
+            if visual_occupancy_seconds > 1e-6:
+                assignment.append({"start_s": visual_start, "end_s": terminal_start, "role": "EXPLICIT_VISUAL_ACTION_OCCUPANCY"})
+            if terminal_hold_seconds > 1e-6:
+                assignment.append({"start_s": terminal_start, "end_s": end, "role": "TERMINAL_PRODUCT_CUSTODY_HOLD", "product_position_unchanged": True, "grip_or_support_fixed": True, "label_orientation_preserved": True, "final_gesture_completed": True, "camera_locked_or_ambience_continuous": True})
         rows_out.append({
             "block_index": position,
             "start_s": start,
             "end_s": end,
             "duration_seconds": duration,
             "wps_mode": "SWEET" if dialogue_enabled else "NONE",
-            "required_target_word_count": target,
+            "max_dialogue_word_count": max_words,
+            # Legacy alias == the MAXIMUM (a ceiling), NOT a minimum. Kept for
+            # backward compatibility only; never treat it as a required floor.
+            "required_target_word_count": max_words,
+            "actual_dialogue_word_count": actual,
             "actual_word_count": actual,
-            "first_utterance_start_s": first_start,
-            "required_first_utterance_start_s": expected_first_start if dialogue_enabled else None,
-            "estimated_speech_end_s": final_end,
-            "estimated_speech_duration_seconds": (
-                max(0.0, final_end - first_start)
-                if final_end is not None and first_start is not None
-                else estimated_speech_duration
-            ),
+            "effective_wps": round(effective_wps, 3),
+            "sweet_wps": sweet_wps,
+            "speech_window_seconds": round(speech_window, 3),
+            "visual_occupancy_seconds": round(visual_occupancy_seconds, 3),
+            "terminal_hold_seconds": round(terminal_hold_seconds, 3),
+            "seam_in_seconds": seam_in,
+            "estimated_speech_end_s": round(speech_end, 3) if dialogue_enabled else None,
             "requires_reauthoring": False,
-            "terminal_hold_seconds": terminal_hold_seconds,
             "max_internal_gap_seconds": max_gap,
             "utterances": utterances,
             "timeline_assignment": assignment,
-            "terminal_hold": assignment[-1] if assignment and assignment[-1]["role"] == "TERMINAL_PRODUCT_CUSTODY_HOLD" else {"start_s": end, "end_s": end, "role": "NO_DIALOGUE_VISUAL_COVERAGE"},
+            "terminal_hold": assignment[-1] if assignment and assignment[-1].get("role") == "TERMINAL_PRODUCT_CUSTODY_HOLD" else {"start_s": end, "end_s": end, "role": "NO_TERMINAL_HOLD"},
             "status": "PASS",
         })
         cursor = end
@@ -640,6 +669,7 @@ def validate_temporal_occupancy(receipt: Mapping[str, Any]) -> None:
 
 __all__ = [
     "CUSTODY_STATES",
+    "ERR_DIALOGUE_REQUIRED_MISSING",
     "ERR_DIALOGUE_SWEETWPS_OVERRUN",
     "ERR_DIALOGUE_SWEETWPS_UNDERRUN",
     "ERR_DIALOGUE_TIMELINE_INVALID",
