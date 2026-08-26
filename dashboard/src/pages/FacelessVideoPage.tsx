@@ -29,6 +29,7 @@ import NativeExtendPanel from "../components/NativeExtendPanel";
 import StaffIdentityBar from "../components/StaffIdentityBar";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import CopywritingSourceSelector from "../components/copywriting/CopywritingSourceSelector";
+import BenefitCopySourceSection from "../components/copywriting/BenefitCopySourceSection";
 import CanonicalReferenceBindingControls, {
 	EMPTY_BINDING,
 	type CanonicalReferenceBinding,
@@ -109,6 +110,10 @@ export default function FacelessVideoPage() {
 	const [workspacePackage, setWorkspacePackage] =
 		useState<WorkspaceExecutionPackage | null>(null);
 	const [v2CopyReady, setV2CopyReady] = useState(false);
+	// Round 2: neutral copy-source selection (Faceless lane). BENEFIT_RENDER copy
+	// readiness comes from a finalized rendered selection, never from v2CopyReady.
+	const [selectedCopySource, setSelectedCopySource] = useState<"BENEFIT_RENDER" | "COPY_V2">("BENEFIT_RENDER");
+	const [benefitRenderReady, setBenefitRenderReady] = useState(false);
 	const [isPreparing, setIsPreparing] = useState(false);
 	const [isExecuting, setIsExecuting] = useState(false);
 	const staffIdentity = useStaffIdentity();
@@ -743,26 +748,55 @@ export default function FacelessVideoPage() {
 						status={sCopy}
 						open={v4IsOpen(2, sCopy)}
 						onToggleOpen={() => v4Toggle(2, v4IsOpen(2, sCopy))}
-						summary={v2CopyReady ? "Copy selected" : "Copywriting required"}
-						helper="Choose existing approved copy from Copy Register or generate with AI Copy Assistant."
+						summary={(selectedCopySource === "BENEFIT_RENDER" ? benefitRenderReady : v2CopyReady) ? "Copy selected" : "Copywriting required"}
+						helper="Generate benefit-driven scripts on demand, or use existing approved Copy Register copy."
 					>
 						<div className="space-y-3">
-							<CopywritingSourceSelector
-								productId={selectedProduct?.id}
-								productName={selectedProduct?.raw_product_title}
-								lane="FACELESS"
-								onCopySelected={() => {
-									setWorkspacePackage(null);
-									setV2CopyReady(false);
-								}}
-							/>
-							<CopyArchitectureV2LaneCard
-								key={selectedProduct?.id ?? "none"}
-								lane="FACELESS"
-								productId={selectedProduct?.id}
-								execution={workspacePackage?.copy_architecture_v2}
-								onReadyChange={setV2CopyReady}
-							/>
+							<div className="flex items-center gap-2" data-testid="copy-source-toggle">
+								<button
+									type="button"
+									data-testid="copy-source-benefit-render"
+									onClick={() => setSelectedCopySource("BENEFIT_RENDER")}
+									className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${selectedCopySource === "BENEFIT_RENDER" ? "border border-emerald-500/40 bg-emerald-600/20 text-emerald-100" : "border border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
+								>
+									Benefit On-Demand Copy
+								</button>
+								<button
+									type="button"
+									data-testid="copy-source-existing-v2"
+									onClick={() => setSelectedCopySource("COPY_V2")}
+									className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${selectedCopySource === "COPY_V2" ? "border border-blue-500/40 bg-blue-600/20 text-blue-100" : "border border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
+								>
+									Existing Approved Copy V2
+								</button>
+							</div>
+							{selectedCopySource === "BENEFIT_RENDER" ? (
+								<BenefitCopySourceSection
+									productId={selectedProduct?.id}
+									lane="FACELESS"
+									durationSeconds={durationSec}
+									onReadyChange={(ready) => { setBenefitRenderReady(ready); if (ready) setWorkspacePackage(null); }}
+								/>
+							) : (
+								<>
+									<CopywritingSourceSelector
+										productId={selectedProduct?.id}
+										productName={selectedProduct?.raw_product_title}
+										lane="FACELESS"
+										onCopySelected={() => {
+											setWorkspacePackage(null);
+											setV2CopyReady(false);
+										}}
+									/>
+									<CopyArchitectureV2LaneCard
+										key={selectedProduct?.id ?? "none"}
+										lane="FACELESS"
+										productId={selectedProduct?.id}
+										execution={workspacePackage?.copy_architecture_v2}
+										onReadyChange={setV2CopyReady}
+									/>
+								</>
+							)}
 						</div>
 					</WorkflowStep>
 
