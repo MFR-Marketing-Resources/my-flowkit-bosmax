@@ -86,7 +86,9 @@ export default function MontagePage() {
 	const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 	const [hookId, setHookId] = useState("AUTO");
 	const [backgroundId, setBackgroundId] = useState("AUTO");
-	const [useMascot, setUseMascot] = useState(false);
+	// Round 3 behavioral contract: the Montage operator surface is a Product Mascot
+	// surface by default — the mascot is the on-screen speaker, not an optional add-on.
+	const [useMascot, setUseMascot] = useState(true);
 	const [finalDuration, setFinalDuration] = useState(8);
 	const [mascotDurationOptions, setMascotDurationOptions] = useState<
 		MascotDurationOption[]
