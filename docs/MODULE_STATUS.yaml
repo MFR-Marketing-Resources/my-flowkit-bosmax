@@ -1904,3 +1904,22 @@ domains:
       - dashboard/src/components/product-intelligence/CreativeFactoryPanel.tsx
       - dashboard/src/components/product-intelligence/CreativeFactoryPanel.test.tsx
       - docs/architecture/BENEFIT_CENTRIC_CREATIVE_FACTORY_V1.md
+      # On-Demand Copy Renderer (Round 2)
+      - agent/models/copy_render_v1.py
+      - agent/db/copy_render_crud.py
+      - agent/services/copy_render_combination_service.py
+      - agent/services/copy_render_service.py
+      - agent/services/copy_render_execution_resolver.py
+      - agent/api/copy_render.py
+      - tests/copy_render_support.py
+      - tests/unit/test_copy_render_combination.py
+      - tests/unit/test_copy_render_service.py
+      - tests/unit/test_copy_render_cache.py
+      - tests/unit/test_copy_render_execution_resolver.py
+      - tests/unit/test_copy_render_idempotency.py
+      - tests/api/test_copy_render_api.py
+      - dashboard/src/api/copyRender.ts
+      - dashboard/src/components/copywriting/OnDemandCopyRendererPanel.tsx
+      - dashboard/src/components/copywriting/OnDemandCopyRendererPanel.test.tsx
+      - dashboard/src/components/copywriting/BenefitCopySourceSection.tsx
+      - docs/architecture/BENEFIT_ON_DEMAND_COPY_RENDERER_V1.md

@@ -60,9 +60,23 @@ class CopyExecutionResolution:
     compiler_copy_intelligence: dict[str, Any] | None = None
     approved_dialogue: str | None = None
     metadata: dict[str, Any] | None = None
+    authority_kind: str = "COPY_BLUEPRINT_V2"
 
     @property
     def ready(self) -> bool:
+        return self.status == "READY"
+
+    @property
+    def copy_ready(self) -> bool:
+        """Truthful 'a usable copy authority is present' signal for consumers.
+
+        For COPY_BLUEPRINT_V2 this equals the existing ``v2_enabled`` behaviour
+        (so the V2 path is byte/behaviour-unchanged); for the request-scoped
+        BENEFIT_COPY_RENDER_V1 authority it is ``status == "READY"``.  It never
+        conflates the two — a rendered copy is NOT a V2 binding.
+        """
+        if self.authority_kind == "COPY_BLUEPRINT_V2":
+            return self.v2_enabled
         return self.status == "READY"
 
     def to_metadata(
@@ -81,6 +95,7 @@ class CopyExecutionResolution:
                 "copy_policy": self.copy_policy,
                 "feature_flag_state": self.feature_flags.model_dump(mode="json"),
                 "v2_enabled": self.v2_enabled,
+                "authority_kind": self.authority_kind,
                 "status": self.status,
             }
         )
@@ -96,6 +111,36 @@ class CopyExecutionResolution:
             # caller-supplied binding.
             base["consumer_context"] = _context_dict(consumer_context)
         return base
+
+
+async def resolve_execution_copy(
+    product_id: str,
+    lane: str,
+    request_context: "Mapping[str, Any] | BaseModel | None" = None,
+    feature_flag_state: "CopyBlueprintV2FeatureFlagState | Mapping[str, Any] | None" = None,
+) -> "CopyExecutionResolution":
+    """Execution-copy authority multiplexer at the package-materialization boundary.
+
+    When ``request_context`` carries a ``benefit_copy_render`` selection, resolve
+    the request-scoped BENEFIT_COPY_RENDER_V1 authority; otherwise delegate to the
+    existing product-global / round3 V2 resolver, behaviourally UNCHANGED. The two
+    copy authorities stay separate — a rendered copy never becomes a V2 binding.
+    """
+    ctx = _as_dict(request_context) if request_context is not None else {}
+    rendered = ctx.get("benefit_copy_render")
+    if isinstance(rendered, Mapping) and str(rendered.get("candidate_id") or ""):
+        # Lazy import avoids a module import cycle (the render resolver imports
+        # CopyExecutionResolution from this module).
+        from agent.services.copy_render_execution_resolver import (
+            resolve_rendered_copy_execution,
+        )
+
+        return await resolve_rendered_copy_execution(
+            product_id, lane, str(rendered["candidate_id"])
+        )
+    return await resolve_persisted_copy_execution_binding(
+        product_id, lane, request_context, feature_flag_state
+    )
 
 
 def _as_dict(value: Any) -> dict[str, Any]:

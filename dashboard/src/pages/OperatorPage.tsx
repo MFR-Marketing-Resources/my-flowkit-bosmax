@@ -37,6 +37,7 @@ import BackendVersionBanner from "../components/BackendVersionBanner";
 import StaffIdentityBar from "../components/StaffIdentityBar";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import CopywritingSourceSelector from "../components/copywriting/CopywritingSourceSelector";
+import BenefitCopySourceSection from "../components/copywriting/BenefitCopySourceSection";
 import NativeExtendPanel from "../components/NativeExtendPanel";
 import RequestReportPanel from "../components/reporting/RequestReportPanel";
 import SocialCopyPackagePanel from "../components/SocialCopyPackagePanel";
@@ -701,6 +702,11 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 	const [previewPackage, setPreviewPackage] =
 		useState<WorkspacePromptPreviewResult | null>(null);
 	const [v2CopyReady, setV2CopyReady] = useState(false);
+	// Round 2: neutral copy-source selection. selectedCopySource === "BENEFIT_RENDER"
+	// ⇒ copy readiness comes from a finalized rendered selection, NOT from v2CopyReady
+	// (which stays the Copy Register V2 readiness signal — never overloaded).
+	const [selectedCopySource, setSelectedCopySource] = useState<"BENEFIT_RENDER" | "COPY_V2">("BENEFIT_RENDER");
+	const [benefitRenderReady, setBenefitRenderReady] = useState(false);
 	// HYBRID anchor is auto-locked from the product's official image, so the
 	// canonical reference picker is collapsed by default and only revealed when
 	// the operator explicitly chooses to override the anchor.
@@ -2507,22 +2513,53 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 							status={s2}
 							open={v4IsOpen(2, s2)}
 							onToggleOpen={() => v4Toggle(2, v4IsOpen(2, s2))}
-							summary={copyBound || v2CopyReady ? "Copy selected" : "Copywriting required"}
-							helper="Choose existing approved copy from Copy Register or generate with AI Copy Assistant."
+							summary={(mode === "HYBRID" && selectedCopySource === "BENEFIT_RENDER" ? benefitRenderReady : (copyBound || v2CopyReady)) ? "Copy selected" : "Copywriting required"}
+							helper="Generate benefit-driven scripts on demand, or use existing approved Copy Register copy."
 						>
 							<div className="space-y-3">
-								<CopywritingSourceSelector
-									productId={selectedProduct?.id}
-									productName={selectedProduct?.product_display_name}
-									lane={mode === "HYBRID" ? "HYBRID" : mode}
-									onCopySelected={() => setWorkspacePackage(null)}
-								/>
-								<CopyArchitectureV2LaneCard
-									lane={mode === "HYBRID" ? "HYBRID" : mode}
-									productId={selectedProduct?.id}
-									execution={workspacePackage?.copy_architecture_v2}
-									onReadyChange={setV2CopyReady}
-								/>
+								{mode === "HYBRID" ? (
+									<div className="flex items-center gap-2" data-testid="copy-source-toggle">
+										<button
+											type="button"
+											data-testid="copy-source-benefit-render"
+											onClick={() => setSelectedCopySource("BENEFIT_RENDER")}
+											className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${selectedCopySource === "BENEFIT_RENDER" ? "border border-emerald-500/40 bg-emerald-600/20 text-emerald-100" : "border border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
+										>
+											Benefit On-Demand Copy
+										</button>
+										<button
+											type="button"
+											data-testid="copy-source-existing-v2"
+											onClick={() => setSelectedCopySource("COPY_V2")}
+											className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${selectedCopySource === "COPY_V2" ? "border border-blue-500/40 bg-blue-600/20 text-blue-100" : "border border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
+										>
+											Existing Approved Copy V2
+										</button>
+									</div>
+								) : null}
+								{mode === "HYBRID" && selectedCopySource === "BENEFIT_RENDER" ? (
+									<BenefitCopySourceSection
+										productId={selectedProduct?.id}
+										lane="HYBRID"
+										durationSeconds={videoDurationSeconds}
+										onReadyChange={(ready) => { setBenefitRenderReady(ready); if (ready) setWorkspacePackage(null); }}
+									/>
+								) : (
+									<>
+										<CopywritingSourceSelector
+											productId={selectedProduct?.id}
+											productName={selectedProduct?.product_display_name}
+											lane={mode === "HYBRID" ? "HYBRID" : mode}
+											onCopySelected={() => setWorkspacePackage(null)}
+										/>
+										<CopyArchitectureV2LaneCard
+											lane={mode === "HYBRID" ? "HYBRID" : mode}
+											productId={selectedProduct?.id}
+											execution={workspacePackage?.copy_architecture_v2}
+											onReadyChange={setV2CopyReady}
+										/>
+									</>
+								)}
 							</div>
 						</WorkflowStep>
 

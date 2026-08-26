@@ -23,6 +23,7 @@ from agent.services.copy_execution_resolver import (
     CopyExecutionResolutionError,
     copy_v2_handoff_context,
     lane_for_request,
+    resolve_execution_copy,
     resolve_persisted_copy_execution_binding,
 )
 from agent.models.copy_blueprint_v2 import legacy_copy_maintenance_enabled
@@ -451,7 +452,7 @@ async def create_workspace_execution_package(
 ) -> dict[str, Any]:
     normalized_mode = normalize_mode(mode)
     try:
-        v2_resolution = await resolve_persisted_copy_execution_binding(
+        v2_resolution = await resolve_execution_copy(
             product_id,
             str((copy_v2_context or {}).get("lane") or lane_for_request(normalized_mode, source_mode=source_mode)),
             copy_v2_context,
@@ -459,6 +460,9 @@ async def create_workspace_execution_package(
     except CopyExecutionResolutionError as exc:
         raise CopyBindingError(exc.code, status_code=exc.status_code, detail=exc.details or str(exc)) from exc
     v2_enabled = v2_resolution.v2_enabled
+    # copy_ready is the truthful "a usable copy authority is present" signal:
+    # == v2_enabled for COPY_BLUEPRINT_V2 (unchanged), True for BENEFIT_COPY_RENDER_V1.
+    copy_ready = v2_resolution.copy_ready
     if copy_set_id and not legacy_copy_maintenance_enabled():
         raise CopyBindingError(
             "LEGACY_COPY_STORAGE_DISABLED",
@@ -471,7 +475,7 @@ async def create_workspace_execution_package(
     if (
         normalized_mode != "IMG"
         and not copy_set_id
-        and not v2_enabled
+        and not copy_ready
         and not copy_fallback_confirmed
     ):
         raise CopyBindingError(
@@ -524,9 +528,9 @@ async def create_workspace_execution_package(
         avatar_id=avatar_id,
         scene_context_override=scene_context_override,
         copy_set_id=copy_set_id,
-        copy_v2_resolution=v2_resolution if v2_enabled else None,
+        copy_v2_resolution=v2_resolution if copy_ready else None,
         copy_v2_context=copy_v2_context,
-        approved_dialogue=(v2_resolution.approved_dialogue if v2_enabled else None),
+        approved_dialogue=(v2_resolution.approved_dialogue if copy_ready else None),
         creative_treatment=creative_treatment,
         scene_template=scene_template,
         camera_preset=camera_preset,
@@ -1164,7 +1168,7 @@ async def compile_workspace_prompt_preview(
     normalized_mode = normalize_mode(mode)
     if copy_v2_resolution is None:
         try:
-            copy_v2_resolution = await resolve_persisted_copy_execution_binding(
+            copy_v2_resolution = await resolve_execution_copy(
                 product_id,
                 str((copy_v2_context or {}).get("lane") or lane_for_request(normalized_mode, source_mode=source_mode)),
                 copy_v2_context,
@@ -1175,7 +1179,7 @@ async def compile_workspace_prompt_preview(
                 status_code=exc.status_code,
                 detail=exc.details or str(exc),
             ) from exc
-    if copy_v2_resolution.v2_enabled:
+    if copy_v2_resolution.copy_ready:
         approved_dialogue = copy_v2_resolution.approved_dialogue
     # Source-lineage law (2026-07-09 corrective audit): a caller that names a
     # canonical source mode ("FRAMES"/"INGREDIENTS"/"T2V") keeps that lineage —
@@ -1203,12 +1207,16 @@ async def compile_workspace_prompt_preview(
     # (fail-closed if an explicit copy_set_id is invalid) into clean compiler copy.
     # Only to_compiler_copy fields cross into the compiler; the lineage below is
     # audit-only and never enters the engine-facing prompt text.
-    if copy_v2_resolution.v2_enabled:
+    if copy_v2_resolution.copy_ready:
         copy_binding = {
             "copy_intelligence": copy_v2_resolution.compiler_copy_intelligence or {},
             "lineage": copy_v2_resolution.to_metadata(
-                consumer_context=copy_v2_handoff_context(
-                    copy_v2_context, copy_v2_resolution
+                # The V2 handoff context (for blueprint re-entry) applies only to a
+                # real V2 binding; BENEFIT_COPY_RENDER_V1 carries its own lineage.
+                consumer_context=(
+                    copy_v2_handoff_context(copy_v2_context, copy_v2_resolution)
+                    if copy_v2_resolution.v2_enabled
+                    else None
                 )
             ),
             "warning": None,
@@ -1233,7 +1241,7 @@ async def compile_workspace_prompt_preview(
         # dialogue; the legacy safe-package getter is maintenance-only.
         safe_package = (
             {}
-            if copy_v2_resolution.v2_enabled
+            if copy_v2_resolution.copy_ready
             else await get_stored_claim_safe_package(product_id) or {}
         )
         compiler_result = compile_ugc_video_prompt(

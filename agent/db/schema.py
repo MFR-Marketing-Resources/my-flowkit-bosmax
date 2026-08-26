@@ -2644,6 +2644,150 @@ CREATE INDEX IF NOT EXISTS idx_product_benefit_review_benefit
 """
 
 
+COPY_RENDER_SCHEMA = """
+-- ==========================================================================
+-- On-Demand Copy Renderer (Round 2)
+-- SYSTEM OWNS STRUCTURE (selection/formula/duration/WPS/cache/idempotency);
+-- AI ONLY STITCHES.  A copy session renders full scripts on demand from Round-1
+-- VERIFIED benefit atoms: ONE bounded provider call per Generate/Regenerate,
+-- lock/regenerate/finalize, immutable render-artifact cache, and a request-scoped
+-- BENEFIT_COPY_RENDER_V1 execution authority.  Additive only; never mutates the
+-- product-global Copy Register V2 binding, and never enqueues production/video.
+-- ==========================================================================
+
+CREATE TABLE IF NOT EXISTS copy_render_session (
+    session_id              TEXT PRIMARY KEY,
+    product_id              TEXT NOT NULL REFERENCES product(id) ON DELETE CASCADE,
+    benefit_id              TEXT NOT NULL,
+    benefit_digest          TEXT NOT NULL,
+    pi_snapshot_id          TEXT,
+    pi_snapshot_version     INTEGER,
+    atom_build_fingerprint  TEXT NOT NULL CHECK(length(atom_build_fingerprint) = 64),
+    lane                    TEXT NOT NULL CHECK(lane IN ('HYBRID','FACELESS')),
+    duration_seconds        INTEGER NOT NULL,
+    target_language         TEXT NOT NULL,
+    wps_mode                TEXT NOT NULL DEFAULT 'SWEET',
+    wps_authority_version   TEXT NOT NULL,
+    wps_authority_digest    TEXT NOT NULL,
+    formula_id              TEXT NOT NULL,
+    formula_version         TEXT NOT NULL,
+    renderer_prompt_version TEXT NOT NULL,
+    safety_policy_version   TEXT NOT NULL,
+    word_budget             INTEGER NOT NULL,
+    target_count            INTEGER NOT NULL CHECK(target_count >= 1),
+    suggestion_batch_size   INTEGER NOT NULL DEFAULT 5,
+    locked_count            INTEGER NOT NULL DEFAULT 0,
+    status                  TEXT NOT NULL DEFAULT 'OPEN'
+                            CHECK(status IN ('OPEN','TARGET_COMPLETE','FINALIZED','STALE','CANCELLED')),
+    lineage_json            TEXT NOT NULL DEFAULT '{}',
+    created_by              TEXT,
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    finalized_at            TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_copy_render_session_product
+    ON copy_render_session(product_id, benefit_id, status);
+
+-- One row per Generate/Regenerate action.  request_id makes the paid action
+-- idempotent; the RESERVED->RUNNING->SHOWN/FAILED lifecycle + recipe_plan_json +
+-- provider timestamps make it crash-recoverable (a stale RESERVED/RUNNING is
+-- reconciled, never auto-repeated).
+CREATE TABLE IF NOT EXISTS copy_render_batch (
+    batch_id                TEXT PRIMARY KEY,
+    session_id              TEXT NOT NULL REFERENCES copy_render_session(session_id) ON DELETE CASCADE,
+    batch_number            INTEGER NOT NULL,
+    request_id              TEXT NOT NULL,
+    action                  TEXT NOT NULL DEFAULT 'GENERATE' CHECK(action IN ('GENERATE','REGENERATE')),
+    status                  TEXT NOT NULL DEFAULT 'RESERVED'
+                            CHECK(status IN ('RESERVED','RUNNING','SHOWN','FAILED')),
+    recipe_plan_json        TEXT NOT NULL DEFAULT '[]',
+    input_digest            TEXT,
+    requested_recipe_count  INTEGER NOT NULL DEFAULT 0,
+    cache_hit_count         INTEGER NOT NULL DEFAULT 0,
+    provider_calls          INTEGER NOT NULL DEFAULT 0,
+    provider                TEXT,
+    model                   TEXT,
+    provider_receipt_json   TEXT NOT NULL DEFAULT '{}',
+    token_usage_json        TEXT NOT NULL DEFAULT '{}',
+    failure_code            TEXT,
+    failure_detail          TEXT,
+    started_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    provider_started_at     TEXT,
+    completed_at            TEXT,
+    UNIQUE(session_id, request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_copy_render_batch_session
+    ON copy_render_batch(session_id, status);
+
+-- Immutable rendered-copy cache.  render_key binds ALL copy-authoring lineage;
+-- a valid entry is reusable across sessions until any lineage element changes.
+CREATE TABLE IF NOT EXISTS copy_render_artifact (
+    artifact_id             TEXT PRIMARY KEY,
+    render_key              TEXT NOT NULL UNIQUE,
+    product_id              TEXT NOT NULL,
+    benefit_id              TEXT NOT NULL,
+    recipe_fingerprint      TEXT NOT NULL,
+    formula_id              TEXT NOT NULL,
+    formula_version         TEXT NOT NULL,
+    duration_seconds        INTEGER NOT NULL,
+    target_language         TEXT NOT NULL,
+    wps_mode                TEXT NOT NULL,
+    wps_authority_version   TEXT NOT NULL,
+    wps_authority_digest    TEXT NOT NULL,
+    renderer_prompt_version TEXT NOT NULL,
+    safety_policy_version   TEXT NOT NULL,
+    stage_json              TEXT NOT NULL DEFAULT '[]',
+    full_copy_text          TEXT NOT NULL,
+    word_count              INTEGER NOT NULL,
+    text_digest             TEXT NOT NULL CHECK(length(text_digest) = 64),
+    source_lineage_json     TEXT NOT NULL DEFAULT '{}',
+    validation_json         TEXT NOT NULL DEFAULT '{}',
+    provider_provenance_json TEXT NOT NULL DEFAULT '{}',
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_copy_render_artifact_lookup
+    ON copy_render_artifact(product_id, benefit_id, recipe_fingerprint);
+
+-- Session presentation/selection.  Every row's recipe_fingerprint AND text_digest
+-- are part of the session's USED history (SHOWN/LOCKED/SKIPPED/FINALIZED) — never
+-- re-shown.  unlock returns LOCKED->SHOWN; only a successful Regenerate marks
+-- unlocked SHOWN->SKIPPED.
+CREATE TABLE IF NOT EXISTS copy_render_candidate (
+    candidate_id            TEXT PRIMARY KEY,
+    session_id              TEXT NOT NULL REFERENCES copy_render_session(session_id) ON DELETE CASCADE,
+    batch_id                TEXT NOT NULL,
+    artifact_id             TEXT NOT NULL,
+    recipe_fingerprint      TEXT NOT NULL,
+    text_digest             TEXT NOT NULL,
+    angle_id                TEXT NOT NULL,
+    hook_id                 TEXT NOT NULL,
+    body_id                 TEXT NOT NULL,
+    cta_id                  TEXT NOT NULL,
+    status                  TEXT NOT NULL DEFAULT 'SHOWN'
+                            CHECK(status IN ('SHOWN','LOCKED','SKIPPED','FINALIZED')),
+    shown_at                TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    locked_at               TEXT,
+    unlocked_at             TEXT,
+    finalized_at            TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_copy_render_candidate_session
+    ON copy_render_candidate(session_id, status);
+
+-- Durable, idempotent candidate->READY-package binding for prepare-selected.
+-- No production/queue side effect.
+CREATE TABLE IF NOT EXISTS copy_render_candidate_package (
+    binding_id              TEXT PRIMARY KEY,
+    session_id              TEXT NOT NULL REFERENCES copy_render_session(session_id) ON DELETE CASCADE,
+    candidate_id            TEXT NOT NULL,
+    artifact_id             TEXT NOT NULL,
+    package_id              TEXT NOT NULL,
+    lineage_json            TEXT NOT NULL DEFAULT '{}',
+    created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    UNIQUE(session_id, candidate_id)
+);
+"""
+
+
 async def init_db():
     """Initialize database with schema and run migrations."""
     async with aiosqlite.connect(str(DB_PATH)) as db:
@@ -6862,6 +7006,12 @@ END;
         # (CREATE ... IF NOT EXISTS); introduces no parallel authority and never
         # mutates Product Intelligence, Copy Register V2, or Storyboard V3.
         await db.executescript(CREATIVE_FACTORY_SCHEMA)
+        await db.commit()
+
+        # On-Demand Copy Renderer (Round 2): copy sessions/batches/candidates,
+        # immutable rendered-copy cache, and request-scoped BENEFIT_COPY_RENDER_V1.
+        # Additive and idempotent; never mutates Copy Register V2 or production.
+        await db.executescript(COPY_RENDER_SCHEMA)
         await db.commit()
 
         # Round 3 P6 per-item copy selection: real production items durably carry
