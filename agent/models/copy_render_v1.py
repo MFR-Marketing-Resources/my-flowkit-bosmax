@@ -28,7 +28,7 @@ DEFAULT_WPS_MODE = "SWEET"
 SUPPORTED_LANES = ("HYBRID", "FACELESS")
 
 # Lineage versions — bump to intentionally invalidate cache + stale sessions.
-RENDERER_PROMPT_VERSION = "copy-render-prompt-v2"  # v2: EXACT SweetWPS dialogue occupancy (not a ceiling)
+RENDERER_PROMPT_VERSION = "copy-render-prompt-v3"  # v3: SweetWPS dialogue occupancy is a CEILING (max), aligned to video_continuity_contract
 SAFETY_POLICY_VERSION = "copy-render-safety-v1"
 
 # Provenance authority label for the request-scoped rendered execution copy.
