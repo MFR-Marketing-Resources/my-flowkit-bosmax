@@ -151,6 +151,37 @@ async def _product_row(product_id: str) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+def _normalize_session_avatar(lane: str, avatar_id: str | None) -> str | None:
+    """Resolve the governed presenter identity for a copy-render session.
+
+    HYBRID uses an explicit Avatar Registry AvatarCode (validated here, never
+    invented — an unknown code fails closed). FACELESS is avatar-exempt and must
+    carry no presenter avatar (keeps Hybrid/Faceless semantics separate).
+
+    Provider-free: this only validates a registry code; it never calls a copy
+    provider and never touches copy text or lineage.
+    """
+    code = str(avatar_id or "").strip()
+    if lane == "FACELESS":
+        if code:
+            raise CopyRenderError(
+                422, "COPY_RENDER_FACELESS_AVATAR_NOT_ALLOWED",
+                "FACELESS is avatar-exempt; do not supply a presenter avatar.",
+                details={"lane": lane},
+            )
+        return None
+    if not code:
+        return None
+    from agent.services import avatar_registry as _avatars
+    try:
+        _avatars.resolve_presenter(code)
+    except ValueError as exc:  # AVATAR_NOT_FOUND — never fall back to a default
+        raise CopyRenderError(
+            422, "COPY_RENDER_AVATAR_INVALID", str(exc), details={"avatar_id": code},
+        ) from exc
+    return code
+
+
 def _resolve_execution_duration_plan(total_seconds: int) -> dict[str, Any]:
     """Map a copy TOTAL duration to the canonical video execution plan via the
     EXISTING model-duration authority (``video_models.resolve_orchestration``): a
@@ -170,11 +201,15 @@ async def create_session(
     *, product_id: str, benefit_id: str, lane: str, target_count: int,
     duration_seconds: int, target_language: str = DEFAULT_TARGET_LANGUAGE,
     formula_id: str | None = None, created_by: str | None = None,
+    avatar_id: str | None = None,
 ) -> dict[str, Any]:
     if lane not in SUPPORTED_LANES:
         raise CopyRenderError(422, "COPY_RENDER_LANE_UNSUPPORTED",
                               "Benefit copy is available only on the HYBRID and FACELESS lanes.",
                               details={"lane": lane, "supported": list(SUPPORTED_LANES)})
+    # Governed presenter identity (optional at creation; required for HYBRID at
+    # prepare-selected). Validated now so an invalid code never reaches materialize.
+    session_avatar = _normalize_session_avatar(lane, avatar_id)
     if target_count < 1:
         raise CopyRenderError(422, "COPY_RENDER_TARGET_INVALID", details={"target_count": target_count})
     if await _product_row(product_id) is None:
@@ -241,6 +276,7 @@ async def create_session(
         "word_budget": int(word_budget), "target_count": target_count,
         "suggestion_batch_size": SUGGESTION_BATCH_SIZE, "locked_count": 0, "status": "OPEN",
         "lineage_json": {"unique_capacity": unique_capacity}, "created_by": created_by,
+        "avatar_id": session_avatar,
     }
     created = await db.create_session(row)
     return await session_view(created["session_id"])
@@ -266,6 +302,9 @@ async def session_view(session_id: str) -> dict[str, Any]:
     return {
         "session_id": session_id, "product_id": s["product_id"], "benefit_id": s["benefit_id"],
         "lane": s["lane"], "duration_seconds": s["duration_seconds"], "target_language": s["target_language"],
+        "avatar_id": s.get("avatar_id"),
+        # HYBRID needs an explicit presenter before packages can materialize.
+        "visual_config_required": bool(s["lane"] != "FACELESS" and not (s.get("avatar_id") or "")),
         "formula_id": s["formula_id"], "word_budget": s["word_budget"],
         "target_count": s["target_count"], "locked_count": s["locked_count"], "status": s["status"],
         "regenerate_enabled": s["status"] == "OPEN",
@@ -275,6 +314,26 @@ async def session_view(session_id: str) -> dict[str, Any]:
         "batches": [_batch_view(b) for b in await db.list_batches(session_id)],
         "finalized_at": s.get("finalized_at"),
     }
+
+
+async def set_visual_config(session_id: str, *, avatar_id: str | None) -> dict[str, Any]:
+    """Bind the governed presenter identity (Avatar Registry AvatarCode) to a
+    copy-render session.
+
+    Visual config ONLY. It is provider-free and never mutates copy text, recipe
+    identity, the copy-provider cache, text uniqueness, or product-truth lineage
+    (avatar_id is excluded from ``_render_key`` and ``_assert_session_current``).
+    Settable at any lifecycle state that can still materialize packages — a
+    FINALIZED session may still receive its presenter before prepare-selected.
+    """
+    s = await db.get_session(session_id)
+    if s is None:
+        raise CopyRenderError(404, "COPY_RENDER_SESSION_NOT_FOUND")
+    if s["status"] == "CANCELLED":
+        raise CopyRenderError(409, "COPY_RENDER_SESSION_CANCELLED", details={"status": s["status"]})
+    normalized = _normalize_session_avatar(s["lane"], avatar_id)
+    await db.update_session(session_id, {"avatar_id": normalized})
+    return await session_view(session_id)
 
 
 def _candidate_view(c: Mapping[str, Any], artifact: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -715,6 +774,23 @@ async def prepare_selected(session_id: str) -> dict[str, Any]:
     from agent.services.workspace_execution_package_service import create_workspace_execution_package
 
     character_presence = fl.FACELESS_CHARACTER_PRESENCE if s["lane"] == "FACELESS" else "VISIBLE_CREATOR"
+    # HYBRID is presenter-led: the canonical compiler correctly requires an explicit
+    # governed Avatar Registry identity for VISIBLE_CREATOR. Resolve the session's
+    # presenter and fail closed with a clear, actionable code BEFORE any package
+    # materialization — never let the deeper compiler surface an opaque
+    # AVATAR_REGISTRY_SELECTION_REQUIRED, and never invent a default presenter.
+    # FACELESS stays avatar-exempt (avatar_id=None).
+    session_avatar = (
+        None if s["lane"] == "FACELESS" else (str(s.get("avatar_id") or "").strip() or None)
+    )
+    if s["lane"] != "FACELESS" and not session_avatar:
+        raise CopyRenderError(
+            422, "COPY_RENDER_HYBRID_AVATAR_REQUIRED",
+            "HYBRID copy render is presenter-led and needs an explicit Avatar Registry "
+            "presenter before packages can materialize. Bind the session visual config "
+            "(avatar_id) first.",
+            details={"session_id": session_id, "lane": s["lane"], "status": "VISUAL_CONFIG_REQUIRED"},
+        )
     # Reconcile the copy TOTAL duration into the canonical video execution plan
     # (SINGLE or governed EXTEND). The existing canonical compiler derives the block
     # chain (16s -> EXTEND 8+8); Copy Render passes only the governed mode + base
@@ -747,6 +823,7 @@ async def prepare_selected(session_id: str) -> dict[str, Any]:
                 manual_override=False,
                 generation_mode=generation_mode,           # SINGLE or governed EXTEND
                 character_presence=character_presence,
+                avatar_id=session_avatar,                  # governed presenter (HYBRID); None for FACELESS
                 source_mode=fl.FACELESS_SOURCE_MODE,       # "HYBRID" product-anchor lineage
                 target_language=s["target_language"],
                 wps_mode=s["wps_mode"],

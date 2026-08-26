@@ -9,6 +9,7 @@ resolves to a governed EXTEND whose block chain the canonical compiler derives
 
 import pytest
 
+from agent.db import copy_render_crud as _crud
 from agent.services import canonical_prompt_compiler as _canon
 from agent.services import copy_render_service as svc
 from tests.copy_render_support import StitchFake, bootstrap_ready_benefit, real_calls
@@ -23,6 +24,11 @@ async def _finalized_session(target: int, duration: int, lane: str = "HYBRID"):
     for cid in shown[:target]:
         await svc.lock_candidate(cid)
     await svc.finalize_session(s["session_id"])
+    # HYBRID is presenter-led: bind a governed avatar so prepare-selected can
+    # materialize (Round 2.2). Written straight to the visual-config column — never
+    # part of copy lineage.
+    if lane != "FACELESS":
+        await _crud.update_session(s["session_id"], {"avatar_id": "BOS_F_ALYA_01"})
     return boot, s
 
 

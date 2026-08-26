@@ -2681,6 +2681,11 @@ CREATE TABLE IF NOT EXISTS copy_render_session (
                             CHECK(status IN ('OPEN','TARGET_COMPLETE','FINALIZED','STALE','CANCELLED')),
     lineage_json            TEXT NOT NULL DEFAULT '{}',
     created_by              TEXT,
+    -- Governed presenter identity (Avatar Registry AvatarCode) for the HYBRID lane.
+    -- A visual setting only: NEVER part of the copy render_key / lineage, so
+    -- setting or changing it never stales or regenerates copy text. NULL for
+    -- FACELESS (avatar-exempt) and for HYBRID sessions before a presenter is chosen.
+    avatar_id               TEXT,
     created_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     finalized_at            TEXT
@@ -2827,6 +2832,13 @@ async def init_db():
                     await db.execute(
                         f"ALTER TABLE provider_execution_certification ADD COLUMN {_column} {_definition}"
                     )
+        # Migration: governed presenter identity on the pre-existing
+        # copy_render_session table (HYBRID avatar handoff). Visual setting only —
+        # never part of the copy render_key, so it never stales copy.
+        cursor = await db.execute("PRAGMA table_info(copy_render_session)")
+        _crs_cols = {row[1] for row in await cursor.fetchall()}
+        if _crs_cols and "avatar_id" not in _crs_cols:
+            await db.execute("ALTER TABLE copy_render_session ADD COLUMN avatar_id TEXT")
         # Migration: add slug column to character table + backfill
         cursor = await db.execute("PRAGMA table_info(character)")
         columns = {row[1] for row in await cursor.fetchall()}

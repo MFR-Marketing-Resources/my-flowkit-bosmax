@@ -180,6 +180,9 @@ async def test_finalize_requires_target_and_prepare_selected_contract(monkeypatc
                 "blockers": ["VISUALS_DEFAULT"], "prompt_fingerprint": "fp"}
 
     monkeypatch.setattr(wep, "create_workspace_execution_package", _stub)
+    # HYBRID is presenter-led (Round 2.2): bind a governed avatar so packages can
+    # materialize. Visual config only — never part of copy lineage.
+    await crud.update_session(s["session_id"], {"avatar_id": "BOS_F_ALYA_01"})
     prep = await svc.prepare_selected(s["session_id"])
     assert prep["enqueued"] is False and prep["package_count"] == 2
     assert all(c["lane"] == "HYBRID" and "benefit_copy_render" in c for c in seen)
