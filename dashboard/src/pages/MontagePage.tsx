@@ -38,6 +38,7 @@ import ResultsSidebar from "../components/workspace/ResultsSidebar";
 import StaffIdentityBar from "../components/StaffIdentityBar";
 import CopyArchitectureV2LaneCard from "../components/copywriting/CopyArchitectureV2LaneCard";
 import CopywritingSourceSelector from "../components/copywriting/CopywritingSourceSelector";
+import BenefitCopySourceSection from "../components/copywriting/BenefitCopySourceSection";
 import SearchableProductSelect from "../components/workspace/SearchableProductSelect";
 import type { Product } from "../types";
 import { useProductCatalog } from "../hooks/useProductCatalog";
@@ -117,6 +118,11 @@ export default function MontagePage() {
 	const [error, setError] = useState<string | null>(null);
 	const [v4Open, setV4Open] = useState<Record<number, boolean>>({});
 	const [v2CopyReady, setV2CopyReady] = useState(false);
+	// Round 3: neutral copy-source selection (Montage). BENEFIT_RENDER renders the
+	// presenter-free FACELESS-lane rendered copy — the product mascot speaks it.
+	// This is NOT the Copy Register V2 readiness signal.
+	const [selectedCopySource, setSelectedCopySource] = useState<"BENEFIT_RENDER" | "COPY_V2">("BENEFIT_RENDER");
+	const [benefitRenderReady, setBenefitRenderReady] = useState(false);
 	const sessionResults = useMemo(
 		() => collectMontageSessionResults(run, assembleResult),
 		[run, assembleResult],
@@ -189,7 +195,11 @@ export default function MontagePage() {
 		run?.scenes?.filter((s) => s.workspace_execution_package_id).length ?? 0;
 
 	const sProduct: WorkflowStepStatus = selectedProduct ? "done" : "active";
-	const sCopy: WorkflowStepStatus = !selectedProduct ? "upcoming" : v2CopyReady ? "done" : "active";
+	const sCopy: WorkflowStepStatus = !selectedProduct
+		? "upcoming"
+		: (selectedCopySource === "BENEFIT_RENDER" ? benefitRenderReady : v2CopyReady)
+			? "done"
+			: "active";
 	const sCreative: WorkflowStepStatus =
 		selectedProduct && settingsAvailable
 			? "done"
@@ -562,26 +572,55 @@ export default function MontagePage() {
 						status={sCopy}
 						open={v4IsOpen(2, sCopy)}
 						onToggleOpen={() => v4Toggle(2, v4IsOpen(2, sCopy))}
-						summary={v2CopyReady ? "Copy selected" : "Copywriting required"}
-						helper="Choose existing approved copy from Copy Register or generate with AI Copy Assistant."
+						summary={(selectedCopySource === "BENEFIT_RENDER" ? benefitRenderReady : v2CopyReady) ? "Copy selected" : "Copywriting required"}
+						helper="Generate benefit-driven scripts on demand, or use existing approved Copy Register copy."
 					>
 						<div className="space-y-3">
-							<CopywritingSourceSelector
-								productId={selectedProduct?.id}
-								productName={selectedProduct?.raw_product_title}
-								lane="MONTAGE"
-								onCopySelected={() => setPlan(null)}
-							/>
-							<CopyArchitectureV2LaneCard
-								lane="MONTAGE"
-								productId={selectedProduct?.id}
-								execution={
-									run?.config?.copy_architecture_v2 as
-									| Record<string, unknown>
-									| undefined
-								}
-								onReadyChange={setV2CopyReady}
-							/>
+							<div className="flex items-center gap-2" data-testid="copy-source-toggle">
+								<button
+									type="button"
+									data-testid="copy-source-benefit-render"
+									onClick={() => setSelectedCopySource("BENEFIT_RENDER")}
+									className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${selectedCopySource === "BENEFIT_RENDER" ? "border border-emerald-500/40 bg-emerald-600/20 text-emerald-100" : "border border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
+								>
+									Benefit On-Demand Copy
+								</button>
+								<button
+									type="button"
+									data-testid="copy-source-existing-v2"
+									onClick={() => setSelectedCopySource("COPY_V2")}
+									className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${selectedCopySource === "COPY_V2" ? "border border-blue-500/40 bg-blue-600/20 text-blue-100" : "border border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200"}`}
+								>
+									Existing Approved Copy V2
+								</button>
+							</div>
+							{selectedCopySource === "BENEFIT_RENDER" ? (
+								<BenefitCopySourceSection
+									productId={selectedProduct?.id}
+									lane="FACELESS"
+									durationSeconds={finalDuration}
+									onReadyChange={(ready) => { setBenefitRenderReady(ready); if (ready) setPlan(null); }}
+								/>
+							) : (
+								<>
+									<CopywritingSourceSelector
+										productId={selectedProduct?.id}
+										productName={selectedProduct?.raw_product_title}
+										lane="MONTAGE"
+										onCopySelected={() => setPlan(null)}
+									/>
+									<CopyArchitectureV2LaneCard
+										lane="MONTAGE"
+										productId={selectedProduct?.id}
+										execution={
+											run?.config?.copy_architecture_v2 as
+											| Record<string, unknown>
+											| undefined
+										}
+										onReadyChange={setV2CopyReady}
+									/>
+								</>
+							)}
 						</div>
 					</WorkflowStep>
 

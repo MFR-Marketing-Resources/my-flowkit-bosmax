@@ -1931,3 +1931,13 @@ domains:
       - dashboard/src/components/copywriting/OnDemandCopyRendererPanel.test.tsx
       - dashboard/src/components/copywriting/BenefitCopySourceSection.tsx
       - docs/architecture/BENEFIT_ON_DEMAND_COPY_RENDERER_V1.md
+      # Creative Execution Recipe + Auto Visual Variation (Round 3)
+      - agent/services/auto_visual_variation_service.py
+      - agent/models/creative_execution_recipe_v1.py
+      - agent/db/creative_execution_recipe_crud.py
+      - agent/services/creative_execution_recipe_service.py
+      - agent/api/creative_execution_recipe.py
+      - tests/unit/test_creative_execution_recipe.py
+      - tests/unit/test_p6_benefit_copy_supply.py
+      - docs/architecture/BENEFIT_CENTRIC_CREATIVE_FACTORY_FINAL_V1.md
+      - dashboard/src/api/creativeExecutionRecipe.ts

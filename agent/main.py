@@ -70,6 +70,7 @@ from agent.api.prompt_preview import router as prompt_preview_router
 from agent.api.execution_approval import router as execution_approval_router
 from agent.api.creative_factory import router as creative_factory_router
 from agent.api.copy_render import router as copy_render_router
+from agent.api.creative_execution_recipe import router as creative_execution_recipe_router
 from agent.services.execution_approval_service import (
     ExecutionApprovalError as _ExecutionApprovalError,
 )
@@ -466,6 +467,7 @@ app.include_router(prompt_preview_router, prefix="/api")
 app.include_router(execution_approval_router, prefix="/api")
 app.include_router(creative_factory_router, prefix="/api")
 app.include_router(copy_render_router, prefix="/api")
+app.include_router(creative_execution_recipe_router, prefix="/api")
 app.include_router(asset_registry_router, prefix="/api")
 app.include_router(creative_assets_router, prefix="/api")
 app.include_router(creative_asset_eligibility_router, prefix="/api")

@@ -142,6 +142,11 @@ class CreativePoolSelection(BaseModel):
     scene_asset_ids: list[str] = Field(default_factory=list, max_length=400)
     style_asset_ids: list[str] = Field(default_factory=list, max_length=200)
     layout_ids: list[str] = Field(default_factory=list, max_length=200)
+    # Round 3: finalized request-scoped BENEFIT_COPY_RENDER_V1 video copy authority,
+    # keyed by product_id (or "*" for the whole scope) -> finalized candidate ids.
+    # When present it supplies the video copy instead of the product-global V2
+    # authority; empty = unchanged (V2 default). Never a legacy CopySet pool.
+    benefit_copy_render: dict[str, list[str]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _legacy_copy_pools_are_archived(self) -> "CreativePoolSelection":
