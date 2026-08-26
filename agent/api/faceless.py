@@ -478,6 +478,23 @@ async def faceless_profile_certification(
                     "profile_cost_ceiling"
                 ),
             )
+            # Bind the SAME server-derived provider execution profile the paid
+            # dispatch derives (make_video._server_derived_video_profiles) so the
+            # self-approved review envelope carries the identical
+            # provider_profile_digest the dispatch envelope will. Without it the
+            # review envelope omitted provider_profile_digest while dispatch kept
+            # it, so the async dispatch boundary failed DISPATCH_NOT_APPROVED
+            # (pre-provider, zero credit). The tuple mirrors this fixed T2V cert
+            # dispatch (T2V/T2V, veo_3_1_lite, 8s, 9:16, no references, 1 output).
+            _, _cert_provider_profile = _mv._server_derived_video_profiles(
+                mode="T2V",
+                source_mode="T2V",
+                model="veo_3_1_lite",
+                duration_s=8,
+                aspect="9:16",
+                ref_count=0,
+                num_videos=1,
+            )
             snapshot = await _eas.create_review_snapshot(
                 surface="FACELESS",
                 logical_mode="T2V",
@@ -490,6 +507,7 @@ async def faceless_profile_certification(
                 count=1,
                 execution_identity=execution_identity,
                 execution_profile_context=profile_context,
+                provider_profile=_cert_provider_profile,
                 created_by=owner.staff_id,
             )
             snapshot = await _eas.approve_snapshot(
