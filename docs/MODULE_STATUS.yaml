@@ -809,6 +809,12 @@ domains:
       - agent/services/flow_client.py
       - agent/services/agent_video.py
       - agent/services/make_video.py
+      # Round 3 shared rendered-output BEHAVIORAL acceptance (HYBRID/FACELESS/MONTAGE):
+      # inspects the RENDERED clip against each lane's owner property set; an UNPROVEN
+      # property never silently becomes PASS — the surface routes to behavioral review.
+      - agent/services/rendered_output_acceptance_service.py
+      - tests/unit/test_rendered_output_acceptance.py
+      - tests/unit/test_round3_result_lane_isolation.py
       - agent/models.json
       - agent/sdk/services/operations.py
       - tests/unit/test_agent_video.py

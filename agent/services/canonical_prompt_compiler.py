@@ -1785,7 +1785,7 @@ def _section_3_continuity(
             f"Use the uploaded product image as the exact visual reference for {pname}: match its colour, label, cap, shape, material, and scale precisely in every shot."
         )
         lines.append(
-            "Faceless continuity law: only hands, forearms, and partial torso may enter the frame. Keep the head and face completely outside the frame for the entire clip."
+            "Faceless continuity law: visible human presence is mandatory — hands, forearms, and partial torso must enter the frame and physically handle the product across the clip; a product-only shot with no visible hands is invalid. Keep the head and face completely outside the frame for the entire clip."
         )
         profile_cue = _clean((faceless_actor_profile or {}).get("cue"))
         if profile_cue:

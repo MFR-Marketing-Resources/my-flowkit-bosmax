@@ -131,14 +131,18 @@ def resolve_faceless_video_configuration(
 
 FACELESS_VISUAL_LAW = (
     "VISUAL LAW (FACELESS): No visible human face and no AI presenter face. "
-    "Hands, arms, and torso may appear with the head and face kept out of frame. "
-    "The person may hold, interact with, demonstrate, or gently move the product. "
+    "A real human presence IS REQUIRED: visible hands, forearms, and partial torso "
+    "must be on camera, with the head and face kept out of frame. "
+    "The person must actively hold, interact with, demonstrate, or move the product "
+    "with their hands — a product-only, hands-absent clip is NOT a valid Faceless sales video. "
     "Product identity and packaging remain locked and authoritative. "
     "No invented claims, endorsements, or medical authority."
 )
 FACELESS_PROVIDER_VISUAL_LAW = (
-    "VISUAL LAW (FACELESS): only hands, forearms, and partial torso may enter the frame. "
+    "VISUAL LAW (FACELESS): visible human presence is MANDATORY — hands, forearms, and "
+    "partial torso must enter the frame and physically handle the product. "
     "Keep the head and face completely outside the frame for the entire clip. "
+    "A product-only clip with no visible hands is a FAILED Faceless render. "
     "Product identity, packaging, and scale remain locked and authoritative."
 )
 

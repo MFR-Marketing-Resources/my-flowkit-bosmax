@@ -3462,6 +3462,51 @@ async def _record_artifacts(job, mode, artifacts):
             # product as READY without explicit fidelity evidence.
             job["status"] = "PRODUCT_FIDELITY_REVIEW_REQUIRED"
 
+    # Round 3 shared BEHAVIORAL acceptance: an MP4 existing is NOT success. For the
+    # HYBRID / FACELESS / MONTAGE surfaces, inspect the RENDERED media against the
+    # lane behavioral contract (presenter/hands/mascot visible, spoken dialogue,
+    # lip-sync, non-static, not BGM-only). Provider-free here: vision/speech provers
+    # are absent, so those properties are UNPROVEN and the job routes to behavioral
+    # review rather than a silent success — UNPROVEN never becomes PASS. (Round 4
+    # injects vision/speech provers to prove a live PASS.)
+    if mode in _VIDEO_MODES and artifacts:
+        import asyncio as _asyncio
+
+        try:
+            from agent.services import rendered_output_acceptance_service as _roa
+
+            _surface = _roa.normalize_surface(
+                (provenance or {}).get("surface_lane")
+                or job.get("surface_lane")
+                or (job.get("product_visual_custody") or {}).get("source_mode")
+            )
+            if _surface in ("HYBRID", "FACELESS", "MONTAGE"):
+                _pf = (job.get("product_fidelity_qc") or {}).get("status")
+                _accepts: list[dict] = []
+                for artifact in artifacts:
+                    _mp = artifact.get("local_path") or artifact.get("path") or ""
+                    _acc = await _asyncio.to_thread(
+                        _roa.evaluate_surface_acceptance, _surface, str(_mp),
+                        product_fidelity_status=_pf,
+                    )
+                    _accepts.append(_acc.to_dict())
+                job["behavioral_acceptance"] = _accepts
+                if all(a["status"] == _roa.ACCEPT_PASS for a in _accepts):
+                    _bstatus = _roa.ACCEPT_PASS
+                elif any(a["status"] == _roa.ACCEPT_FAIL for a in _accepts):
+                    _bstatus = _roa.ACCEPT_FAIL
+                else:
+                    _bstatus = _roa.ACCEPT_REVIEW
+                job["behavioral_acceptance_status"] = _bstatus
+                job["behavioral_acceptance_surface"] = _surface
+                # Never let an unproven/failed behavioral clip stand as a plain DONE.
+                if _bstatus != _roa.ACCEPT_PASS and job.get("status") == "DONE":
+                    job["status"] = "BEHAVIORAL_REVIEW_REQUIRED"
+        except Exception as exc:  # noqa: BLE001 - acceptance must never crash delivery; fail to review
+            job["behavioral_acceptance_error"] = str(exc)
+            if job.get("status") == "DONE":
+                job["status"] = "BEHAVIORAL_REVIEW_REQUIRED"
+
 
 def _image_provider_operation_reference(response: dict) -> dict[str, str | None]:
     """Extract provider correlation evidence without inventing an operation id.
