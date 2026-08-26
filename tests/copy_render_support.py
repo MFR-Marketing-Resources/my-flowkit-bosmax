@@ -87,9 +87,12 @@ class StitchFake:
         self.last_kwargs = dict(kwargs)
         assert kwargs.get("allow_fallback") is False
         assert kwargs.get("lane") == "structure"
-        m = re.search(r"REQUIRED EXACT total words per complete script:\s*(\d+)", user)
-        required_total = int(m.group(1)) if m else 0
-        target = self._word_override if self._word_override is not None else required_total
+        m = re.search(r"Maximum total words per complete script:\s*(\d+)", user)
+        ceiling = int(m.group(1)) if m else 0
+        # Default: author right AT the ceiling (valid — a ceiling-length script is
+        # allowed). Tests pass word_override to emit shorter (valid) or over-max
+        # (rejected) copy against the ceiling.
+        target = self._word_override if self._word_override is not None else ceiling
         slots = re.findall(
             r"- (S\d+): angle=\[(.*?)\] hook=\[(.*?)\] body=\[(.*?)\] cta=\[(.*?)\]", user)
         suggestions = []
@@ -105,8 +108,8 @@ class StitchFake:
             for i, key in enumerate(self.stages):
                 out_key = "WRONG_STAGE" if (self._corrupt_stage and i == 0) else key
                 stages.append({"stage_key": out_key, "text": role.get(key, f"{slot} {key}")})
-            # Fit to the EXACT required occupancy (skip when deliberately corrupting
-            # the stage key — that failure is asserted before the word count).
+            # Fit to the requested total (default = the ceiling; skip when deliberately
+            # corrupting the stage key — that failure is asserted before the word count).
             if target and not self._corrupt_stage:
                 stages = self._fit_exact(stages, target)
             suggestions.append({"slot": slot, "stages": stages})
