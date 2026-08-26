@@ -2290,6 +2290,14 @@ async def _run_generate_task(job_id: str, runner, *args) -> None:
     """Run a task while preserving the pre-provider certification state machine."""
     job = _JOBS.get(job_id)
     client = get_flow_client()
+    # Detach any operation-lease id inherited via asyncio context copy from the
+    # dispatching request (whose lease may already be released, e.g. faceless
+    # profile certification). This task always acquires+activates its OWN lease
+    # below, so it must never rely on an inherited one. Guarded so injected test
+    # doubles without the method are unaffected.
+    _detach = getattr(client, "detach_inherited_operation_lease", None)
+    if callable(_detach):
+        _detach()
     lease = None
     runner_started = False
     lease_methods = (

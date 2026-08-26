@@ -556,6 +556,12 @@ class FlowClient:
         finally:
             self._active_operation_lease_id.reset(token)
 
+    def detach_inherited_operation_lease(self) -> None:
+        """Clear any operation-lease id inherited via asyncio context copy from a
+        parent request (whose lease may already be released), so this context
+        establishes and pins its OWN lease from a clean slate."""
+        self._active_operation_lease_id.set("")
+
     def bind_operation_lease(self, lease, **bindings) -> dict:
         """Bind immutable tab/project/build facts to an acquired lease."""
         lease_id = str(
