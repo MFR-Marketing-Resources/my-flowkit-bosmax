@@ -85,6 +85,36 @@ def test_scene_scaffold_prompt_forbids_provider_product_pixels():
     assert "no visible face" in prompt.lower()
 
 
+def test_presenter_visible_scaffold_keeps_presenter_and_forbids_only_product():
+    # Exact-product HYBRID reuses the SAME scaffold builder as Faceless, but the
+    # on-camera presenter (face + lip-synced dialogue) is preserved; only the
+    # product pixels are withheld for the deterministic compositor.
+    plan = {
+        "selected_execution_route": exact.EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,
+        "choreography": {"choreography_id": exact.PRODUCT_PRESENT_TO_CAMERA},
+    }
+    prompt = exact.build_exact_scene_scaffold_prompt(
+        "=== PRODUCT TRUTH LOCK ===\n"
+        "Show the exact product label and preserve the real product.\n"
+        "=== DIALOGUE ===\n"
+        "Presenter says: rasa lega dalam lima minit.",
+        plan,
+        scene_context="Bright studio, presenter to camera.",
+        presenter_visible=True,
+    )
+
+    # Provider still cannot render the product pixels.
+    assert "SCENE-ONLY PLATE" in prompt
+    assert "provider output is an internal plate" in prompt
+    assert "preserve the real product" not in prompt.lower()
+    # HYBRID keeps the presenter — the FACELESS face-ban is NOT applied.
+    assert "no visible face" not in prompt.lower()
+    assert "presenter" in prompt.lower()
+    assert "lip-synced" in prompt.lower()
+    # The spoken dialogue survives the scene-only strip (lip-sync source intact).
+    assert "rasa lega dalam lima minit" in prompt
+
+
 def _video_plan_for_test():
     return {
         "selected_execution_route": exact.EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,

@@ -57,6 +57,7 @@ from agent.services.product_visual_custody_service import (
 from agent.services.exact_product_video_compositor_service import (
     EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,
     ExactProductVideoCompositeError,
+    build_exact_product_video_plan,
     build_exact_scene_scaffold_prompt,
 )
 
@@ -561,15 +562,46 @@ async def create_workspace_execution_package(
         and exact_product_video.get("selected_execution_route")
         == EXACT_PRODUCT_DETERMINISTIC_COMPOSITE
     )
-    if exact_faceless_route:
+    # Exact-product HYBRID parity: a presenter-visible (HYBRID) lane whose product
+    # is exact-required runs the SAME deterministic composite route as Faceless —
+    # the provider renders presenter + action + background as the scene scaffold
+    # and the exact product is inserted by the compositor.  Unlike Faceless, the
+    # on-camera presenter is preserved (only the product is withheld).  Gate
+    # POSITIVELY on the HYBRID source lane so Faceless (own faceless_resolution),
+    # Montage (own resolver), IMG, and non-exact HYBRID are never affected.
+    exact_hybrid_route = False
+    if (
+        not exact_faceless_route
+        and normalized_mode == "F2V"
+        and str(resolved_source_mode or "").strip().upper() == "HYBRID"
+    ):
+        _exact_hybrid_product = await crud.get_product(product_id)
+        if _exact_hybrid_product and exact_product_required(_exact_hybrid_product):
+            try:
+                exact_product_video = build_exact_product_video_plan(
+                    _exact_hybrid_product,
+                    (faceless_resolution or {}).get("choreography"),
+                )
+            except ExactProductVideoCompositeError as exc:
+                raise CopyBindingError(
+                    exc.code, status_code=exc.status_code, detail=exc.message
+                ) from exc
+            exact_hybrid_route = bool(
+                isinstance(exact_product_video, dict)
+                and exact_product_video.get("selected_execution_route")
+                == EXACT_PRODUCT_DETERMINISTIC_COMPOSITE
+            )
+    if exact_faceless_route or exact_hybrid_route:
         # The shared compiler remains the source of copy/shot lineage, but the
         # provider-facing text is explicitly rewritten to scene-scaffold-only.
-        # Exact product pixels are forbidden from the provider lane.
+        # Exact product pixels are forbidden from the provider lane.  HYBRID keeps
+        # the presenter visible and lip-synced; Faceless suppresses the face.
         try:
             scaffold_prompt = build_exact_scene_scaffold_prompt(
                 compiler_result.get("final_compiled_prompt_text") or "",
                 exact_product_video,
                 scene_context=scene_context_override or "",
+                presenter_visible=exact_hybrid_route,
             )
         except ExactProductVideoCompositeError as exc:
             raise CopyBindingError(exc.code, status_code=exc.status_code, detail=exc.message) from exc
@@ -587,7 +619,11 @@ async def create_workspace_execution_package(
                     block[key] = scaffold_prompt
         compiler_result["prompt_fingerprint"] = _fingerprint(scaffold_prompt)
         compiler_result.setdefault("source_of_truth_notes", []).append(
-            "Exact Faceless route: provider receives scene scaffold only; final product pixels are inserted from Product Truth Lock."
+            "Exact "
+            + ("HYBRID" if exact_hybrid_route else "Faceless")
+            + " route: provider receives scene scaffold only (presenter preserved"
+            + ("" if exact_hybrid_route else "; face suppressed")
+            + "); final product pixels are inserted from Product Truth Lock."
         )
     prompt_fingerprint = compiler_result["prompt_fingerprint"]
     total_duration_seconds = int(compiler_result["total_duration_seconds"])

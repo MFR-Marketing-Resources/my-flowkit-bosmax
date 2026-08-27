@@ -2190,6 +2190,9 @@ async def generate(body: GenerateRequest):
             OfficialProviderReferenceError,
             prepare_official_provider_reference,
         )
+        from agent.services import (
+            exact_product_video_compositor_service as _mv_exact,
+        )
 
         product_row = await crud.get_product(str(body.product_id))
         official_asset = (
@@ -2217,14 +2220,23 @@ async def generate(body: GenerateRequest):
                     raise ProductVisualCustodyError(
                         _oe.code, _oe.message, details=_oe.details
                     ) from _oe
-            product_visual_custody = build_product_visual_custody_receipt(
-                product_row,
-                official_asset,
-                mode=mode,
-                source_mode=effective_source_mode,
-                prompt=body.prompt,
-                prepared_reference=_prepared_official_reference,
-                provider_route=_mv.hybrid_reference_omni10_provider_route(
+            # Exact-product routing parity with Faceless: an exact-product video
+            # (HYBRID included) must run the deterministic composite route — the
+            # provider renders a presenter/action/background scene scaffold and the
+            # canonical product pixels are inserted by the shared exact-product
+            # compositor. The generative reference route is forbidden and would be
+            # (correctly) rejected by validate_pre_dispatch_route. Non-exact HYBRID
+            # keeps its generative reference route unchanged.
+            _exact_hybrid_route = bool(
+                _package_exact_route or exact_product_required(product_row)
+            )
+            if _exact_hybrid_route:
+                _hybrid_provider_route = "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+                _hybrid_generation_type = (
+                    "scene_video_scaffold_then_deterministic_composite"
+                )
+            else:
+                _hybrid_provider_route = _mv.hybrid_reference_omni10_provider_route(
                     mode,
                     effective_source_mode,
                     body.model,
@@ -2233,10 +2245,33 @@ async def generate(body: GenerateRequest):
                     ref_count=1,
                     num_videos=body.count,
                     surface_lane=effective_surface_lane,
-                ),
-                generation_type="reference_frame_2_video",
+                )
+                _hybrid_generation_type = "reference_frame_2_video"
+            product_visual_custody = build_product_visual_custody_receipt(
+                product_row,
+                official_asset,
+                mode=mode,
+                source_mode=effective_source_mode,
+                prompt=body.prompt,
+                prepared_reference=_prepared_official_reference,
+                provider_route=_hybrid_provider_route,
+                generation_type=_hybrid_generation_type,
                 execution_identity=body.execution_identity,
             )
+            if _exact_hybrid_route:
+                # No provider product reference is sent on the exact composite route.
+                product_visual_custody["provider_product_reference_forbidden"] = True
+                # Attach the deterministic compositor plan (canonical Product Truth
+                # geometry + rigid placement) so make_video's SHARED exact-product
+                # compositor has its plan — the same compositor Faceless uses, never
+                # a second one. The plan is deterministic from the approved Product
+                # Truth Lock: no credit, no provider call, no upload.
+                try:
+                    product_visual_custody["exact_product_video"] = (
+                        _mv_exact.build_exact_product_video_plan(product_row, None)
+                    )
+                except _mv_exact.ExactProductVideoCompositeError as _pe:
+                    raise ProductVisualCustodyError(_pe.code, _pe.message) from _pe
             validate_pre_dispatch_route(
                 product_visual_custody,
                 provider_route=product_visual_custody["provider_route"],
@@ -2244,10 +2279,15 @@ async def generate(body: GenerateRequest):
             )
             if (
                 exact_product_required(product_row)
+                and not _exact_hybrid_route
                 and not product_visual_custody["prompt_lock"].get(
                     "all_required_markers_present"
                 )
             ):
+                # The exact composite route (scaffold prompt) deliberately omits the
+                # Product Truth Lock section — the product is composited, not
+                # prompt-described — so this reference-route marker check does not
+                # apply to it (guarded by `not _exact_hybrid_route`).
                 raise ProductVisualCustodyError(
                     "ERR_PRODUCT_PROMPT_LOCK_INCOMPLETE",
                     "Exact-product video prompt is missing one or more required Product Lock sections.",
@@ -2335,7 +2375,18 @@ async def generate(body: GenerateRequest):
             if media_id and media_id not in resolved_ids:
                 resolved_ids.append(media_id)
 
-    if _package_exact_route:
+    # Any exact deterministic composite custody — a Faceless/exact package
+    # (``_package_exact_route``) OR an exact-product HYBRID whose custody this
+    # request just built with the composite route — dispatches with NO provider
+    # product reference. Keying off the custody's provider_route (not only the
+    # package flag) is what routes an exact-product HYBRID here instead of into
+    # the generative reference-transport branch below.
+    _exact_dispatch_route = _package_exact_route or (
+        isinstance(product_visual_custody, dict)
+        and product_visual_custody.get("provider_route")
+        == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+    )
+    if _exact_dispatch_route:
         if not isinstance(product_visual_custody, dict):
             raise HTTPException(
                 status_code=422,
@@ -2344,6 +2395,11 @@ async def generate(body: GenerateRequest):
                     "message": "Exact deterministic composite package has no custody receipt.",
                 },
             )
+        # The exact product is composited from Product Truth, never referenced or
+        # generated by the provider. Drop any resolved reference ids so make_video
+        # runs the T2V scene scaffold (parity with the exact Faceless lane, which
+        # dispatches zero provider references).
+        resolved_ids = []
         from agent.services.product_visual_custody_service import (
             ProductVisualCustodyError,
             validate_pre_dispatch_route,
