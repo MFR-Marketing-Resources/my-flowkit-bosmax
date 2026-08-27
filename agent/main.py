@@ -225,14 +225,6 @@ async def lifespan(app: FastAPI):
     except Exception as _p6_e:  # pragma: no cover
         logger.warning("P6 creative production recovery skipped: %s", _p6_e)
     try:
-        from agent.services import make_video as _make_video_svc
-
-        _single_recovery = await _make_video_svc.recover_durable_single_jobs()
-        if _single_recovery.get("candidates"):
-            logger.info("SINGLE generation recovery: %s", _single_recovery)
-    except Exception as _single_e:  # pragma: no cover — boot must remain available
-        logger.warning("SINGLE generation recovery skipped: %s", _single_e)
-    try:
         from agent.services import bulk_generation_service as _bulk_svc
 
         _rec = await _bulk_svc.recover_stuck_bulk_runs()
@@ -351,6 +343,35 @@ async def lifespan(app: FastAPI):
     from agent.services.montage_run_service import montage_scheduler_loop
     montage_scheduler_task = asyncio.create_task(montage_scheduler_loop())
 
+    async def _resume_durable_single_jobs_after_bridge_ready():
+        # Provider-backed SINGLE recovery cannot run before run_ws_server(): the
+        # exact extension installation has no transport at that point. Wait for
+        # one live bridge, then execute the submit-free sweep once. Local-only
+        # artifact repair is intentionally delayed by the same bounded interval.
+        client = get_flow_client()
+        for _attempt in range(120):
+            if client.connected:
+                break
+            await asyncio.sleep(0.5)
+        else:
+            logger.warning(
+                "SINGLE generation recovery deferred: extension bridge did not "
+                "connect within 60 seconds"
+            )
+            return
+        try:
+            from agent.services import make_video as _make_video_svc
+
+            single_recovery = await _make_video_svc.recover_durable_single_jobs()
+            if single_recovery.get("candidates"):
+                logger.info("SINGLE generation recovery: %s", single_recovery)
+        except Exception as single_e:  # pragma: no cover — boot remains available
+            logger.warning("SINGLE generation recovery skipped: %s", single_e)
+
+    single_recovery_task = asyncio.create_task(
+        _resume_durable_single_jobs_after_bridge_ready()
+    )
+
     async def _resume_durable_video_jobs():
         # Restart recovery: RESUME (poll only) any in-flight authorized full-video
         # job — never a fresh credit submit. Repair already-retrieved final delivery
@@ -396,6 +417,7 @@ async def lifespan(app: FastAPI):
     if p6_scheduler_task is not None:
         p6_scheduler_task.cancel()
     montage_scheduler_task.cancel()
+    single_recovery_task.cancel()
     await close_db()
     logger.info("Flow Kit stopped")
 

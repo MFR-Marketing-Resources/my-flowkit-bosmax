@@ -1996,11 +1996,53 @@ async def reconcile_durable_single_job(
 
         handle_kind, handles, identity_error = _durable_provider_handles(row, state)
         if not handle_kind and identity_error == "DURABLE_PROVIDER_IDENTITY_INSUFFICIENT":
-            history_recovery = await _recover_provider_media_from_project_history(
-                row,
-                state,
-                client,
-            )
+            history_lookup_lease = None
+            try:
+                if isinstance(client, FlowClient):
+                    persisted_history_lease = (
+                        state.get("bridge_lease")
+                        if isinstance(state.get("bridge_lease"), dict)
+                        else {}
+                    )
+                    persisted_installation_id = str(
+                        persisted_history_lease.get("installation_id") or ""
+                    ).strip()
+                    if not persisted_installation_id:
+                        raise ConnectionError(
+                            "DURABLE_BRIDGE_LEASE_IDENTITY_REQUIRED:installation_id"
+                        )
+                    history_lookup_lease = client.acquire_operation_lease(
+                        installation_id=persisted_installation_id
+                    )
+                    with client.activate_operation_lease(history_lookup_lease):
+                        history_recovery = await (
+                            _recover_provider_media_from_project_history(
+                                row,
+                                state,
+                                client,
+                            )
+                        )
+                else:
+                    history_recovery = await (
+                        _recover_provider_media_from_project_history(
+                            row,
+                            state,
+                            client,
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001 — preserve exact lookup blocker
+                history_recovery = {
+                    "matched": False,
+                    "error": "PROJECT_HISTORY_LOOKUP_FAILED",
+                    "detail": str(exc)[:400],
+                    "provider_calls": 0,
+                }
+            finally:
+                if history_lookup_lease is not None:
+                    try:
+                        client.release_operation_lease(history_lookup_lease)
+                    except Exception:  # noqa: BLE001 — lookup remains fail-closed
+                        pass
             job["provider_identity_recovery"] = history_recovery
             job["provider_reconciliation"]["identity_lookup_provider_calls"] = int(
                 history_recovery.get("provider_calls") or 0
