@@ -3211,17 +3211,57 @@ async def hybrid_profile_certification(
             },
         ) from exc
 
+    # --- ensure an official Flow project editor is open BEFORE the provider-free
+    #     bridge selection. bind_flow_session VERIFIES a project editor tab; it
+    #     never opens one, and a freshly-authenticated bridge tab legitimately
+    #     starts on the Flow root (live: manual jobs died NO_OPEN_EDITOR the same
+    #     way). Create + open one explicitly in the bridge's OWN Google account
+    #     (no cross-account mismatch) and pin the bind to it. Zero-credit. ---
+    import asyncio  # module keeps asyncio function-local; import in this scope
+    _cert_project_id = None
+    _provision_diag: dict = {"attempted": False}
+    try:
+        _pre = await client.harvest_video_urls()
+        _pre_inner = _pre.get("result", _pre) if isinstance(_pre, dict) else {}
+        _pre_diag = _pre_inner.get("diag", _pre_inner) if isinstance(_pre_inner, dict) else {}
+        _on_editor = bool(
+            isinstance(_pre_diag, dict) and _pre_diag.get("projectId")
+            and "/project/" in str((_pre_inner or {}).get("flow_url") or "")
+        )
+    except Exception as _pe:  # noqa: BLE001 — probe is best-effort; binding re-verifies
+        _on_editor = False
+        _provision_diag["harvest_error"] = str(_pe)[:200]
+    if not _on_editor:
+        _provision_diag["attempted"] = True
+        try:
+            _proj = await client.create_project("bosmax hybrid cert")
+            _cert_project_id = _extract_project_id(_proj)
+            _provision_diag["create_result"] = str(_proj)[:200]
+        except Exception as _ce:  # noqa: BLE001
+            _provision_diag["create_error"] = str(_ce)[:200]
+        if _cert_project_id:
+            try:
+                _op = await client.open_target_flow_project(
+                    f"https://labs.google/fx/tools/flow/project/{_cert_project_id}"
+                )
+                _provision_diag["open_result"] = str(_op)[:160]
+            except Exception as _oe:  # noqa: BLE001 — bind re-verifies opener readiness
+                _provision_diag["open_error"] = str(_oe)[:200]
+            await asyncio.sleep(5)
+
     # --- bind the official Flow editor (provider-free; fail-closed, no credit) ---
     try:
         editor_binding = await _mv.ensure_editor_binding(
-            client, requested_project_id=None, mode="T2V"
+            client, requested_project_id=_cert_project_id, mode="T2V"
         )
     except _mv.FlowEditorBindingError as exc:
+        _details = dict(exc.details or {})
+        _details["provision_diag"] = _provision_diag
         raise HTTPException(
             409,
             {
                 "error_code": "FLOW_EDITOR_BINDING_REQUIRED", "message": str(exc),
-                "details": exc.details, "provider_calls": 0, "credit_spend": False,
+                "details": _details, "provider_calls": 0, "credit_spend": False,
             },
         ) from exc
 

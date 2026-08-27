@@ -295,23 +295,32 @@ async def reserve_capture(**kwargs: Any) -> tuple[dict[str, Any], bool]:
     values = _reservation_values(profile=profile, **kwargs)
     existing = await _crud.get_by_profile_digest(values["profile_digest"])
     if existing is not None:
+        # Self-heal a stale terminal reservation before deciding to reuse, so a
+        # terminal linked job can never permanently occupy the shared provider
+        # profile slot.  Provider-free; may transition the row to FAILED+reopenable
+        # (archived + recreated just below) or leave it unchanged (active/pending).
+        existing = await reconcile_stale_reservation(existing)
         existing_failure_code = _norm(existing.get("failure_code")).upper()
         if (
             _norm(existing.get("status")).upper() == CERTIFICATION_FAILED
             and existing_failure_code in _REOPENABLE_FAILURES
         ):
-            return (
-                await _crud.archive_failed_pre_provider_and_create_reservation(
-                    existing,
-                    values,
-                    reason=(
-                        "EXPLICIT_NEW_CAPTURE_AFTER_UNSUITABLE_ARTIFACT_SUPERSEDE"
-                        if existing_failure_code == CERTIFICATION_ARTIFACT_UNSUITABLE
-                        else "EXPLICIT_NEW_CAPTURE_AFTER_PRE_PROVIDER_FAILURE"
-                    ),
+            reopened = await _crud.archive_failed_pre_provider_and_create_reservation(
+                existing,
+                values,
+                reason=(
+                    "EXPLICIT_NEW_CAPTURE_AFTER_UNSUITABLE_ARTIFACT_SUPERSEDE"
+                    if existing_failure_code == CERTIFICATION_ARTIFACT_UNSUITABLE
+                    else "EXPLICIT_NEW_CAPTURE_AFTER_PRE_PROVIDER_FAILURE"
                 ),
-                True,
             )
+            # Under a concurrent reopen the CRUD may return a competitor's fresh
+            # reservation rather than ours; only the caller that actually minted
+            # the new row reports created=True, so exactly one capture ever fires.
+            created = str(reopened.get("certification_id")) == str(
+                values["certification_id"]
+            )
+            return reopened, created
         return existing, False
     try:
         return await _crud.create_reservation(values), True
@@ -480,6 +489,224 @@ async def reconcile_pre_provider_failure(
         **({"snapshot_id": _norm(snapshot_id)} if snapshot_id else {}),
         failure_code=_norm(code)[:160],
         failure_detail=_norm(detail)[:1000],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Provider-free stale-reservation reconciliation (self-healing state machine).
+#
+# ``reserve_capture`` is keyed by ``profile_digest`` and shares ONE reservation
+# slot across every lane that resolves the same provider profile (e.g. HYBRID
+# and FACELESS).  A reservation left SUBMITTED / ARTIFACT_PENDING whose linked
+# job has already reached a terminal state would otherwise occupy that slot
+# forever and permanently deadlock every sharing lane.  This classifies the
+# linked job and reconciles it WITHOUT any provider generation call so a
+# terminal linked job can never poison the shared provider profile.
+# ---------------------------------------------------------------------------
+
+# Linked-job statuses that are terminal for reconciliation.  This mirrors the
+# generation lane's terminal set and additionally treats the delivery-failure
+# status (which the generation lane does not itself list as generation-terminal)
+# as terminal here, because a delivery failure with already-rendered bytes still
+# leaves the certification permanently stuck.
+_RECONCILE_TERMINAL_JOB_STATUSES = frozenset({
+    "DONE",
+    "PRODUCT_FIDELITY_REVIEW_REQUIRED",
+    "FAILED",
+    "REJECTED",
+    "ARTIFACT_PERSISTENCE_FAILED",
+    "DURABILITY_SYNC_FAILED",
+    "RECOVERY_REQUIRED",
+    "RECOVERY_UNRECOVERABLE",
+    "GENERATED_BUT_UNRETRIEVED",
+    "RENDER_NOT_MATERIALIZED",
+    "STALE_OR_FOREIGN_CANDIDATES_ONLY",
+    "FINAL_ARTIFACT_DELIVERY_FAILED",
+})
+_RECONCILE_SUCCESS_JOB_STATUSES = frozenset({"DONE"})
+
+
+async def _resolve_linked_job_provider_free(job_id: str) -> dict[str, Any] | None:
+    """Read one durable video job row + its persisted stage state.
+
+    Pure repository read: no provider call and no reconcile-driven re-fetch, so
+    it is safe inside the reservation path and never spends a credit.
+    """
+    if not job_id:
+        return None
+    try:
+        from agent.db import crud
+    except Exception:  # noqa: BLE001 — reconciliation must never hard-fail reserve
+        return None
+    try:
+        row = await crud.get_video_production_job(job_id)
+    except Exception:  # noqa: BLE001
+        return None
+    if not row:
+        return None
+    job: dict[str, Any] = {}
+    try:
+        state = json.loads(row.get("stage_state_json") or "{}")
+        if isinstance(state, dict):
+            job.update(state)
+    except (TypeError, ValueError):
+        pass
+    # Authoritative DB columns win over any stale embedded stage state.
+    for col in (
+        "job_id", "status", "final_media_id", "final_local_path",
+        "final_sha256", "product_id", "model", "aspect_ratio",
+    ):
+        if row.get(col) is not None:
+            job[col] = row.get(col)
+    return job
+
+
+def _has_recoverable_artifact_bytes(job: Mapping[str, Any]) -> bool:
+    """True only when a rendered artifact media id AND non-empty local bytes are
+    both present on disk — the precondition for provider-free delivery recovery.
+    """
+    media_id = _norm(job.get("final_media_id") or job.get("media_id"))
+    path = _norm(job.get("final_local_path") or job.get("local_path"))
+    if not media_id or not path:
+        for art in job.get("artifacts") or []:
+            if not isinstance(art, Mapping):
+                continue
+            media_id = media_id or _norm(art.get("media_id"))
+            path = path or _norm(art.get("local_path"))
+    if not media_id or not path:
+        return False
+    try:
+        import os
+
+        return os.path.isfile(path) and os.path.getsize(path) > 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _attempt_provider_free_delivery_recovery(
+    job_id: str,
+) -> dict[str, Any] | None:
+    """Re-register already-rendered on-disk bytes for a delivery-failed job.
+
+    Delegates to the generation lane's local-only artifact registration, which
+    never re-submits a provider generation.  Returns the re-read job on success,
+    otherwise ``None`` so the caller supersedes and fires ONE corrected capture.
+    """
+    try:
+        from agent.services.make_video import retry_artifact_delivery
+
+        await retry_artifact_delivery(job_id)
+    except Exception:  # noqa: BLE001 — recovery is best-effort; caller supersedes
+        return None
+    return await _resolve_linked_job_provider_free(job_id)
+
+
+async def _try_finalize_recovered_artifact(
+    certification_id: str, job: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """Promote a recovered artifact ONLY when the job already carries a PASSING
+    frame-QC evidence block.
+
+    Content frame-QC is an owner review step and is never fabricated here, so
+    absent embedded PASS evidence this returns ``None`` and the caller
+    supersedes so ONE corrected capture can fire.
+    """
+    frame_qc = job.get("frame_qc")
+    if not isinstance(frame_qc, Mapping):
+        frame_qc = job.get("frame_qc_evidence")
+    if (
+        not isinstance(frame_qc, Mapping)
+        or _norm(frame_qc.get("status")).upper() != "PASS"
+    ):
+        return None
+    try:
+        return await finalize_capture(certification_id, job=job, frame_qc=frame_qc)
+    except ProviderCertificationError:
+        return None
+
+
+async def reconcile_stale_reservation(
+    existing: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Provider-free reconciliation of a stale SUBMITTED / ARTIFACT_PENDING
+    certification whose linked job has reached a terminal state.
+
+    Returns the (possibly transitioned) certification row.  Invariants:
+      * active / provider-ambiguous linked job  -> row UNCHANGED (reuse; never a
+        duplicate submission)
+      * terminal success awaiting owner finalize -> row UNCHANGED (reuse)
+      * terminal pre-provider failure            -> row closed FAILED (reopenable)
+      * terminal delivery failure with bytes     -> provider-free recovery first;
+        a recovered + QC-passing artifact is finalized (zero new credit),
+        otherwise the row is superseded (reopenable)
+      * terminal provider-engaged failure, no bytes -> row superseded (reopenable)
+      * a CERTIFIED row is never reached here and is never touched
+
+    No provider generation call is ever made and no lineage is deleted.  The
+    caller applies its existing FAILED+reopenable archive+recreate rule to any
+    row this transitions.
+    """
+    row = dict(existing)
+    status = _norm(row.get("status")).upper()
+    if status not in {CERTIFICATION_SUBMITTED, CERTIFICATION_ARTIFACT_PENDING}:
+        return row
+    certification_id = _norm(row.get("certification_id"))
+    job_id = _norm(row.get("job_id"))
+    if not certification_id or not job_id:
+        return row  # nothing linked to classify -> never duplicate
+
+    job = await _resolve_linked_job_provider_free(job_id)
+    if job is None:
+        return row  # unresolvable linked job -> conservative reuse
+
+    job_status = _norm(job.get("status")).upper()
+    if job_status not in _RECONCILE_TERMINAL_JOB_STATUSES:
+        return row  # (A) active / ambiguous provider op -> NEVER duplicate
+    if job_status in _RECONCILE_SUCCESS_JOB_STATUSES:
+        return row  # terminal success awaiting owner finalize -> reuse
+
+    has_artifact = _has_recoverable_artifact_bytes(job)
+    has_provider_op = bool(_provider_operation_id(job))
+
+    if not has_artifact and not has_provider_op:
+        # (B) terminal pre-provider failure -> close FAILED (reopenable)
+        return await reconcile_pre_provider_failure(
+            certification_id,
+            job_id=job_id,
+            code="PROFILE_CERTIFICATION_PRE_PROVIDER_FAILED",
+            detail=f"RECONCILED_TERMINAL_PRE_PROVIDER:{job_status}"[:1000],
+        )
+
+    if has_artifact:
+        # (C) terminal delivery failure with rendered bytes -> recover first.
+        recovered = await _attempt_provider_free_delivery_recovery(job_id)
+        if (
+            recovered is not None
+            and _norm(recovered.get("status")).upper() == "DONE"
+        ):
+            certified = await _try_finalize_recovered_artifact(
+                certification_id, recovered
+            )
+            if certified is not None:
+                return certified  # zero-new-credit certification via recovered bytes
+        return await supersede_unsuitable(
+            certification_id,
+            reason=(
+                f"RECONCILE_TERMINAL_DELIVERY_FAILURE:{job_status}:"
+                f"recovered={'yes' if recovered is not None else 'no'}:"
+                "content_qc_requires_owner_review"
+            ),
+            superseded_by="system-reconciler",
+        )
+
+    # (D) terminal provider-engaged failure, no recoverable bytes -> supersede.
+    return await supersede_unsuitable(
+        certification_id,
+        reason=(
+            f"RECONCILE_TERMINAL_ARTIFACT_UNRECOVERABLE:{job_status}:"
+            "provider_op_no_bytes"
+        ),
+        superseded_by="system-reconciler",
     )
 
 
