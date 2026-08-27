@@ -75,6 +75,44 @@ window.fetch = async function (...args) {
   }
 })();
 
+// ─── SPA navigation self-heal ──────────────────────────────
+// Google Flow is an SPA: navigating the Flow root -> a project editor uses
+// history.pushState (and sometimes replaceState), which does NOT reliably
+// update chrome.tabs.Tab.url. Monkey-patch both so we broadcast the live URL
+// AFTER the original runs; content.js (isolated world) listens for this and
+// tells the background the authoritative location_href.
+(function hookHistoryLocationChanges() {
+  function emitLocationChanged() {
+    try {
+      window.dispatchEvent(new CustomEvent('FLOWKIT_LOCATION_CHANGED', {
+        detail: { location_href: window.location.href, timestamp: Date.now() },
+      }));
+    } catch (_) {}
+  }
+  try {
+    const origPush = history.pushState;
+    if (typeof origPush === 'function' && !history.__flowkitPushWrapped) {
+      history.pushState = function (...args) {
+        const result = origPush.apply(this, args);
+        emitLocationChanged();
+        return result;
+      };
+      history.__flowkitPushWrapped = true;
+    }
+    const origReplace = history.replaceState;
+    if (typeof origReplace === 'function' && !history.__flowkitReplaceWrapped) {
+      history.replaceState = function (...args) {
+        const result = origReplace.apply(this, args);
+        emitLocationChanged();
+        return result;
+      };
+      history.__flowkitReplaceWrapped = true;
+    }
+  } catch (_) {}
+  window.addEventListener('popstate', emitLocationChanged);
+  window.addEventListener('hashchange', emitLocationChanged);
+})();
+
 window.addEventListener('GET_CAPTCHA', async ({ detail }) => {
   const { requestId, pageAction } = detail;
   try {
