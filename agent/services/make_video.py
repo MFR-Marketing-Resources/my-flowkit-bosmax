@@ -931,8 +931,19 @@ async def _bind_with_recovery(client, requested_project_id=None, job=None) -> di
     tab back to the home shell (NO_OPEN_EDITOR — observed: Flow navigates the editor tab to home
     on its own). Recovery RE-OPENS the project the user was working in — the explicitly requested
     project, else the last stored editor URL — and NEVER mints a new project, then re-binds once.
-    A BROKEN_EDITOR_PAGE / CONTENT_BUILD_MISMATCH / PROJECT_TAB_MISMATCH still fails closed."""
+    A stale/missing content script is re-injected once through the extension's
+    official exact-project opener. BROKEN_EDITOR_PAGE / PROJECT_TAB_MISMATCH
+    and every other binding error still fail closed."""
     bridge_lease = job.get("bridge_lease") if isinstance(job, dict) else None
+
+    def official_reopen_allowed(exc: Exception) -> bool:
+        detail = str(exc)
+        return any(marker in detail for marker in (
+            "NO_OPEN_EDITOR",
+            "CONTENT_SCRIPT_NOT_READY",
+            "CONTENT_BUILD_MISMATCH",
+            "EXTENSION_BUILD_MISMATCH",
+        ))
 
     async def bind_once() -> dict:
         if bridge_lease is None:
@@ -958,7 +969,7 @@ async def _bind_with_recovery(client, requested_project_id=None, job=None) -> di
     try:
         return await bind_once()
     except RuntimeError as e:
-        if "NO_OPEN_EDITOR" not in str(e):
+        if not official_reopen_allowed(e):
             raise
         target = (f"https://labs.google/fx/tools/flow/project/{requested_project_id}"
                   if requested_project_id else None)
@@ -1014,7 +1025,7 @@ async def _bind_with_recovery(client, requested_project_id=None, job=None) -> di
                 return binding
             except RuntimeError as bind_exc:
                 last_error = bind_exc
-                if "NO_OPEN_EDITOR" not in str(bind_exc) or attempt == 7:
+                if not official_reopen_allowed(bind_exc) or attempt == 7:
                     break
                 await asyncio.sleep(1)
         raise FlowEditorBindingError(

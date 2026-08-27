@@ -1068,6 +1068,52 @@ def test_bind_with_recovery_reopens_stored_project_on_drift():
         mv.asyncio = orig
 
 
+def test_bind_with_recovery_reinjects_stale_content_on_exact_project():
+    url = "https://labs.google/fx/tools/flow/project/heal-build-1"
+    state = {"opened": False, "open_calls": 0}
+
+    class _StaleContentClient:
+        async def harvest_video_urls(self, tab_id=None):
+            return _harvest("heal-build-1", url, 17)
+
+        async def flow_page_state_diagnostic(self, mode=None):
+            if not state["opened"]:
+                return {
+                    "stored_flow_project_url": url,
+                    "content_script_loaded": False,
+                    "content_script_alive": False,
+                    "build_match": False,
+                }
+            return {
+                "stored_flow_project_url": url,
+                "content_script_loaded": True,
+                "content_script_alive": True,
+                "visible_error_markers": [],
+                "build_match": True,
+            }
+
+        async def open_target_flow_project(self, flow_project_url):
+            assert flow_project_url == url
+            state["open_calls"] += 1
+            state["opened"] = True
+            return {"ok": True, "flow_project_url": url, "flow_tab_id": 17}
+
+    orig = mv.asyncio
+    mv.asyncio = _ShimAsyncio(mv.asyncio)
+    try:
+        binding = _run(
+            mv._bind_with_recovery(
+                _StaleContentClient(),
+                requested_project_id="heal-build-1",
+            )
+        )
+        assert binding["project_id"] == "heal-build-1"
+        assert binding["recovered_officially"] is True
+        assert state["open_calls"] == 1
+    finally:
+        mv.asyncio = orig
+
+
 def test_bind_with_recovery_fails_closed_on_broken_editor():
     # A broken editor (not a drift) must NOT trigger re-open recovery — fail closed.
     url = "https://labs.google/fx/tools/flow/project/abc"
