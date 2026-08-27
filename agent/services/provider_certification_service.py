@@ -90,10 +90,15 @@ def validate_capture_contract(
         raise ProviderCertificationError("PROFILE_CERTIFICATION_MODE_MUST_BE_T2V")
     if str(source_mode or "").upper() != "T2V":
         raise ProviderCertificationError("PROFILE_CERTIFICATION_SOURCE_MODE_MUST_BE_T2V")
-    if str(surface_lane or "").upper() != "FACELESS":
-        raise ProviderCertificationError("PROFILE_CERTIFICATION_SURFACE_MUST_BE_FACELESS")
-    if str(production_recipe or "").upper() != "FACELESS":
-        raise ProviderCertificationError("PROFILE_CERTIFICATION_RECIPE_MUST_BE_FACELESS")
+    # The certification profile is lane-INDEPENDENT (a representative lane is
+    # evidence provenance only, never part of the provider-proof identity), so a
+    # bounded capture may certify it from either the FACELESS or the exact-product
+    # HYBRID surface.  Surface, recipe, and the profile lane must still all agree.
+    _certifiable_surface = str(surface_lane or "").upper()
+    if _certifiable_surface not in ("FACELESS", "HYBRID"):
+        raise ProviderCertificationError("PROFILE_CERTIFICATION_SURFACE_NOT_CERTIFIABLE")
+    if str(production_recipe or "").upper() != _certifiable_surface:
+        raise ProviderCertificationError("PROFILE_CERTIFICATION_RECIPE_MUST_MATCH_SURFACE")
     if str(model or "").strip() != "veo_3_1_lite":
         raise ProviderCertificationError("PROFILE_CERTIFICATION_MODEL_MUST_BE_VEO_3_1_LITE")
     if int(duration_s or 0) != 8:
@@ -139,8 +144,8 @@ def validate_capture_contract(
         or profile.get("execution_transport") != "GOOGLE_FLOW_CREATION_AGENT"
     ):
         raise ProviderCertificationError("PROFILE_CERTIFICATION_PROFILE_TUPLE_INVALID")
-    if normalized.get("lane") != "FACELESS":
-        raise ProviderCertificationError("PROFILE_CERTIFICATION_PROFILE_LANE_INVALID")
+    if normalized.get("lane") != _certifiable_surface:
+        raise ProviderCertificationError("PROFILE_CERTIFICATION_PROFILE_LANE_MUST_MATCH_SURFACE")
     return normalized
 
 
