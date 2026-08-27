@@ -2100,7 +2100,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			});
 			return;
 		}
-		if (!v2CopyReady) {
+		if (!(v2CopyReady || (selectedCopySource === "BENEFIT_RENDER" && benefitRenderReady))) {
 			setNotice({
 				tone: "warning",
 				title: "V2 binding required",
@@ -4179,7 +4179,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 						disabled={
 							!previewPackage ||
 							isLoadingPackage ||
-							!v2CopyReady ||
+							!(v2CopyReady || (selectedCopySource === "BENEFIT_RENDER" && benefitRenderReady)) ||
 							extendTotalRequired ||
 							backendRuntimeStale
 						}
