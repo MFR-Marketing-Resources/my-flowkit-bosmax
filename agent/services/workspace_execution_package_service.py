@@ -685,10 +685,15 @@ async def create_workspace_execution_package(
     )
     product_visual_custody: dict[str, Any] | None = None
     custody_blockers: list[str] = []
-    # Exact Faceless is a T2V scene-scaffold package with no provider product
-    # reference.  The custody receipt still carries the approved canonical
-    # visual so the later deterministic compositor can prove lineage.
-    if exact_faceless_route:
+    # Exact Faceless AND exact-product HYBRID are T2V scene-scaffold packages
+    # with no provider product reference.  The custody receipt still carries the
+    # approved canonical visual so the later deterministic compositor can prove
+    # lineage.  Without this, an exact-product HYBRID package fell into the
+    # generative-reference custody branch below and marked itself
+    # execution_allowed=False (ERR_PRODUCT_FIDELITY_ROUTE_NOT_PROVEN +
+    # ERR_PRODUCT_PROMPT_LOCK_INCOMPLETE) even though its scaffold prompt and
+    # generate-time custody are the deterministic composite route.
+    if exact_faceless_route or exact_hybrid_route:
         product_row = await crud.get_product(product_id)
         try:
             if not product_row:
