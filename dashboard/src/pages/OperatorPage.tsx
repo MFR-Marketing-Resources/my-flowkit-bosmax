@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { fetchAPI } from "../api/client";
+import { csrfToken, fetchAPI } from "../api/client";
 import { FinalPromptApprovalModal } from "../components/execution-approval/FinalPromptApprovalModal";
 import type { ReviewEnvelope } from "../api/executionApproval";
 import {
@@ -1609,7 +1609,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			if (isGfv2RuntimeLane || isWorkspaceRuntimeLane) {
 				const response = await fetch("/api/flow/execute-flow-job", {
 					method: "POST",
-					headers: { "Content-Type": "application/json" },
+					headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
 					body: JSON.stringify({
 						...data,
 						request_id: requestId,
@@ -1640,7 +1640,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 			// execute-flow-job DOM automation against the retired Video/Frames UI).
 			const response = await fetch("/api/flow/generate", {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
 				body: JSON.stringify({
 					request_id: requestId,
 					mode: data.mode,

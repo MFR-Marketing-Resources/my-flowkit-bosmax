@@ -1,6 +1,6 @@
 const BASE = ''  // same origin, proxied by Vite in dev
 
-function csrfToken(): string {
+export function csrfToken(): string {
   if (typeof document === 'undefined') return ''
   const prefix = 'bosmax_csrf='
   const item = document.cookie.split('; ').find((value) => value.startsWith(prefix))
