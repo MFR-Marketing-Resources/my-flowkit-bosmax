@@ -12,6 +12,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -230,6 +231,67 @@ def build_exact_product_video_plan(
     }
 
 
+# Canonical (ADR-008) prompt section headers ("SECTION N - NAME") whose bodies
+# describe RENDERING or HOLDING the product. For a presenter-visible (HYBRID)
+# exact scaffold these are removed wholesale and replaced by the interaction-zone
+# choreography below — the standard HYBRID compiler integrates "presenter holds
+# and renders the exact product" throughout these sections, which directly
+# contradicts a scene-only scaffold. FACELESS keeps its full prompt unchanged.
+_CANONICAL_PRODUCT_VISUAL_SECTIONS = (
+    "PRODUCT TRUTH LOCK",
+    "CONTINUITY & STATE LOCK",
+    "VISUAL STORY",
+    "SHOT & CAMERA RULES",
+)
+_CANONICAL_SECTION_RE = re.compile(
+    r"^\s*SECTION\s+\d+\s*[-–]\s*(.+?)\s*$", re.IGNORECASE
+)
+
+# Extra line-level markers used ONLY on the presenter-visible path to scrub any
+# product-render / product-hold prose that survives in the kept sections.
+_PRESENTER_EXTRA_FORBIDDEN_MARKERS = (
+    "generic prop",
+    "real health & personal care",
+    "printed label",
+    "bottle shot",
+    "packshot",
+    "hero product",
+    "in hand",
+    "held at",
+    "held by",
+    "holding the product",
+    "uploaded product image",
+    "exact visual reference",
+    "match its colour",
+    "match its color",
+    "natural grip",
+)
+
+
+def _drop_canonical_product_sections(
+    prompt: str, drop_names: tuple[str, ...]
+) -> str:
+    """Remove whole ``SECTION N - NAME`` blocks whose name is product-describing.
+
+    Dropping runs from a matched product section header until the next canonical
+    section header (any name), so only the product-visual sections are removed
+    and the speech/role sections are preserved verbatim.
+    """
+
+    drop_upper = {name.upper() for name in drop_names}
+    kept: list[str] = []
+    dropping = False
+    for raw_line in (prompt or "").splitlines():
+        match = _CANONICAL_SECTION_RE.match(raw_line)
+        if match:
+            dropping = match.group(1).strip().upper() in drop_upper
+            if dropping:
+                continue
+        if not dropping:
+            kept.append(raw_line)
+    return "\n".join(kept).strip()
+
+
 def build_exact_scene_scaffold_prompt(
     base_prompt: str,
     plan: dict[str, Any],
@@ -243,17 +305,28 @@ def build_exact_scene_scaffold_prompt(
     share this builder:
 
     * FACELESS (default): the provider must not render a face — only the scene,
-      hands, and torso.
+      hands, and torso.  The full compiled prompt is kept (unchanged behaviour).
     * HYBRID (``presenter_visible=True``): the on-camera human presenter stays
-      fully visible and lip-synced to the dialogue.  Only the *product* pixels
-      are withheld for the deterministic compositor; the presenter is NOT
-      suppressed.  The provider still renders presenter + action + background as
-      the scene scaffold.
+      fully visible and lip-synced to the dialogue; only the *product* is
+      withheld for the deterministic compositor.  The standard HYBRID compiler
+      integrates "presenter holds and renders the exact product" throughout its
+      visual sections, which contradicts a scene-only scaffold, so those
+      product-visual sections are DROPPED and replaced by an explicit
+      presenter–product interaction-zone choreography: the presenter presents
+      TOWARD a reserved (empty) product region instead of holding the product
+      (hand-hold requires per-frame occlusion masks the compositor does not
+      have).  Speech (dialogue/voice) and role sections are preserved.
     """
 
     selected = plan.get("choreography") or {}
     selected_id = selected.get("choreography_id") or FACELESS_V1_SAFE_DEFAULT
     raw_prompt = str(base_prompt or "")
+    if presenter_visible:
+        # Remove the product-render/hold sections wholesale; the interaction-zone
+        # choreography below replaces them.
+        raw_prompt = _drop_canonical_product_sections(
+            raw_prompt, _CANONICAL_PRODUCT_VISUAL_SECTIONS
+        )
     # The older image compositor helper removes its known Product Truth
     # headings.  A video compiler can also emit free-form product prose, so
     # remove directive lines before applying the strict scene-only block.
@@ -270,6 +343,10 @@ def build_exact_scene_scaffold_prompt(
         "product reference lock",
         "product no-modification lock",
     )
+    if presenter_visible:
+        forbidden_directive_markers = (
+            forbidden_directive_markers + _PRESENTER_EXTRA_FORBIDDEN_MARKERS
+        )
     safe_lines = [
         line
         for line in raw_prompt.splitlines()
@@ -283,14 +360,32 @@ def build_exact_scene_scaffold_prompt(
         f"EXACT CHOREOGRAPHY: {selected_id}; use only the declared rigid product placement and keep hands/props outside the reserved product box unless a verified foreground mask is supplied.",
     ]
     if presenter_visible:
-        # HYBRID: keep the governed on-camera presenter — only the product is
-        # withheld for the compositor.  The presenter/spokesperson, their face,
-        # and lip-synced dialogue are required, never suppressed.
+        # HYBRID: the governed on-camera presenter is REQUIRED and fully visible.
+        # The reserved product region is an intentional presenter-product
+        # interaction zone — the presenter presents TOWARD it (never holds the
+        # product, which would need per-frame occlusion masks). Only the product
+        # pixels are withheld for the compositor; the presenter is never
+        # suppressed and never reduced to a generic talking head.
         additions.append(
-            "PRESENTER: the on-camera human presenter/spokesperson remains fully "
-            "visible and lip-synced to the spoken dialogue; render the presenter, "
-            "setting, and action as the scene scaffold, but leave the reserved "
-            "product box empty — the exact product is inserted by the compositor."
+            "PRESENTER (REQUIRED, FULLY VISIBLE): render the governed on-camera "
+            "human presenter/spokesperson fully visible and lip-synced to the "
+            "spoken dialogue, visually active across the entire selling beat — "
+            "never a static or generic talking head beside a pack shot."
+        )
+        additions.append(
+            "PRESENTER-PRODUCT INTERACTION ZONE: the reserved product region is an "
+            "intentional interaction zone. The presenter must visibly acknowledge "
+            "and present toward it — point, gesture, and frame toward the reserved "
+            "region and coordinate body language with its position, as if "
+            "presenting the product to the viewer."
+        )
+        additions.append(
+            "RESERVED REGION STAYS EMPTY: leave the reserved product region "
+            "completely empty in the provider output. The presenter may gesture "
+            "around and toward the region but must NOT hold, grab, occlude, "
+            "overlap, or pass a hand, arm, or object behind or in front of it — "
+            "the exact product is inserted there only by the deterministic "
+            "compositor."
         )
     else:
         additions.append(
