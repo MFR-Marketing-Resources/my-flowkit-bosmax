@@ -3057,7 +3057,34 @@ async def hybrid_profile_certification(
         candidates = gen.get("candidates") or []
         if not candidates:
             raise HTTPException(409, {"error_code": "HYBRID_CERTIFICATION_COPY_EMPTY"})
-        candidate = candidates[0]
+        # Pick a candidate within the dialogue-occupancy word budget for this
+        # duration; the generator can overshoot a single suggestion
+        # (DIALOGUE_OCCUPANCY_OVERRUN). Regenerate once (credit-free text) if a
+        # whole batch overshoots.
+        _budget = int(session.get("word_budget") or 22)
+
+        def _pick(cands):
+            return next(
+                (c for c in cands if int(c.get("word_count") or 999) <= _budget),
+                None,
+            )
+
+        candidate = _pick(candidates)
+        if candidate is None:
+            gen = await _copy_render.generate_suggestions(
+                session["session_id"], correlation_id + "_copy2"
+            )
+            candidates = gen.get("candidates") or []
+            candidate = _pick(candidates)
+        if candidate is None:
+            raise HTTPException(
+                409,
+                {
+                    "error_code": "HYBRID_CERTIFICATION_COPY_OVER_BUDGET",
+                    "word_counts": [c.get("word_count") for c in candidates],
+                    "budget": _budget,
+                },
+            )
         await _copy_render.lock_candidate(candidate["candidate_id"])
         await _copy_render.finalize_session(session["session_id"])
     except HTTPException:
