@@ -371,6 +371,31 @@ async def test_reserve_after_terminal_job_reopens_exactly_once(monkeypatch):
     assert third["certification_id"] == second["certification_id"]
 
 
+@pytest.mark.asyncio
+async def test_surface_mismatch_pre_provider_failure_reopens_exactly_once():
+    profile = _profile()
+    kwargs = _reserve_kwargs("HYBRID")
+
+    first, created = await service.reserve_capture(profile=profile, **kwargs)
+    assert created is True
+    first_id = first["certification_id"]
+    await service.mark_failed(
+        first_id,
+        code="PROFILE_CERTIFICATION_SURFACE_MUST_BE_FACELESS",
+        detail="provider-free contract rejection",
+    )
+
+    second, created_again = await service.reserve_capture(
+        profile=profile,
+        **_reserve_kwargs("FACELESS"),
+    )
+
+    assert created_again is True
+    assert second["certification_id"] != first_id
+    assert second["status"] == service.CERTIFICATION_RESERVED
+    assert await cert_crud.get_by_id(first_id) is None
+
+
 # --------------------------------------------------------------------------- #
 # (G) FACELESS stale reservation cannot deadlock HYBRID on the shared digest
 # --------------------------------------------------------------------------- #
