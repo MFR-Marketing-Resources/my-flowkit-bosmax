@@ -2031,6 +2031,10 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 				avatar_id: registryAvatarId || null,
 				scene_context_override: null,
 				scene_context_code: null,
+				// Section 6: the WEP must carry the SAME request-scoped authority as the
+				// preview — thread the benefit candidate so the durable package binds
+				// BENEFIT_COPY_RENDER_V1, never a silent flip to the persisted Copy V2.
+				copy_v2_context: benefitCopyRequestContext(selectedCopySource, selectedBenefitCopy),
 				// Recipe descriptors (Step F): the primary selected recipe's scene template
 				// + camera preset so the compiled prompt uses the coherent combination.
 				// Every video lane uses the selected product's coherent recipe.
@@ -3098,7 +3102,9 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										onClick={() => void handleGeneratePackage()}
 						disabled={
 											isLoadingPackage ||
-											!v2CopyReady ||
+											// Copy is ready when V2 is bound OR the operator finalized a Benefit
+											// On-Demand selection (BENEFIT_COPY_RENDER_V1).
+											!(v2CopyReady || (selectedCopySource === "BENEFIT_RENDER" && benefitRenderReady)) ||
 											extendTotalRequired ||
 											backendRuntimeStale
 										}
