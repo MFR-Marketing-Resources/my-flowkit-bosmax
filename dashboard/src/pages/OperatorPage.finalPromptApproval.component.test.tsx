@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../api/client", () => ({
 	fetchAPI: vi.fn().mockResolvedValue({ engines: [] }),
+	csrfToken: () => "test-csrf",
 }));
 vi.mock("../api/creativeAssets", () => ({
 	fetchCreativeAssetEligibilityAudit: vi.fn().mockResolvedValue({ eligible_assets: [] }),

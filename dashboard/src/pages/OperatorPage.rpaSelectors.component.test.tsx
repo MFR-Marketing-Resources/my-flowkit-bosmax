@@ -16,6 +16,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../api/client", () => ({
+	csrfToken: () => "test-csrf",
 	fetchAPI: vi.fn().mockResolvedValue({ models: [] }),
 }));
 vi.mock("../api/products", () => ({
