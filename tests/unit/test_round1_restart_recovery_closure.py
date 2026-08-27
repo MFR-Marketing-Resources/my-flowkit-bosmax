@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -12,6 +13,7 @@ import pytest
 
 from agent.db import crud
 from agent.services import make_video
+from agent.services.flow_client import FlowClient
 from agent.services.montage_run_service import (
     KIND,
     _default_montage_generate_fn,
@@ -355,6 +357,74 @@ async def test_single_restart_refuses_ambiguous_project_history_identity():
     assert provider.poll_count == 0
     assert provider.retrieve_count == 0
     assert provider.submit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_project_history_lookup_pins_persisted_installation_with_two_connections(
+    monkeypatch,
+):
+    job_id = f"g_history_lease_{uuid4().hex[:10]}"
+    await _seed_single_job(
+        job_id,
+        status="RECOVERY_UNRECOVERABLE",
+        provider_operation_ids=[],
+        direct_media_targets=[],
+        bridge_lease={
+            "installation_id": "installation-paid-job",
+            "extension_build": "build-paid-job",
+            "flow_project_id": "project-restart",
+        },
+    )
+    client = FlowClient()
+    client.register_extension_connection(
+        object(),
+        installation_id="installation-paid-job",
+        extension_session_id="session-paid-job",
+        synthetic=True,
+    )
+    client.register_extension_connection(
+        object(),
+        installation_id="installation-other",
+        extension_session_id="session-other",
+        synthetic=True,
+    )
+    observed = {}
+
+    async def lookup(_row, _state, selected_client):
+        observed["installation_id"] = selected_client._select_connection()[
+            "installation_id"
+        ]
+        return {
+            "matched": False,
+            "error": "PROJECT_HISTORY_IDENTITY_NOT_FOUND",
+            "provider_calls": 1,
+        }
+
+    monkeypatch.setattr(
+        make_video,
+        "_recover_provider_media_from_project_history",
+        lookup,
+    )
+    recovered = await make_video.reconcile_durable_single_job(
+        job_id,
+        provider_client=client,
+    )
+
+    assert observed["installation_id"] == "installation-paid-job"
+    assert recovered["status"] == "RECOVERY_UNRECOVERABLE"
+    assert all(lease.get("released") is True for lease in client._operation_leases.values())
+
+
+def test_startup_single_recovery_is_scheduled_after_websocket_server():
+    source = (Path(__file__).parents[2] / "agent" / "main.py").read_text(
+        encoding="utf-8"
+    )
+    websocket_started = source.index("ws_task = asyncio.create_task(run_ws_server())")
+    recovery_scheduled = source.index(
+        "single_recovery_task = asyncio.create_task("
+    )
+    assert websocket_started < recovery_scheduled
+    assert "recover_durable_single_jobs()" not in source[:websocket_started]
 
 
 async def _seed_montage_run(run_id: str, items: list[tuple[str, str, dict]], *, status="GENERATING"):
