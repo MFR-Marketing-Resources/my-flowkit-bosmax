@@ -91,10 +91,15 @@ def validate_capture_contract(
         raise ProviderCertificationError("PROFILE_CERTIFICATION_MODE_MUST_BE_T2V")
     if str(source_mode or "").upper() != "T2V":
         raise ProviderCertificationError("PROFILE_CERTIFICATION_SOURCE_MODE_MUST_BE_T2V")
-    if str(surface_lane or "").upper() != "FACELESS":
-        raise ProviderCertificationError("PROFILE_CERTIFICATION_SURFACE_MUST_BE_FACELESS")
-    if str(production_recipe or "").upper() != "FACELESS":
-        raise ProviderCertificationError("PROFILE_CERTIFICATION_RECIPE_MUST_BE_FACELESS")
+    # The certification profile is lane-INDEPENDENT (a representative lane is
+    # evidence provenance only, never part of the provider-proof identity), so a
+    # bounded capture may certify it from either the FACELESS or the exact-product
+    # HYBRID surface.  Surface, recipe, and the profile lane must still all agree.
+    _certifiable_surface = str(surface_lane or "").upper()
+    if _certifiable_surface not in ("FACELESS", "HYBRID"):
+        raise ProviderCertificationError("PROFILE_CERTIFICATION_SURFACE_NOT_CERTIFIABLE")
+    if str(production_recipe or "").upper() != _certifiable_surface:
+        raise ProviderCertificationError("PROFILE_CERTIFICATION_RECIPE_MUST_MATCH_SURFACE")
     if str(model or "").strip() != "veo_3_1_lite":
         raise ProviderCertificationError("PROFILE_CERTIFICATION_MODEL_MUST_BE_VEO_3_1_LITE")
     if int(duration_s or 0) != 8:
@@ -140,8 +145,8 @@ def validate_capture_contract(
         or profile.get("execution_transport") != "GOOGLE_FLOW_CREATION_AGENT"
     ):
         raise ProviderCertificationError("PROFILE_CERTIFICATION_PROFILE_TUPLE_INVALID")
-    if normalized.get("lane") != "FACELESS":
-        raise ProviderCertificationError("PROFILE_CERTIFICATION_PROFILE_LANE_INVALID")
+    if normalized.get("lane") != _certifiable_surface:
+        raise ProviderCertificationError("PROFILE_CERTIFICATION_PROFILE_LANE_MUST_MATCH_SURFACE")
     return normalized
 
 
@@ -289,6 +294,30 @@ def _reservation_values(
     }
 
 
+def _failed_reservation_is_reopenable(existing: Mapping[str, Any]) -> bool:
+    """A FAILED reservation may reopen when its failure code is explicitly
+    reopenable, OR when it never engaged the provider — no linked job, no
+    provider operation, no artifact, and no measured credit.  A bounded
+    pre-provider dispatch rejection (e.g. a capture-contract validation failure
+    raised before any provider call) is credit-free and must not permanently
+    poison the shared provider profile slot.
+    """
+    if _norm(existing.get("status")).upper() != CERTIFICATION_FAILED:
+        return False
+    if _norm(existing.get("failure_code")).upper() in _REOPENABLE_FAILURES:
+        return True
+    if _norm(existing.get("job_id")):
+        return False
+    if _norm(existing.get("provider_operation_id")):
+        return False
+    if _norm(existing.get("artifact_media_id")):
+        return False
+    delta = existing.get("credit_delta")
+    if delta not in (None, "", 0, 0.0, "0"):
+        return False
+    return True
+
+
 async def reserve_capture(**kwargs: Any) -> tuple[dict[str, Any], bool]:
     """Reserve one exact profile; return (row, created)."""
 
@@ -302,10 +331,7 @@ async def reserve_capture(**kwargs: Any) -> tuple[dict[str, Any], bool]:
         # (archived + recreated just below) or leave it unchanged (active/pending).
         existing = await reconcile_stale_reservation(existing)
         existing_failure_code = _norm(existing.get("failure_code")).upper()
-        if (
-            _norm(existing.get("status")).upper() == CERTIFICATION_FAILED
-            and existing_failure_code in _REOPENABLE_FAILURES
-        ):
+        if _failed_reservation_is_reopenable(existing):
             reopened = await _crud.archive_failed_pre_provider_and_create_reservation(
                 existing,
                 values,
