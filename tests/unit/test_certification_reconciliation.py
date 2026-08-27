@@ -452,3 +452,89 @@ async def test_concurrent_reserve_creates_exactly_one_fresh(monkeypatch):
     live = await cert_crud.get_by_profile_digest(first["profile_digest"])
     assert live is not None
     assert live["certification_id"] in ids
+
+
+# --------------------------------------------------------------------------- #
+# (K) credit-free pre-provider dispatch rejection is reopenable
+# --------------------------------------------------------------------------- #
+def test_pre_provider_dispatch_rejection_is_reopenable():
+    # FAILED with a non-reopenable code but NO provider evidence (never
+    # dispatched) — a bounded contract-validation rejection, credit-free.
+    row = {
+        "status": "FAILED",
+        "failure_code": "PROFILE_CERTIFICATION_SURFACE_MUST_BE_FACELESS",
+        "job_id": None,
+        "provider_operation_id": None,
+        "artifact_media_id": None,
+        "credit_delta": None,
+    }
+    assert service._failed_reservation_is_reopenable(row) is True
+
+
+def test_failed_with_linked_job_is_not_reopenable_by_evidence_rule():
+    row = {
+        "status": "FAILED",
+        "failure_code": "SOME_TERMINAL_PROVIDER_FAILURE",
+        "job_id": "g_x",  # engaged the provider lane
+    }
+    assert service._failed_reservation_is_reopenable(row) is False
+
+
+def test_failed_with_credit_or_artifact_is_not_reopenable():
+    assert (
+        service._failed_reservation_is_reopenable(
+            {"status": "FAILED", "failure_code": "X", "credit_delta": 5}
+        )
+        is False
+    )
+    assert (
+        service._failed_reservation_is_reopenable(
+            {"status": "FAILED", "failure_code": "X", "artifact_media_id": "m1"}
+        )
+        is False
+    )
+    assert (
+        service._failed_reservation_is_reopenable(
+            {"status": "FAILED", "failure_code": "X", "provider_operation_id": "op1"}
+        )
+        is False
+    )
+
+
+def test_explicit_reopenable_code_reopens_even_with_evidence():
+    row = {
+        "status": "FAILED",
+        "failure_code": service.CERTIFICATION_ARTIFACT_UNSUITABLE,
+        "job_id": "g_x",
+        "credit_delta": 5,
+    }
+    assert service._failed_reservation_is_reopenable(row) is True
+
+
+def test_non_failed_is_not_reopenable():
+    assert service._failed_reservation_is_reopenable({"status": "RESERVED"}) is False
+    assert service._failed_reservation_is_reopenable({"status": "SUBMITTED"}) is False
+
+
+@pytest.mark.asyncio
+async def test_reserve_reopens_after_pre_provider_dispatch_rejection(monkeypatch):
+    profile = _profile()
+    kwargs = _reserve_kwargs()
+
+    first, created = await service.reserve_capture(profile=profile, **kwargs)
+    assert created is True
+    first_id = first["certification_id"]
+    # a bounded pre-provider dispatch rejection: FAILED, non-reopenable code,
+    # never dispatched (no provider evidence)
+    await cert_crud.update_certification(
+        first_id,
+        status="FAILED",
+        failure_code="PROFILE_CERTIFICATION_SURFACE_MUST_BE_FACELESS",
+        failure_detail="rejected before any provider call",
+    )
+
+    second, created_again = await service.reserve_capture(profile=profile, **kwargs)
+    assert created_again is True
+    assert second["certification_id"] != first_id
+    assert second["status"] == service.CERTIFICATION_RESERVED
+    assert await cert_crud.get_by_id(first_id) is None  # archived, not destroyed
