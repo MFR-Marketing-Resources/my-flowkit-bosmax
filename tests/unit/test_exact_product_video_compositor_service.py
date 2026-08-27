@@ -85,34 +85,55 @@ def test_scene_scaffold_prompt_forbids_provider_product_pixels():
     assert "no visible face" in prompt.lower()
 
 
-def test_presenter_visible_scaffold_keeps_presenter_and_forbids_only_product():
-    # Exact-product HYBRID reuses the SAME scaffold builder as Faceless, but the
-    # on-camera presenter (face + lip-synced dialogue) is preserved; only the
-    # product pixels are withheld for the deterministic compositor.
+def test_presenter_visible_scaffold_drops_product_sections_and_adds_interaction_zone():
+    # Exact-product HYBRID: the canonical (SECTION N - NAME) compiler integrates
+    # "presenter holds and renders the exact product" throughout its product-visual
+    # sections. The presenter-visible scaffold DROPS those sections wholesale and
+    # replaces them with the presenter-product interaction-zone choreography, while
+    # keeping the presenter fully visible and preserving the spoken dialogue for
+    # lip-sync. The presenter presents TOWARD an empty reserved region (never holds
+    # the product — hand-hold needs per-frame occlusion masks).
     plan = {
         "selected_execution_route": exact.EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,
         "choreography": {"choreography_id": exact.PRODUCT_PRESENT_TO_CAMERA},
     }
-    prompt = exact.build_exact_scene_scaffold_prompt(
-        "=== PRODUCT TRUTH LOCK ===\n"
-        "Show the exact product label and preserve the real product.\n"
-        "=== DIALOGUE ===\n"
-        "Presenter says: rasa lega dalam lima minit.",
-        plan,
-        scene_context="Bright studio, presenter to camera.",
-        presenter_visible=True,
+    canonical = (
+        "SECTION 1 - ROLE & OBJECTIVE\n"
+        "You are generating an 8-second vertical commercial video block.\n"
+        "SECTION 2 - PRODUCT TRUTH LOCK\n"
+        "Preserve the exact real-world appearance; when a presenter holds the product, keep it in a natural grip.\n"
+        "SECTION 4 - VISUAL STORY\n"
+        "Creator-led opening with the bottle already in hand, matching the uploaded product image exactly.\n"
+        "SECTION 5 - SHOT & CAMERA RULES\n"
+        "Handheld vertical 9:16; if the presenter is holding the product, keep it in hand.\n"
+        "SECTION 6 - SPOKEN DIALOGUE\n"
+        "Kembung perut? Sapu dan urut perlahan-lahan untuk lega.\n"
+        "SECTION 7 - VOICE & DELIVERY\n"
+        "Warm, reassuring female voice.\n"
     )
+    prompt = exact.build_exact_scene_scaffold_prompt(
+        canonical, plan, scene_context="Bright home studio.", presenter_visible=True
+    )
+    low = prompt.lower()
 
-    # Provider still cannot render the product pixels.
+    # Product-render / product-hold sections are removed wholesale — no contradiction.
+    assert "preserve the exact real-world appearance" not in low
+    assert "already in hand" not in low
+    assert "uploaded product image" not in low
+    assert "keep it in hand" not in low
+    assert "natural grip" not in low
+    # The provider is forbidden from rendering any product.
     assert "SCENE-ONLY PLATE" in prompt
-    assert "provider output is an internal plate" in prompt
-    assert "preserve the real product" not in prompt.lower()
-    # HYBRID keeps the presenter — the FACELESS face-ban is NOT applied.
-    assert "no visible face" not in prompt.lower()
-    assert "presenter" in prompt.lower()
-    assert "lip-synced" in prompt.lower()
-    # The spoken dialogue survives the scene-only strip (lip-sync source intact).
-    assert "rasa lega dalam lima minit" in prompt
+    assert "reserved region stays empty" in low
+    # Presenter is required and NOT face-banned; interaction-zone choreography present.
+    assert "no visible face" not in low
+    assert "fully visible" in low
+    assert "lip-synced" in low
+    assert "interaction zone" in low
+    assert "present toward" in low
+    # Speech survives for lip-sync + the presenter's voice section is preserved.
+    assert "sapu dan urut perlahan-lahan" in low
+    assert "warm, reassuring female voice" in low
 
 
 def _video_plan_for_test():
