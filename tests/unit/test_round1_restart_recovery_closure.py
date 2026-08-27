@@ -61,6 +61,45 @@ class _FakeProvider:
         }
 
 
+class _ProjectHistoryProvider(_FakeProvider):
+    def __init__(self, media_id: str, project_id: str, media: list[dict]):
+        super().__init__(media_id, project_id)
+        self.media = media
+        self.history_reads = 0
+
+    async def list_project_media(self, project_id):
+        self.history_reads += 1
+        assert project_id == self.project_id
+        return {
+            "status": 200,
+            "project_id": self.project_id,
+            "media": self.media,
+        }
+
+
+def _history_media(media_id: str, project_id: str, prompt: str) -> dict:
+    created = datetime.now(timezone.utc)
+    return {
+        "name": media_id,
+        "projectId": project_id,
+        "workflowId": f"workflow-{media_id}",
+        "mediaMetadata": {
+            "createTime": created.isoformat().replace("+00:00", "Z"),
+            "mediaStatus": {
+                "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_SUCCESSFUL",
+            },
+        },
+        "video": {
+            "generatedVideo": {
+                "prompt": f"<root><instruction><prompt>{prompt}</prompt></instruction></root>",
+                "model": "veo_3_1_t2v_lite",
+                "aspectRatio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+                "seed": 537780,
+            },
+        },
+    }
+
+
 async def _seed_single_job(job_id: str, **updates) -> dict:
     job = {
         "job_id": job_id,
@@ -202,6 +241,120 @@ async def test_single_restart_without_provider_identity_is_explicitly_unrecovera
     assert recovered["recovery_unrecoverable"] is True
     provider.check_video_status_by_media.assert_not_awaited()
     provider.check_video_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_single_restart_recovers_one_exact_project_history_identity(
+    tmp_path, monkeypatch
+):
+    prompt = "exact paid creation-agent prompt"
+    project_id = "project-history-recovery"
+    media_id = f"history-media-{uuid4().hex}"
+    provider = _ProjectHistoryProvider(
+        media_id,
+        project_id,
+        [_history_media(media_id, project_id, prompt)],
+    )
+    provider.submit_once()
+    job_id = f"g_history_recovery_{uuid4().hex[:10]}"
+    await _seed_single_job(
+        job_id,
+        status="RECOVERY_UNRECOVERABLE",
+        prompt=prompt,
+        project_id=project_id,
+        mode="T2V",
+        source_mode="T2V",
+        aspect="9:16",
+        model="veo_3_1_lite",
+        provider_operation_ids=[],
+        direct_media_targets=[],
+        generation_identity={
+            "sse_prompt": prompt,
+            "expected_model": "veo_3_1_t2v_lite",
+            "tool_call_id": "generate_video_from_text",
+            "response_id": "response-history",
+            "seed": None,
+        },
+        provider_generation_submit_count=1,
+        recovery_unrecoverable=True,
+        error="DURABLE_PROVIDER_IDENTITY_INSUFFICIENT",
+    )
+    make_video._JOBS.clear()
+    make_video._VIDEO_LANE_JOB = None
+    monkeypatch.setattr(make_video, "OUTPUT_DIR", tmp_path)
+    direct_submit = AsyncMock(side_effect=AssertionError("recovery must not submit"))
+    monkeypatch.setattr(make_video, "_direct_submit", direct_submit)
+
+    recovered = await make_video.reconcile_durable_single_job(
+        job_id,
+        provider_client=provider,
+    )
+
+    assert recovered["status"] == "DONE"
+    assert recovered["media_id"] == media_id
+    assert recovered["provider_operation_ids"] == [media_id]
+    assert recovered["provider_identity_recovery"]["correlation"] == (
+        "EXACT_PROMPT_MODEL_ASPECT_PROJECT_TIME_UNIQUE"
+    )
+    assert provider.history_reads == 1
+    assert provider.submit_count == 1
+    assert provider.poll_count == 1
+    assert provider.retrieve_count == 1
+    direct_submit.assert_not_awaited()
+    artifact = await crud.get_generated_artifact(media_id)
+    assert artifact and artifact["job_id"] == job_id
+
+
+@pytest.mark.asyncio
+async def test_single_restart_refuses_ambiguous_project_history_identity():
+    prompt = "repeated exact prompt"
+    project_id = "project-history-ambiguous"
+    media_a = f"history-a-{uuid4().hex}"
+    media_b = f"history-b-{uuid4().hex}"
+    provider = _ProjectHistoryProvider(
+        media_a,
+        project_id,
+        [
+            _history_media(media_a, project_id, prompt),
+            _history_media(media_b, project_id, prompt),
+        ],
+    )
+    provider.submit_once()
+    job_id = f"g_history_ambiguous_{uuid4().hex[:10]}"
+    await _seed_single_job(
+        job_id,
+        status="RECOVERY_UNRECOVERABLE",
+        prompt=prompt,
+        project_id=project_id,
+        mode="T2V",
+        source_mode="T2V",
+        aspect="9:16",
+        model="veo_3_1_lite",
+        provider_operation_ids=[],
+        direct_media_targets=[],
+        generation_identity={
+            "sse_prompt": prompt,
+            "expected_model": "veo_3_1_t2v_lite",
+        },
+        provider_generation_submit_count=1,
+    )
+    make_video._JOBS.clear()
+    make_video._VIDEO_LANE_JOB = None
+
+    recovered = await make_video.reconcile_durable_single_job(
+        job_id,
+        provider_client=provider,
+    )
+
+    assert recovered["status"] == "RECOVERY_UNRECOVERABLE"
+    assert recovered["provider_identity_recovery"]["error"] == (
+        "PROJECT_HISTORY_IDENTITY_AMBIGUOUS"
+    )
+    assert recovered["provider_identity_recovery"]["candidate_count"] == 2
+    assert provider.history_reads == 1
+    assert provider.poll_count == 0
+    assert provider.retrieve_count == 0
+    assert provider.submit_count == 1
 
 
 async def _seed_montage_run(run_id: str, items: list[tuple[str, str, dict]], *, status="GENERATING"):

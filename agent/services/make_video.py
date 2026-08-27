@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import time
+from datetime import datetime, timezone
 from uuid import uuid4
 from urllib.parse import unquote
 
@@ -63,6 +64,10 @@ _DURABLE_RECOVERY_STATUSES = frozenset({
     "ARTIFACT_PERSISTING",
     "ARTIFACT_PERSISTENCE_FAILED",
     "RETRIEVED_NOT_REGISTERED",
+    # This state used to be terminal even when the accepted Flow-agent request
+    # left exact prompt/model anchors that can resolve one unique project-media
+    # identity. Revisit it provider-free; ambiguity still remains terminal.
+    "RECOVERY_UNRECOVERABLE",
 })
 
 _DURABLE_RECOVERY_LOCKS: dict[str, asyncio.Lock] = {}
@@ -1639,6 +1644,189 @@ def _durable_provider_handles(row: dict, state: dict) -> tuple[str | None, list,
     return None, [], "DURABLE_PROVIDER_IDENTITY_INSUFFICIENT"
 
 
+def _provider_history_created_at(value) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _provider_history_aspect_matches(requested: str | None, observed: str | None) -> bool:
+    if not requested or not observed:
+        return True
+    aliases = {
+        "9:16": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "16:9": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+        "1:1": "VIDEO_ASPECT_RATIO_SQUARE",
+    }
+    expected = aliases.get(str(requested).strip(), str(requested).strip())
+    return expected == str(observed).strip()
+
+
+async def _recover_provider_media_from_project_history(
+    row: dict,
+    state: dict,
+    client,
+) -> dict:
+    """Resolve one missing paid-operation identity from authenticated Flow state.
+
+    The Flow creation-agent acknowledgement does not always expose an operation
+    handle. Recovery is safe only when the durable provider-accepted envelope
+    and one project-media row form an exact, unique composite. Freshness/order
+    alone is never accepted.
+    """
+    lister = getattr(client, "list_project_media", None)
+    project_id = str(row.get("project_id") or state.get("project_id") or "").strip()
+    identity = state.get("generation_identity")
+    identity = identity if isinstance(identity, dict) else {}
+    anchors = {
+        str(value).strip()
+        for value in (
+            identity.get("sse_prompt"),
+            state.get("prompt"),
+            row.get("initial_prompt_text"),
+        )
+        if str(value or "").strip()
+    }
+    expected_model = str(identity.get("expected_model") or "").strip()
+    submitted_count = int(state.get("provider_generation_submit_count") or 0)
+    if not callable(lister) or not project_id or not anchors or submitted_count != 1:
+        return {
+            "matched": False,
+            "error": "PROJECT_HISTORY_RECOVERY_PRECONDITIONS_UNMET",
+            "provider_calls": 0,
+        }
+
+    try:
+        snapshot = await lister(project_id)
+    except Exception as exc:  # noqa: BLE001 — preserve the accepted attempt
+        return {
+            "matched": False,
+            "error": "PROJECT_HISTORY_LOOKUP_FAILED",
+            "detail": str(exc)[:400],
+            "provider_calls": 1,
+        }
+    if not isinstance(snapshot, dict) or snapshot.get("error"):
+        detail = (
+            snapshot.get("error")
+            if isinstance(snapshot, dict)
+            else "invalid project history response"
+        )
+        return {
+            "matched": False,
+            "error": "PROJECT_HISTORY_LOOKUP_FAILED",
+            "detail": str(detail or "invalid response")[:400],
+            "provider_calls": 1,
+        }
+    observed_project_id = str(snapshot.get("project_id") or "").strip()
+    if observed_project_id != project_id:
+        return {
+            "matched": False,
+            "error": "PROJECT_HISTORY_PROJECT_MISMATCH",
+            "observed_project_id": observed_project_id,
+            "provider_calls": 1,
+        }
+
+    job_created = _provider_history_created_at(row.get("created_at"))
+    window_start = (job_created.timestamp() - 5) if job_created else None
+    window_end = (job_created.timestamp() + 45 * 60) if job_created else None
+    matches = []
+    rejected = {
+        "missing_identity": 0,
+        "outside_window": 0,
+        "prompt_mismatch": 0,
+        "model_mismatch": 0,
+        "aspect_mismatch": 0,
+        "provider_failed": 0,
+    }
+    for item in snapshot.get("media") or []:
+        if not isinstance(item, dict):
+            continue
+        media_id = str(item.get("name") or "").strip()
+        video = item.get("video") if isinstance(item.get("video"), dict) else {}
+        generated = (
+            video.get("generatedVideo")
+            if isinstance(video.get("generatedVideo"), dict)
+            else video
+        )
+        metadata = (
+            item.get("mediaMetadata")
+            if isinstance(item.get("mediaMetadata"), dict)
+            else {}
+        )
+        created_at = _provider_history_created_at(metadata.get("createTime"))
+        if not media_id or created_at is None:
+            rejected["missing_identity"] += 1
+            continue
+        created_ts = created_at.timestamp()
+        if (
+            window_start is not None
+            and window_end is not None
+            and not (window_start <= created_ts <= window_end)
+        ):
+            rejected["outside_window"] += 1
+            continue
+        _normalization, provider_prompt = _extract_provider_prompt(generated.get("prompt"))
+        if provider_prompt not in anchors:
+            rejected["prompt_mismatch"] += 1
+            continue
+        provider_model = str(generated.get("model") or "").strip()
+        if expected_model and provider_model and provider_model != expected_model:
+            rejected["model_mismatch"] += 1
+            continue
+        if not _provider_history_aspect_matches(
+            row.get("aspect_ratio") or state.get("aspect"),
+            generated.get("aspectRatio"),
+        ):
+            rejected["aspect_mismatch"] += 1
+            continue
+        media_status = (
+            metadata.get("mediaStatus")
+            if isinstance(metadata.get("mediaStatus"), dict)
+            else {}
+        )
+        status = str(media_status.get("mediaGenerationStatus") or "").strip()
+        if status == "MEDIA_GENERATION_STATUS_FAILED":
+            rejected["provider_failed"] += 1
+            continue
+        matches.append({
+            "name": media_id,
+            "projectId": project_id,
+            "workflow_id": str(item.get("workflowId") or "").strip() or None,
+            "created_at": created_at.isoformat().replace("+00:00", "Z"),
+            "provider_status": status or None,
+            "provider_model": provider_model or None,
+            "media_seed": generated.get("seed"),
+        })
+
+    if len(matches) != 1:
+        return {
+            "matched": False,
+            "error": (
+                "PROJECT_HISTORY_IDENTITY_NOT_FOUND"
+                if not matches
+                else "PROJECT_HISTORY_IDENTITY_AMBIGUOUS"
+            ),
+            "candidate_count": len(matches),
+            "rejected": rejected,
+            "provider_calls": 1,
+        }
+    return {
+        "matched": True,
+        "target": matches[0],
+        "candidate_count": 1,
+        "rejected": rejected,
+        "provider_calls": 1,
+        "correlation": "EXACT_PROMPT_MODEL_ASPECT_PROJECT_TIME_UNIQUE",
+    }
+
+
 def _durable_recovery_job(row: dict, state: dict) -> dict:
     """Rebuild the poll/retrieve job envelope without inventing a submit."""
     job = dict(state)
@@ -1802,7 +1990,59 @@ async def reconcile_durable_single_job(
                 _durable_state_from_row(fresh or row),
             )
 
+        client = provider_client
+        if client is None:
+            client = get_flow_client()
+
         handle_kind, handles, identity_error = _durable_provider_handles(row, state)
+        if not handle_kind and identity_error == "DURABLE_PROVIDER_IDENTITY_INSUFFICIENT":
+            history_recovery = await _recover_provider_media_from_project_history(
+                row,
+                state,
+                client,
+            )
+            job["provider_identity_recovery"] = history_recovery
+            job["provider_reconciliation"]["identity_lookup_provider_calls"] = int(
+                history_recovery.get("provider_calls") or 0
+            )
+            if history_recovery.get("matched") is True:
+                recovered_target = dict(history_recovery["target"])
+                job["direct_media_targets"] = [{
+                    "name": recovered_target["name"],
+                    "projectId": recovered_target["projectId"],
+                    **(
+                        {"workflow_id": recovered_target["workflow_id"]}
+                        if recovered_target.get("workflow_id")
+                        else {}
+                    ),
+                }]
+                job["provider_operation_ids"] = [recovered_target["name"]]
+                job["generation_identity"] = {
+                    **(
+                        state.get("generation_identity")
+                        if isinstance(state.get("generation_identity"), dict)
+                        else {}
+                    ),
+                    "operation_names": [recovered_target["name"]],
+                    "provider_generation_submit_count": 1,
+                }
+                job.update(
+                    status="RECOVERY_REQUIRED",
+                    stage="provider_identity_recovered",
+                    error=None,
+                    recovery_unrecoverable=False,
+                )
+                sync_ok = await _sync_durable_single_job(job)
+                if sync_ok is False:
+                    raise RuntimeError(
+                        "RECOVERED_PROVIDER_IDENTITY_DURABILITY_FAILED"
+                    )
+                row = await crud.get_video_production_job(job_id) or row
+                state = _durable_state_from_row(row)
+                handle_kind, handles, identity_error = _durable_provider_handles(
+                    row,
+                    state,
+                )
         if not handle_kind:
             job.update(
                 status="RECOVERY_UNRECOVERABLE",
@@ -1844,10 +2084,7 @@ async def reconcile_durable_single_job(
                 "provider_generation_submit_count": 1,
             }
 
-        client = provider_client
         production_lease_required = client is None or isinstance(client, FlowClient)
-        if client is None:
-            client = get_flow_client()
         recovery_lease = None
         persisted_lease = (
             state.get("bridge_lease")
