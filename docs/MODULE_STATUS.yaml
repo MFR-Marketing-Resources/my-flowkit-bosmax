@@ -1925,6 +1925,7 @@ domains:
       - tests/unit/test_copy_render_execution_resolver.py
       - tests/unit/test_copy_render_idempotency.py
       - tests/unit/test_copy_render_occupancy.py
+      - tests/unit/test_copy_render_authoring_headroom.py
       - tests/api/test_copy_render_api.py
       - dashboard/src/api/copyRender.ts
       - dashboard/src/components/copywriting/OnDemandCopyRendererPanel.tsx
