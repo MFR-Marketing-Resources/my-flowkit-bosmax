@@ -25,6 +25,11 @@ export interface BenefitCopySourceSectionProps {
   lane: CopyRenderLane
   durationSeconds: number
   targetLanguage?: string
+  /** Governed Avatar Registry presenter for presenter-led (HYBRID) sessions, reused
+   * from the host operator's selection and bound at copy-session creation so
+   * prepare-selected can materialize (COPY_RENDER_HYBRID_AVATAR_REQUIRED). Omit for
+   * avatar-exempt lanes (FACELESS). */
+  avatarId?: string | null
   /** Neutral readiness signal — TRUE once a finalized rendered selection exists.
    * This is NOT the Copy Register V2 readiness signal. */
   onReadyChange?: (ready: boolean) => void
@@ -36,7 +41,7 @@ export interface BenefitCopySourceSectionProps {
 }
 
 export function BenefitCopySourceSection(props: BenefitCopySourceSectionProps) {
-  const { productId, lane, durationSeconds, targetLanguage = 'BM_MS', onReadyChange, onSelectedCopyChange } = props
+  const { productId, lane, durationSeconds, targetLanguage = 'BM_MS', avatarId, onReadyChange, onSelectedCopyChange } = props
   const [benefits, setBenefits] = useState<BenefitCapacity[]>([])
   const [benefitId, setBenefitId] = useState<string>('')
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -111,6 +116,7 @@ export function BenefitCopySourceSection(props: BenefitCopySourceSectionProps) {
           lane={lane}
           durationSeconds={durationSeconds}
           targetLanguage={targetLanguage}
+          avatarId={avatarId}
           onCopySelected={({ session, prepared }) => {
             // Carry the finalized selection identity up so the operator sends
             // benefit_copy_render.candidate_id (never collapse it to copyReady=true).
