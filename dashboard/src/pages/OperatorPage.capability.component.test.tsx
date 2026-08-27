@@ -40,6 +40,7 @@ const MATRIX = {
 };
 
 vi.mock("../api/client", () => ({
+	csrfToken: () => "test-csrf",
 	fetchAPI: vi.fn((url: string) => {
 		if (typeof url === "string" && url.includes("video-capability-matrix")) {
 			return Promise.resolve(MATRIX);
