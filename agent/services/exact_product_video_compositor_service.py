@@ -235,8 +235,21 @@ def build_exact_scene_scaffold_prompt(
     plan: dict[str, Any],
     *,
     scene_context: str = "",
+    presenter_visible: bool = False,
 ) -> str:
-    """Make a provider prompt that cannot authorize provider product pixels."""
+    """Make a provider prompt that cannot authorize provider product pixels.
+
+    ``presenter_visible`` distinguishes the two exact-composite scaffolds that
+    share this builder:
+
+    * FACELESS (default): the provider must not render a face — only the scene,
+      hands, and torso.
+    * HYBRID (``presenter_visible=True``): the on-camera human presenter stays
+      fully visible and lip-synced to the dialogue.  Only the *product* pixels
+      are withheld for the deterministic compositor; the presenter is NOT
+      suppressed.  The provider still renders presenter + action + background as
+      the scene scaffold.
+    """
 
     selected = plan.get("choreography") or {}
     selected_id = selected.get("choreography_id") or FACELESS_V1_SAFE_DEFAULT
@@ -268,8 +281,22 @@ def build_exact_scene_scaffold_prompt(
         "PROVIDER ROLE: scene scaffold only; the provider output is an internal plate and is never the final product artifact.",
         "Do not generate product pixels, packaging, label, logo, cap, replacement bottle, product text, product shadow, or product reflection.",
         f"EXACT CHOREOGRAPHY: {selected_id}; use only the declared rigid product placement and keep hands/props outside the reserved product box unless a verified foreground mask is supplied.",
-        "FACELESS: no visible face, head, eyes, mouth, or facial reflection; hands, arms, and torso may appear.",
     ]
+    if presenter_visible:
+        # HYBRID: keep the governed on-camera presenter — only the product is
+        # withheld for the compositor.  The presenter/spokesperson, their face,
+        # and lip-synced dialogue are required, never suppressed.
+        additions.append(
+            "PRESENTER: the on-camera human presenter/spokesperson remains fully "
+            "visible and lip-synced to the spoken dialogue; render the presenter, "
+            "setting, and action as the scene scaffold, but leave the reserved "
+            "product box empty — the exact product is inserted by the compositor."
+        )
+    else:
+        additions.append(
+            "FACELESS: no visible face, head, eyes, mouth, or facial reflection; "
+            "hands, arms, and torso may appear."
+        )
     if scene_context.strip():
         additions.append(f"SCENE CONTEXT: {scene_context.strip()}")
     return f"{prompt}\n\n" + " ".join(additions)

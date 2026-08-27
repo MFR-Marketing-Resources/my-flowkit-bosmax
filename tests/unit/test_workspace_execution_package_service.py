@@ -1,5 +1,6 @@
 import copy
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -590,6 +591,132 @@ async def test_workspace_execution_package_hybrid_uses_automatic_product_anchor(
     assert result["resolved_assets"][0]["asset_id"] == "product-visual:prod-001:official"
     stored_assets = json.loads(captured["resolved_assets"])
     assert stored_assets[0]["media_id"] == "media-product"
+
+
+@pytest.mark.asyncio
+async def test_exact_product_hybrid_package_rewrites_prompt_presenter_scaffold(monkeypatch):
+    """Owner regression: an exact-product HYBRID package must rewrite the
+    approval-bound prompt to a presenter-preserving scene scaffold — the product
+    is withheld for the compositor, but the on-camera presenter and lip-synced
+    dialogue survive (never the FACELESS face-ban)."""
+    from types import SimpleNamespace
+
+    import agent.services.workspace_execution_package_service as wep
+
+    captured = {}
+
+    async def fake_package(product_id: str, mode: str):
+        return {
+            "prompt_package_snapshot_id": "pkg_exact_hybrid",
+            "product_id": product_id,
+            "product_name": "Exact Product",
+            "mode": mode,
+            "production_generation_allowed": False,
+            "prompt_text": "Hybrid prompt",
+            "prompt_fingerprint": "fingerprint_exact_hybrid",
+            "asset_slots": copy.deepcopy(_ANCHOR_SLOTS),
+            "manual_fallback": {"copy_prompt_available": True},
+            "blockers": [],
+            "source_of_truth_notes": [],
+            "claim_safe_rewrite": "Safe rewrite",
+        }
+
+    async def fake_compile(**kwargs):
+        return {
+            "final_compiled_prompt_text": (
+                "=== PRODUCT TRUTH LOCK ===\n"
+                "Show the exact product label and preserve the real product.\n"
+                "=== DIALOGUE ===\n"
+                "Presenter says: rasa lega dalam lima minit.\n"
+                "=== PRESENTER ===\n"
+                "One visible creator persona to camera."
+            ),
+            "prompt_blocks": [
+                {
+                    "block_index": 1,
+                    "block_role": "ANCHOR",
+                    "duration_seconds": 8,
+                    "compiled_prompt_text": "Block 1",
+                }
+            ],
+            "compiler_version": "ugc_video_prompt_compiler_v1",
+            "source_mode": "HYBRID",
+            "generation_mode": "SINGLE",
+            "total_duration_seconds": 8,
+            "camera_style": "UGC_IPHONE_RAW",
+            "character_presence": "VISIBLE_CREATOR",
+            "creator_persona": "DEFAULT_CREATOR",
+            "target_language": "BM_MS",
+            "shot_plan": [{"block_index": 1, "shot_count": 1, "shots": ["Shot 1"]}],
+            "dialogue_word_budget_per_block": [13],
+            "prompt_fingerprint": "compiled_fp_exact_hybrid",
+            "warnings": [],
+            "blockers": [],
+            "source_of_truth_notes": [],
+            "continuation_lineage": [],
+            "runtime_config_snapshot": {"defaults": {"block_duration_seconds": 8}},
+        }
+
+    async def fake_store(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    async def fake_bind(slots, **kwargs):
+        return slots
+
+    monkeypatch.setattr(wep, "get_approved_product_package", fake_package)
+    monkeypatch.setattr(wep, "compile_workspace_prompt_preview", fake_compile)
+    monkeypatch.setattr(wep.crud, "create_or_replace_workspace_execution_package", fake_store)
+    monkeypatch.setattr(wep, "_bind_f2v_reference_assets", fake_bind)
+    monkeypatch.setattr(
+        wep,
+        "resolve_execution_copy",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                v2_enabled=False, copy_ready=True, approved_dialogue=None
+            )
+        ),
+    )
+    # Exact-required product -> the composite plan is built and the presenter
+    # scaffold rewrite fires.
+    monkeypatch.setattr(
+        wep.crud, "get_product", AsyncMock(return_value={"id": "p1", "_exact_product_required": True})
+    )
+    monkeypatch.setattr(wep, "exact_product_required", lambda _product: True)
+    monkeypatch.setattr(
+        wep,
+        "build_exact_product_video_plan",
+        lambda _product, _choreo: {
+            "selected_execution_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+            "choreography": {"choreography_id": "PRODUCT_PRESENT_TO_CAMERA"},
+            "generate_eligibility": True,
+        },
+    )
+
+    result = await create_workspace_execution_package(
+        "p1",
+        "F2V",
+        8,
+        "9:16",
+        "Veo 3.1 - Lite",
+        False,
+        source_mode="HYBRID",
+        character_presence="VISIBLE_CREATOR",
+    )
+
+    prompt = result["prompt_text"]
+    # Provider gets a scene-scaffold-only prompt: no exact product pixels.
+    assert "SCENE-ONLY PLATE" in prompt
+    assert "preserve the real product" not in prompt.lower()
+    # HYBRID keeps the presenter and lip-synced dialogue — the FACELESS face-ban
+    # must NOT be applied to a presenter-visible lane.
+    assert "no visible face" not in prompt.lower()
+    assert "presenter" in prompt.lower()
+    assert "lip-synced" in prompt.lower()
+    assert "rasa lega dalam lima minit" in prompt
+    # Source-of-truth note records the exact HYBRID route (presenter preserved).
+    note_blob = " ".join(json.loads(captured["source_of_truth_notes"]))
+    assert "Exact HYBRID route" in note_blob
 
 
 @pytest.mark.asyncio
