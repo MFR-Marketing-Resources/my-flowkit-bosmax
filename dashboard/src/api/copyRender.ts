@@ -114,6 +114,11 @@ export interface CreateSessionInput {
   duration_seconds: number
   target_language?: string
   formula_id?: string | null
+  /** Governed Avatar Registry presenter for a presenter-led (HYBRID) session, so the
+   * session carries the visual config the backend requires before prepare-selected
+   * (COPY_RENDER_HYBRID_AVATAR_REQUIRED). Reuse the operator's already-selected
+   * presenter — never a default/substitute. Omit for avatar-exempt lanes (FACELESS). */
+  avatar_id?: string | null
 }
 
 export async function createSession(input: CreateSessionInput): Promise<CopyRenderSession> {

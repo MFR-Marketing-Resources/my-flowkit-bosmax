@@ -2555,6 +2555,7 @@ export default function OperatorPage({ mode: propMode }: OperatorPageProps) {
 										productId={selectedProduct?.id}
 										lane="HYBRID"
 										durationSeconds={videoDurationSeconds}
+										avatarId={registryAvatarId || null}
 										onReadyChange={(ready) => { setBenefitRenderReady(ready); if (ready) setWorkspacePackage(null); }}
 										onSelectedCopyChange={(ctx) => { setSelectedBenefitCopy(ctx); setWorkspacePackage(null); }}
 									/>

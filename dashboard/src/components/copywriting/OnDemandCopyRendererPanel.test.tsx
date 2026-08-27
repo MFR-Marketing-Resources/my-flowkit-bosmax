@@ -54,6 +54,27 @@ describe('OnDemandCopyRendererPanel', () => {
     expect(api.generateSuggestions).toHaveBeenCalledWith('CRS_1', 'req-test-00000001')
   })
 
+  // Round 4: a presenter-led (HYBRID) session must carry the operator's governed
+  // presenter at creation, else prepare-selected fails COPY_RENDER_HYBRID_AVATAR_REQUIRED.
+  it('binds the operator presenter (avatar_id) into a HYBRID session at creation', async () => {
+    ;(api.createSession as Mock).mockResolvedValue(sess())
+    ;(api.generateSuggestions as Mock).mockResolvedValue(sess({ candidates: [cand('c1', 'SHOWN', 'x')] }))
+    render(<OnDemandCopyRendererPanel productId="p" benefitId="b" durationSeconds={8} lane="HYBRID" defaultTarget={1} avatarId="BOS_F_ALYA_01" />)
+    fireEvent.click(screen.getByTestId('cr-generate'))
+    await waitFor(() => expect(api.createSession).toHaveBeenCalledTimes(1))
+    expect((api.createSession as Mock).mock.calls[0][0]).toMatchObject({ lane: 'HYBRID', avatar_id: 'BOS_F_ALYA_01' })
+  })
+
+  // Avatar-exempt lanes (FACELESS) must NOT supply an avatar (backend rejects one).
+  it('sends avatar_id null when no presenter is supplied (FACELESS-exempt)', async () => {
+    ;(api.createSession as Mock).mockResolvedValue(sess())
+    ;(api.generateSuggestions as Mock).mockResolvedValue(sess({ candidates: [cand('c1', 'SHOWN', 'x')] }))
+    render(<OnDemandCopyRendererPanel productId="p" benefitId="b" durationSeconds={8} lane="FACELESS" defaultTarget={1} />)
+    fireEvent.click(screen.getByTestId('cr-generate'))
+    await waitFor(() => expect(api.createSession).toHaveBeenCalledTimes(1))
+    expect((api.createSession as Mock).mock.calls[0][0].avatar_id).toBeNull()
+  })
+
   it('locks to target, finalizes, prepares packages and reports the selection', async () => {
     const onSel = vi.fn()
     ;(api.createSession as Mock).mockResolvedValue(sess({ target_count: 1 }))

@@ -27,13 +27,18 @@ export interface OnDemandCopyRendererPanelProps {
   defaultTarget?: number
   maxTarget?: number
   className?: string
+  /** Governed Avatar Registry presenter for presenter-led (HYBRID) sessions. Bound
+   * into the session at creation so prepare-selected can materialize packages
+   * (COPY_RENDER_HYBRID_AVATAR_REQUIRED). Reuse the operator's selection; omit for
+   * avatar-exempt lanes (FACELESS). */
+  avatarId?: string | null
   /** Called after the selection is finalized (and packages prepared) so the host
    * page can mark its neutral copyReady state and record the selected source. */
   onCopySelected?: (result: { session: CopyRenderSession; prepared: PrepareResult }) => void
 }
 
 export function OnDemandCopyRendererPanel(props: OnDemandCopyRendererPanelProps) {
-  const { productId, benefitId, durationSeconds, lane, targetLanguage = 'BM_MS', className = '' } = props
+  const { productId, benefitId, durationSeconds, lane, targetLanguage = 'BM_MS', className = '', avatarId } = props
   const [session, setSession] = useState<CopyRenderSession | null>(null)
   const [target, setTarget] = useState<number>(props.defaultTarget ?? 5)
   const [busy, setBusy] = useState<string | null>(null)
@@ -57,11 +62,14 @@ export function OnDemandCopyRendererPanel(props: OnDemandCopyRendererPanelProps)
       const created = await createSession({
         product_id: productId, benefit_id: benefitId, lane,
         target_count: target, duration_seconds: durationSeconds, target_language: targetLanguage,
+        // Reuse the operator's governed presenter so a HYBRID session carries its
+        // visual config before prepare-selected. Never a default/substitute.
+        avatar_id: avatarId ?? null,
       })
       sid = created.session_id
     }
     setSession(await generateSuggestions(sid!, newRequestId()))
-  }), [run, session, productId, benefitId, lane, target, durationSeconds, targetLanguage])
+  }), [run, session, productId, benefitId, lane, target, durationSeconds, targetLanguage, avatarId])
 
   const onToggleLock = useCallback((c: CopyRenderCandidate) => run('lock', async () => {
     setSession(c.status === 'LOCKED' ? await unlockCandidate(c.candidate_id) : await lockCandidate(c.candidate_id))
