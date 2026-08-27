@@ -54,6 +54,16 @@ try {
 	console.error("[GFV2] ERR_GFV2_READINESS_IMPORT_FAILED", _err);
 }
 
+try {
+	// eslint-disable-next-line no-undef
+	importScripts("flow-editor-binding.js"); // exposes self.FlowEditorBinding
+} catch (_err) {
+	console.error(
+		"[FLOWKIT_EDITOR_BINDING] ERR_FLOW_EDITOR_BINDING_IMPORT_FAILED",
+		_err,
+	);
+}
+
 const _bosmaxRunnerImported = Boolean(
 	typeof self !== "undefined" && self.__BOSMAX_F2V_FLOW_QUEUE_RUNNER__,
 );
@@ -4148,26 +4158,270 @@ async function ensureFlowDomScript(tabId) {
 	}
 }
 
+// Ask a Flow tab's always-on content script (content.js, injected at
+// document_start) for its LIVE window.location.href. This is authoritative over
+// chrome.tabs.Tab.url, which can lag behind Flow's SPA history.pushState
+// navigation. Zero-credit, no provider ops. Returns the href or null.
+async function probeFlowTabLiveLocation(tabId, timeoutMs = 2000) {
+	if (!tabId) return null;
+	try {
+		const res = await sendTabMessageSafe(
+			tabId,
+			{ type: "FLOWKIT_CAPTCHA_PING" },
+			timeoutMs,
+		);
+		const href = String(res?.location_href || "").trim();
+		return href || null;
+	} catch (_) {
+		return null;
+	}
+}
+
+// Resolve the authoritative editor tab by probing candidate Flow tabs for their
+// LIVE location_href (not the possibly-stale Tab.url) and delegating the choice
+// to the pure decision core. Fail-closed on genuine multi-editor ambiguity.
+async function resolveEditorTabViaLiveProbe(params = {}) {
+	const binding = (typeof self !== "undefined" && self.FlowEditorBinding) || null;
+	if (!binding) return null;
+	const requestedTabId = Number(params?.requestedTabId || 0);
+	const requestedProjectId = String(params?.requestedProjectId || "").trim();
+	const storedProjectUrl = params?.storedProjectUrl || null;
+
+	const allTabs = await getFlowTabs();
+	let candidateTabs = allTabs;
+	if (requestedTabId) {
+		const target =
+			allTabs.find((tab) => Number(tab?.id) === requestedTabId) ||
+			params?.fallbackTab ||
+			(await getTabSafe(requestedTabId));
+		candidateTabs = target?.id ? [target] : [];
+	}
+	if (!candidateTabs.length) return null;
+
+	const focusedActiveTab = await getFocusedActiveBrowserTab();
+	const focusedId = Number(focusedActiveTab?.id || 0);
+
+	const descriptors = (
+		await Promise.all(
+			candidateTabs.map(async (tab) => {
+				if (!tab?.id) return null;
+				const liveLocationHref = await probeFlowTabLiveLocation(tab.id);
+				return {
+					tabId: tab.id,
+					tab,
+					tabUrl: tab.url || null,
+					liveLocationHref,
+					focusedActive: focusedId > 0 && Number(tab.id) === focusedId,
+				};
+			}),
+		)
+	).filter(Boolean);
+	if (!descriptors.length) return null;
+
+	// A backend-supplied project id disambiguates directly (highest authority).
+	if (requestedProjectId) {
+		const match = descriptors.find((descriptor) => {
+			const resolved = binding.resolveAuthoritativeEditorUrl({
+				tabUrl: descriptor.tabUrl,
+				liveLocationHref: descriptor.liveLocationHref,
+			});
+			return resolved.isEditor && resolved.projectId === requestedProjectId;
+		});
+		if (match) {
+			return {
+				tab: match.tab,
+				liveLocationHref: match.liveLocationHref,
+				ambiguous: false,
+				reason: "REQUESTED_PROJECT_MATCH",
+			};
+		}
+	}
+
+	const selection = binding.selectAuthoritativeEditorTab(descriptors, {
+		storedProjectUrl,
+	});
+	const chosen =
+		descriptors.find(
+			(descriptor) => Number(descriptor.tabId) === Number(selection?.tabId),
+		) || null;
+	if (selection?.ambiguous) {
+		return {
+			tab: null,
+			selectedTab: chosen?.tab || null,
+			liveLocationHref: chosen?.liveLocationHref || null,
+			ambiguous: true,
+			reason: selection.reason,
+		};
+	}
+	if (chosen && selection?.ok) {
+		return {
+			tab: chosen.tab,
+			liveLocationHref: chosen.liveLocationHref,
+			ambiguous: false,
+			reason: selection?.reason || null,
+		};
+	}
+	return null;
+}
+
+// Publish the identity of an already-open live Flow editor into runtime
+// diagnostics + stored project url WITHOUT resetting the extension/session
+// identity. Used by the SPA-nav reconciler and the WS-reconnect law. Zero
+// credit, no provider ops.
+async function reconcileOpenFlowEditorIdentity(reason = "manual") {
+	const binding = (typeof self !== "undefined" && self.FlowEditorBinding) || null;
+	if (!binding) return { ok: false, reason: "MODULE_UNAVAILABLE" };
+	try {
+		const storedProjectUrl = await getStoredFlowProjectUrl();
+		const resolved = await resolveEditorTabViaLiveProbe({
+			requestedTabId: 0,
+			requestedProjectId: "",
+			fallbackTab: null,
+			storedProjectUrl,
+		});
+		if (!resolved || resolved.ambiguous || !resolved.tab?.id) {
+			return {
+				ok: false,
+				reason: resolved?.ambiguous ? "AMBIGUOUS" : "NO_OPEN_EDITOR",
+			};
+		}
+		const liveUrl = String(
+			resolved.liveLocationHref || resolved.tab.url || "",
+		).trim();
+		const classified = binding.reconcileFlowLocation({ url: liveUrl });
+		if (classified.action !== "BIND_EDITOR") {
+			return { ok: false, reason: "NO_OPEN_EDITOR" };
+		}
+		updateRuntimeDiagnostics({
+			flow_path_state: "FLOW_PROJECT_EDITOR",
+			flow_tab_url: liveUrl,
+			target_project_url: classified.normalized || liveUrl,
+			selected_tab_id: resolved.tab.id,
+			selected_tab_url: liveUrl,
+			active_editor_tab_url: liveUrl,
+		});
+		if (
+			classified.normalized &&
+			normalizeFlowProjectUrl(storedProjectUrl) !== classified.normalized
+		) {
+			await setStoredFlowProjectUrl(classified.normalized);
+		}
+		return {
+			ok: true,
+			reason,
+			flow_tab_id: resolved.tab.id,
+			flow_project_id: classified.projectId,
+			flow_project_url: classified.normalized,
+		};
+	} catch (err) {
+		return {
+			ok: false,
+			reason: "RECONCILE_FAILED",
+			detail: String(err?.message || err),
+		};
+	}
+}
+
+// Handle a debounced FLOW_LOCATION_CHANGED message from content.js (driven by
+// injected.js's history.pushState/replaceState hook). Reconcile the live editor
+// identity; PRESERVE the extension/session identity (never touch
+// activeConnectionId). A return to the Flow root drops any bound editor state.
+async function handleFlowLocationChanged(msg, sender) {
+	const binding = (typeof self !== "undefined" && self.FlowEditorBinding) || null;
+	const url = String(msg?.location_href || "").trim();
+	const tabId = sender?.tab?.id ?? null;
+	if (!binding) {
+		return { ok: true, reconciled: false, reason: "MODULE_UNAVAILABLE" };
+	}
+	const classified = binding.reconcileFlowLocation({ url });
+	if (classified.action === "BIND_EDITOR") {
+		updateRuntimeDiagnostics({
+			flow_path_state: "FLOW_PROJECT_EDITOR",
+			flow_tab_url: url,
+			target_project_url: classified.normalized || url,
+			selected_tab_id: tabId,
+			selected_tab_url: url,
+			active_editor_tab_url: url,
+		});
+		try {
+			const stored = await getStoredFlowProjectUrl();
+			if (
+				classified.normalized &&
+				normalizeFlowProjectUrl(stored) !== classified.normalized
+			) {
+				await setStoredFlowProjectUrl(classified.normalized);
+			}
+		} catch (_) {}
+		return {
+			ok: true,
+			reconciled: true,
+			action: classified.action,
+			flow_project_id: classified.projectId,
+			flow_project_url: classified.normalized,
+		};
+	}
+	if (classified.action === "CLEAR_EDITOR") {
+		// Back at the Flow root: mark the editor unavailable, never retain a
+		// false bound state. Session identity stays intact.
+		updateRuntimeDiagnostics({
+			flow_path_state: "FLOW_ROOT",
+			flow_tab_url: url,
+			selected_tab_url: url,
+		});
+		return { ok: true, reconciled: true, action: classified.action };
+	}
+	return { ok: true, reconciled: false, action: "IGNORE" };
+}
+
 async function handleFlowProviderSessionChallenge(params = {}) {
+	const binding = (typeof self !== "undefined" && self.FlowEditorBinding) || null;
 	const requestedTabId = Number(params?.flow_tab_id || 0);
+	const requestedProjectId = String(params?.flow_project_id || "").trim();
+	const storedProjectUrl = await getStoredFlowProjectUrl();
 	let flowTab = requestedTabId
 		? await getTabSafe(requestedTabId)
 		: await getFlowTabSafe();
-	if (
-		!requestedTabId &&
-		(!flowTab?.id || !isProjectEditorUrl(flowTab.url) || isRootFlowUrl(flowTab.url))
-	) {
-		const editorTabs = (await getFlowTabs()).filter(
-			(tab) => isProjectEditorUrl(tab?.url) && !isRootFlowUrl(tab?.url),
-		);
-		flowTab = editorTabs[0] || flowTab;
-	}
-	const requestedProjectId = String(params?.flow_project_id || "").trim();
-	if (!requestedTabId && requestedProjectId) {
-		const matchingEditorTab = (await getFlowTabs()).find(
-			(tab) => extractFlowProjectId(String(tab?.url || "")) === requestedProjectId,
-		);
-		if (matchingEditorTab) flowTab = matchingEditorTab;
+
+	// LIVE URL AUTHORITATIVE: chrome.tabs.Tab.url can lag behind Flow's SPA
+	// history navigation (root -> project editor), so resolve the real editor
+	// tab by probing candidate content scripts for their live location_href
+	// BEFORE trusting Tab.url or failing FLOW_PROJECT_NOT_FOUND.
+	let liveLocationHref = null;
+	let liveResolutionAmbiguous = false;
+	if (binding) {
+		const resolved = await resolveEditorTabViaLiveProbe({
+			requestedTabId,
+			requestedProjectId,
+			fallbackTab: flowTab,
+			storedProjectUrl,
+		});
+		if (resolved?.ambiguous) {
+			liveResolutionAmbiguous = true;
+			if (resolved.selectedTab) flowTab = resolved.selectedTab;
+		} else if (resolved?.tab) {
+			flowTab = resolved.tab;
+			liveLocationHref = resolved.liveLocationHref || null;
+		}
+	} else {
+		// Module unavailable: preserve the original Tab.url-based editor pick.
+		if (
+			!requestedTabId &&
+			(!flowTab?.id ||
+				!isProjectEditorUrl(flowTab.url) ||
+				isRootFlowUrl(flowTab.url))
+		) {
+			const editorTabs = (await getFlowTabs()).filter(
+				(tab) => isProjectEditorUrl(tab?.url) && !isRootFlowUrl(tab?.url),
+			);
+			flowTab = editorTabs[0] || flowTab;
+		}
+		if (!requestedTabId && requestedProjectId) {
+			const matchingEditorTab = (await getFlowTabs()).find(
+				(tab) =>
+					extractFlowProjectId(String(tab?.url || "")) === requestedProjectId,
+			);
+			if (matchingEditorTab) flowTab = matchingEditorTab;
+		}
 	}
 	const manifest = chrome.runtime.getManifest();
 	const identity = {
@@ -4196,7 +4450,31 @@ async function handleFlowProviderSessionChallenge(params = {}) {
 		same_extension_session: true,
 		same_flow_tab: false,
 	};
-	if (!flowTab?.id || !isProjectEditorUrl(flowTab.url) || isRootFlowUrl(flowTab.url)) {
+	// Two genuinely different live project editors and nothing to disambiguate:
+	// fail closed rather than binding the wrong project.
+	if (liveResolutionAmbiguous) {
+		return {
+			...base,
+			primary_blocker: "FLOW_EDITOR_AMBIGUOUS",
+		};
+	}
+	// Gate on the AUTHORITATIVE url: the live content-script location_href wins
+	// over a possibly-stale Tab.url; Tab.url is used only when live is absent.
+	const gateResolution = binding
+		? binding.resolveAuthoritativeEditorUrl({
+				tabUrl: flowTab?.url,
+				liveLocationHref,
+				storedProjectUrl,
+			})
+		: null;
+	const gateIsEditor = gateResolution
+		? gateResolution.isEditor
+		: Boolean(
+				flowTab?.url &&
+					isProjectEditorUrl(flowTab.url) &&
+					!isRootFlowUrl(flowTab.url),
+			);
+	if (!flowTab?.id || !gateIsEditor) {
 		return {
 			...base,
 			primary_blocker: "FLOW_PROJECT_NOT_FOUND",
@@ -4219,11 +4497,23 @@ async function handleFlowProviderSessionChallenge(params = {}) {
 		8000,
 	);
 	const liveTab = (await getTabSafe(flowTab.id)) || flowTab;
-	const flowUrl = String(liveTab.url || flowTab.url || "").trim();
-	const projectId = extractFlowProjectId(flowUrl);
+	// location_href (live content) is AUTHORITATIVE over chrome.tabs.Tab.url; a
+	// stale root Tab.url must not override a live project-editor location_href.
 	const contentUrl = String(
-		content?.flow_project_url || content?.flow_url || content?.location_href || "",
+		content?.location_href || content?.flow_project_url || content?.flow_url || "",
 	).trim();
+	if (contentUrl) liveLocationHref = contentUrl;
+	const authoritative = binding
+		? binding.resolveAuthoritativeEditorUrl({
+				tabUrl: liveTab.url,
+				liveLocationHref: contentUrl || liveLocationHref,
+				storedProjectUrl,
+			})
+		: null;
+	const flowUrl = String(
+		(authoritative && authoritative.url) || liveTab.url || flowTab.url || "",
+	).trim();
+	const projectId = extractFlowProjectId(flowUrl);
 	const contentProjectId = extractFlowProjectId(contentUrl);
 	const nonceMatch =
 		String(content?.challenge_nonce || "") === String(params?.nonce || "");
@@ -6142,6 +6432,11 @@ function connectToAgent() {
 				console.log(
 					`[FlowAgent] Received callback credential for ${connectionId}`,
 				);
+				// RECONNECT LAW: a backend restart + WS reconnect must rediscover an
+				// already-open Flow editor WITHOUT the user navigating again. Fire ONE
+				// zero-credit live reconciliation (no provider ops); it preserves the
+				// extension/session identity established above.
+				reconcileOpenFlowEditorIdentity("ws_reconnect").catch(() => {});
 			} else if (msg.method === "CHECK_FLOW_COMPOSER_READY") {
 				const result = await executeWsMethodAndReply(msg, () =>
 					handleCheckFlowComposerReady(msg.params?.mode),
@@ -7148,6 +7443,10 @@ async function handleMessage(msg, sender) {
 	if (msg.type === "TRPC_MEDIA_URLS") {
 		handleTrpcMediaUrls(msg.trpcUrl, msg.body);
 		return { ok: true };
+	}
+
+	if (msg.type === "FLOW_LOCATION_CHANGED") {
+		return await handleFlowLocationChanged(msg, sender);
 	}
 
 	if (msg.type === "CHECK_FLOW_COMPOSER_READY") {

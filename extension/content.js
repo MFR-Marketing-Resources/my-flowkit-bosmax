@@ -27,6 +27,46 @@ if (!window._flowKitInjected) {
     } catch (_) {}
   });
 
+  // ─── SPA location reconciliation ───────────────────────────
+  // injected.js (MAIN world) rewrites history.pushState/replaceState and
+  // dispatches FLOWKIT_LOCATION_CHANGED. Debounce those (plus popstate/
+  // hashchange) and forward the authoritative live location_href to the
+  // background so editor binding survives client-side SPA navigation that
+  // leaves chrome.tabs.Tab.url stale. Low-frequency only — never a tight poll.
+  (function flowkitLocationReconciler() {
+    let lastSentHref = null;
+    let debounceTimer = null;
+    function forwardLocation() {
+      try {
+        const href = window.location.href;
+        if (href === lastSentHref) return;
+        lastSentHref = href;
+        const pending = chrome.runtime.sendMessage({
+          type: 'FLOW_LOCATION_CHANGED',
+          location_href: href,
+          document_title: document.title,
+          timestamp: Date.now(),
+        });
+        pending?.catch?.(() => {});
+      } catch (_) {}
+    }
+    function scheduleForward() {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(forwardLocation, 300);
+    }
+    window.addEventListener('FLOWKIT_LOCATION_CHANGED', scheduleForward);
+    window.addEventListener('popstate', scheduleForward);
+    window.addEventListener('hashchange', scheduleForward);
+    // Inexpensive fallback: re-check on focus / tab becoming visible. This is
+    // NOT an aggressive interval — it only fires on real user attention events.
+    window.addEventListener('focus', scheduleForward);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') scheduleForward();
+    });
+    // Publish the initial location once, after the isolated world is ready.
+    scheduleForward();
+  })();
+
   // Default timeout for async listener handlers in content.js (captcha path).
   // reCAPTCHA Enterprise can normally resolve well under 5s; if grecaptcha
   // hangs we surface a structured timeout instead of leaking the port.

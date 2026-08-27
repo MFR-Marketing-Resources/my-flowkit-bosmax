@@ -1045,6 +1045,8 @@ domains:
       - extension/content.js
       - extension/f2v-flow-queue-runner.js
       - extension/injected.js
+      - extension/flow-editor-binding.js
+      - extension/__tests__/flow_editor_binding.test.mjs
       - extension/selector-registry.js
       - extension/content-flow-dom.js
       - extension/manifest.json
