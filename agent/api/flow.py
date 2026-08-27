@@ -15,7 +15,7 @@ from uuid import uuid4
 import aiohttp
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any, Optional
 from agent.services.flow_client import get_flow_client
 from agent.db import crud
@@ -2947,6 +2947,379 @@ def _native_extend_chain_request(body: ExtendRunRequest, runtime):
         aspect_ratio=body.aspect_ratio,
         workspace_generation_package_id=body.workspace_generation_package_id,
         seed=body.seed, user_paygate_tier=body.user_paygate_tier)
+
+
+class HybridProfileCertificationRequest(BaseModel):
+    """One bounded representative proof for the exact-product HYBRID composite
+    profile (surface/lane=HYBRID, T2V scene scaffold, ref=0, COMPOSITE)."""
+
+    product_id: str = Field(..., min_length=1)
+    benefit_id: str = Field(..., min_length=1)
+    avatar_id: str = Field(..., min_length=1)
+    model: str = Field("veo_3_1_lite", min_length=1)
+    duration_seconds: int = Field(8, ge=1)
+    aspect_ratio: str = "9:16"
+    target_language: str = "BM_MS"
+    confirm_live_credit_burn: bool = False
+    maximum_provider_operations: int = Field(1, ge=1, le=1)
+    max_retry_operations: int = Field(0, ge=0, le=0)
+    request_id: str | None = None
+
+
+@router.post("/hybrid-profile-certification")
+async def hybrid_profile_certification(
+    body: HybridProfileCertificationRequest,
+) -> dict[str, Any]:
+    """Run exactly one authenticated exact-product HYBRID composite profile proof.
+
+    Reuses the SHARED certification services + envelope machinery (the same ones
+    Faceless uses); binds surface=HYBRID / lane=HYBRID while preserving the real
+    provider execution tuple (veo_3_1_lite, 8s, 9:16, T2V scene scaffold, SINGLE,
+    reference_count=0, EXACT_PRODUCT_DETERMINISTIC_COMPOSITE finalization). The
+    review envelope is built to match the real HYBRID dispatch envelope. This
+    single capture IS the one paid HYBRID live proof — no second duplicate render.
+    """
+
+    from agent.api.faceless import (
+        _require_profile_certification_owner,
+        _current_runtime_proof,
+    )
+    from agent.services.flow_client import get_flow_client
+    from agent.services import make_video as _mv
+    from agent.services import provider_certification_service as _certifications
+    from agent.services import video_execution_profile_service as _profiles
+    from agent.services import execution_approval_service as _eas
+    from agent.services import copy_register_v2_service as _copy_register
+    from agent.services import copy_render_service as _copy_render
+    from agent.services import workspace_execution_package_service as _wep
+    from agent.services.product_visual_custody_service import (
+        ProductVisualCustodyError,
+        build_product_visual_custody_receipt,
+        exact_product_required,
+        validate_pre_dispatch_route,
+    )
+    from agent.services.product_visual_grounding_resolver import (
+        build_official_product_visual_asset,
+    )
+    from agent.services import exact_product_video_compositor_service as _mv_exact
+
+    correlation_id = body.request_id or ("hpcert_" + uuid4().hex)
+    owner = _require_profile_certification_owner()
+    runtime = _current_runtime_proof()
+
+    if (
+        body.model.strip() != "veo_3_1_lite"
+        or body.duration_seconds != 8
+        or body.aspect_ratio != "9:16"
+        or body.confirm_live_credit_burn is not True
+        or body.maximum_provider_operations != 1
+        or body.max_retry_operations != 0
+    ):
+        raise HTTPException(
+            422,
+            detail={
+                "error_code": "PROFILE_CERTIFICATION_TUPLE_INVALID",
+                "required": {
+                    "model": "veo_3_1_lite",
+                    "duration_seconds": 8,
+                    "aspect_ratio": "9:16",
+                    "maximum_provider_operations": 1,
+                    "max_retry_operations": 0,
+                    "confirm_live_credit_burn": True,
+                },
+            },
+        )
+
+    product_row = await crud.get_product(body.product_id)
+    if not product_row or not exact_product_required(product_row):
+        raise HTTPException(
+            422,
+            detail={
+                "error_code": "HYBRID_CERTIFICATION_EXACT_PRODUCT_REQUIRED",
+                "message": "HYBRID composite certification requires an exact-product-required product.",
+            },
+        )
+
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "PROFILE_CERTIFICATION_FLOW_TRANSPORT_NOT_CONNECTED")
+
+    # --- credit-free benefit-copy prep (session -> generate -> lock -> finalize) ---
+    try:
+        session = await _copy_render.create_session(
+            product_id=body.product_id, benefit_id=body.benefit_id, lane="HYBRID",
+            target_count=1, duration_seconds=8, target_language=body.target_language,
+            created_by=owner.staff_id, avatar_id=body.avatar_id,
+        )
+        gen = await _copy_render.generate_suggestions(
+            session["session_id"], correlation_id + "_copy"
+        )
+        candidates = gen.get("candidates") or []
+        if not candidates:
+            raise HTTPException(409, {"error_code": "HYBRID_CERTIFICATION_COPY_EMPTY"})
+        candidate = candidates[0]
+        await _copy_render.lock_candidate(candidate["candidate_id"])
+        await _copy_render.finalize_session(session["session_id"])
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — structured pre-provider boundary
+        raise HTTPException(
+            409,
+            {"error_code": "HYBRID_CERTIFICATION_COPY_PREP_FAILED", "message": str(exc)},
+        ) from exc
+    copy_id = str(candidate["candidate_id"])
+    copy_digest = str(
+        candidate.get("text_digest") or candidate.get("recipe_fingerprint") or ""
+    )
+    if not copy_digest:
+        raise HTTPException(409, {"error_code": "HYBRID_CERTIFICATION_COPY_DIGEST_UNPROVEN"})
+
+    # --- HYBRID WEP: presenter interaction-zone scaffold prompt + copy binding ---
+    try:
+        package = await _wep.create_workspace_execution_package(
+            body.product_id, "F2V", 8, "9:16", body.model, False,
+            staff_id=owner.staff_id, staff_display_name_snapshot=owner.display_name,
+            generation_mode="SINGLE", target_language=body.target_language,
+            character_presence="VISIBLE_CREATOR", source_mode="HYBRID",
+            avatar_id=body.avatar_id,
+            copy_v2_context={
+                "lane": "HYBRID",
+                "benefit_copy_render": {"candidate_id": copy_id},
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            409,
+            {"error_code": "HYBRID_CERTIFICATION_PACKAGE_FAILED", "message": str(exc)},
+        ) from exc
+    if not package.get("execution_allowed"):
+        raise HTTPException(
+            422,
+            {
+                "error_code": "HYBRID_CERTIFICATION_PACKAGE_NOT_READY",
+                "blockers": package.get("blockers"),
+            },
+        )
+    prompt = str(package.get("prompt_text") or "").strip()
+    if not prompt or "SCENE-ONLY PLATE" not in prompt:
+        raise HTTPException(
+            422, {"error_code": "HYBRID_CERTIFICATION_SCAFFOLD_PROMPT_MISSING"}
+        )
+
+    # --- composite custody (shared services; provider product reference forbidden) ---
+    execution_identity = {
+        "workspace_execution_package_id": package.get("workspace_execution_package_id"),
+        "prompt_fingerprint": package.get("prompt_fingerprint"),
+        "surface_lane": "HYBRID",
+    }
+    try:
+        official_asset = build_official_product_visual_asset(
+            product_row,
+            slot_key="canonical_product_asset",
+            label="Canonical Product Truth cutout",
+        )
+        exact_plan = _mv_exact.build_exact_product_video_plan(product_row, None)
+        custody = build_product_visual_custody_receipt(
+            product_row, official_asset, mode="F2V", source_mode="HYBRID", prompt=prompt,
+            provider_route="EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+            generation_type="scene_video_scaffold_then_deterministic_composite",
+            execution_identity=execution_identity,
+        )
+        custody["exact_product_video"] = exact_plan
+        custody["provider_product_reference_forbidden"] = True
+        validate_pre_dispatch_route(
+            custody, provider_route="EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+            generation_type=custody["generation_type"],
+        )
+    except (ProductVisualCustodyError, _mv_exact.ExactProductVideoCompositeError) as exc:
+        raise HTTPException(
+            409,
+            {
+                "error_code": getattr(exc, "code", "HYBRID_CERTIFICATION_CUSTODY_FAILED"),
+                "message": getattr(exc, "message", str(exc)),
+            },
+        ) from exc
+
+    # --- product truth digest ---
+    try:
+        truth = await _copy_register.get_product_truth_proof(body.product_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            409,
+            {"error_code": "HYBRID_CERTIFICATION_PRODUCT_TRUTH_FAILED", "message": str(exc)},
+        ) from exc
+    product_digest = ((truth.get("product_truth") or {}).get("snapshot") or {}).get("digest")
+    if not truth.get("ready_for_copy") or not product_digest:
+        raise HTTPException(
+            409,
+            {
+                "error_code": "HYBRID_CERTIFICATION_PRODUCT_TRUTH_NOT_READY",
+                "blockers": truth.get("blockers") or [],
+            },
+        )
+
+    # --- shared profile + HYBRID-lane approval context (T2V scene-scaffold tuple) ---
+    try:
+        profile = _profiles.resolve_duration_model_profile(
+            model="veo_3_1_lite", duration_s=8, aspect_ratio="9:16",
+            logical_mode="T2V", source_mode="T2V", generation_mode="SINGLE",
+            reference_count=0, prompt_block_count=1,
+        )
+        profile_context = _profiles.build_approval_context(
+            profile, lane="HYBRID", product_digest=str(product_digest),
+            copy_digest=copy_digest,
+        )
+        authority_digests = {
+            "sweetwps_digest": _profiles.sweetwps_digest(),
+            "compositor_digest": _profiles.compositor_digest(),
+            "compiler_digest": _profiles.compiler_digest(),
+            "lane_adapter_digest": _profiles.lane_adapter_digest("HYBRID"),
+        }
+    except _profiles.ExecutionProfileError as exc:
+        raise HTTPException(
+            409,
+            {
+                "error_code": "PROFILE_CERTIFICATION_PROFILE_RESOLUTION_FAILED",
+                "message": str(exc), "source_error_code": exc.code,
+            },
+        ) from exc
+
+    # --- bind the official Flow editor (provider-free; fail-closed, no credit) ---
+    try:
+        editor_binding = await _mv.ensure_editor_binding(
+            client, requested_project_id=None, mode="T2V"
+        )
+    except _mv.FlowEditorBindingError as exc:
+        raise HTTPException(
+            409,
+            {
+                "error_code": "FLOW_EDITOR_BINDING_REQUIRED", "message": str(exc),
+                "details": exc.details, "provider_calls": 0, "credit_spend": False,
+            },
+        ) from exc
+
+    copy_binding = package.get("copy_execution_binding") or {
+        "lane": "HYBRID",
+        "authority_kind": "BENEFIT_COPY_RENDER_V1",
+        "candidate_id": copy_id,
+    }
+
+    # --- review snapshot (surface=HYBRID) matching the real dispatch envelope ---
+    snapshot = None
+    try:
+        target_authorization = _eas.build_provider_target_authorization(
+            lane="HYBRID_VIDEO", route="EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+            model="veo_3_1_lite", duration_s=8, aspect_ratio="9:16",
+            product_id=body.product_id, copy_id=copy_id,
+            profile_digest=str(profile["profile_digest"]),
+            sweetwps_digest=authority_digests["sweetwps_digest"],
+            compositor_digest=authority_digests["compositor_digest"],
+            compiler_digest=authority_digests["compiler_digest"],
+            owner_credit_ceiling=(profile.get("credits_cost_rule") or {}).get(
+                "profile_cost_ceiling"
+            ),
+        )
+        _, _cert_provider_profile = _mv._server_derived_video_profiles(
+            mode="T2V", source_mode="T2V", model="veo_3_1_lite",
+            duration_s=8, aspect="9:16", ref_count=0, num_videos=1,
+        )
+        snapshot = await _eas.create_review_snapshot(
+            surface="HYBRID", logical_mode="T2V", final_prompt_text=prompt,
+            product_id=body.product_id, source_mode="T2V", model="veo_3_1_lite",
+            aspect="9:16", duration_s=8, count=1, execution_identity=execution_identity,
+            execution_profile_context=profile_context,
+            provider_profile=_cert_provider_profile, created_by=owner.staff_id,
+        )
+        snapshot = await _eas.approve_snapshot(
+            snapshot["snapshot_id"], approved_by=owner.staff_id
+        )
+    except _eas.ExecutionApprovalError as exc:
+        if snapshot:
+            await _eas.reconcile_pre_provider_failure(
+                snapshot["snapshot_id"],
+                reason=f"HYBRID_CERT_SNAPSHOT_FAILED:{exc}"[:1000],
+            )
+        raise HTTPException(
+            409,
+            {"error_code": exc.code, "message": str(exc), "details": exc.details},
+        ) from exc
+
+    # --- reserve the certification (representative_lane=HYBRID; no-resubmit guard) ---
+    try:
+        reservation, created = await _certifications.reserve_capture(
+            profile=profile, representative_lane="HYBRID", product_id=body.product_id,
+            copy_id=copy_id, product_digest=str(product_digest), copy_digest=copy_digest,
+            snapshot_id=snapshot["snapshot_id"], **authority_digests,
+            runtime_sha=str(runtime["runtime_sha"]),
+        )
+    except _certifications.ProviderCertificationError as exc:
+        await _eas.reconcile_pre_provider_failure(
+            snapshot["snapshot_id"],
+            reason=f"HYBRID_CERT_RESERVATION_FAILED:{exc}"[:1000],
+        )
+        raise HTTPException(
+            409,
+            {"error_code": exc.code, "message": str(exc), "details": exc.details},
+        ) from exc
+    if not created:
+        await _eas.reconcile_pre_provider_failure(
+            snapshot["snapshot_id"], reason="HYBRID_CERT_RESERVATION_REUSED"
+        )
+        return {
+            "status": reservation.get("status"), "certification": reservation,
+            "profile": profile, "provider_calls": 0, "credit_spend": 0,
+            "reused_reservation": True,
+        }
+
+    # --- ONE paid HYBRID capture (T2V scene scaffold + deterministic composite) ---
+    try:
+        result = await _mv.start_generate(
+            "T2V", prompt, aspect="9:16", tier="PAYGATE_TIER_ONE", model="veo_3_1_lite",
+            duration_s=8, num_videos=1, product_id=body.product_id, source_mode="T2V",
+            staff_id=owner.staff_id, staff_display_name_snapshot=owner.display_name,
+            copy_execution_binding=copy_binding, execution_identity=execution_identity,
+            execution_snapshot_id=snapshot["snapshot_id"],
+            profile_certification_id=reservation["certification_id"],
+            provider_target_authorization=target_authorization, editor_binding=editor_binding,
+            execution_profile_context=profile_context, product_visual_custody=custody,
+            request_id=correlation_id, idempotency_key=correlation_id,
+            production_recipe="HYBRID", surface_lane="HYBRID", confirm_live_credit_burn=True,
+            maximum_provider_operations=1, max_retry_operations=0,
+            profile_certification_capture=True,
+        )
+    except Exception as exc:  # noqa: BLE001 — no provider result is claimed
+        await _certifications.mark_failed(
+            reservation["certification_id"], code="PROFILE_CERTIFICATION_DISPATCH_FAILED",
+            detail=str(exc), snapshot_id=snapshot["snapshot_id"],
+        )
+        raise HTTPException(
+            409,
+            {"error_code": "PROFILE_CERTIFICATION_DISPATCH_FAILED", "message": str(exc)},
+        ) from exc
+    if not isinstance(result, dict) or result.get("status") == "REJECTED" or not result.get("job_id"):
+        await _certifications.mark_failed(
+            reservation["certification_id"],
+            code=(result or {}).get("error", "PROFILE_CERTIFICATION_DISPATCH_REJECTED")
+            if isinstance(result, dict) else "PROFILE_CERTIFICATION_DISPATCH_REJECTED",
+            detail=str(result), snapshot_id=snapshot["snapshot_id"],
+        )
+        raise HTTPException(
+            409,
+            {
+                "error_code": (result or {}).get("error")
+                if isinstance(result, dict) else "PROFILE_CERTIFICATION_DISPATCH_REJECTED",
+                "message": (result or {}).get("message")
+                if isinstance(result, dict) else "The provider boundary rejected the certification request.",
+                "provider_response": result,
+            },
+        )
+    return {
+        "status": result.get("status") or _mv.PROFILE_CERTIFICATION_PRE_PROVIDER_STATUS,
+        "certification": reservation, "profile": profile, "snapshot": snapshot,
+        "job": result, "editor_binding": editor_binding,
+        "target_authorization": target_authorization,
+        "provider_calls": 0, "credit_spend": "PENDING_ARTIFACT_DELTA",
+    }
 
 
 @router.post("/native-extend/materialize-approval-manifest")

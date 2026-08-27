@@ -227,6 +227,63 @@ def test_exact_product_hybrid_routes_to_composite_with_zero_provider_refs(monkey
     assert calls["image_media_ids"] == []
 
 
+def _cert_owner():
+    return SimpleNamespace(staff_id="staff_owner", display_name="Owner")
+
+
+def test_hybrid_certification_rejects_invalid_tuple(monkeypatch):
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(
+        "agent.api.faceless._require_profile_certification_owner", _cert_owner
+    )
+    monkeypatch.setattr(
+        "agent.api.faceless._current_runtime_proof",
+        lambda: {"runtime_sha": "abc", "canonical_runtime": True},
+    )
+    try:
+        _run(
+            flow.hybrid_profile_certification(
+                flow.HybridProfileCertificationRequest(
+                    product_id="p1", benefit_id="b1", avatar_id="BOS_F_ALYA_01",
+                    confirm_live_credit_burn=False,  # invalid → tuple gate fails closed
+                )
+            )
+        )
+        raise AssertionError("expected HTTPException")
+    except HTTPException as exc:
+        assert exc.status_code == 422
+        assert exc.detail["error_code"] == "PROFILE_CERTIFICATION_TUPLE_INVALID"
+
+
+def test_hybrid_certification_requires_exact_product(monkeypatch):
+    from fastapi import HTTPException
+    import agent.services.product_visual_custody_service as pvc
+
+    monkeypatch.setattr(
+        "agent.api.faceless._require_profile_certification_owner", _cert_owner
+    )
+    monkeypatch.setattr(
+        "agent.api.faceless._current_runtime_proof",
+        lambda: {"runtime_sha": "abc", "canonical_runtime": True},
+    )
+    monkeypatch.setattr(flow.crud, "get_product", AsyncMock(return_value={"id": "p1"}))
+    monkeypatch.setattr(pvc, "exact_product_required", lambda _p: False)
+    try:
+        _run(
+            flow.hybrid_profile_certification(
+                flow.HybridProfileCertificationRequest(
+                    product_id="p1", benefit_id="b1", avatar_id="BOS_F_ALYA_01",
+                    confirm_live_credit_burn=True,  # valid tuple → reaches exact-product gate
+                )
+            )
+        )
+        raise AssertionError("expected HTTPException")
+    except HTTPException as exc:
+        assert exc.status_code == 422
+        assert exc.detail["error_code"] == "HYBRID_CERTIFICATION_EXACT_PRODUCT_REQUIRED"
+
+
 def test_exact_product_route_uses_scaffold_generation_type_from_custody():
     custody = {
         "provider_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
