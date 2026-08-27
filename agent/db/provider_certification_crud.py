@@ -205,29 +205,44 @@ async def archive_failed_pre_provider_and_create_reservation(
     archived_at = datetime.now(timezone.utc).isoformat()
     db = await get_db()
     async with _db_lock:
-        await db.execute(
-            "INSERT INTO provider_execution_certification_history "
-            "(history_id, certification_id, profile_digest, row_json, archive_reason, archived_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                history_id,
-                existing.get("certification_id"),
-                existing.get("profile_digest"),
-                json.dumps(existing, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-                str(reason or "NEW_EXPLICIT_CAPTURE")[:1000],
-                archived_at,
-            ),
-        )
-        await db.execute(
-            "DELETE FROM provider_execution_certification WHERE certification_id=?",
-            (existing.get("certification_id"),),
-        )
-        await db.execute(
-            f"INSERT INTO provider_execution_certification ({','.join(columns)}) "
-            f"VALUES ({placeholders})",
-            tuple(values[column] for column in columns),
-        )
-        await db.commit()
+        try:
+            await db.execute(
+                "INSERT INTO provider_execution_certification_history "
+                "(history_id, certification_id, profile_digest, row_json, archive_reason, archived_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    history_id,
+                    existing.get("certification_id"),
+                    existing.get("profile_digest"),
+                    json.dumps(existing, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                    str(reason or "NEW_EXPLICIT_CAPTURE")[:1000],
+                    archived_at,
+                ),
+            )
+            await db.execute(
+                "DELETE FROM provider_execution_certification WHERE certification_id=?",
+                (existing.get("certification_id"),),
+            )
+            await db.execute(
+                f"INSERT INTO provider_execution_certification ({','.join(columns)}) "
+                f"VALUES ({placeholders})",
+                tuple(values[column] for column in columns),
+            )
+            await db.commit()
+        except Exception:
+            # A competing reopen already archived this exact terminal row and
+            # inserted the fresh reservation under the shared unique
+            # profile_digest.  Roll back this duplicate attempt and return the
+            # winner's live row so a shared profile yields EXACTLY ONE fresh
+            # reservation under concurrency (never two captures).
+            try:
+                await db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            winner = await get_by_profile_digest(str(values["profile_digest"]))
+            if winner is not None and str(winner.get("status") or "").upper() != "FAILED":
+                return winner
+            raise
     row = await get_by_id(str(values["certification_id"]))
     if row is None:
         raise RuntimeError("PROVIDER_CERTIFICATION_RESERVATION_MISSING")

@@ -159,12 +159,19 @@ async def test_pre_provider_failure_allows_one_new_archived_reservation(monkeypa
         snapshot_id="snapshot-1",
     )
     existing = dict(values, status="FAILED", failure_code="FLOW_EDITOR_BINDING_REQUIRED")
-    replacement = dict(values, certification_id="pec_new", status="RESERVED")
     monkeypatch.setattr(service._crud, "get_by_profile_digest", lambda _digest: _async(existing))
+
+    # The real reopen CRUD returns the row for the caller's freshly minted
+    # ``values["certification_id"]`` on success (a competitor's id only under a
+    # lost concurrency race).  reserve_capture mints its own id internally, so the
+    # mock must ECHO the id it is handed for created=True to hold.
+    async def _fake_archive(_existing, values_arg, *, reason):
+        return dict(values_arg, status="RESERVED")
+
     monkeypatch.setattr(
         service._crud,
         "archive_failed_pre_provider_and_create_reservation",
-        lambda *_args, **_kwargs: _async(replacement),
+        _fake_archive,
     )
     row, created = await service.reserve_capture(
         profile=profile,
@@ -181,7 +188,9 @@ async def test_pre_provider_failure_allows_one_new_archived_reservation(monkeypa
         snapshot_id="snapshot-1",
     )
     assert created is True
-    assert row["certification_id"] == "pec_new"
+    assert row["status"] == "RESERVED"
+    # a genuinely fresh reservation, distinct from the archived FAILED row
+    assert row["certification_id"] != existing["certification_id"]
 
 
 @pytest.mark.asyncio
