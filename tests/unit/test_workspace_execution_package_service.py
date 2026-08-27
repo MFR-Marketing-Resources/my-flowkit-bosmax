@@ -717,6 +717,12 @@ async def test_exact_product_hybrid_package_rewrites_prompt_presenter_scaffold(m
     # Source-of-truth note records the exact HYBRID route (presenter preserved).
     note_blob = " ".join(json.loads(captured["source_of_truth_notes"]))
     assert "Exact HYBRID route" in note_blob
+    # The package custody is the deterministic composite route (not the generative
+    # reference route), so the package marks itself execution-ready instead of
+    # failing closed with ERR_PRODUCT_FIDELITY_ROUTE_NOT_PROVEN.
+    assert result["product_visual_custody"]["provider_route"] == (
+        "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+    )
 
 
 @pytest.mark.asyncio
