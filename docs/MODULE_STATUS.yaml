@@ -103,6 +103,7 @@ domains:
       - agent/db/provider_certification_crud.py
       - agent/services/provider_certification_service.py
       - tests/unit/test_provider_certification_service.py
+      - tests/unit/test_certification_reconciliation.py
       - tests/unit/test_provider_target_acknowledgement.py
       - .ai/audits/DURATION_PROFILE_CERTIFICATION_REFACTOR_2026-08-24.md
       # Shared provider-free video continuity, SweetWPS timing, mascot identity,

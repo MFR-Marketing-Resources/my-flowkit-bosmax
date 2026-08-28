@@ -232,16 +232,17 @@ def build_exact_product_video_plan(
 
 
 # Canonical (ADR-008) prompt section headers ("SECTION N - NAME") whose bodies
-# describe RENDERING or HOLDING the product. For a presenter-visible (HYBRID)
-# exact scaffold these are removed wholesale and replaced by the interaction-zone
-# choreography below — the standard HYBRID compiler integrates "presenter holds
-# and renders the exact product" throughout these sections, which directly
-# contradicts a scene-only scaffold. FACELESS keeps its full prompt unchanged.
+# describe RENDERING or HOLDING the product. Both exact-video scaffolds remove
+# these sections wholesale and replace them with the interaction-zone
+# choreography below; otherwise the canonical prompt contradicts the
+# provider's scene-only role. HYBRID preserves its presenter and Faceless keeps
+# only hands/forearms outside the reserved product region.
 _CANONICAL_PRODUCT_VISUAL_SECTIONS = (
     "PRODUCT TRUTH LOCK",
     "CONTINUITY & STATE LOCK",
     "VISUAL STORY",
     "SHOT & CAMERA RULES",
+    "CTA & END FRAME",
 )
 _CANONICAL_SECTION_RE = re.compile(
     r"^\s*SECTION\s+\d+\s*[-–]\s*(.+?)\s*$", re.IGNORECASE
@@ -265,6 +266,23 @@ _PRESENTER_EXTRA_FORBIDDEN_MARKERS = (
     "match its colour",
     "match its color",
     "natural grip",
+)
+
+_PRODUCT_WITHHELD_SOURCE_MARKERS = (
+    "product",
+    "packaging",
+    "bottle",
+    "label",
+    "logo",
+    "brand mark",
+    "generic prop",
+)
+_DIALOGUE_SECTION_NAMES = (
+    "SPOKEN DIALOGUE",
+    "DIALOGUE",
+    "VOICEOVER",
+    "VOICE OVER",
+    "AUDIO",
 )
 
 
@@ -292,6 +310,42 @@ def _drop_canonical_product_sections(
     return "\n".join(kept).strip()
 
 
+def _strip_product_withheld_source_cues(prompt: str) -> str:
+    """Remove provider product cues while preserving governed spoken copy."""
+
+    kept: list[str] = []
+    current_section = ""
+    for raw_line in (prompt or "").splitlines():
+        match = _CANONICAL_SECTION_RE.match(raw_line)
+        if match:
+            current_section = match.group(1).strip().upper()
+            kept.append(raw_line)
+            continue
+        if current_section in _DIALOGUE_SECTION_NAMES:
+            kept.append(raw_line)
+            continue
+        lowered = raw_line.lower()
+        if any(marker in lowered for marker in _PRODUCT_WITHHELD_SOURCE_MARKERS):
+            continue
+        kept.append(raw_line)
+    return "\n".join(kept).strip()
+
+
+def _safe_product_withheld_scene_context(scene_context: str) -> str:
+    """Keep only context sentences that cannot instruct product rendering."""
+
+    safe_sentences = []
+    for sentence in re.split(r"(?<=[.!?])\s+|[\r\n]+", str(scene_context or "")):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        lowered = sentence.lower()
+        if any(marker in lowered for marker in _PRODUCT_WITHHELD_SOURCE_MARKERS):
+            continue
+        safe_sentences.append(sentence)
+    return " ".join(safe_sentences)
+
+
 def build_exact_scene_scaffold_prompt(
     base_prompt: str,
     plan: dict[str, Any],
@@ -305,28 +359,26 @@ def build_exact_scene_scaffold_prompt(
     share this builder:
 
     * FACELESS (default): the provider must not render a face — only the scene,
-      hands, and torso.  The full compiled prompt is kept (unchanged behaviour).
+      hands, and torso outside the empty reserved product region.
     * HYBRID (``presenter_visible=True``): the on-camera human presenter stays
       fully visible and lip-synced to the dialogue; only the *product* is
       withheld for the deterministic compositor.  The standard HYBRID compiler
       integrates "presenter holds and renders the exact product" throughout its
       visual sections, which contradicts a scene-only scaffold, so those
-      product-visual sections are DROPPED and replaced by an explicit
+      product-visual sections are DROPPED for both exact routes and replaced by
+      an explicit
       presenter–product interaction-zone choreography: the presenter presents
       TOWARD a reserved (empty) product region instead of holding the product
       (hand-hold requires per-frame occlusion masks the compositor does not
-      have).  Speech (dialogue/voice) and role sections are preserved.
+      have). FACELESS receives the corresponding face-free interaction zone.
+      Speech (dialogue/voice) and role sections are preserved.
     """
 
     selected = plan.get("choreography") or {}
     selected_id = selected.get("choreography_id") or FACELESS_V1_SAFE_DEFAULT
-    raw_prompt = str(base_prompt or "")
-    if presenter_visible:
-        # Remove the product-render/hold sections wholesale; the interaction-zone
-        # choreography below replaces them.
-        raw_prompt = _drop_canonical_product_sections(
-            raw_prompt, _CANONICAL_PRODUCT_VISUAL_SECTIONS
-        )
+    raw_prompt = _strip_product_withheld_source_cues(_drop_canonical_product_sections(
+        str(base_prompt or ""), _CANONICAL_PRODUCT_VISUAL_SECTIONS
+    ))
     # The older image compositor helper removes its known Product Truth
     # headings.  A video compiler can also emit free-form product prose, so
     # remove directive lines before applying the strict scene-only block.
@@ -392,8 +444,19 @@ def build_exact_scene_scaffold_prompt(
             "FACELESS: no visible face, head, eyes, mouth, or facial reflection; "
             "hands, arms, and torso may appear."
         )
-    if scene_context.strip():
-        additions.append(f"SCENE CONTEXT: {scene_context.strip()}")
+        additions.append(
+            "FACELESS INTERACTION ZONE: hands and forearms must remain visibly "
+            "active around and point toward the reserved product region, but must "
+            "not hold, touch, cross, overlap, or occlude that region."
+        )
+        additions.append(
+            "RESERVED REGION STAYS EMPTY: do not place a product, proxy bottle, "
+            "hand, arm, prop, text, shadow, or reflection inside the reserved box; "
+            "the canonical product is inserted there after retrieval."
+        )
+    safe_context = _safe_product_withheld_scene_context(scene_context)
+    if safe_context:
+        additions.append(f"SCENE CONTEXT (PRODUCT-WITHHELD): {safe_context}")
     return f"{prompt}\n\n" + " ".join(additions)
 
 
@@ -579,13 +642,58 @@ def _validate_occlusion_bounds(
 
 
 def _dynamic_choreography(choreography: Mapping[str, Any]) -> bool:
-    return _norm_id(choreography.get("choreography_id")) in {
+    choreography_id = _norm_id(choreography.get("choreography_id"))
+    track_policy = _norm_id(choreography.get("track_policy"))
+    expected_policy = {
+        PRODUCT_STATIC_TABLE: "STATIC_RIGID_PRODUCT_TRUTH_TRACK",
+        PRODUCT_PRESENT_TO_CAMERA: "STATIC_RIGID_PRODUCT_TRUTH_TRACK",
+        SMALL_CONTROLLED_ROTATION: "BOUNDED_RIGID_PRODUCT_TRUTH_TRACK",
+        PRODUCT_HAND_HOLD: "EXPLICIT_MASKED_RIGID_PRODUCT_TRUTH_TRACK",
+        PRODUCT_PICK_UP: "EXPLICIT_MASKED_RIGID_PRODUCT_TRUTH_TRACK",
+        PRODUCT_PLACE_DOWN: "EXPLICIT_MASKED_RIGID_PRODUCT_TRUTH_TRACK",
+    }.get(choreography_id)
+    if expected_policy and track_policy and track_policy != expected_policy:
+        raise ExactProductVideoCompositeError(
+            "EXACT_COMPOSITE_TRACK_POLICY_MISMATCH",
+            "Exact choreography and transform-track policy disagree.",
+            details={
+                "choreography_id": choreography_id,
+                "expected_track_policy": expected_policy,
+                "observed_track_policy": track_policy,
+            },
+        )
+    if track_policy == "STATIC_RIGID_PRODUCT_TRUTH_TRACK":
+        return False
+    if track_policy in {
+        "BOUNDED_RIGID_PRODUCT_TRUTH_TRACK",
+        "EXPLICIT_MASKED_RIGID_PRODUCT_TRUTH_TRACK",
+    }:
+        return True
+    return choreography_id in {
         PRODUCT_HAND_HOLD,
         PRODUCT_PICK_UP,
         PRODUCT_PLACE_DOWN,
-        PRODUCT_PRESENT_TO_CAMERA,
         SMALL_CONTROLLED_ROTATION,
     }
+
+
+def write_exact_product_lineage_sidecar(
+    output_file: str | Path,
+    lineage: Mapping[str, Any],
+) -> Path:
+    """Atomically persist the current exact-product custody lineage."""
+
+    output_path = Path(output_file).expanduser().resolve()
+    if not output_path.exists() or not output_path.is_file():
+        raise ExactProductVideoCompositeError(
+            "EXACT_COMPOSITE_FINAL_MISSING",
+            f"Exact compositor output is missing: {output_path}",
+        )
+    lineage_path = output_path.with_suffix(".lineage.json")
+    temp_path = lineage_path.with_suffix(lineage_path.suffix + ".tmp")
+    temp_path.write_text(json.dumps(dict(lineage), indent=2), encoding="utf-8")
+    os.replace(temp_path, lineage_path)
+    return lineage_path
 
 
 def _normalise_transform_track(
@@ -1015,6 +1123,22 @@ def compose_exact_product_video_artifact(
             for dimension in qc_dimensions.values()
         )
         qc_status = "PRODUCT_FIDELITY_QC_PASS" if qc_verified else "PRODUCT_FIDELITY_REVIEW_REQUIRED"
+        transform_track_evidence = {
+            "required": dynamic_track_required,
+            "verified": bool(frame_transforms) and (
+                dynamic_track_verified or not dynamic_track_required
+            ),
+            "track_policy": choreography.get("track_policy"),
+            "source": (
+                "EVIDENCE_BACKED_FRAME_INDEXED_INPUT"
+                if dynamic_track_required
+                else "DETERMINISTIC_STATIC_PLAN"
+            ),
+            "frame_count": len(frame_transforms),
+            "sha256": hashlib.sha256(
+                _stable_json(frame_transforms).encode("utf-8")
+            ).hexdigest(),
+        }
 
         fps = metadata["fps"]
         _run(
@@ -1084,6 +1208,7 @@ def compose_exact_product_video_artifact(
         "track_policy": choreography.get("track_policy"),
         "frame_count": len(frame_lineage),
         "dimensions": {"width": width, "height": height, "fps": metadata["fps"]},
+        "transform_track_evidence": transform_track_evidence,
         "frame_transform_lineage": frame_lineage,
         "plate_scan_lineage": plate_scans,
         "product_fidelity_qc_dimensions": qc_dimensions,
@@ -1095,6 +1220,7 @@ def compose_exact_product_video_artifact(
         "provider_scene_artifact": manifest["provider_scene_artifact"],
         "canonical_product_asset": manifest["canonical_product_asset"],
         "composite_manifest": {"sha256": manifest_sha, "manifest": manifest},
+        "transform_track": transform_track_evidence,
         "transform_track_lineage": frame_lineage,
         "product_fidelity_qc": {
             "status": qc_status,
@@ -1107,6 +1233,12 @@ def compose_exact_product_video_artifact(
         "final_media_id": final_media_id,
         "final_output_sha256": final_sha,
         "final_output_path": str(output_path),
+        "compositor_output": {
+            "media_id": final_media_id,
+            "local_path": str(output_path),
+            "sha256": final_sha,
+        },
+        "final_registered_media": None,
         "job_id": job_id,
         "raw_scene_final_authority": False,
     }
@@ -1124,8 +1256,7 @@ def compose_exact_product_video_artifact(
                 "exact_product_required",
             )
         }
-    lineage_path = output_path.with_suffix(".lineage.json")
-    lineage_path.write_text(json.dumps(lineage, indent=2), encoding="utf-8")
+    lineage_path = write_exact_product_lineage_sidecar(output_path, lineage)
     evidence = {
         "status": qc_status,
         "verified": qc_verified,
@@ -1137,6 +1268,7 @@ def compose_exact_product_video_artifact(
     return {
         "media_id": final_media_id,
         "local_path": str(output_path),
+        "lineage_path": str(lineage_path),
         "size_mb": round(output_path.stat().st_size / (1024 * 1024), 4),
         "output_sha256": final_sha,
         "artifact_kind": "video",
@@ -1173,6 +1305,7 @@ __all__ = [
     "PRODUCT_PLACE_DOWN",
     "PRODUCT_PRESENT_TO_CAMERA",
     "PRODUCT_STATIC_TABLE",
+    "write_exact_product_lineage_sidecar",
     "REQUIRES_OCCLUSION_MASK",
     "SMALL_CONTROLLED_ROTATION",
     "SUPPORTED_EXACT",

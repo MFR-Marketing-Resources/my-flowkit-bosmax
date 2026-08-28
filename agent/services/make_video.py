@@ -32,6 +32,7 @@ _JOB_TTL = 1800  # seconds — GC finished jobs after this.
 _GENERATION_TERMINAL_STATUSES = frozenset({
     "DONE",
     "PRODUCT_FIDELITY_REVIEW_REQUIRED",
+    "EXACT_COMPOSITE_FAILED",
     "FAILED",
     "REJECTED",
     "ARTIFACT_PERSISTENCE_FAILED",
@@ -63,11 +64,17 @@ _DURABLE_RECOVERY_STATUSES = frozenset({
     "STALE_OR_FOREIGN_CANDIDATES_ONLY",
     "ARTIFACT_PERSISTING",
     "ARTIFACT_PERSISTENCE_FAILED",
+    "EXACT_COMPOSITE_FAILED",
     "RETRIEVED_NOT_REGISTERED",
     # This state used to be terminal even when the accepted Flow-agent request
     # left exact prompt/model anchors that can resolve one unique project-media
     # identity. Revisit it provider-free; ambiguity still remains terminal.
     "RECOVERY_UNRECOVERABLE",
+})
+
+_RETRYABLE_EXACT_COMPOSITE_ERRORS = frozenset({
+    "EXACT_COMPOSITE_MEDIA_TOOL_UNAVAILABLE",
+    "EXACT_COMPOSITE_MEDIA_TOOL_FAILED",
 })
 
 _DURABLE_RECOVERY_LOCKS: dict[str, asyncio.Lock] = {}
@@ -1332,6 +1339,52 @@ async def _sync_durable_single_job(job: dict | None) -> bool:
                 targets[0].get("workflow_id")
                 or targets[0].get("workflowId")
             )
+        custody = job.get("product_visual_custody")
+        exact_route = bool(
+            isinstance(custody, dict)
+            and custody.get("exact_product_required")
+            and custody.get("provider_route")
+            == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+        )
+        raw_artifacts = job.get("raw_provider_artifacts") or []
+        raw_first = raw_artifacts[0] if raw_artifacts else {}
+        raw_media_id = (
+            job.get("raw_provider_media_id")
+            or raw_first.get("media_id")
+            or (row.get("initial_media_id") if exact_route else None)
+        )
+        raw_local_path = (
+            job.get("raw_provider_local_path") or raw_first.get("local_path")
+        )
+        raw_sha256 = (
+            job.get("raw_provider_sha256")
+            or raw_first.get("sha256")
+            or raw_first.get("output_sha256")
+        )
+        if exact_route and raw_local_path and not raw_sha256:
+            try:
+                from agent.services.video_artifact_delivery_service import (
+                    file_delivery_evidence,
+                )
+
+                raw_evidence = file_delivery_evidence(str(raw_local_path))
+                raw_sha256 = raw_evidence.get("sha256")
+            except Exception:
+                pass
+        if exact_route:
+            job["raw_provider_media_id"] = raw_media_id
+            job["raw_provider_local_path"] = raw_local_path
+            job["raw_provider_sha256"] = raw_sha256
+            job["raw_provider_final_authority"] = False
+        current_artifacts = job.get("artifacts") or []
+        current_first = current_artifacts[0] if current_artifacts else {}
+        exact_final_authoritative = bool(
+            exact_route
+            and job.get("final_artifact_authority") == "DETERMINISTIC_COMPOSITOR"
+            and isinstance(current_first.get("exact_product_lineage"), dict)
+            and media_id
+            and str(media_id) != str(raw_media_id or "")
+        )
         state = _durable_single_snapshot(job)
         if first_operation_id or targets:
             state.setdefault("provider_generation_submit_count", 1)
@@ -1342,6 +1395,9 @@ async def _sync_durable_single_job(job: dict | None) -> bool:
             "PRODUCT_FIDELITY_REVIEW_REQUIRED",
             "ARTIFACT_PERSISTENCE_FAILED",
         }
+        final_authoritative = exact_final_authoritative or (
+            not exact_route and job.get("status") in terminal_with_output
+        )
         await crud.update_video_production_job_full(
             job["job_id"],
             status=job.get("status") or "UNKNOWN",
@@ -1351,13 +1407,20 @@ async def _sync_durable_single_job(job: dict | None) -> bool:
                 else None
             ),
             project_id=job.get("project_id") or row.get("project_id"),
-            initial_media_id=media_id,
+            initial_media_id=(
+                raw_media_id
+                if exact_route
+                else media_id
+            ),
             initial_operation_id=first_operation_id,
             initial_workflow_id=str(first_workflow_id) if first_workflow_id else None,
-            final_media_id=media_id if media_id and job.get("status") in terminal_with_output else None,
-            final_local_path=(str(local_path) if local_path and job.get("status") in terminal_with_output else None),
-            final_sha256=file_sha256 if job.get("status") in terminal_with_output else None,
-            final_duration_s=job.get("duration_used") or job.get("duration_s"),
+            final_media_id=media_id if media_id and final_authoritative else None,
+            final_local_path=(str(local_path) if local_path and final_authoritative else None),
+            final_sha256=file_sha256 if final_authoritative else None,
+            final_duration_s=(
+                (job.get("duration_used") or job.get("duration_s"))
+                if final_authoritative else None
+            ),
             initial_lane_job_id=job.get("job_id"),
             initial_lane_project_id=job.get("project_id") or row.get("project_id"),
             surface_lane=job.get("surface_lane") or row.get("surface_lane"),
@@ -1528,6 +1591,17 @@ def _durable_public_state(row: dict, state: dict, *, status: str | None = None) 
     """Merge the DB lifecycle row and its JSON snapshot for API/status readers."""
     merged = dict(state or {})
     effective_status = str(status or row.get("status") or "UNKNOWN")
+    custody = merged.get("product_visual_custody")
+    exact_route = bool(
+        isinstance(custody, dict)
+        and custody.get("exact_product_required")
+        and custody.get("provider_route")
+        == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
+    )
+    exact_final_authoritative = bool(
+        exact_route
+        and merged.get("final_artifact_authority") == "DETERMINISTIC_COMPOSITOR"
+    )
     merged.update({
         "job_id": row.get("job_id"),
         "status": effective_status,
@@ -1555,6 +1629,13 @@ def _durable_public_state(row: dict, state: dict, *, status: str | None = None) 
         "provider_resubmission": False,
         "resubmission_allowed": False,
     })
+    if exact_route and not exact_final_authoritative:
+        merged["raw_provider_media_id"] = (
+            merged.get("raw_provider_media_id") or row.get("initial_media_id")
+        )
+        merged["raw_provider_local_path"] = merged.get("raw_provider_local_path")
+        merged["media_id"] = None
+        merged["local_path"] = None
     # Historical Phase-B rows used PROVIDER_REJECTED for a generation that was
     # approved and then proved to use the wrong settings. Do not rewrite the
     # stored artifact: expose a deterministic derived primary classification with
@@ -1980,8 +2061,17 @@ async def reconcile_durable_single_job(
         # A process can die after retrieval and before the two library writes.
         # The artifact list is enough to repair locally; no provider poll is
         # needed and no provider identity is required for this branch.
-        if status in {"ARTIFACT_PERSISTING", "ARTIFACT_PERSISTENCE_FAILED", "RETRIEVED_NOT_REGISTERED"} or (
-            state.get("provider_terminal") is True and state.get("artifacts")
+        exact_retry_allowed = not (
+            status == "EXACT_COMPOSITE_FAILED"
+            and state.get("exact_composite_retryable") is not True
+        )
+        if exact_retry_allowed and (
+            status in {
+                "ARTIFACT_PERSISTING",
+                "ARTIFACT_PERSISTENCE_FAILED",
+                "RETRIEVED_NOT_REGISTERED",
+            }
+            or (state.get("provider_terminal") is True and state.get("artifacts"))
         ):
             try:
                 if await _reconcile_artifacts_only(job):
@@ -2000,6 +2090,9 @@ async def reconcile_durable_single_job(
                 fresh or row,
                 _durable_state_from_row(fresh or row),
             )
+
+        if status == "EXACT_COMPOSITE_FAILED" and not exact_retry_allowed:
+            return _durable_public_state(row, state)
 
         client = provider_client
         if client is None:
@@ -3498,14 +3591,50 @@ async def _record_artifacts(job, mode, artifacts):
         and custody.get("exact_product_required")
         and custody.get("provider_route") == "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE"
     )
-    if exact_route and mode in _VIDEO_MODES:
+    exact_already_composited = bool(
+        exact_route
+        and job.get("final_artifact_authority") == "DETERMINISTIC_COMPOSITOR"
+        and artifacts
+        and all(
+            isinstance(artifact.get("exact_product_lineage"), dict)
+            for artifact in artifacts
+        )
+    )
+    if exact_route and mode in _VIDEO_MODES and not exact_already_composited:
         # The retrieved provider scene is an internal scaffold.  Register only
         # deterministic final videos whose product pixels came from the
         # approved Product Truth cutout.
         try:
             from agent.services import exact_product_video_compositor_service as _exact_video
             from agent.db import crud
+            from agent.services.video_artifact_delivery_service import (
+                file_delivery_evidence,
+            )
 
+            raw_artifacts = []
+            for raw_artifact in artifacts:
+                raw_evidence = file_delivery_evidence(
+                    str(raw_artifact.get("local_path") or raw_artifact.get("path") or "")
+                )
+                raw_artifacts.append({
+                    **raw_artifact,
+                    "artifact_role": "RAW_PROVIDER_SCENE",
+                    "sha256": raw_evidence["sha256"],
+                    "file_size_bytes": raw_evidence["size_bytes"],
+                    "final_authority": False,
+                })
+            if not raw_artifacts:
+                raise _exact_video.ExactProductVideoCompositeError(
+                    "EXACT_COMPOSITE_FINAL_MISSING",
+                    "The provider returned no scene artifact for exact compositing.",
+                )
+            job["raw_provider_artifacts"] = list(raw_artifacts)
+            job["raw_provider_media_id"] = raw_artifacts[0].get("media_id")
+            job["raw_provider_local_path"] = raw_artifacts[0].get("local_path")
+            job["raw_provider_sha256"] = raw_artifacts[0].get("sha256")
+            job["raw_provider_final_authority"] = False
+            job["artifacts"] = list(raw_artifacts)
+            job["exact_composite_status"] = "RUNNING"
             product = await crud.get_product(str(custody.get("product_id") or job.get("product_id") or ""))
             if not product:
                 raise _exact_video.ExactProductVideoCompositeError(
@@ -3518,8 +3647,30 @@ async def _record_artifacts(job, mode, artifacts):
                     "EXACT_COMPOSITE_PLAN_MISSING",
                     "Exact video custody has no compositor plan.",
                 )
+            job["exact_product_lineage"] = {
+                "raw_provider_artifacts": list(raw_artifacts),
+                "canonical_product_asset": {
+                    "canonical_media_id": (plan.get("product_truth") or {}).get(
+                        "canonical_media_id"
+                    ),
+                    "canonical_source_sha256": (plan.get("product_truth") or {}).get(
+                        "canonical_source_sha256"
+                    ),
+                    "canonical_cutout_media_id": (plan.get("product_truth") or {}).get(
+                        "canonical_cutout_media_id"
+                    ),
+                    "canonical_cutout_sha256": (plan.get("product_truth") or {}).get(
+                        "canonical_cutout_sha256"
+                    ),
+                },
+                "transform_track_policy": (plan.get("choreography") or {}).get(
+                    "track_policy"
+                ),
+                "compositor_output": None,
+                "final_registered_media": None,
+            }
             final_artifacts = []
-            for raw_artifact in artifacts:
+            for raw_artifact in raw_artifacts:
                 final_artifacts.append(
                     _exact_video.compose_exact_product_video_artifact(
                         product=product,
@@ -3546,6 +3697,9 @@ async def _record_artifacts(job, mode, artifacts):
                 )
             artifacts = final_artifacts
             job["artifacts"] = list(final_artifacts)
+            job["composite_artifacts"] = list(final_artifacts)
+            job["exact_composite_status"] = "COMPOSITED"
+            job["final_artifact_authority"] = "DETERMINISTIC_COMPOSITOR"
             job["media_id"] = final_artifacts[0].get("media_id")
             job["local_path"] = final_artifacts[0].get("local_path")
             job["size_mb"] = final_artifacts[0].get("size_mb")
@@ -3560,11 +3714,18 @@ async def _record_artifacts(job, mode, artifacts):
             }
             job["product_visual_custody"] = custody
         except Exception as exc:  # noqa: BLE001 — exact output must fail closed
-            job["status"] = "PRODUCT_FIDELITY_REVIEW_REQUIRED"
+            exact_error = getattr(exc, "code", "EXACT_COMPOSITE_FAILED")
+            job["status"] = "EXACT_COMPOSITE_FAILED"
+            job["exact_composite_status"] = "FAILED"
+            job["exact_composite_retryable"] = (
+                exact_error in _RETRYABLE_EXACT_COMPOSITE_ERRORS
+            )
+            job["final_artifact_authority"] = None
+            job["raw_provider_final_authority"] = False
             job["product_fidelity_qc_status"] = "PRODUCT_FIDELITY_REVIEW_REQUIRED"
             job["generated_output_review_state"] = "PRODUCT_FIDELITY_REVIEW_REQUIRED"
             job["error"] = str(exc)
-            job["exact_composite_error"] = getattr(exc, "code", "EXACT_COMPOSITE_FAILED")
+            job["exact_composite_error"] = exact_error
             return
     try:
         from agent.db import crud
@@ -3623,6 +3784,39 @@ async def _record_artifacts(job, mode, artifacts):
                 raise RuntimeError(
                     f"ARTIFACT_READBACK_PATH_MISMATCH:{art['media_id']}"
                 )
+            lineage = art.get("exact_product_lineage")
+            if isinstance(lineage, dict):
+                registered_media = {
+                    "media_id": art["media_id"],
+                    "local_path": art.get("local_path"),
+                    "sha256": evidence["sha256"],
+                    "delivery_status": "REGISTERED",
+                    "readback_verified": True,
+                }
+                lineage["final_registered_media"] = registered_media
+                from agent.services import (
+                    exact_product_video_compositor_service as _exact_video,
+                )
+
+                art["lineage_path"] = str(
+                    _exact_video.write_exact_product_lineage_sidecar(
+                        art.get("local_path"), lineage
+                    )
+                )
+                art["exact_product_lineage"] = lineage
+                job["exact_product_lineage"] = lineage
+                current_custody = job.get("product_visual_custody")
+                if isinstance(current_custody, dict):
+                    job["product_visual_custody"] = {
+                        **current_custody,
+                        "exact_video_composite": lineage,
+                    }
+                artifact_custody = art.get("product_visual_custody")
+                if isinstance(artifact_custody, dict):
+                    art["product_visual_custody"] = {
+                        **artifact_custody,
+                        "exact_video_composite": lineage,
+                    }
             job["artifact_persisted_count"] += 1
         # The generated_artifact row is the file/library index; generation_result
         # is the durable operator recovery record. Both are idempotent on media_id.

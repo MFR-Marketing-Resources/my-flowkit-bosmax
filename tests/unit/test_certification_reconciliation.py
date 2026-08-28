@@ -264,6 +264,54 @@ async def test_unrecoverable_artifact_supersedes_preserving_lineage(monkeypatch)
     assert out["artifact_media_id"] == "media_1"
 
 
+@pytest.mark.asyncio
+async def test_deterministic_exact_composite_failure_supersedes_without_retry(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        service,
+        "_resolve_linked_job_provider_free",
+        _async({
+            "job_id": "g_job",
+            "status": "EXACT_COMPOSITE_FAILED",
+            "exact_composite_error": "EXACT_COMPOSITE_PLATE_CONTAINS_PRODUCT_IMPOSTOR",
+            "exact_composite_retryable": False,
+            "provider_operation_ids": ["op_123"],
+            "artifacts": [{"media_id": "raw-provider-scene", "local_path": "raw.mp4"}],
+        }),
+    )
+    recovery = {"n": 0}
+
+    async def fake_recovery(_job_id):
+        recovery["n"] += 1
+        return None
+
+    monkeypatch.setattr(
+        service, "_attempt_provider_free_delivery_recovery", fake_recovery
+    )
+    captured: dict = {}
+
+    async def fake_supersede(cid, *, reason, superseded_by=None):
+        captured.update(cid=cid, reason=reason, by=superseded_by)
+        return {
+            "certification_id": cid,
+            "status": "FAILED",
+            "failure_code": service.CERTIFICATION_ARTIFACT_UNSUITABLE,
+        }
+
+    monkeypatch.setattr(service, "supersede_unsuitable", fake_supersede)
+
+    out = await service.reconcile_stale_reservation(_sub_row())
+
+    assert recovery["n"] == 0
+    assert out["failure_code"] == service.CERTIFICATION_ARTIFACT_UNSUITABLE
+    assert captured["reason"].startswith(
+        "RECONCILE_TERMINAL_EXACT_COMPOSITE_FAILURE:"
+        "EXACT_COMPOSITE_PLATE_CONTAINS_PRODUCT_IMPOSTOR"
+    )
+    assert captured["by"] == "system-reconciler"
+
+
 # --------------------------------------------------------------------------- #
 # (H) CERTIFIED is immutable: short-circuits before any classification
 # --------------------------------------------------------------------------- #

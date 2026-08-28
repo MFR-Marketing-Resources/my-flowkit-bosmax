@@ -50,6 +50,7 @@ def test_faceless_default_records_original_scene_and_safe_exact_action():
     assert result["requested_scene_choreography_id"] == "traditional_herbal_oil.v0"
     assert result["selection_reason"] == "FACELESS_V1_EXACT_SAFE_DEFAULT"
     assert result["classification"] == exact.SUPPORTED_EXACT
+    assert exact._dynamic_choreography(result) is False
 
 
 def test_exact_plan_carries_product_truth_geometry(monkeypatch):
@@ -83,6 +84,84 @@ def test_scene_scaffold_prompt_forbids_provider_product_pixels():
     assert "PRODUCT_PRESENT_TO_CAMERA" in prompt
     assert "preserve the real product" not in prompt.lower()
     assert "no visible face" in prompt.lower()
+
+
+def test_faceless_scene_scaffold_removes_product_handling_contradictions():
+    plan = {
+        "selected_execution_route": exact.EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,
+        "choreography": {"choreography_id": exact.PRODUCT_PRESENT_TO_CAMERA},
+    }
+    prompt = exact.build_exact_scene_scaffold_prompt(
+        "SECTION 1 - ROLE & OBJECTIVE\n"
+        "Keep the social scene natural.\n"
+        "SECTION 4 - VISUAL STORY\n"
+        "Hands bring the product into frame and hold it clearly.\n"
+        "SECTION 5 - SHOT & CAMERA RULES\n"
+        "Keep the same product grip throughout.\n"
+        "SECTION 6 - SPOKEN DIALOGUE\n"
+        "Dapatkan sekarang.\n"
+        "SECTION 8 - CTA & END FRAME\n"
+        "End with the product held clearly to camera.\n",
+        plan,
+        scene_context=(
+            "Hands must physically handle the product. Product hero on table. "
+            "A product-only clip with no visible hands is a FAILED Faceless render."
+        ),
+    )
+    low = prompt.lower()
+
+    assert "bring the product" not in low
+    assert "product grip" not in low
+    assert "product held clearly" not in low
+    assert "physically handle the product" not in low
+    assert "product hero on table" not in low
+    assert "reserved region stays empty" in low
+    assert "must not hold, touch, cross, overlap, or occlude" in low
+    assert "dapatkan sekarang" in low
+
+
+def test_faceless_scene_scaffold_scrubs_actual_failed_prompt_cues_but_keeps_dialogue():
+    plan = {
+        "selected_execution_route": exact.EXACT_PRODUCT_DETERMINISTIC_COMPOSITE,
+        "choreography": {
+            "choreography_id": exact.PRODUCT_PRESENT_TO_CAMERA,
+            "track_policy": "STATIC_RIGID_PRODUCT_TRUTH_TRACK",
+        },
+    }
+    prompt = exact.build_exact_scene_scaffold_prompt(
+        "SECTION 1 - ROLE & OBJECTIVE\n"
+        "Present a real health & personal care product, not a generic prop.\n"
+        "SECTION 6 - SPOKEN DIALOGUE\n"
+        "Minyak Warisan ini teman urutan keluarga.\n"
+        "SECTION 7 - AUDIO & PERFORMANCE\n"
+        "Time the gesture over the product handling.\n",
+        plan,
+        scene_context=(
+            "Product identity, packaging, and scale remain locked. "
+            "Warm practical bathroom lighting remains consistent."
+        ),
+    )
+    low = prompt.lower()
+
+    assert "real health & personal care product" not in low
+    assert "generic prop" not in low
+    assert "over the product handling" not in low
+    assert "product identity, packaging, and scale remain locked" not in low
+    assert "minyak warisan ini teman urutan keluarga" in low
+    assert "warm practical bathroom lighting remains consistent" in low
+
+
+def test_dynamic_choreography_rejects_track_policy_mismatch():
+    with pytest.raises(
+        exact.ExactProductVideoCompositeError,
+        match="Exact choreography and transform-track policy disagree",
+    ) as exc:
+        exact._dynamic_choreography({
+            "choreography_id": exact.PRODUCT_HAND_HOLD,
+            "track_policy": "STATIC_RIGID_PRODUCT_TRUTH_TRACK",
+        })
+
+    assert exc.value.code == "EXACT_COMPOSITE_TRACK_POLICY_MISMATCH"
 
 
 def test_presenter_visible_scaffold_drops_product_sections_and_adds_interaction_zone():
@@ -237,6 +316,15 @@ def test_video_compositor_static_scene_is_measured_and_deterministic(tmp_path, m
         for item in lineage["product_fidelity_qc"]["dimensions"].values()
     )
     assert all(row["qa"]["exact_product_count"] == 1 for row in lineage["transform_track_lineage"])
+    assert lineage["transform_track"]["required"] is False
+    assert lineage["transform_track"]["verified"] is True
+    assert lineage["transform_track"]["source"] == "DETERMINISTIC_STATIC_PLAN"
+    assert lineage["transform_track"]["frame_count"] == 2
+    assert len(lineage["transform_track"]["sha256"]) == 64
+    assert lineage["canonical_product_asset"]["canonical_cutout_sha256"] == "b" * 64
+    assert lineage["compositor_output"]["media_id"] == first["media_id"]
+    assert lineage["compositor_output"]["sha256"] == first["output_sha256"]
+    assert lineage["final_registered_media"] is None
 
 
 def test_video_compositor_fails_closed_for_dynamic_action_without_track_or_masks(tmp_path, monkeypatch):
@@ -314,6 +402,29 @@ def test_plate_scan_rejects_duplicate_canonical_shape_outside_reserved_region(tm
     )
     assert scan["status"] == "FAIL"
     assert scan["reference_like_duplicates"] >= 1
+
+
+def test_plate_scan_rejects_generic_provider_product_inside_reserved_region(tmp_path):
+    from PIL import ImageDraw
+
+    cutout_path = tmp_path / "cutout.png"
+    cutout = Image.new("RGBA", (20, 40), (0, 0, 0, 0))
+    ImageDraw.Draw(cutout).rectangle((4, 2, 16, 37), fill=(20, 120, 60, 255))
+    cutout.save(cutout_path)
+    frame_path = tmp_path / "frame.png"
+    frame = Image.new("RGBA", (120, 120), (245, 245, 245, 255))
+    ImageDraw.Draw(frame).rectangle((12, 12, 28, 48), fill=(180, 120, 20, 255))
+    frame.save(frame_path)
+
+    scan = exact._plate_product_scan(
+        frame_path,
+        reserved_box={"x": 10, "y": 10, "w": 20, "h": 40},
+        canonical_cutout_path=cutout_path,
+        static_scene=True,
+    )
+
+    assert scan["status"] == "FAIL"
+    assert scan["reserved_region_hits"] >= 1
 
 
 def test_dynamic_qc_leaves_unverified_dimension_honest():
