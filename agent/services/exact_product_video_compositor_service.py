@@ -424,7 +424,8 @@ def build_exact_scene_scaffold_prompt(
         "corner brackets, markers, outline, guide, matte, screen, or sign for it; "
         "show only the ordinary unobstructed scene surface behind that region.",
         "SPARSE PROP FIELD: do not render bottle-shaped containers, vials, jars, "
-        "tubes, dispensers, or freestanding upright proxy props anywhere in frame.",
+        "tubes, dispensers, or freestanding upright proxy props anywhere in frame. "
+        "Keep the scene sparse and natural.",
     ]
     if presenter_visible:
         # HYBRID: the governed on-camera presenter is REQUIRED and fully visible.
@@ -456,14 +457,15 @@ def build_exact_scene_scaffold_prompt(
         )
     else:
         additions.append(
-            "FACELESS: no visible face, head, eyes, mouth, or facial reflection; "
-            "hands, arms, and torso may appear."
+            "FACELESS: absolutely no visible face, head, eyes, or mouth anywhere, "
+            "including in reflections, portraits, photos, screens, or background "
+            "people; only hands, forearms, arms, and partial torso may appear."
         )
         additions.append(
             "DIALOGUE IS AUDIO ONLY: never visualize, cast, illustrate, or cut to "
             "a person mentioned or implied by the spoken words. Do not depict a "
-            "baby, child, adult head, or adult face; show only adult hands, "
-            "forearms, and partial torso outside the reserved region."
+            "baby, child, adult head, or adult face, directly or indirectly; show "
+            "only adult hands, forearms, and partial torso outside the reserved region."
         )
         additions.append(
             "FACELESS INTERACTION ZONE: hands and forearms must remain visibly "
