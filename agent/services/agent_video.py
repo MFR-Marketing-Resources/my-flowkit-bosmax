@@ -15,6 +15,7 @@ import hashlib
 import re
 from collections.abc import Mapping
 
+from agent.services import video_execution_profile_service as video_profiles
 from agent.services import video_models
 
 VEO_LITE_COST = 10  # legacy default; pricing now lives in video_models (cost = f(model, duration))
@@ -88,7 +89,8 @@ def _duration_label(duration_s) -> str:
 
 
 def build_target_settings_directive(target_model=None, target_duration_s=None,
-                                    desired_num=1, has_reference=False) -> str:
+                                    desired_num=1, has_reference=False,
+                                    target_aspect_ratio="9:16") -> str:
     """Build the provider-facing settings directive from the SSOT registry.
 
     The creative prompt is deliberately not accepted here. Callers prepend this
@@ -99,6 +101,8 @@ def build_target_settings_directive(target_model=None, target_duration_s=None,
     duration = (target_duration_s if target_duration_s is not None
                 else spec["default_duration_s"])
     duration_text = _duration_label(duration)
+    aspect = video_profiles.normalize_aspect_ratio(target_aspect_ratio)
+    aspect_label = "portrait 9:16" if aspect == "9:16" else "landscape 16:9"
     count = max(1, int(desired_num or 1))
     video_word = "video" if count == 1 else "videos"
     if has_reference:
@@ -114,13 +118,16 @@ def build_target_settings_directive(target_model=None, target_duration_s=None,
         )
     return (
         f"Use exactly {spec['agent_label']} at {duration_text} seconds. "
+        f"Use exactly the {aspect_label} aspect ratio; do not use any other "
+        "orientation or canvas shape. "
         f"Generate exactly {count} {video_word}. {source_clause} "
         "Do not generate separate image outputs."
     )
 
 
-def _target_settings_acknowledged(text, target_model=None, target_duration_s=None) -> bool:
-    """Conservatively recognize an explicit model + duration acknowledgement."""
+def _target_settings_acknowledged(text, target_model=None, target_duration_s=None,
+                                  target_aspect_ratio="9:16") -> bool:
+    """Recognize an explicit model + duration + aspect acknowledgement."""
     spec = video_models.resolve(target_model)
     low = str(text or "").lower()
     compact = re.sub(r"[^a-z0-9]+", "", low)
@@ -140,10 +147,17 @@ def _target_settings_acknowledged(text, target_model=None, target_duration_s=Non
     )
     # Accept the common provider renderings: `10s`, `10 sec`, `10 second(s)`,
     # and `10-second`; do not infer duration from credits.
-    return bool(re.search(
+    duration_acknowledged = bool(re.search(
         rf"(?<!\d){re.escape(duration)}\s*(?:-\s*)?(?:s|secs?|seconds?)\b",
         low,
     ))
+    aspect = video_profiles.normalize_aspect_ratio(target_aspect_ratio)
+    aspect_acknowledged = (
+        aspect in low
+        or (aspect == "9:16" and "portrait" in low)
+        or (aspect == "16:9" and "landscape" in low)
+    )
+    return duration_acknowledged and aspect_acknowledged
 
 # Post-approve failure knowledge (captured live 2026-07-02, Faris' screenshots):
 # when the render dies server-side the agent posts a "Failed / Something went
@@ -259,6 +273,7 @@ def parse_agent_sse(text) -> dict:
                     "error": text["error"], "text": ""}
         text = json.dumps(text)
     permission, tools, error, texts, model, duration_used = None, [], None, [], None, None
+    aspect_used = None
     gen_prompt, gen_seed, tool_call_id, response_id = None, None, None, None
     for line in (text or "").splitlines():
         line = line.strip()
@@ -291,6 +306,12 @@ def parse_agent_sse(text) -> dict:
                         duration_used = int(round(float(dur)))
                     except (TypeError, ValueError):
                         pass
+                aspect_raw = ta.get("aspect_ratio", ta.get("aspectRatio"))
+                if aspect_raw is not None:
+                    try:
+                        aspect_used = video_profiles.normalize_aspect_ratio(aspect_raw)
+                    except (TypeError, ValueError):
+                        aspect_used = str(aspect_raw).strip() or None
                 # PR321 closure: capture EVERY exact identity the generation tool
                 # invocation exposes (SSE contract carries toolCallId + responseId;
                 # prompt/seed when the agent passes them) — the correlation anchors
@@ -310,7 +331,7 @@ def parse_agent_sse(text) -> dict:
     return {"permission": permission, "tools": tools, "started": started,
             "started_tool": started_tool,
             "error": error, "text": joined[:600], "model": model,
-            "duration_used": duration_used,
+            "duration_used": duration_used, "aspect_used": aspect_used,
             "gen_prompt": gen_prompt, "gen_seed": gen_seed,
             "tool_call_id": tool_call_id, "response_id": response_id}
 
@@ -329,6 +350,9 @@ _CAPTURE_MODEL_KEYS = {
 }
 _CAPTURE_DURATION_KEYS = {
     "duration", "duration_s", "durationseconds", "duration_seconds", "length",
+}
+_CAPTURE_ASPECT_KEYS = {
+    "aspect", "aspectratio", "aspect_ratio", "videoaspectratio", "video_aspect_ratio",
 }
 _CAPTURE_GENERATION_TYPE_KEYS = {
     "generationtype", "generation_type", "generationmode", "generation_mode",
@@ -361,6 +385,7 @@ def _capture_safe_value(key, value):
             and (
                 _capture_key_token(k) in _CAPTURE_MODEL_KEYS
                 or _capture_key_token(k) in _CAPTURE_DURATION_KEYS
+                or _capture_key_token(k) in _CAPTURE_ASPECT_KEYS
                 or _capture_key_token(k) in _CAPTURE_GENERATION_TYPE_KEYS
                 or any(part in _capture_key_token(k) for part in _CAPTURE_REFERENCE_KEY_PARTS)
             )
@@ -370,7 +395,12 @@ def _capture_safe_value(key, value):
     if isinstance(value, (str, int, float, bool)) or value is None:
         if any(part in token for part in _CAPTURE_REFERENCE_KEY_PARTS):
             return str(value)[:240]
-        if token in (_CAPTURE_MODEL_KEYS | _CAPTURE_DURATION_KEYS | _CAPTURE_GENERATION_TYPE_KEYS):
+        if token in (
+            _CAPTURE_MODEL_KEYS
+            | _CAPTURE_DURATION_KEYS
+            | _CAPTURE_ASPECT_KEYS
+            | _CAPTURE_GENERATION_TYPE_KEYS
+        ):
             return value
         return None
     return None
@@ -421,6 +451,7 @@ def build_reference_contract_capture_evidence(
                 negotiation_state.get("target_duration_s"),
                 negotiation_state.get("desired_num", 1),
                 has_reference=bool(refs),
+                target_aspect_ratio=negotiation_state.get("target_aspect_ratio") or "9:16",
             )
         except (TypeError, ValueError):
             target_settings_directive = None
@@ -465,6 +496,7 @@ def build_reference_contract_capture_evidence(
     forwarded_refs = []
     model_fields = []
     duration_fields = []
+    aspect_fields = []
     generation_type_fields = []
     for invocation in invocations:
         name = str(invocation.get("toolName") or "").strip()
@@ -482,6 +514,8 @@ def build_reference_contract_capture_evidence(
                     model_fields.append({"field": _capture_safe_key(key), "value": safe_value})
                 if token in _CAPTURE_DURATION_KEYS:
                     duration_fields.append({"field": _capture_safe_key(key), "value": safe_value})
+                if token in _CAPTURE_ASPECT_KEYS:
+                    aspect_fields.append({"field": _capture_safe_key(key), "value": safe_value})
                 if token in _CAPTURE_GENERATION_TYPE_KEYS:
                     generation_type_fields.append({"field": _capture_safe_key(key), "value": safe_value})
                 if any(part in token for part in _CAPTURE_REFERENCE_KEY_PARTS):
@@ -512,6 +546,7 @@ def build_reference_contract_capture_evidence(
         "tool_invocations": safe_invocations,
         "model_selector_fields": model_fields,
         "duration_fields": duration_fields,
+        "aspect_fields": aspect_fields,
         "generation_type_fields": generation_type_fields,
         "reference_request_schema": "agent userMessage.mediaReferences[{mediaId}]",
         "reference_order_requested": refs,
@@ -533,8 +568,10 @@ def build_reference_contract_capture_evidence(
         },
         "model_used_from_negotiation": negotiation.get("model_used"),
         "duration_used_from_negotiation": negotiation.get("duration_used"),
+        "aspect_used_from_negotiation": negotiation.get("aspect_used"),
         "model_verified": negotiation.get("model_ok"),
         "duration_verified": negotiation.get("duration_ok"),
+        "aspect_verified": negotiation.get("aspect_ok"),
         "identity": {
             "tool_call_id": negotiation.get("tool_call_id"),
             "response_id": negotiation.get("response_id"),
@@ -544,7 +581,8 @@ def build_reference_contract_capture_evidence(
 
 
 def decide(permission, target_model=None, target_duration_s=None, desired_num=1,
-           has_reference=False, settings_confirmed=True):
+           has_reference=False, settings_confirmed=True,
+           target_aspect_ratio="9:16"):
     """Steer the agent to the USER-SELECTED model+duration and approve under a CAP-GATE
     (Layer A): num_videos==1, num_images==0, and cost <= ceiling(model, duration).
 
@@ -552,10 +590,10 @@ def decide(permission, target_model=None, target_duration_s=None, desired_num=1,
     proposes by credits (often multi-video). So the gate uses the registry value as a CEILING
     (a promo cheaper price still passes), refuses multi-video / images, and NEVER puts a credit
     target in the steer text (that makes the agent inflate the video count to hit the number).
-    The actual model AND duration are verified POST-approve (the proposal carries neither).
+    The actual model, duration, and aspect are verified POST-approve (the proposal carries none).
     `settings_confirmed` is the negotiation invariant: the caller must keep it false
     until the exact target settings were re-steered after a permission proposal and
-    the provider acknowledged the model + duration. A standalone cap decision keeps
+    the provider acknowledged the model + duration + aspect. A standalone cap decision keeps
     its historical default (`True`); the approval path below always passes the live
     state explicitly.
 
@@ -575,7 +613,8 @@ def decide(permission, target_model=None, target_duration_s=None, desired_num=1,
     # branch preserves the F2V/I2V reference and the no-reference branch positively
     # declares text-only routing, so a shared/dirty Flow project cannot change lanes.
     steer = build_target_settings_directive(
-        target_model, dur, desired_num, has_reference=has_reference)
+        target_model, dur, desired_num, has_reference=has_reference,
+        target_aspect_ratio=target_aspect_ratio)
     if not permission:
         return ("wait", steer, None)
     nv = permission.get("num_videos")
@@ -607,6 +646,7 @@ def decide(permission, target_model=None, target_duration_s=None, desired_num=1,
 async def negotiate_and_generate(client, project_id, session_id, prompt, media_ids,
                                  target_model=None, target_duration_s=None,
                                  desired_num=1, max_turns=16, approve=True,
+                                 target_aspect_ratio="9:16",
                                  target_authorization: Mapping | None = None,
                                  on_target_acknowledged=None) -> dict:
     """Drive the agent until generation STARTS (verified by its own reply) or it fails.
@@ -620,6 +660,7 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
     target_spec = video_models.resolve(target_model)
     target_duration = (target_duration_s if target_duration_s is not None
                        else target_spec["default_duration_s"])
+    target_aspect = video_profiles.normalize_aspect_ratio(target_aspect_ratio)
     target_settings_communicated = False
     target_settings_resteered = False
     permission_after_target_steer = False
@@ -642,6 +683,7 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
             "target_model_label": target_spec["ui_label"],
             "target_agent_label": target_spec["agent_label"],
             "target_duration_s": target_duration,
+            "target_aspect_ratio": target_aspect,
             "desired_num": max(1, int(desired_num or 1)),
             "reference_media_ids": list(refs),
             "target_steer_turn": target_steer_turn,
@@ -675,7 +717,7 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
         if target_settings_resteered and st.get("permission") is not None:
             permission_after_target_steer = True
         if target_settings_resteered and _target_settings_acknowledged(
-                st.get("text"), target_model, target_duration):
+                st.get("text"), target_model, target_duration, target_aspect):
             target_settings_acknowledged = True
             if target_authorization is not None and not target_acknowledgement_persisted:
                 try:
@@ -710,6 +752,7 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
         # Post-approve model + duration verification (the proposal carries neither).
         mu = st.get("model")
         du = st.get("duration_used")
+        au = st.get("aspect_used")
         tgt_dur = (target_duration_s if target_duration_s is not None
                    else video_models.resolve(target_model)["default_duration_s"])
         return {
@@ -717,6 +760,8 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
             "model_ok": (video_models.model_matches(mu, target_model) if mu else None),
             "duration_used": du,
             "duration_ok": (None if du is None else (du == tgt_dur)),
+            "aspect_used": au,
+            "aspect_ok": (None if au is None else (au == target_aspect)),
             # Exact generation identities from the fired tool (PR321 closure) —
             # the deterministic output-correlation anchors.
             "gen_prompt": st.get("gen_prompt"),
@@ -747,7 +792,8 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
     # for make_video's submitted_prompt correlation anchor and carry references on
     # every conversational turn so a correction cannot silently become text-only.
     settings_directive = build_target_settings_directive(
-        target_model, target_duration, desired_num, has_reference=bool(refs))
+        target_model, target_duration, desired_num, has_reference=bool(refs),
+        target_aspect_ratio=target_aspect)
     initial_text = (
         ("" if refs else _TEXT_ONLY_DIRECTIVE)
         + settings_directive + "\n\n" + prompt
@@ -795,7 +841,7 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
                 "detail": (
                     "Provider returned a permission proposal without acknowledging "
                     f"{target_spec['ui_label']} at {_duration_label(target_duration)} "
-                    "seconds after the exact target steer and canonical target "
+                    f"seconds in {target_aspect} after the exact target steer and canonical target "
                     "receipt; approval was not sent."
                 ),
                 "target_digest": (
@@ -816,7 +862,8 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
         kind, msg, perm_action = decide(state["permission"], target_model,
                                         target_duration_s, desired_num,
                                         has_reference=bool(refs),
-                                        settings_confirmed=settings_confirmed)
+                                        settings_confirmed=settings_confirmed,
+                                        target_aspect_ratio=target_aspect)
         if kind == "approve":
             if not approve:
                 return _finish({"ok": True, "dry": True,

@@ -5,6 +5,7 @@ Authority fixture: tests/fixtures/agent_sse_proposal.txt — a REAL pre-approve 
 post-approve), so cost is the Lite proxy pre-approve and the model is verified post-approve.
 """
 import asyncio
+import json
 import os
 
 from agent.services import agent_video as av
@@ -67,6 +68,7 @@ def test_parse_post_approve_extracts_model_and_started():
     assert st["started"] is True          # a generate tool fired
     assert st["model"] == "veo_3_1_r2v_lite"
     assert st["duration_used"] == 8       # DUR-1: duration extracted from tool args (8.0 → 8)
+    assert st["aspect_used"] == "9:16"
 
 
 def test_parse_beginrendering_text_only_not_started():
@@ -157,7 +159,7 @@ def test_decide_never_approves_unsteered_permission():
 
 _SOFT_PLUS_PROPOSAL = (
     'data: {"text": "Sure, I\'m generating your video concept now. I will use '
-    'Veo 3.1 - Lite for 8 seconds."}\n'   # soft phrase, no tool
+    'Veo 3.1 - Lite for 8 seconds in portrait 9:16."}\n'   # soft phrase, no tool
     'data: {"agentMessage": {"agentEvents": [{"eventId": "p","toolInvocation": '
     '{"toolName": "ask_for_permission","toolArguments": '
     '{"num_videos": 1,"num_images": 0,"total_cost": 10,"num_total": 1}}}],"responseId": "p"}}\n'
@@ -350,17 +352,31 @@ class _CaptureClient:
     """Fake Flow client: records what was sent, fires a generation tool on the first
     turn so negotiate_and_generate returns immediately (no provider, no credit)."""
 
-    def __init__(self):
+    def __init__(self, aspect_ratio="9:16"):
         self.sent = []
+        self.aspect_ratio = aspect_ratio
 
     async def agent_stream_chat(self, session_id, project_id, turn, text,
                                 media_ids=None, permission_action=None):
         self.sent.append({"text": text, "media_ids": media_ids})
-        return {"data": (
-            'data: {"agentMessage": {"responseId": "r1", "agentEvents": '
-            '[{"toolInvocation": {"toolName": "generate_video_from_text", '
-            '"toolCallId": "tc1", "toolArguments": {"prompt": "compiled", '
-            '"model_usage_key": "veo_3_1_t2v_lite", "duration": 8}}}]}}')}
+        payload = {
+            "agentMessage": {
+                "responseId": "r1",
+                "agentEvents": [{
+                    "toolInvocation": {
+                        "toolName": "generate_video_from_text",
+                        "toolCallId": "tc1",
+                        "toolArguments": {
+                            "prompt": "compiled",
+                            "model_usage_key": "veo_3_1_t2v_lite",
+                            "duration": 8,
+                            "aspect_ratio": self.aspect_ratio,
+                        },
+                    },
+                }],
+            },
+        }
+        return {"data": "data: " + json.dumps(payload)}
 
 
 def test_negotiate_prepends_text_only_directive_when_no_media():
@@ -371,6 +387,7 @@ def test_negotiate_prepends_text_only_directive_when_no_media():
     assert first.startswith(av._TEXT_ONLY_DIRECTIVE)
     assert "MY CREATIVE PROMPT" in first
     assert "TEXT-TO-VIDEO" in first
+    assert "portrait 9:16 aspect ratio" in first
 
 
 def test_negotiate_does_not_add_directive_when_reference_present():
@@ -389,6 +406,7 @@ def test_target_directive_uses_registry_defaults_and_supported_settings():
     default_ref = av.build_target_settings_directive(has_reference=True)
     assert "Veo 3.1 - Lite" in default_ref
     assert "8 seconds" in default_ref
+    assert "portrait 9:16 aspect ratio" in default_ref
     assert "using the attached reference image" in default_ref
 
     omni_ref = av.build_target_settings_directive(
@@ -396,7 +414,56 @@ def test_target_directive_uses_registry_defaults_and_supported_settings():
     )
     assert "Gemini Omni Flash" in omni_ref
     assert "10 seconds" in omni_ref
+    assert "portrait 9:16 aspect ratio" in omni_ref
     assert "text-only" not in omni_ref
+
+
+def test_exact_aspect_is_transmitted_and_verified_from_generation_tool():
+    client = _CaptureClient(aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT")
+    result = _run(av.negotiate_and_generate(
+        client, "proj", "sid", "MY CREATIVE PROMPT", [],
+        target_model="Veo 3.1 - Lite", target_duration_s=8,
+        target_aspect_ratio="9:16",
+    ))
+
+    assert "portrait 9:16 aspect ratio" in client.sent[0]["text"]
+    assert result["aspect_used"] == "9:16"
+    assert result["aspect_ok"] is True
+
+
+def test_generation_tool_aspect_mismatch_is_explicit():
+    result = _run(av.negotiate_and_generate(
+        _CaptureClient(aspect_ratio="16:9"), "proj", "sid", "prompt", [],
+        target_model="Veo 3.1 - Lite", target_duration_s=8,
+        target_aspect_ratio="9:16",
+    ))
+
+    assert result["aspect_used"] == "16:9"
+    assert result["aspect_ok"] is False
+
+
+def test_certification_evidence_preserves_sanitized_exact_generation_envelope():
+    client = _CaptureClient(aspect_ratio="VIDEO_ASPECT_RATIO_PORTRAIT")
+    result = _run(av.negotiate_and_generate(
+        client, "proj", "sid", "MY CREATIVE PROMPT", [],
+        target_model="Veo 3.1 - Lite", target_duration_s=8,
+        target_aspect_ratio="9:16",
+    ))
+    evidence = av.build_reference_contract_capture_evidence(
+        result, [], project_id="proj"
+    )
+
+    assert "portrait 9:16 aspect ratio" in evidence["target_settings_directive"]
+    assert evidence["provider_generation_tools"] == ["generate_video_from_text"]
+    assert evidence["aspect_fields"] == [
+        {"field": "aspect_ratio", "value": "VIDEO_ASPECT_RATIO_PORTRAIT"}
+    ]
+    invocation = evidence["tool_invocations"][0]
+    assert invocation["arguments"]["aspect_ratio"] == "VIDEO_ASPECT_RATIO_PORTRAIT"
+    assert invocation["arguments"]["prompt"]["sha256"]
+    assert invocation["arguments"]["prompt"]["length"] == len("compiled")
+    assert evidence["aspect_used_from_negotiation"] == "9:16"
+    assert evidence["aspect_verified"] is True
 
 
 _PHASE_B_FIRST_PERMISSION = (
@@ -408,7 +475,7 @@ _PHASE_B_FIRST_PERMISSION = (
 )
 
 _PHASE_B_REVISED_PERMISSION = (
-    'data: {"text": "Confirmed: use Gemini Omni Flash for 10 seconds, preserve '
+    'data: {"text": "Confirmed: use Gemini Omni Flash for 10 seconds in portrait 9:16, preserve '
     'the attached reference image, and generate exactly one video."}\n'
     'data: {"agentMessage": {"agentEvents": [{"eventId": "phase-b-2",'
     '"toolInvocation": {"toolCallId": "ask-2",'
