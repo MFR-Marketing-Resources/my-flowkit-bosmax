@@ -4490,7 +4490,7 @@ async def get_final_video_delivery(media_id: str) -> dict:
 
 
 async def list_incomplete_final_video_deliveries(limit: int = 200) -> list[dict]:
-    """Final files whose local delivery pair needs repair (never provider work)."""
+    """Final-timeline files whose local delivery pair needs repair."""
     db = await get_db()
     cur = await db.execute(
         """SELECT v.*,
@@ -4499,7 +4499,9 @@ async def list_incomplete_final_video_deliveries(limit: int = 200) -> list[dict]
            FROM video_production_job v
            LEFT JOIN generated_artifact ga ON ga.media_id=v.final_media_id
            LEFT JOIN generation_result gr ON gr.media_id=v.final_media_id
-           WHERE v.final_media_id IS NOT NULL AND v.final_media_id!=''
+           WHERE v.final_concat_job_name IS NOT NULL
+             AND v.final_concat_job_name!=''
+             AND v.final_media_id IS NOT NULL AND v.final_media_id!=''
              AND v.final_local_path IS NOT NULL AND v.final_local_path!=''
              AND (ga.media_id IS NULL OR gr.media_id IS NULL)
            ORDER BY v.updated_at ASC LIMIT ?""",

@@ -193,12 +193,25 @@ async def test_final_video_delivery_rolls_back_when_result_write_fails():
     assert await crud.get_generation_result("atomic-rollback") is None
 
 
-async def test_incomplete_delivery_query_never_selects_provider_work():
+async def test_incomplete_delivery_query_selects_only_final_timeline_jobs():
     await crud.create_video_production_job_full(
         "local-repair", logical_job_key="local-repair-key", status="DELIVERY_PENDING"
     )
     await crud.update_video_production_job_full(
-        "local-repair", final_media_id="local-final", final_local_path="/tmp/local.mp4"
+        "local-repair",
+        final_concat_job_name="local-final-concat",
+        final_media_id="local-final",
+        final_local_path="/tmp/local.mp4",
+    )
+    await crud.create_video_production_job_full(
+        "historical-single",
+        logical_job_key="ljk_single_historical",
+        status="PRODUCT_FIDELITY_REVIEW_REQUIRED",
+    )
+    await crud.update_video_production_job_full(
+        "historical-single",
+        final_media_id="raw-provider-scene",
+        final_local_path="/tmp/raw-provider-scene.mp4",
     )
     await crud.create_video_production_job_full(
         "provider-work", logical_job_key="provider-work-key", status="INITIAL_POLLING",
