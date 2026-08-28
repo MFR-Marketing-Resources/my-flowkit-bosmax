@@ -539,6 +539,7 @@ async def reconcile_pre_provider_failure(
 _RECONCILE_TERMINAL_JOB_STATUSES = frozenset({
     "DONE",
     "PRODUCT_FIDELITY_REVIEW_REQUIRED",
+    "EXACT_COMPOSITE_FAILED",
     "FAILED",
     "REJECTED",
     "ARTIFACT_PERSISTENCE_FAILED",
@@ -691,6 +692,20 @@ async def reconcile_stale_reservation(
         return row  # (A) active / ambiguous provider op -> NEVER duplicate
     if job_status in _RECONCILE_SUCCESS_JOB_STATUSES:
         return row  # terminal success awaiting owner finalize -> reuse
+
+    if (
+        job_status == "EXACT_COMPOSITE_FAILED"
+        and job.get("exact_composite_retryable") is not True
+    ):
+        return await supersede_unsuitable(
+            certification_id,
+            reason=(
+                "RECONCILE_TERMINAL_EXACT_COMPOSITE_FAILURE:"
+                f"{_norm(job.get('exact_composite_error')) or 'UNKNOWN'}:"
+                "raw_provider_scene_not_final_authority"
+            ),
+            superseded_by="system-reconciler",
+        )
 
     has_artifact = _has_recoverable_artifact_bytes(job)
     has_provider_op = bool(_provider_operation_id(job))

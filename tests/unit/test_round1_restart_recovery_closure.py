@@ -226,6 +226,328 @@ async def test_single_restart_after_provider_terminal_retries_artifact_only(tmp_
     assert await crud.get_generated_artifact(media_id)
 
 
+def _exact_custody() -> dict:
+    return {
+        "product_id": "product-exact",
+        "exact_product_required": True,
+        "provider_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+        "product_fidelity_qc_required": False,
+        "exact_product_video": {
+            "selected_execution_route": "EXACT_PRODUCT_DETERMINISTIC_COMPOSITE",
+            "generate_eligibility": True,
+            "product_truth": {
+                "canonical_media_id": "canonical-source",
+                "canonical_source_sha256": "a" * 64,
+                "canonical_cutout_media_id": "canonical-cutout",
+                "canonical_cutout_sha256": "b" * 64,
+            },
+            "choreography": {
+                "choreography_id": "PRODUCT_PRESENT_TO_CAMERA",
+                "track_policy": "STATIC_RIGID_PRODUCT_TRUTH_TRACK",
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_exact_artifact_without_official_product_fails_before_registration(
+    tmp_path, monkeypatch
+):
+    raw_path = tmp_path / "provider-raw.mp4"
+    raw_path.write_bytes(b"raw-provider-scene")
+    insert_artifact = AsyncMock()
+    monkeypatch.setattr(crud, "get_product", AsyncMock(return_value=None))
+    monkeypatch.setattr(crud, "insert_generated_artifact", insert_artifact)
+    job = {
+        "job_id": "g_exact_missing_plate",
+        "status": "DONE",
+        "mode": "T2V",
+        "product_id": "product-exact",
+        "product_visual_custody": _exact_custody(),
+        "strict_artifact_delivery": True,
+    }
+
+    await make_video._record_artifacts(
+        job,
+        "T2V",
+        [{"media_id": "provider-raw", "local_path": str(raw_path)}],
+    )
+
+    assert job["status"] == "EXACT_COMPOSITE_FAILED"
+    assert job["exact_composite_error"] == "ERR_PRODUCT_VISUAL_CUSTODY_REQUIRED"
+    assert job["raw_provider_media_id"] == "provider-raw"
+    assert job["raw_provider_sha256"] != ""
+    assert job["raw_provider_final_authority"] is False
+    assert job["exact_composite_retryable"] is False
+    assert job.get("final_artifact_authority") is None
+    insert_artifact.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_exact_artifact_registers_compositor_output_never_provider_raw(
+    tmp_path, monkeypatch
+):
+    from agent.services import exact_product_video_compositor_service as exact
+
+    raw_path = tmp_path / "provider-raw.mp4"
+    final_path = tmp_path / "exact-final.mp4"
+    raw_path.write_bytes(b"raw-provider-scene")
+    final_path.write_bytes(b"deterministic-compositor-output")
+    final_lineage = {
+        "provider_scene_artifact": {"media_id": "provider-raw"},
+        "canonical_product_asset": {"canonical_cutout_sha256": "b" * 64},
+        "transform_track": {"verified": True, "source": "DETERMINISTIC_STATIC_PLAN"},
+        "compositor_output": {
+            "media_id": "exact-final",
+            "local_path": str(final_path),
+        },
+        "final_registered_media": None,
+        "raw_scene_final_authority": False,
+        "face_qc": {"status": "NOT_RUN", "verified": False},
+    }
+    monkeypatch.setattr(crud, "get_product", AsyncMock(return_value={"id": "product-exact"}))
+    monkeypatch.setattr(
+        exact,
+        "compose_exact_product_video_artifact",
+        lambda **_kwargs: {
+            "media_id": "exact-final",
+            "local_path": str(final_path),
+            "size_mb": 0.1,
+            "output_sha256": "c" * 64,
+            "exact_product_lineage": final_lineage,
+            "product_fidelity_qc_evidence": {
+                "status": "PRODUCT_FIDELITY_QC_PASS",
+                "verified": True,
+                "dimensions": {},
+            },
+            "product_visual_custody": _exact_custody(),
+        },
+    )
+    inserted_media: list[str] = []
+
+    async def insert_generated_artifact(**kwargs):
+        inserted_media.append(kwargs["media_id"])
+        return {"local_path": kwargs["local_path"]}
+
+    monkeypatch.setattr(crud, "insert_generated_artifact", insert_generated_artifact)
+    monkeypatch.setattr(crud, "insert_generation_result", AsyncMock())
+    job = {
+        "job_id": "g_exact_register_final",
+        "status": "DONE",
+        "mode": "T2V",
+        "product_id": "product-exact",
+        "product_visual_custody": _exact_custody(),
+        "strict_artifact_delivery": True,
+    }
+
+    await make_video._record_artifacts(
+        job,
+        "T2V",
+        [{"media_id": "provider-raw", "local_path": str(raw_path)}],
+    )
+
+    assert inserted_media == ["exact-final"]
+    assert job["raw_provider_media_id"] == "provider-raw"
+    assert job["media_id"] == "exact-final"
+    assert job["final_artifact_authority"] == "DETERMINISTIC_COMPOSITOR"
+    registered = job["exact_product_lineage"]["final_registered_media"]
+    assert registered["media_id"] == "exact-final"
+    assert registered["readback_verified"] is True
+    assert registered["sha256"] != job["raw_provider_sha256"]
+    sidecar = json.loads(final_path.with_suffix(".lineage.json").read_text())
+    assert sidecar["final_registered_media"] == registered
+
+
+@pytest.mark.asyncio
+async def test_exact_durable_sync_never_maps_raw_scene_into_final_columns(
+    tmp_path, monkeypatch
+):
+    raw_path = tmp_path / "provider-raw.mp4"
+    raw_path.write_bytes(b"raw-provider-scene")
+    captured: dict = {}
+    monkeypatch.setattr(
+        crud,
+        "get_video_production_job",
+        AsyncMock(return_value={"job_id": "g_exact_sync", "project_id": "project-1"}),
+    )
+
+    async def update(_job_id, **values):
+        captured.update(values)
+
+    monkeypatch.setattr(crud, "update_video_production_job_full", update)
+    job = {
+        "job_id": "g_exact_sync",
+        "status": "EXACT_COMPOSITE_FAILED",
+        "mode": "T2V",
+        "media_id": "provider-raw",
+        "local_path": str(raw_path),
+        "raw_provider_artifacts": [
+            {"media_id": "provider-raw", "local_path": str(raw_path)}
+        ],
+        "product_visual_custody": _exact_custody(),
+    }
+
+    assert await make_video._sync_durable_single_job(job) is True
+    assert captured["initial_media_id"] == "provider-raw"
+    assert captured["final_media_id"] is None
+    assert captured["final_local_path"] is None
+    assert captured["final_sha256"] is None
+    public = make_video._durable_public_state(
+        {
+            "job_id": "g_exact_sync",
+            "status": "EXACT_COMPOSITE_FAILED",
+            "initial_media_id": "provider-raw",
+            "final_media_id": None,
+        },
+        job,
+    )
+    assert public["raw_provider_media_id"] == "provider-raw"
+    assert public["media_id"] is None
+    assert public["local_path"] is None
+
+
+@pytest.mark.asyncio
+async def test_non_exact_durable_sync_keeps_existing_final_mapping(tmp_path, monkeypatch):
+    path = tmp_path / "ordinary-final.mp4"
+    path.write_bytes(b"ordinary-final")
+    captured: dict = {}
+    monkeypatch.setattr(
+        crud,
+        "get_video_production_job",
+        AsyncMock(return_value={"job_id": "g_non_exact_sync", "project_id": "project-1"}),
+    )
+
+    async def update(_job_id, **values):
+        captured.update(values)
+
+    monkeypatch.setattr(crud, "update_video_production_job_full", update)
+    job = {
+        "job_id": "g_non_exact_sync",
+        "status": "DONE",
+        "mode": "T2V",
+        "media_id": "ordinary-final",
+        "local_path": str(path),
+    }
+
+    assert await make_video._sync_durable_single_job(job) is True
+    assert captured["initial_media_id"] == "ordinary-final"
+    assert captured["final_media_id"] == "ordinary-final"
+    assert captured["final_local_path"] == str(path)
+
+
+@pytest.mark.asyncio
+async def test_exact_restart_resumes_composite_without_provider_call(tmp_path, monkeypatch):
+    job_id = f"g_exact_restart_{uuid4().hex[:10]}"
+    raw_path = tmp_path / "provider-raw.mp4"
+    final_path = tmp_path / "exact-final.mp4"
+    raw_path.write_bytes(b"raw-provider-scene")
+    final_path.write_bytes(b"exact-final")
+    state = {
+        "job_id": job_id,
+        "status": "EXACT_COMPOSITE_FAILED",
+        "mode": "T2V",
+        "provider_terminal": True,
+        "provider_generation_submit_count": 1,
+        "artifacts": [{"media_id": "provider-raw", "local_path": str(raw_path)}],
+        "raw_provider_artifacts": [
+            {"media_id": "provider-raw", "local_path": str(raw_path)}
+        ],
+        "product_visual_custody": _exact_custody(),
+        "exact_composite_status": "FAILED",
+        "exact_composite_error": "EXACT_COMPOSITE_MEDIA_TOOL_FAILED",
+        "exact_composite_retryable": True,
+    }
+    row = {
+        "job_id": job_id,
+        "status": "EXACT_COMPOSITE_FAILED",
+        "project_id": "project-exact",
+        "initial_media_id": "provider-raw",
+        "stage_state_json": json.dumps(state),
+    }
+    monkeypatch.setattr(crud, "get_video_production_job", AsyncMock(return_value=row))
+    compose_calls = {"count": 0}
+
+    async def record(job, _mode, artifacts):
+        compose_calls["count"] += 1
+        assert artifacts[0]["media_id"] == "provider-raw"
+        job.update(
+            status="DONE",
+            media_id="exact-final",
+            local_path=str(final_path),
+            final_artifact_authority="DETERMINISTIC_COMPOSITOR",
+            artifacts=[{
+                "media_id": "exact-final",
+                "local_path": str(final_path),
+                "exact_product_lineage": {"final_registered_media": {"media_id": "exact-final"}},
+            }],
+        )
+
+    async def sync(job):
+        row["status"] = job["status"]
+        row["final_media_id"] = job.get("media_id")
+        row["final_local_path"] = job.get("local_path")
+        row["stage_state_json"] = json.dumps(make_video._durable_single_snapshot(job))
+        return True
+
+    monkeypatch.setattr(make_video, "_record_artifacts", record)
+    monkeypatch.setattr(make_video, "_sync_durable_single_job", sync)
+    provider = AsyncMock()
+
+    recovered = await make_video.reconcile_durable_single_job(
+        job_id, provider_client=provider
+    )
+
+    assert recovered["status"] == "DONE"
+    assert recovered["media_id"] == "exact-final"
+    assert compose_calls["count"] == 1
+    provider.check_video_status_by_media.assert_not_awaited()
+    provider.check_video_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_exact_deterministic_failure_does_not_loop_local_recomposition(
+    tmp_path, monkeypatch
+):
+    job_id = f"g_exact_terminal_{uuid4().hex[:10]}"
+    raw_path = tmp_path / "provider-impostor.mp4"
+    raw_path.write_bytes(b"provider-scene-with-impostor")
+    state = {
+        "job_id": job_id,
+        "status": "EXACT_COMPOSITE_FAILED",
+        "mode": "T2V",
+        "provider_terminal": True,
+        "provider_generation_submit_count": 1,
+        "artifacts": [{"media_id": "provider-raw", "local_path": str(raw_path)}],
+        "raw_provider_artifacts": [
+            {"media_id": "provider-raw", "local_path": str(raw_path)}
+        ],
+        "product_visual_custody": _exact_custody(),
+        "exact_composite_status": "FAILED",
+        "exact_composite_error": "EXACT_COMPOSITE_PLATE_CONTAINS_PRODUCT_IMPOSTOR",
+        "exact_composite_retryable": False,
+    }
+    row = {
+        "job_id": job_id,
+        "status": "EXACT_COMPOSITE_FAILED",
+        "project_id": "project-exact",
+        "initial_media_id": "provider-raw",
+        "stage_state_json": json.dumps(state),
+    }
+    monkeypatch.setattr(crud, "get_video_production_job", AsyncMock(return_value=row))
+    record = AsyncMock()
+    monkeypatch.setattr(make_video, "_record_artifacts", record)
+    provider = AsyncMock()
+
+    recovered = await make_video.reconcile_durable_single_job(
+        job_id, provider_client=provider
+    )
+
+    assert recovered["status"] == "EXACT_COMPOSITE_FAILED"
+    record.assert_not_awaited()
+    provider.check_video_status_by_media.assert_not_awaited()
+    provider.check_video_status.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_single_restart_without_provider_identity_is_explicitly_unrecoverable():
     job_id = f"g_restart_unrecoverable_{uuid4().hex[:10]}"
