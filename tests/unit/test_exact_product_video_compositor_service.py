@@ -117,8 +117,10 @@ def test_faceless_scene_scaffold_removes_product_handling_contradictions():
     assert "product held clearly" not in low
     assert "physically handle the product" not in low
     assert "product hero on table" not in low
-    assert "reserved region stays empty" in low
-    assert "must not hold, touch, cross, overlap, or occlude" in low
+    assert "product-free scene" in low
+    assert "never point, frame, present toward, hold, touch, or interact" in low
+    assert "reserved product region" not in low
+    assert "reserved box" not in low
     assert "dapatkan sekarang" in low
 
 
@@ -155,11 +157,15 @@ def test_faceless_scene_scaffold_scrubs_actual_failed_prompt_cues_but_keeps_dial
     assert "do not depict a baby, child, adult head, or adult face, directly or indirectly" in low
     assert "reflections, portraits, photos, screens, or background people" in low
     assert "only hands, forearms, arms, and partial torso may appear" in low
-    assert "invisible reservation only" in low
-    assert "do not render a blank card, sheet of paper, rectangle" in low
+    assert "no placeholder or guide" in low
+    assert "do not render a blank card, sheet of paper" in low
     assert "freestanding upright proxy props" in low
     assert "keep the scene sparse and natural" in low
     assert "warm practical bathroom lighting remains consistent" in low
+    assert "reserved product region" not in low
+    assert "reserved box" not in low
+    assert "point toward" not in low
+    assert "product_present_to_camera" not in low
 
 
 def test_dynamic_choreography_rejects_track_policy_mismatch():
