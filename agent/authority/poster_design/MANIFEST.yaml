@@ -1,0 +1,77 @@
+version: 1
+authority_pack_id: bosmax_poster_design_authority_v1
+folder: agent/authority/poster_design
+purpose: >
+  Authority and reference pack for BOSMAX poster/image prompt generation.
+  This pack supports commercial poster prompt construction, platform-aware
+  layout decisions, copy overlay reasoning, typography, ecommerce product
+  handling, visual proof, and post-processing rules.
+runtime_status: reference_only
+integration_status: not_yet_wired_to_runtime
+
+strict_authority_files:
+  - Platform_Specs_v1_STRICT.yaml
+  - Model_Behaviour_v1_STRICT.yaml
+  - Prompt_Framework_v1_STRICT.yaml
+  - Visual_Language_v1_STRICT.yaml
+  - PostProcessing_v1_STRICT.yaml
+  - Commercial_Design_Intelligence_v1_STRICT.yaml
+
+satellite_reference_files:
+  - Ecommerce_Product_v1_SATELLITE.yaml
+  - Typography_v1_SATELLITE.yaml
+  - Copywriting_v1_SATELLITE.yaml
+  - Color_Testing_v1_SATELLITE.yaml
+  - Visual_Proof_v1_SATELLITE.yaml
+  - RealEstate_v1_SATELLITE.yaml
+
+portable_skill_files:
+  - BOSMAX_UNIVERSAL_COMMERCIAL_DESIGN_SKILL.md
+  - Custom_Instruction.txt
+
+resolution_order:
+  always_read:
+    - Platform_Specs_v1_STRICT.yaml
+    - Model_Behaviour_v1_STRICT.yaml
+    - Prompt_Framework_v1_STRICT.yaml
+    - Visual_Language_v1_STRICT.yaml
+    - PostProcessing_v1_STRICT.yaml
+    - Commercial_Design_Intelligence_v1_STRICT.yaml
+  conditionally_read:
+    ecommerce_or_product:
+      - Ecommerce_Product_v1_SATELLITE.yaml
+    text_or_cta:
+      - Typography_v1_SATELLITE.yaml
+      - Copywriting_v1_SATELLITE.yaml
+    color_strategy:
+      - Color_Testing_v1_SATELLITE.yaml
+    proof_or_conversion_poster:
+      - Visual_Proof_v1_SATELLITE.yaml
+    property_or_real_estate:
+      - RealEstate_v1_SATELLITE.yaml
+
+scope_locks:
+  - Poster/image prompt generation only.
+  - Do not use this pack as the video prompt compiler authority.
+  - Do not emit internal metadata keys into final image prompts.
+  - Product truth must come from product registration, product image, or explicit operator input.
+  - Copy fields such as angle, hook, subhook, USP, and CTA must remain clean user/operator-facing fields.
+
+future_runtime_contract:
+  intended_inputs:
+    - product_id
+    - product_truth
+    - angle
+    - hook
+    - subhook
+    - usp1
+    - usp2
+    - usp3
+    - cta
+    - platform
+    - language
+    - poster_mode
+  intended_outputs:
+    - final_image_prompt
+    - negative_prompt
+    - optional_metadata_handoff
