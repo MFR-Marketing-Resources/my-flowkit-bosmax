@@ -153,7 +153,8 @@ Do NOT "improve", refactor, or re-debug these unless a listed harness FAILS:
    downgrade). Telemetry stage `API_USER_SETTINGS_APPLIED` records what ran.
 6. **Negotiation brain** (`agent_video.py`): cap-gate (num_videos == user
    count, cost ≤ ceiling×count), approve exactly once, post-approve
-   model+duration verification, failure-reply knowledge
+   model+duration+aspect verification, exact provider-envelope capture for
+   certification runs, failure-reply knowledge
    (REFERENCE_IMAGE_MISSING → re-upload, NEVER bare "regenerate";
    RENDER_FAILED → safe resubmit), zero-credit render-status probe.
 7. **Retrieval**: pre-poll snapshot excludes pre-existing media (false-DONE

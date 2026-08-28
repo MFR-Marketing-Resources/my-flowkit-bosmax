@@ -7015,6 +7015,7 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         nres = await agent_video.negotiate_and_generate(
             client, project_id, sid, prompt, refs,
             target_model=model, target_duration_s=duration_s,
+            target_aspect_ratio=aspect,
             desired_num=num_videos,
             target_authorization=target_authorization,
             on_target_acknowledged=_persist_target_acknowledgement
@@ -7068,6 +7069,8 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         job["model_ok"] = nres.get("model_ok")
         job["duration_used"] = nres.get("duration_used")
         job["duration_ok"] = nres.get("duration_ok")
+        job["aspect_used"] = nres.get("aspect_used")
+        job["aspect_ok"] = nres.get("aspect_ok")
         # DIAGNOSABILITY: persist the captured identity (toolNames seen, anchors, and
         # the raw approve SSE on a gap) HERE — before any post-approve guard below can
         # raise — so a REJECTED run still reveals what tool/model it fired instead of
@@ -7085,6 +7088,12 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         job["identity_captured"] = _identity_captured(job["generation_identity"])
         job["tools_seen"] = list(nres.get("tools_seen") or [])
         job["gen_tool_matched"] = bool(nres.get("gen_tool_matched"))
+        if job.get("profile_certification_capture"):
+            job["provider_contract_evidence"] = (
+                agent_video.build_reference_contract_capture_evidence(
+                    nres, refs, project_id=project_id
+                )
+            )
         if job.get("provider_certification_bootstrap"):
             observed_model = str(nres.get("model_used") or "").strip().lower()
             observed_tools = {str(tool).strip() for tool in (nres.get("tools_seen") or [])}
@@ -7159,6 +7168,9 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
         if nres.get("duration_ok") is False:
             raise RuntimeError(
                 f"FAILED_WRONG_DURATION: expected {duration_s or 'default'}s, got {nres.get('duration_used')}s")
+        if nres.get("aspect_ok") is False:
+            raise RuntimeError(
+                f"FAILED_WRONG_ASPECT: expected {aspect}, got {nres.get('aspect_used')}")
         # SEV-0 Mission 11: a reference run must fire a REFERENCE generation tool.
         # The proposal carries no tool/model (fixture-proven), so this is the earliest
         # honest boundary — fail LOUD instead of reporting a text-only fallback (image
@@ -7176,6 +7188,8 @@ async def _run_generate(job_id, mode, prompt, project_id, image_media_ids,
                 job["model_unverified"] = True
             if nres.get("duration_ok") is None:
                 job["duration_unverified"] = True
+            if nres.get("aspect_ok") is None:
+                job["aspect_unverified"] = True
         if not nres.get("approved"):
             if nres.get("error_class") == agent_video.RATE_LIMITED:
                 raise RuntimeError(str(nres.get("error")))  # honest 0-credit rate-limit label

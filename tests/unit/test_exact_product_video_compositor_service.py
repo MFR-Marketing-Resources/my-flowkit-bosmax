@@ -81,7 +81,9 @@ def test_scene_scaffold_prompt_forbids_provider_product_pixels():
 
     assert "SCENE-ONLY PLATE" in prompt
     assert "provider output is an internal plate" in prompt
-    assert "PRODUCT_PRESENT_TO_CAMERA" in prompt
+    assert "PRODUCT_PRESENT_TO_CAMERA" not in prompt
+    assert "placement bounding box" not in prompt
+    assert "compositor motion contract" in prompt.lower()
     assert "preserve the real product" not in prompt.lower()
     assert "no visible face" in prompt.lower()
 
@@ -132,7 +134,7 @@ def test_faceless_scene_scaffold_scrubs_actual_failed_prompt_cues_but_keeps_dial
         "SECTION 1 - ROLE & OBJECTIVE\n"
         "Present a real health & personal care product, not a generic prop.\n"
         "SECTION 6 - SPOKEN DIALOGUE\n"
-        "Minyak Warisan ini teman urutan keluarga.\n"
+        "Anak menangis malam kerana perut kembung? Minyak Warisan ini teman urutan keluarga.\n"
         "SECTION 7 - AUDIO & PERFORMANCE\n"
         "Time the gesture over the product handling.\n",
         plan,
@@ -147,7 +149,13 @@ def test_faceless_scene_scaffold_scrubs_actual_failed_prompt_cues_but_keeps_dial
     assert "generic prop" not in low
     assert "over the product handling" not in low
     assert "product identity, packaging, and scale remain locked" not in low
-    assert "minyak warisan ini teman urutan keluarga" in low
+    assert "anak menangis malam kerana perut kembung" in low
+    assert "dialogue is audio only" in low
+    assert "never visualize, cast, illustrate, or cut to" in low
+    assert "do not depict a baby, child, adult head, or adult face" in low
+    assert "invisible reservation only" in low
+    assert "do not render a blank card, sheet of paper, rectangle" in low
+    assert "freestanding upright proxy props" in low
     assert "warm practical bathroom lighting remains consistent" in low
 
 

@@ -374,8 +374,6 @@ def build_exact_scene_scaffold_prompt(
       Speech (dialogue/voice) and role sections are preserved.
     """
 
-    selected = plan.get("choreography") or {}
-    selected_id = selected.get("choreography_id") or FACELESS_V1_SAFE_DEFAULT
     raw_prompt = _strip_product_withheld_source_cues(_drop_canonical_product_sections(
         str(base_prompt or ""), _CANONICAL_PRODUCT_VISUAL_SECTIONS
     ))
@@ -405,11 +403,28 @@ def build_exact_scene_scaffold_prompt(
         if not any(marker in line.lower() for marker in forbidden_directive_markers)
     ]
     prompt = augment_prompt_scene_only("\n".join(safe_lines))
+    prompt = prompt.replace(
+        "Reserve the declared placement bounding box as a clear unobstructed "
+        "region, provide a physically plausible contact surface and compatible "
+        "scene lighting, and do not place foreground objects, hands, text, "
+        "shadows, reflections, or props across that region.",
+        "Provide an ordinary physically plausible contact surface and compatible "
+        "scene lighting. Keep the scene naturally sparse and unobstructed. Never "
+        "visualize any compositor placement instruction or guide.",
+    )
     additions = [
         "EXECUTION ROUTE: EXACT_PRODUCT_DETERMINISTIC_COMPOSITE.",
         "PROVIDER ROLE: scene scaffold only; the provider output is an internal plate and is never the final product artifact.",
         "Do not generate product pixels, packaging, label, logo, cap, replacement bottle, product text, product shadow, or product reflection.",
-        f"EXACT CHOREOGRAPHY: {selected_id}; use only the declared rigid product placement and keep hands/props outside the reserved product box unless a verified foreground mask is supplied.",
+        "COMPOSITOR MOTION CONTRACT: use a locked-off camera and a stable ordinary "
+        "contact surface. Any later foreground insertion is system-owned and must "
+        "not be represented, marked, framed, or anticipated in the scene pixels.",
+        "INVISIBLE RESERVATION ONLY: the reserved product region is not a visible "
+        "placeholder. Do not render a blank card, sheet of paper, rectangle, box, "
+        "corner brackets, markers, outline, guide, matte, screen, or sign for it; "
+        "show only the ordinary unobstructed scene surface behind that region.",
+        "SPARSE PROP FIELD: do not render bottle-shaped containers, vials, jars, "
+        "tubes, dispensers, or freestanding upright proxy props anywhere in frame.",
     ]
     if presenter_visible:
         # HYBRID: the governed on-camera presenter is REQUIRED and fully visible.
@@ -443,6 +458,12 @@ def build_exact_scene_scaffold_prompt(
         additions.append(
             "FACELESS: no visible face, head, eyes, mouth, or facial reflection; "
             "hands, arms, and torso may appear."
+        )
+        additions.append(
+            "DIALOGUE IS AUDIO ONLY: never visualize, cast, illustrate, or cut to "
+            "a person mentioned or implied by the spoken words. Do not depict a "
+            "baby, child, adult head, or adult face; show only adult hands, "
+            "forearms, and partial torso outside the reserved region."
         )
         additions.append(
             "FACELESS INTERACTION ZONE: hands and forearms must remain visibly "
