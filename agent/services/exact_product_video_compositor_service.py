@@ -419,10 +419,9 @@ def build_exact_scene_scaffold_prompt(
         "COMPOSITOR MOTION CONTRACT: use a locked-off camera and a stable ordinary "
         "contact surface. Any later foreground insertion is system-owned and must "
         "not be represented, marked, framed, or anticipated in the scene pixels.",
-        "INVISIBLE RESERVATION ONLY: the reserved product region is not a visible "
-        "placeholder. Do not render a blank card, sheet of paper, rectangle, box, "
-        "corner brackets, markers, outline, guide, matte, screen, or sign for it; "
-        "show only the ordinary unobstructed scene surface behind that region.",
+        "NO PLACEHOLDER OR GUIDE: do not render a blank card, sheet of paper, "
+        "rectangle, box, corner brackets, markers, outline, guide, matte, screen, "
+        "or sign. Show only an ordinary unobstructed scene surface.",
         "SPARSE PROP FIELD: do not render bottle-shaped containers, vials, jars, "
         "tubes, dispensers, or freestanding upright proxy props anywhere in frame. "
         "Keep the scene sparse and natural.",
@@ -465,17 +464,17 @@ def build_exact_scene_scaffold_prompt(
             "DIALOGUE IS AUDIO ONLY: never visualize, cast, illustrate, or cut to "
             "a person mentioned or implied by the spoken words. Do not depict a "
             "baby, child, adult head, or adult face, directly or indirectly; show "
-            "only adult hands, forearms, and partial torso outside the reserved region."
+            "only adult hands, forearms, and partial torso."
         )
         additions.append(
-            "FACELESS INTERACTION ZONE: hands and forearms must remain visibly "
-            "active around and point toward the reserved product region, but must "
-            "not hold, touch, cross, overlap, or occlude that region."
+            "NATURAL BACKGROUND ACTION ONLY: hands and forearms may make subtle "
+            "ordinary motions, but must never point, frame, present toward, hold, "
+            "touch, or interact with an absent product or placeholder."
         )
         additions.append(
-            "RESERVED REGION STAYS EMPTY: do not place a product, proxy bottle, "
-            "hand, arm, prop, text, shadow, or reflection inside the reserved box; "
-            "the canonical product is inserted there after retrieval."
+            "PRODUCT-FREE SCENE: do not place a product, proxy bottle, product-like "
+            "prop, product text, product shadow, or product reflection anywhere in "
+            "the provider output."
         )
     safe_context = _safe_product_withheld_scene_context(scene_context)
     if safe_context:
