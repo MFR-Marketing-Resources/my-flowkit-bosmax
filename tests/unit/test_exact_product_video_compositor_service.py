@@ -152,10 +152,13 @@ def test_faceless_scene_scaffold_scrubs_actual_failed_prompt_cues_but_keeps_dial
     assert "anak menangis malam kerana perut kembung" in low
     assert "dialogue is audio only" in low
     assert "never visualize, cast, illustrate, or cut to" in low
-    assert "do not depict a baby, child, adult head, or adult face" in low
+    assert "do not depict a baby, child, adult head, or adult face, directly or indirectly" in low
+    assert "reflections, portraits, photos, screens, or background people" in low
+    assert "only hands, forearms, arms, and partial torso may appear" in low
     assert "invisible reservation only" in low
     assert "do not render a blank card, sheet of paper, rectangle" in low
     assert "freestanding upright proxy props" in low
+    assert "keep the scene sparse and natural" in low
     assert "warm practical bathroom lighting remains consistent" in low
 
 
