@@ -201,6 +201,11 @@ def required_permission(path: str, method: str) -> str:
         return "staff.read" if upper_method in {"GET", "HEAD"} else "staff.manage"
     if _path_has_prefix(normalized, "/api/ai-providers"):
         return "provider.read" if upper_method in {"GET", "HEAD"} else "provider.manage"
+    # Reading one Flow media record is an asset lookup, not production control.
+    # Keep this exception method-scoped so every mutation and all other Flow
+    # routes retain the stricter production permission mapping.
+    if upper_method in {"GET", "HEAD"} and _path_has_prefix(normalized, "/api/flow/media"):
+        return "assets.read"
     module = _module_for_path(normalized)
     if module is None:
         # Unknown human API paths fail closed instead of inheriting a broad role.
