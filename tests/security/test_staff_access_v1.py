@@ -15,6 +15,7 @@ from agent.models.product_intelligence_review_draft import (
 )
 from agent.security.access_control import (
     _module_for_path,
+    _flow_dispatcher_route_allowed,
     classify_route,
     required_permission,
 )
@@ -66,11 +67,22 @@ def _safe_product_intelligence_draft_request() -> ProductIntelligenceReviewDraft
     )
 
 
+def test_flow_dispatcher_scope_allows_status_polling_but_blocks_paid_recovery():
+    assert _flow_dispatcher_route_allowed("GET", "/api/flow/generate-job/job_123")
+    assert not _flow_dispatcher_route_allowed(
+        "POST", "/api/flow/generate-job/job_123/retry-artifact-delivery"
+    )
+    assert not _flow_dispatcher_route_allowed(
+        "POST", "/api/flow/generate-job/job_123/reretrieve-media"
+    )
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def isolated_access_tables():
     db = await get_db()
     for table in (
         "access_audit_event",
+        "auth_service_token",
         "auth_session",
         "auth_setup_token",
         "user_role",
@@ -80,6 +92,65 @@ async def isolated_access_tables():
         await db.execute(f"DELETE FROM {table}")
     await db.commit()
     yield
+
+
+@pytest.mark.asyncio
+async def test_owner_approves_scoped_flow_dispatcher_and_can_revoke_it(monkeypatch, tmp_path):
+    token_file = tmp_path / "bot4-flow-dispatcher.token"
+    monkeypatch.setattr(access, "FLOW_DISPATCHER_TOKEN_FILE", token_file)
+    owner_password = _password()
+    async with await _client() as owner:
+        setup = await _post(
+            owner,
+            "/api/auth/setup-owner",
+            {
+                "display_name": "Dispatcher Owner",
+                "email": _email("dispatcher-owner"),
+                "password": owner_password,
+                "password_confirmation": owner_password,
+            },
+        )
+        assert setup.status_code == 200
+
+        approved = await _post(owner, "/api/auth/flow-dispatcher/approve", {})
+        assert approved.status_code == 200
+        assert approved.json()["approved"] is True
+        raw_token = token_file.read_text(encoding="utf-8")
+        assert len(raw_token) >= 32
+        assert raw_token not in approved.text
+
+        status = await owner.get("/api/auth/flow-dispatcher")
+        assert status.status_code == 200
+        assert status.json()["approved"] is True
+        assert status.json()["credential_file_present"] is True
+
+        async with await _client() as bot4:
+            allowed = await bot4.get(
+                "/api/flow/direct-video-readiness?mode=F2V&source_mode=FRAMES",
+                headers={"Authorization": f"Bearer {raw_token}"},
+            )
+            assert allowed.status_code != 401
+            assert allowed.status_code != 403
+
+            denied = await bot4.get(
+                "/api/products",
+                headers={"Authorization": f"Bearer {raw_token}"},
+            )
+            assert denied.status_code == 403
+            assert denied.json()["error"] == "SERVICE_SCOPE_DENIED"
+
+        revoked = await _post(owner, "/api/auth/flow-dispatcher/revoke", {})
+        assert revoked.status_code == 200
+        assert revoked.json() == {"revoked": True}
+        assert not token_file.exists()
+
+        async with await _client() as bot4:
+            rejected = await bot4.get(
+                "/api/flow/direct-video-readiness?mode=F2V&source_mode=FRAMES",
+                headers={"Authorization": f"Bearer {raw_token}"},
+            )
+            assert rejected.status_code == 401
+            assert rejected.json()["error"] == "SERVICE_AUTHENTICATION_REQUIRED"
 
 
 @pytest.mark.asyncio

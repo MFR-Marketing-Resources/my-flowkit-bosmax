@@ -173,3 +173,36 @@ async def change_password(body: ChangePasswordRequest, request: Request) -> dict
     except access.AccessControlError as exc:
         _raise(exc)
     return {"ok": True}
+
+
+async def _owner_context(request: Request) -> access.AuthContext:
+    context = await access.load_session_context(
+        request.cookies.get(access.SESSION_COOKIE_NAME), touch=False
+    )
+    if context is None:
+        _raise(access.AccessControlError("AUTHENTICATION_REQUIRED", "Sign in as an owner.", status_code=401))
+    return context
+
+
+@router.get("/flow-dispatcher")
+async def flow_dispatcher_status(request: Request) -> dict[str, Any]:
+    try:
+        return await access.flow_dispatcher_status(await _owner_context(request))
+    except access.AccessControlError as exc:
+        _raise(exc)
+
+
+@router.post("/flow-dispatcher/approve")
+async def approve_flow_dispatcher(request: Request) -> dict[str, Any]:
+    try:
+        return await access.approve_flow_dispatcher(await _owner_context(request))
+    except access.AccessControlError as exc:
+        _raise(exc)
+
+
+@router.post("/flow-dispatcher/revoke")
+async def revoke_flow_dispatcher(request: Request) -> dict[str, bool]:
+    try:
+        return await access.revoke_flow_dispatcher(await _owner_context(request))
+    except access.AccessControlError as exc:
+        _raise(exc)

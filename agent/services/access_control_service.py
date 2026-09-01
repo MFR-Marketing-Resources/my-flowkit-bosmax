@@ -23,10 +23,12 @@ from argon2 import PasswordHasher, Type
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
 from agent.access_control_constants import PERMISSION_CODES, ROLE_CODES
+from agent.config import BASE_DIR
 from agent.db.schema import _db_lock, atomic, get_db
 
 SESSION_COOKIE_NAME = "bosmax_session"
 CSRF_COOKIE_NAME = "bosmax_csrf"
+FLOW_DISPATCHER_TOKEN_FILE = BASE_DIR / ".local-agent" / "bot4-flow-dispatcher.token"
 SESSION_TTL_SECONDS = max(900, int(os.environ.get("BOSMAX_SESSION_TTL_SECONDS", "28800")))
 SETUP_TOKEN_TTL_SECONDS = max(
     300, int(os.environ.get("BOSMAX_SETUP_TOKEN_TTL_SECONDS", "86400"))
@@ -351,6 +353,142 @@ async def load_session_context(raw_token: str | None, *, touch: bool = True) -> 
         expires_at=str(row[3]),
         last_seen_at=last_seen,
     )
+
+
+async def load_flow_dispatcher_context(raw_token: str | None) -> AuthContext | None:
+    """Resolve an owner-approved, narrowly scoped Flow dispatcher credential."""
+    token = _text(raw_token)
+    if len(token) < 32:
+        return None
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT t.token_id, t.created_by_user_id, t.created_at, t.last_used_at, "
+        "ua.email, ua.account_status, sp.staff_id, sp.display_name, sp.active "
+        "FROM auth_service_token t "
+        "JOIN user_account ua ON ua.user_id=t.created_by_user_id "
+        "JOIN staff_profile sp ON sp.staff_id=ua.staff_id "
+        "WHERE t.token_hash=? AND t.scope='FLOW_DISPATCHER' AND t.revoked_at IS NULL",
+        (hash_session_token(token),),
+    )
+    row = await cursor.fetchone()
+    if not row or str(row[5]) != "ACTIVE" or not bool(row[8]):
+        return None
+    roles, permissions = await _permissions_for_user(db, str(row[1]))
+    if "OWNER" not in roles:
+        return None
+    now = _now()
+    async with _db_lock:
+        await db.execute(
+            "UPDATE auth_service_token SET last_used_at=? WHERE token_id=? AND revoked_at IS NULL",
+            (now, str(row[0])),
+        )
+        await write_audit_event(
+            db,
+            "FLOW_DISPATCHER_TOKEN_USED",
+            target_user_id=str(row[1]),
+            target_staff_id=str(row[6]),
+            metadata={"token_id": str(row[0]), "scope": "FLOW_DISPATCHER"},
+        )
+        await db.commit()
+    return AuthContext(
+        session_id=str(row[0]),
+        user_id=str(row[1]),
+        staff_id=str(row[6]),
+        display_name=str(row[7]),
+        email=str(row[4]),
+        account_status=str(row[5]),
+        staff_active=bool(row[8]),
+        role_codes=roles,
+        permission_codes=permissions,
+        created_at=str(row[2]),
+        expires_at="SERVICE_TOKEN",
+        last_seen_at=now,
+    )
+
+
+def _require_owner(context: AuthContext | None) -> AuthContext:
+    if context is None:
+        raise AccessControlError("AUTHENTICATION_REQUIRED", "Sign in as an owner.", status_code=401)
+    if "OWNER" not in context.role_codes:
+        raise AccessControlError("OWNER_REQUIRED", "Only an owner can manage Bot 4 access.", status_code=403)
+    return context
+
+
+async def approve_flow_dispatcher(context: AuthContext | None) -> dict[str, Any]:
+    """Rotate the local Bot 4 credential and persist only its hash in SQLite."""
+    owner = _require_owner(context)
+    raw_token = secrets.token_urlsafe(48)
+    token_id = _new_id("svc")
+    now = _now()
+    async with atomic() as db:
+        await db.execute(
+            "UPDATE auth_service_token SET revoked_at=?, revoke_reason=? "
+            "WHERE scope='FLOW_DISPATCHER' AND revoked_at IS NULL",
+            (now, "OWNER_ROTATED"),
+        )
+        await db.execute(
+            "INSERT INTO auth_service_token "
+            "(token_id, label, token_hash, scope, created_by_user_id, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (token_id, "Bot 4 Generation Dispatcher", hash_session_token(raw_token), "FLOW_DISPATCHER", owner.user_id, now),
+        )
+        await write_audit_event(
+            db,
+            "FLOW_DISPATCHER_APPROVED",
+            actor=owner,
+            metadata={"token_id": token_id, "scope": "FLOW_DISPATCHER"},
+        )
+    FLOW_DISPATCHER_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    FLOW_DISPATCHER_TOKEN_FILE.write_text(raw_token, encoding="utf-8")
+    try:
+        os.chmod(FLOW_DISPATCHER_TOKEN_FILE, 0o600)
+    except OSError:
+        pass
+    return {
+        "approved": True,
+        "token_id": token_id,
+        "label": "Bot 4 Generation Dispatcher",
+        "scope": "FLOW_DISPATCHER",
+        "created_at": now,
+        "credential_file": str(FLOW_DISPATCHER_TOKEN_FILE),
+    }
+
+
+async def flow_dispatcher_status(context: AuthContext | None) -> dict[str, Any]:
+    _require_owner(context)
+    db = await get_db()
+    row = await (
+        await db.execute(
+            "SELECT token_id, label, created_at, last_used_at FROM auth_service_token "
+            "WHERE scope='FLOW_DISPATCHER' AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1"
+        )
+    ).fetchone()
+    return {
+        "approved": bool(row),
+        "credential_file_present": FLOW_DISPATCHER_TOKEN_FILE.is_file(),
+        "token": None if not row else {
+            "token_id": str(row[0]), "label": str(row[1]),
+            "created_at": str(row[2]), "last_used_at": row[3],
+            "scope": "FLOW_DISPATCHER",
+        },
+    }
+
+
+async def revoke_flow_dispatcher(context: AuthContext | None) -> dict[str, bool]:
+    owner = _require_owner(context)
+    now = _now()
+    async with atomic() as db:
+        await db.execute(
+            "UPDATE auth_service_token SET revoked_at=?, revoke_reason=? "
+            "WHERE scope='FLOW_DISPATCHER' AND revoked_at IS NULL",
+            (now, "OWNER_REVOKED"),
+        )
+        await write_audit_event(db, "FLOW_DISPATCHER_REVOKED", actor=owner)
+    try:
+        FLOW_DISPATCHER_TOKEN_FILE.unlink(missing_ok=True)
+    except OSError as exc:
+        raise AccessControlError("CREDENTIAL_FILE_REMOVE_FAILED", str(exc), status_code=500) from exc
+    return {"revoked": True}
 
 
 async def session_csrf_valid(raw_session_token: str | None, raw_csrf_token: str | None) -> bool:

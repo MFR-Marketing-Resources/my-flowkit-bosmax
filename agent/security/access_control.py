@@ -16,8 +16,25 @@ from agent.services.access_control_service import (
     SESSION_COOKIE_NAME,
     has_human_accounts,
     load_session_context,
+    load_flow_dispatcher_context,
     write_audit_event,
 )
+
+FLOW_DISPATCHER_ROUTES = frozenset(
+    {
+        ("GET", "/api/flow/direct-video-readiness"),
+        ("GET", "/api/flow/credits"),
+        ("POST", "/api/flow/generate"),
+    }
+)
+
+
+def _flow_dispatcher_route_allowed(method: str, path: str) -> bool:
+    if (method, path) in FLOW_DISPATCHER_ROUTES:
+        return True
+    # Polling the job created by POST /generate is read-only. Retry and media
+    # recovery remain POST routes and are therefore outside this scope.
+    return method == "GET" and path.startswith("/api/flow/generate-job/")
 
 _AUTH_CONTEXT: contextvars.ContextVar[AuthContext | None] = contextvars.ContextVar(
     "bosmax_auth_context", default=None
@@ -322,7 +339,16 @@ async def access_control_middleware(
     if route_class in {"C_INTERNAL_SERVICE", "D_HEALTH_PROVENANCE"}:
         return await call_next(request)
 
-    context = await load_session_context(request.cookies.get(SESSION_COOKIE_NAME))
+    normalized_path = request.url.path.rstrip("/") or "/"
+    bearer = request.headers.get("authorization", "")
+    service_context = None
+    if bearer.lower().startswith("bearer "):
+        if not _flow_dispatcher_route_allowed(request.method.upper(), normalized_path):
+            return _error(403, "SERVICE_SCOPE_DENIED", "Bot 4 credential is not valid for this route.")
+        service_context = await load_flow_dispatcher_context(bearer[7:].strip())
+        if service_context is None:
+            return _error(401, "SERVICE_AUTHENTICATION_REQUIRED", "Bot 4 credential is missing, invalid, or revoked.")
+    context = service_context or await load_session_context(request.cookies.get(SESSION_COOKIE_NAME))
     if context is None:
         setup_required = not await has_human_accounts()
         return _error(
@@ -335,7 +361,7 @@ async def access_control_middleware(
     if permission not in context.permission_codes:
         await _record_permission_denied(context, request.url.path, request.method, permission)
         return _error(403, "PERMISSION_DENIED", "The authenticated role cannot perform this action.", permission=permission)
-    if is_mutation:
+    if is_mutation and service_context is None:
         from agent.services.access_control_service import session_csrf_valid
 
         if not await session_csrf_valid(

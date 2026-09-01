@@ -14,6 +14,18 @@ import type {
 	TelemetrySummary,
 } from "../types";
 
+type FlowDispatcherStatus = {
+	approved: boolean;
+	credential_file_present: boolean;
+	token: null | {
+		token_id: string;
+		label: string;
+		created_at: string;
+		last_used_at: string | null;
+		scope: "FLOW_DISPATCHER";
+	};
+};
+
 function DeploymentStatusCard({
 	agentStatus,
 }: {
@@ -362,6 +374,9 @@ export default function SettingsPage() {
 	const [telemetry, setTelemetry] = useState<TelemetrySummary | null>(null);
 	const [providerRegistry, setProviderRegistry] =
 		useState<AIProviderRegistry | null>(null);
+	const [dispatcherStatus, setDispatcherStatus] =
+		useState<FlowDispatcherStatus | null>(null);
+	const [dispatcherBusy, setDispatcherBusy] = useState(false);
 	const [catalogMalformed, setCatalogMalformed] = useState(false);
 	const [draftKeys, setDraftKeys] = useState<Record<AIProviderId, string>>({
 		qwen: "",
@@ -396,10 +411,11 @@ export default function SettingsPage() {
 
 	const refreshStatus = async () => {
 		try {
-			const [status, tel, providers] = await Promise.all([
+			const [status, tel, providers, dispatcher] = await Promise.all([
 				fetchAPI<LocalAgentStatus>("/api/local-agent/status"),
 				fetchAPI<TelemetrySummary>("/api/telemetry/summary"),
 				fetchAPI<unknown>("/api/ai-providers"),
+				fetchAPI<FlowDispatcherStatus>("/api/auth/flow-dispatcher"),
 			]);
 			const { registry, catalogMalformed: malformed } =
 				normalizeRegistry(providers);
@@ -407,6 +423,7 @@ export default function SettingsPage() {
 				setAgentStatus(status);
 				setTelemetry(tel);
 				setProviderRegistry(registry);
+				setDispatcherStatus(dispatcher);
 				setCatalogMalformed(malformed);
 			});
 		} catch (err) {
@@ -414,6 +431,35 @@ export default function SettingsPage() {
 			setBannerError(
 				err instanceof Error ? err.message : "Failed to load AI provider settings.",
 			);
+		}
+	};
+
+	const setFlowDispatcherApproval = async (approved: boolean) => {
+		setDispatcherBusy(true);
+		setBannerError(null);
+		setBannerMessage(null);
+		try {
+			await fetchAPI(
+				approved
+					? "/api/auth/flow-dispatcher/approve"
+					: "/api/auth/flow-dispatcher/revoke",
+				{ method: "POST", body: JSON.stringify({}) },
+			);
+			const next = await fetchAPI<FlowDispatcherStatus>(
+				"/api/auth/flow-dispatcher",
+			);
+			setDispatcherStatus(next);
+			setBannerMessage(
+				approved
+					? "Bot 4 approved. Its local Flow credential is ready."
+					: "Bot 4 Flow access revoked.",
+			);
+		} catch (err) {
+			setBannerError(
+				err instanceof Error ? err.message : "Bot 4 approval failed.",
+			);
+		} finally {
+			setDispatcherBusy(false);
 		}
 	};
 
@@ -748,6 +794,59 @@ export default function SettingsPage() {
 			<DeploymentStatusCard
 				agentStatus={agentStatus}
 			/>
+
+			<section className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-6 shadow-xl">
+				<div className="flex flex-wrap items-start justify-between gap-4">
+					<div className="max-w-2xl">
+						<div className="text-xs font-bold uppercase tracking-wider text-blue-300">
+							Bot 4 · Google Flow Dispatcher
+						</div>
+						<h3 className="mt-2 text-lg font-bold text-white">
+							Owner-approved service access
+						</h3>
+						<p className="mt-2 text-sm text-slate-400">
+							Allows Bot 4 to check Flow readiness and credits, then submit the
+							governed generation request. It cannot access products, staff,
+							settings, retries, or other BOSMAX APIs.
+						</p>
+					</div>
+					<span className={`rounded-full border px-3 py-1 text-xs font-bold ${
+						dispatcherStatus?.approved && dispatcherStatus.credential_file_present
+							? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+							: "border-amber-500/40 bg-amber-500/10 text-amber-300"
+					}`}>
+						{dispatcherStatus?.approved && dispatcherStatus.credential_file_present
+							? "APPROVED"
+							: "APPROVAL REQUIRED"}
+					</span>
+				</div>
+				<div className="mt-5 flex flex-wrap items-center gap-3">
+					{dispatcherStatus?.approved ? (
+						<button
+							type="button"
+							disabled={dispatcherBusy}
+							onClick={() => void setFlowDispatcherApproval(false)}
+							className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-200 disabled:opacity-50"
+						>
+							{dispatcherBusy ? "Revoking…" : "Revoke Bot 4"}
+						</button>
+					) : (
+						<button
+							type="button"
+							disabled={dispatcherBusy}
+							onClick={() => void setFlowDispatcherApproval(true)}
+							className="rounded-lg border border-blue-400/50 bg-blue-500/20 px-4 py-2 text-sm font-semibold text-blue-100 disabled:opacity-50"
+						>
+							{dispatcherBusy ? "Approving…" : "Approve Bot 4"}
+						</button>
+					)}
+					{dispatcherStatus?.token?.last_used_at ? (
+						<span className="text-xs text-slate-500">
+							Last used: {dispatcherStatus.token.last_used_at}
+						</span>
+					) : null}
+				</div>
+			</section>
 
 			{bannerMessage ? (
 				<div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">

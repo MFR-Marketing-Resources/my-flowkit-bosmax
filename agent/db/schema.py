@@ -619,6 +619,20 @@ CREATE TABLE IF NOT EXISTS auth_session (
 CREATE INDEX IF NOT EXISTS idx_auth_session_user_active
     ON auth_session(user_id, revoked_at, expires_at);
 
+CREATE TABLE IF NOT EXISTS auth_service_token (
+    token_id            TEXT PRIMARY KEY,
+    label               TEXT NOT NULL,
+    token_hash          TEXT NOT NULL UNIQUE,
+    scope               TEXT NOT NULL CHECK(scope = 'FLOW_DISPATCHER'),
+    created_by_user_id  TEXT NOT NULL REFERENCES user_account(user_id),
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+    last_used_at        TEXT,
+    revoked_at          TEXT,
+    revoke_reason       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_auth_service_token_active
+    ON auth_service_token(scope, revoked_at, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS auth_setup_token (
     token_id            TEXT PRIMARY KEY,
     user_id             TEXT NOT NULL REFERENCES user_account(user_id),
