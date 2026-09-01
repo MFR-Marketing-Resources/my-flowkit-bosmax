@@ -144,6 +144,32 @@ def test_manual_lane_materializes_remote_url_only_package_asset(monkeypatch):
     assert "API_START_ASSET_UPLOADED" in calls["stages"]
 
 
+def test_asset_upload_is_scoped_to_bound_flow_project(tmp_path):
+    observed = {}
+
+    class _C:
+        async def upload_image(self, b64, mime_type="image/png", project_id="", file_name=""):
+            observed.update(
+                project_id=project_id,
+                file_name=file_name,
+                image_base64=b64,
+            )
+            return {"_mediaId": "project-scoped-media"}
+
+    image = tmp_path / "canonical.png"
+    image.write_bytes(b"\x89PNG_project_scoped")
+    result = _run(flow_api._resolve_asset_to_media_id(
+        _C(),
+        {"localFilePath": str(image), "officialVisual": True},
+        "Start",
+        project_id="bound-project-123",
+    ))
+
+    assert result == "project-scoped-media"
+    assert observed["project_id"] == "bound-project-123"
+    assert observed["file_name"] == "canonical.png"
+
+
 def test_manual_lane_resolves_i2v_refs_aspect_and_model(monkeypatch):
     # I2V/IMG modules send refs.{subjectAsset,sceneAsset,styleAsset} (NOT startAsset),
     # plus orientation (not aspect) and the model ui_label. Previously refs were

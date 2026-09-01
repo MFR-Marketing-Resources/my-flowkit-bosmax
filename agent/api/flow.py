@@ -5042,7 +5042,13 @@ async def _persist_output_correlation_evidence(request_id: str, job_id: str, job
         pass
 
 
-async def _resolve_asset_to_media_id(client, asset: dict, slot: str, request_id: str | None = None) -> str:
+async def _resolve_asset_to_media_id(
+    client,
+    asset: dict,
+    slot: str,
+    request_id: str | None = None,
+    project_id: str | None = None,
+) -> str:
     """Resolve ONE dashboard asset (startAsset or refs.*) to a LIVE Flow media id.
     Priority: valid UUID media id (validated pre-credits, self-heals if stale) →
     local file upload → remote downloadUrl materialize + upload. Fails closed."""
@@ -5121,7 +5127,7 @@ async def _resolve_asset_to_media_id(client, asset: dict, slot: str, request_id:
     asset_sha256 = hashlib.sha256(image_bytes).hexdigest()
     mime = mimetypes.guess_type(str(local_path))[0] or "image/png"
     up = await client.upload_image(
-        b64, mime_type=mime, project_id="",
+        b64, mime_type=mime, project_id=str(project_id or ""),
         file_name=os.path.basename(str(local_path)))
     uploaded_id = None
     if isinstance(up, dict):
@@ -5437,6 +5443,37 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                     "ERR_CAMPAIGN_PRE_PROVIDER_LINT_BLOCKED",
                 )
 
+    # Resolve the exact editor project before uploading any video reference.
+    # Flow media membership is project-scoped; uploading with an empty project
+    # can return an id that the subsequently bound editor cannot use.
+    target_project_id = None
+    if mode in ("T2V", "I2V", "F2V"):
+        h = await client.harvest_video_urls()
+        inner = h.get("result", h) if isinstance(h, dict) else {}
+        diag = inner.get("diag", inner) if isinstance(inner, dict) else {}
+        on_editor = bool(
+            isinstance(diag, dict) and diag.get("projectId")
+            and "/project/" in str((inner or {}).get("flow_url") or ""))
+        if on_editor:
+            target_project_id = str(diag["projectId"])
+        else:
+            proj = await client.create_project(f"bosmax {mode.lower()} manual")
+            target_project_id = _extract_project_id(proj)
+            if not target_project_id:
+                await _fail_manual_request(
+                    request_id, "API_PROJECT_CREATE_FAILED",
+                    f"create_project returned no projectId: {str(proj)[:200]}",
+                    "ERR_PROJECT_CREATE_FAILED")
+            await crud.add_stage_event(
+                request_id, "API_PROJECT_CREATED", "WAITING_FLOW",
+                f"project_id={target_project_id} (no editor was open)", "backend")
+            try:
+                await client.open_target_flow_project(
+                    f"https://labs.google/fx/tools/flow/project/{target_project_id}")
+            except Exception:  # noqa: BLE001 — bind re-verifies; opener readiness is noisy
+                pass
+            await asyncio.sleep(5)
+
     # Collect EVERY image the dashboard sent: F2V uses startAsset (+ optional
     # endAsset — previously materialized then silently DROPPED here, losing the
     # user's 2nd frame); I2V/IMG send refs.{subjectAsset,sceneAsset,styleAsset}
@@ -5447,7 +5484,8 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
     refs = []
     official_provider_media_id = None
     for slot_label, asset in slot_assets:
-        resolved = await _resolve_asset_to_media_id(client, asset, slot_label, request_id)
+        resolved = await _resolve_asset_to_media_id(
+            client, asset, slot_label, request_id, project_id=target_project_id)
         if resolved and resolved not in refs:
             refs.append(resolved)
         asset_source = str(
@@ -5556,38 +5594,6 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
                 request_id, "API_LANE_REJECTED",
                 f"account tier '{tier}' cannot generate video", "ERR_ACCOUNT_TIER_NO_VIDEO")
 
-    # Ensure an editor project is OPEN before the video bind. The video lane itself
-    # fail-closes and never mints hidden projects (patch A/G) — correct for the
-    # automated queue, but a user-initiated dashboard job may legitimately start
-    # with NO project open (user cleaned up Flow; live: manual_1fb86ffd died
-    # NO_OPEN_EDITOR after the user deleted every project). Create + open one
-    # EXPLICITLY, with telemetry, and pin the bind to it.
-    created_project_id = None
-    if mode in ("T2V", "I2V", "F2V"):
-        h = await client.harvest_video_urls()
-        inner = h.get("result", h) if isinstance(h, dict) else {}
-        diag = inner.get("diag", inner) if isinstance(inner, dict) else {}
-        on_editor = bool(
-            isinstance(diag, dict) and diag.get("projectId")
-            and "/project/" in str((inner or {}).get("flow_url") or ""))
-        if not on_editor:
-            proj = await client.create_project(f"bosmax {mode.lower()} manual")
-            created_project_id = _extract_project_id(proj)
-            if not created_project_id:
-                await _fail_manual_request(
-                    request_id, "API_PROJECT_CREATE_FAILED",
-                    f"create_project returned no projectId: {str(proj)[:200]}",
-                    "ERR_PROJECT_CREATE_FAILED")
-            await crud.add_stage_event(
-                request_id, "API_PROJECT_CREATED", "WAITING_FLOW",
-                f"project_id={created_project_id} (no editor was open)", "backend")
-            try:
-                await client.open_target_flow_project(
-                    f"https://labs.google/fx/tools/flow/project/{created_project_id}")
-            except Exception:  # noqa: BLE001 — bind re-verifies; opener readiness is noisy
-                pass
-            await asyncio.sleep(5)
-
     # ── USER SETTINGS ARE LAW (production contract): whatever the operator set in
     # BOSMAX — aspect, count, model, duration — is EXACTLY what reaches Google Flow.
     # The dashboard modules send `aspectRatio` (IMG) or `orientation` (T2V/I2V/F2V),
@@ -5643,7 +5649,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         f"duration_s={duration_s or 'default'}", "backend")
 
     res = await _mv.start_generate(
-        mode, prompt, project_id=created_project_id,
+        mode, prompt, project_id=target_project_id,
         image_media_ids=refs or None,
         aspect=aspect, tier=tier, model=model_key,
         duration_s=duration_s, num_videos=count,
@@ -5709,7 +5715,7 @@ async def _run_manual_job_via_generate(body: dict, mode: str, start_asset):
         "workspace_generation_package_id": (
             body.get("workspace_execution_package_id")
             or body.get("workspace_generation_package_id")),
-        "project_id": created_project_id,
+        "project_id": target_project_id,
         "staff_id": body.get("staff_id"),
         "staff_display_name_snapshot": body.get("staff_display_name_snapshot"),
         "product_visual_custody": body.get("product_visual_custody") or {},
