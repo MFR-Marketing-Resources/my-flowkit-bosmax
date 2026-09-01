@@ -5070,11 +5070,22 @@ async def _resolve_asset_to_media_id(
     # server-owned path on this dispatch; otherwise an old/stale media id can
     # silently survive a Product Truth cutout replacement.
     if media_id and not official_visual:
-        check = await client.get_media(str(media_id))
-        check_status = check.get("status") if isinstance(check, dict) else None
-        media_alive = bool(
-            isinstance(check, dict) and not check.get("error")
-            and (check_status is None or (isinstance(check_status, int) and check_status < 400)))
+        if project_id:
+            check = await client.list_project_media(str(project_id))
+            listed_project_id = str(check.get("project_id") or "") if isinstance(check, dict) else ""
+            listed_media = check.get("media") or [] if isinstance(check, dict) else []
+            check_status = check.get("status") if isinstance(check, dict) else None
+            media_alive = bool(
+                isinstance(check, dict) and not check.get("error")
+                and listed_project_id == str(project_id)
+                and any(str(item.get("name") or "") == str(media_id) for item in listed_media)
+            )
+        else:
+            check = await client.get_media(str(media_id))
+            check_status = check.get("status") if isinstance(check, dict) else None
+            media_alive = bool(
+                isinstance(check, dict) and not check.get("error")
+                and (check_status is None or (isinstance(check_status, int) and check_status < 400)))
         if media_alive:
             if request_id:
                 await crud.add_stage_event(
@@ -5084,7 +5095,8 @@ async def _resolve_asset_to_media_id(
         if request_id:
             await crud.add_stage_event(
                 request_id, f"API_{token}_ASSET_STALE", "WAITING_FLOW",
-                f"media_id={media_id} is dead (status={check_status}); "
+                f"media_id={media_id} is absent from project={project_id or 'unknown'} "
+                f"(status={check_status}); "
                 f"self-healing via re-upload", "backend")
     if not local_path:
         remote_url = _asset_payload_remote_url(asset)

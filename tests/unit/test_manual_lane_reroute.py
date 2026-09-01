@@ -170,6 +170,32 @@ def test_asset_upload_is_scoped_to_bound_flow_project(tmp_path):
     assert observed["file_name"] == "canonical.png"
 
 
+def test_existing_media_is_validated_by_bound_project_membership():
+    observed = {}
+
+    class _C:
+        async def list_project_media(self, project_id):
+            observed["project_id"] = project_id
+            return {
+                "status": 200,
+                "project_id": project_id,
+                "media": [{"name": "aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb"}],
+            }
+
+        async def get_media(self, media_id):
+            raise AssertionError("project-scoped validation must not use /v1/media")
+
+    result = _run(flow_api._resolve_asset_to_media_id(
+        _C(),
+        {"mediaId": "aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb"},
+        "Start",
+        project_id="bound-project-456",
+    ))
+
+    assert result == "aaaaaaaa-1111-4222-8333-bbbbbbbbbbbb"
+    assert observed["project_id"] == "bound-project-456"
+
+
 def test_manual_lane_resolves_i2v_refs_aspect_and_model(monkeypatch):
     # I2V/IMG modules send refs.{subjectAsset,sceneAsset,styleAsset} (NOT startAsset),
     # plus orientation (not aspect) and the model ui_label. Previously refs were
