@@ -1015,6 +1015,22 @@ class GenerateRequest(BaseModel):
     poster_copy_set_id: Optional[str] = None
     output_intent: Optional[str] = None
     creative_mode: Optional[str] = None
+    # GUIDED_FACTORY Bot 3 -> Bot 4 immutable execution packet. These remain
+    # optional for all existing lanes and are fail-closed only when that governed
+    # creative mode is explicitly selected.
+    status: Optional[str] = None
+    job_phase: Optional[str] = None
+    brief_version: Optional[str] = None
+    brief_hash: Optional[str] = None
+    selected_candidate_id: Optional[str] = None
+    approval_state: Optional[str] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
+    final_prompt_hash: Optional[str] = None
+    generation_run_id: Optional[str] = None
+    compile_gate: Optional[str] = None
+    dispatch_gate: Optional[str] = None
+    may_dispatch: Optional[bool] = None
     confirm_live_credit_burn: bool = False
     maximum_provider_operations: Optional[int] = None
     max_retry_operations: int = 0
@@ -1029,6 +1045,53 @@ class GenerateRequest(BaseModel):
     # Explicit shared provider-profile binding. The server re-resolves the
     # tuple/id/digest before any provider-adjacent work; it is not client trust.
     provider_profile: Optional[dict[str, Any]] = None
+
+
+def _validate_guided_factory_dispatch(body: GenerateRequest) -> None:
+    if str(body.creative_mode or "").strip().upper() != "GUIDED_FACTORY":
+        return
+
+    blockers: list[str] = []
+    if str(body.status or "").strip().upper() != "READY_FOR_BOT4":
+        blockers.append("STATUS_MUST_BE_READY_FOR_BOT4")
+    if str(body.job_phase or "").strip().upper() != "FINAL_COMPILATION":
+        blockers.append("JOB_PHASE_MUST_BE_FINAL_COMPILATION")
+    if not str(body.brief_version or "").strip():
+        blockers.append("BRIEF_VERSION_REQUIRED")
+    if not str(body.brief_hash or "").strip():
+        blockers.append("BRIEF_HASH_REQUIRED")
+    if not str(body.selected_candidate_id or "").strip():
+        blockers.append("SELECTED_CANDIDATE_ID_REQUIRED")
+    if str(body.approval_state or "").strip().upper() != "APPROVED":
+        blockers.append("APPROVAL_STATE_MUST_BE_APPROVED")
+    if not str(body.approved_by or "").strip():
+        blockers.append("APPROVED_BY_REQUIRED")
+    if not str(body.approved_at or "").strip():
+        blockers.append("APPROVED_AT_REQUIRED")
+    if not str(body.final_prompt_hash or "").strip():
+        blockers.append("FINAL_PROMPT_HASH_REQUIRED")
+    if not str(body.generation_run_id or "").strip():
+        blockers.append("GENERATION_RUN_ID_REQUIRED")
+    if str(body.compile_gate or "").strip().upper() != "PASS":
+        blockers.append("BOT2_COMPILE_GATE_NOT_PASSED")
+    if str(body.dispatch_gate or "").strip().upper() != "PASS":
+        blockers.append("BOT2_DISPATCH_GATE_NOT_PASSED")
+    if body.may_dispatch is not True:
+        blockers.append("BOT2_MAY_DISPATCH_NOT_TRUE")
+    if body.count != 1 or body.maximum_provider_operations != 1:
+        blockers.append("GUIDED_FACTORY_SINGLE_OUTPUT_REQUIRED")
+    if body.max_retry_operations != 0:
+        blockers.append("GUIDED_FACTORY_PAID_RETRY_FORBIDDEN")
+
+    if blockers:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "GUIDED_FACTORY_DISPATCH_BLOCKED",
+                "blockers": blockers,
+                "pre_provider": {"provider_calls": 0, "credit_spend": False},
+            },
+        )
 
 
 @router.get("/video-models")
@@ -1823,6 +1886,7 @@ async def generate(body: GenerateRequest):
         raise HTTPException(422, f"unknown mode '{body.mode}' (use IMG/T2V/I2V/F2V)")
     if not body.prompt.strip():
         raise HTTPException(422, "prompt is required")
+    _validate_guided_factory_dispatch(body)
     _production_recipe = str(body.production_recipe or "").strip().upper()
     if not _production_recipe:
         _source_recipe = str(body.source_mode or "").strip().upper()

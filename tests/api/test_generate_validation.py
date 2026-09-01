@@ -111,6 +111,69 @@ def test_empty_prompt_returns_422():
     _expect_422(flow.GenerateRequest(mode="T2V", prompt="   "))
 
 
+def _guided_factory_request(**overrides):
+    payload = {
+        "mode": "T2V",
+        "prompt": "Approved final provider prompt",
+        "creative_mode": "GUIDED_FACTORY",
+        "status": "READY_FOR_BOT4",
+        "job_phase": "FINAL_COMPILATION",
+        "brief_version": "brief-v1",
+        "brief_hash": "brief-sha256",
+        "selected_candidate_id": "candidate-03",
+        "approval_state": "APPROVED",
+        "approved_by": "owner-01",
+        "approved_at": "2026-09-02T10:00:00+08:00",
+        "final_prompt_hash": "prompt-sha256",
+        "generation_run_id": "run-001",
+        "compile_gate": "PASS",
+        "dispatch_gate": "PASS",
+        "may_dispatch": True,
+        "maximum_provider_operations": 1,
+    }
+    payload.update(overrides)
+    return flow.GenerateRequest(**payload)
+
+
+def test_guided_factory_rejects_candidate_planning_before_provider_contact(monkeypatch):
+    monkeypatch.setattr(
+        flow,
+        "get_flow_client",
+        lambda: pytest.fail("candidate-planning output contacted provider transport"),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        _run(flow.generate(_guided_factory_request(job_phase="CANDIDATE_PLANNING")))
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["error"] == "GUIDED_FACTORY_DISPATCH_BLOCKED"
+    assert exc.value.detail["blockers"] == ["JOB_PHASE_MUST_BE_FINAL_COMPILATION"]
+    assert exc.value.detail["pre_provider"] == {
+        "provider_calls": 0,
+        "credit_spend": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "blocker"),
+    [
+        ("selected_candidate_id", None, "SELECTED_CANDIDATE_ID_REQUIRED"),
+        ("approval_state", "PENDING", "APPROVAL_STATE_MUST_BE_APPROVED"),
+        ("final_prompt_hash", None, "FINAL_PROMPT_HASH_REQUIRED"),
+        ("dispatch_gate", "FAIL", "BOT2_DISPATCH_GATE_NOT_PASSED"),
+        ("maximum_provider_operations", None, "GUIDED_FACTORY_SINGLE_OUTPUT_REQUIRED"),
+    ],
+)
+def test_guided_factory_required_dispatch_fields_fail_closed(field, value, blocker):
+    with pytest.raises(HTTPException) as exc:
+        _run(flow.generate(_guided_factory_request(**{field: value})))
+
+    assert exc.value.status_code == 409
+    assert blocker in exc.value.detail["blockers"]
+    assert exc.value.detail["pre_provider"]["provider_calls"] == 0
+    assert exc.value.detail["pre_provider"]["credit_spend"] is False
+
+
 def test_video_models_shape():
     res = _run(flow.video_models_list())
     assert res["default"] == "veo_3_1_lite"
