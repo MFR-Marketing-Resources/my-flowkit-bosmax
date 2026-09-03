@@ -855,10 +855,24 @@ def _plate_product_scan(
     ry = float(reserved_box.get("y") or 0) * scale_y
     rw = float(reserved_box.get("w") or 0) * scale_x
     rh = float(reserved_box.get("h") or 0) * scale_y
+    # A connected component that spans most of the scene is background/foreground
+    # mass (for example a table plus hands), not an isolated product candidate.
+    # Keep this narrow: ordinary product-sized components and canonical-shape
+    # duplicates remain subject to the fail-closed checks below.
+    scene_spanning_components = [
+        component
+        for component in components
+        if component["area"] >= (scan_width * scan_height) * 0.25
+        and (
+            component["w"] >= scan_width * 0.80
+            or component["h"] >= scan_height * 0.80
+        )
+    ]
     reserved_hits = [
         component
         for component in components
-        if component["h"] >= component["w"] * 1.15
+        if component not in scene_spanning_components
+        and component["h"] >= component["w"] * 1.15
         and component["area"] >= 18
         and component["x"] < rx + rw
         and component["x"] + component["w"] > rx
@@ -878,7 +892,12 @@ def _plate_product_scan(
         if template_alpha is not None:
             template_mask = template_alpha.resize((32, 64)).point(lambda value: 255 if value >= 128 else 0)
             for component in components:
-                if component in reserved_hits or component["h"] < component["w"] * 1.15 or component["area"] < 18:
+                if (
+                    component in scene_spanning_components
+                    or component in reserved_hits
+                    or component["h"] < component["w"] * 1.15
+                    or component["area"] < 18
+                ):
                     continue
                 x = round(component["x"] / scale_x)
                 y = round(component["y"] / scale_y)
@@ -911,6 +930,7 @@ def _plate_product_scan(
     suspicious += reference_like
     return {
         "components_scanned": len(components),
+        "scene_spanning_components_ignored": len(scene_spanning_components),
         "reserved_region_hits": len(reserved_hits),
         "reference_like_duplicates": reference_like,
         "suspicious_product_components": suspicious,
