@@ -669,6 +669,7 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
     target_acknowledgement = None
     target_acknowledgement_persisted = False
     target_acknowledgement_error = None
+    target_ack_clarification_attempted = False
 
     def _negotiation_state() -> dict:
         return {
@@ -679,6 +680,7 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
             "target_acknowledgement": target_acknowledgement,
             "target_acknowledgement_persisted": target_acknowledgement_persisted,
             "target_acknowledgement_error": target_acknowledgement_error,
+            "target_ack_clarification_attempted": target_ack_clarification_attempted,
             "target_model_key": target_spec["key"],
             "target_model_label": target_spec["ui_label"],
             "target_agent_label": target_spec["agent_label"],
@@ -822,9 +824,11 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
                             **_verdict(state),
                             "agent_text": state["text"]})
 
-        # A permission after the target steer that still does not acknowledge the
-        # exact registry model + duration is a fail-closed, pre-provider outcome.
-        # Cost is only a cap and can never stand in for either setting.
+        # A permission after the target steer still cannot stand in for an exact
+        # model + duration + aspect acknowledgement.  The live provider can emit
+        # a bare second permission card with no text at all, so give it one
+        # zero-credit acknowledgement-only clarification before failing closed.
+        # The permission is denied first and is never treated as settings proof.
         if (state["permission"] is not None
                 and permission_after_target_steer
                 and (
@@ -834,6 +838,17 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
                         and not target_acknowledgement_persisted
                     )
                 )):
+            if not target_ack_clarification_attempted:
+                await send("Reject", perm=DENIED, media=refs)
+                target_ack_clarification_attempted = True
+                state = await send(
+                    "Do not request permission yet. Reply in plain text first and "
+                    f"explicitly confirm exactly {target_spec['ui_label']} at "
+                    f"{_duration_label(target_duration)} seconds in {target_aspect}. "
+                    "Do not generate anything in this acknowledgement reply.",
+                    media=refs,
+                )
+                continue
             return _finish({
                 "ok": False,
                 "stage": "pre_approval_acknowledgement",
@@ -852,6 +867,17 @@ async def negotiate_and_generate(client, project_id, session_id, prompt, media_i
                 "provider_submit": False,
                 "credit_spend": False,
             })
+
+        # Once the provider has supplied the explicit settings text, ask it for
+        # the permission proposal without resetting the acknowledged target.
+        # Approval remains gated by the exact count/cost checks below.
+        if state["permission"] is None and target_settings_acknowledged:
+            state = await send(
+                "Now request permission for exactly the acknowledged target; do "
+                "not change model, duration, aspect ratio, source mode, or count.",
+                media=refs,
+            )
+            continue
 
         settings_confirmed = (
             target_settings_communicated
