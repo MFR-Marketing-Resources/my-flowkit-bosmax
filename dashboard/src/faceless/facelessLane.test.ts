@@ -1,6 +1,7 @@
 /**
  * Faceless helpers — product-first Hybrid parity (no avatar).
  */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
 	buildFacelessGenerateBody,
@@ -26,6 +27,14 @@ describe("facelessLane product-first", () => {
 		expect(FACELESS_VISUAL_LAW).toMatch(/no visible human face/i);
 		expect(FACELESS_VISUAL_LAW).toMatch(/hands/i);
 		expect(FACELESS_VISUAL_LAW).not.toMatch(/F2V|FRAMES/i);
+	});
+
+	it("sends the session-bound CSRF token with the production generate POST", () => {
+		const pageSource = readFileSync("src/pages/FacelessVideoPage.tsx", "utf8");
+		expect(pageSource).toContain('import { csrfToken } from "../api/client";');
+		expect(pageSource).toMatch(
+			/fetch\("\/api\/flow\/generate",\s*\{[\s\S]*?method:\s*"POST",[\s\S]*?"X-CSRF-Token":\s*csrfToken\(\)/,
+		);
 	});
 
 	it("product-only prepare needs product + model + duration (no start frame)", () => {
