@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FinalPromptApprovalModal } from "../components/execution-approval/FinalPromptApprovalModal";
 import type { ReviewEnvelope } from "../api/executionApproval";
+import { csrfToken } from "../api/client";
 import {
 	prepareFacelessPackage,
 	useCreativeLaneSettings,
@@ -612,7 +613,7 @@ export default function FacelessVideoPage() {
 			}
 			const response = await fetch("/api/flow/generate", {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
+				headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
 				body: JSON.stringify({ ...attributedGenerateBody, request_id: requestId }),
 			});
 			if (!response.ok) {
