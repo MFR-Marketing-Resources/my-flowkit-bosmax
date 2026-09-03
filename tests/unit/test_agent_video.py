@@ -555,6 +555,55 @@ def test_permission_after_target_steer_without_ack_fails_before_provider_submit(
     assert result["provider_submit"] is False
     assert result["credit_spend"] is False
     assert all(item["permission_action"] != av.APPROVED for item in client.sent)
+    assert result["negotiation_state"]["target_ack_clarification_attempted"] is True
+
+
+def test_bare_second_permission_gets_one_ack_clarification_before_approval():
+    no_ack_permission = (
+        'data: {"agentMessage": {"agentEvents": [{"toolInvocation": {'
+        '"toolName": "ask_for_permission", "toolArguments": {'
+        '"num_videos": 1, "num_images": 0, "total_cost": 10, "num_total": 1}}}]}}\n'
+    )
+    ack_text = (
+        'data: {"text": "Confirmed: use Gemini Omni Flash for 10 seconds in '
+        'portrait 9:16 and generate exactly one video."}\n'
+    )
+
+    class _BarePermissionThenAckClient:
+        def __init__(self):
+            self.sent = []
+
+        async def agent_stream_chat(self, session_id, project_id, turn, text,
+                                    media_ids=None, permission_action=None):
+            self.sent.append({
+                "turn": turn,
+                "text": text,
+                "media_ids": media_ids,
+                "permission_action": permission_action,
+            })
+            call = len(self.sent)
+            if call == 1:
+                return {"data": _PHASE_B_FIRST_PERMISSION}
+            if permission_action == av.DENIED:
+                return {"data": 'data: {"text": "Permission denied."}\n'}
+            if call == 3:
+                return {"data": no_ack_permission}
+            if call == 5:
+                return {"data": ack_text}
+            return {"data": no_ack_permission}
+
+    client = _BarePermissionThenAckClient()
+    result = _run(av.negotiate_and_generate(
+        client, "project", "session", "prompt", ["ref-1"],
+        target_model="omni_flash", target_duration_s=10, approve=False,
+    ))
+
+    assert result["would_approve"]["num_videos"] == 1
+    assert result["negotiation_state"]["target_settings_acknowledged"] is True
+    assert result["negotiation_state"]["target_ack_clarification_attempted"] is True
+    assert all(item["permission_action"] != av.APPROVED for item in client.sent)
+    assert client.sent[3]["permission_action"] == av.DENIED
+    assert "Do not request permission yet" in client.sent[4]["text"]
 
 
 def test_exact_target_acknowledgement_is_persisted_before_approval():
