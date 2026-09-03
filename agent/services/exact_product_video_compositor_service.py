@@ -883,6 +883,7 @@ def _plate_product_scan(
     # canonical cutout; generic background objects are not rejected solely by
     # being vertical.
     reference_like = 0
+    reference_shape_mismatches = 0
     try:
         with Image.open(canonical_cutout_path) as cutout:
             cutout_rgba = cutout.convert("RGBA")
@@ -890,6 +891,8 @@ def _plate_product_scan(
             alpha_box = alpha.getbbox()
             template_alpha = alpha.crop(alpha_box) if alpha_box else None
         if template_alpha is not None:
+            template_aspect_ratio = template_alpha.width / max(1, template_alpha.height)
+            aspect_tolerance = max(0.08, template_aspect_ratio * 0.25)
             template_mask = template_alpha.resize((32, 64)).point(lambda value: 255 if value >= 128 else 0)
             for component in components:
                 if (
@@ -898,6 +901,10 @@ def _plate_product_scan(
                     or component["h"] < component["w"] * 1.15
                     or component["area"] < 18
                 ):
+                    continue
+                component_aspect_ratio = component["w"] / max(1, component["h"])
+                if abs(component_aspect_ratio - template_aspect_ratio) > aspect_tolerance:
+                    reference_shape_mismatches += 1
                     continue
                 x = round(component["x"] / scale_x)
                 y = round(component["y"] / scale_y)
@@ -933,6 +940,7 @@ def _plate_product_scan(
         "scene_spanning_components_ignored": len(scene_spanning_components),
         "reserved_region_hits": len(reserved_hits),
         "reference_like_duplicates": reference_like,
+        "reference_shape_mismatches_ignored": reference_shape_mismatches,
         "suspicious_product_components": suspicious,
         "status": "PASS" if suspicious == 0 else "FAIL",
         "method": "DETERMINISTIC_CONTRAST_COMPONENT_AND_CANONICAL_REFERENCE_SCAN",

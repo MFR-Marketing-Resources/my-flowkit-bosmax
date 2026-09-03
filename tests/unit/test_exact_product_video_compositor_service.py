@@ -425,6 +425,31 @@ def test_plate_scan_rejects_duplicate_canonical_shape_outside_reserved_region(tm
     assert scan["reference_like_duplicates"] >= 1
 
 
+def test_plate_scan_ignores_stretched_background_band_outside_reserved_region(tmp_path):
+    from PIL import ImageDraw
+
+    cutout_path = tmp_path / "cutout.png"
+    cutout = Image.new("RGBA", (20, 40), (0, 0, 0, 0))
+    ImageDraw.Draw(cutout).rectangle((4, 2, 16, 37), fill=(20, 120, 60, 255))
+    cutout.save(cutout_path)
+    frame_path = tmp_path / "frame.png"
+    frame = Image.new("RGBA", (120, 200), (245, 245, 245, 255))
+    stretched_band = cutout.resize((20, 100))
+    frame.alpha_composite(stretched_band, (90, 10))
+    frame.save(frame_path)
+
+    scan = exact._plate_product_scan(
+        frame_path,
+        reserved_box={"x": 45, "y": 60, "w": 20, "h": 80},
+        canonical_cutout_path=cutout_path,
+        static_scene=True,
+    )
+
+    assert scan["status"] == "PASS"
+    assert scan["reference_like_duplicates"] == 0
+    assert scan["reference_shape_mismatches_ignored"] >= 1
+
+
 def test_plate_scan_rejects_generic_provider_product_inside_reserved_region(tmp_path):
     from PIL import ImageDraw
 
