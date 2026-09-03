@@ -448,6 +448,30 @@ def test_plate_scan_rejects_generic_provider_product_inside_reserved_region(tmp_
     assert scan["reserved_region_hits"] >= 1
 
 
+def test_plate_scan_ignores_scene_spanning_foreground_mass(tmp_path):
+    from PIL import ImageDraw
+
+    cutout_path = tmp_path / "cutout.png"
+    cutout = Image.new("RGBA", (20, 40), (0, 0, 0, 0))
+    ImageDraw.Draw(cutout).rectangle((4, 2, 16, 37), fill=(20, 120, 60, 255))
+    cutout.save(cutout_path)
+    frame_path = tmp_path / "frame.png"
+    frame = Image.new("RGBA", (120, 200), (25, 15, 10, 255))
+    ImageDraw.Draw(frame).rectangle((0, 10, 119, 190), fill=(180, 150, 120, 255))
+    frame.save(frame_path)
+
+    scan = exact._plate_product_scan(
+        frame_path,
+        reserved_box={"x": 45, "y": 50, "w": 20, "h": 80},
+        canonical_cutout_path=cutout_path,
+        static_scene=True,
+    )
+
+    assert scan["status"] == "PASS"
+    assert scan["scene_spanning_components_ignored"] == 1
+    assert scan["reserved_region_hits"] == 0
+
+
 def test_dynamic_qc_leaves_unverified_dimension_honest():
     dimensions = exact._qc_dimensions(
         [{"transform": {"x": 1}, "qa": {"composition_ok": True, "product_region_match": True}}],
