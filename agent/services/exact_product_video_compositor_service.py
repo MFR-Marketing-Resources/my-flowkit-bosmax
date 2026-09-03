@@ -412,13 +412,14 @@ def build_exact_scene_scaffold_prompt(
         "scene lighting. Keep the scene naturally sparse and unobstructed. Never "
         "visualize any compositor placement instruction or guide.",
     )
+    faceless_priority_preamble = ""
     additions = [
         "EXECUTION ROUTE: EXACT_PRODUCT_DETERMINISTIC_COMPOSITE.",
         "PROVIDER ROLE: scene scaffold only; the provider output is an internal plate and is never the final product artifact.",
         "Do not generate product pixels, packaging, label, logo, cap, replacement bottle, product text, product shadow, or product reflection.",
         "COMPOSITOR MOTION CONTRACT: use a locked-off camera and a stable ordinary "
         "contact surface. Any later foreground insertion is system-owned and must "
-        "not be represented, marked, framed, or anticipated in the scene pixels.",
+        "not be represented, marked, or illustrated with guides or proxy pixels.",
         "NO PLACEHOLDER OR GUIDE: do not render a blank card, sheet of paper, "
         "rectangle, box, corner brackets, markers, outline, guide, matte, screen, "
         "or sign. Show only an ordinary unobstructed scene surface.",
@@ -455,6 +456,28 @@ def build_exact_scene_scaffold_prompt(
             "compositor."
         )
     else:
+        # Put the FACELESS visual contract before the preserved dialogue.  The
+        # provider otherwise tends to cast nouns from the opening spoken copy
+        # (for example, "anak") before it reaches a trailing negative prompt.
+        # Dialogue remains byte-for-byte present for audio generation; it is
+        # simply subordinated to an explicit visual grammar at prompt start.
+        faceless_priority_preamble = (
+            "FACELESS VISUAL CONTRACT — HIGHEST PRIORITY; THIS OVERRIDES ALL "
+            "VISUAL IMPLICATIONS OF THE SPOKEN DIALOGUE. DIALOGUE IS AUDIO ONLY "
+            "and must never visually cast, instantiate, illustrate, or cut to a "
+            "speaker or any person mentioned or implied by the words. Absolutely "
+            "no visible face, head, eyes, or mouth anywhere: no babies, children, "
+            "adult faces or heads, reflections, portraits, screens, photos, or "
+            "background people. Human presence is limited to adult hands, "
+            "forearms, arms, and partial torso with every head fully outside the "
+            "frame for the entire clip. The reserved product interaction region "
+            "is visually invisible: render no white card, placeholder frame, "
+            "rectangle, box, outline, corner marks, guide, matte, screen, sign, "
+            "proxy object, bottle-like prop, or upright container. Keep a sparse, "
+            "natural scene. Adult hands must perform a meaningful selling gesture "
+            "around and toward the invisible future product location without "
+            "crossing or occluding it. Render no product pixels."
+        )
         additions.append(
             "FACELESS: absolutely no visible face, head, eyes, or mouth anywhere, "
             "including in reflections, portraits, photos, screens, or background "
@@ -467,9 +490,10 @@ def build_exact_scene_scaffold_prompt(
             "only adult hands, forearms, and partial torso."
         )
         additions.append(
-            "NATURAL BACKGROUND ACTION ONLY: hands and forearms may make subtle "
-            "ordinary motions, but must never point, frame, present toward, hold, "
-            "touch, or interact with an absent product or placeholder."
+            "MEANINGFUL FACELESS INTERACTION: adult hands and forearms must make "
+            "a clear selling gesture around and toward the invisible future "
+            "product location, while never crossing, occluding, holding, or "
+            "touching that region. Do not visualize the region itself."
         )
         additions.append(
             "PRODUCT-FREE SCENE: do not place a product, proxy bottle, product-like "
@@ -479,6 +503,8 @@ def build_exact_scene_scaffold_prompt(
     safe_context = _safe_product_withheld_scene_context(scene_context)
     if safe_context:
         additions.append(f"SCENE CONTEXT (PRODUCT-WITHHELD): {safe_context}")
+    if faceless_priority_preamble:
+        return f"{faceless_priority_preamble}\n\n{prompt}\n\n" + " ".join(additions)
     return f"{prompt}\n\n" + " ".join(additions)
 
 

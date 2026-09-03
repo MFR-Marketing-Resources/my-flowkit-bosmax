@@ -118,8 +118,11 @@ def test_faceless_scene_scaffold_removes_product_handling_contradictions():
     assert "physically handle the product" not in low
     assert "product hero on table" not in low
     assert "product-free scene" in low
-    assert "never point, frame, present toward, hold, touch, or interact" in low
-    assert "reserved product region" not in low
+    assert "meaningful faceless interaction" in low
+    assert "around and toward the invisible future product location" in low
+    assert "do not visualize the region itself" in low
+    assert "reserved product interaction region is visually invisible" in low
+    assert "must not be represented, marked, framed, or anticipated" not in low
     assert "reserved box" not in low
     assert "dapatkan sekarang" in low
 
@@ -153,6 +156,7 @@ def test_faceless_scene_scaffold_scrubs_actual_failed_prompt_cues_but_keeps_dial
     assert "product identity, packaging, and scale remain locked" not in low
     assert "anak menangis malam kerana perut kembung" in low
     assert "dialogue is audio only" in low
+    assert low.index("faceless visual contract") < low.index("section 6 - spoken dialogue")
     assert "never visualize, cast, illustrate, or cut to" in low
     assert "do not depict a baby, child, adult head, or adult face, directly or indirectly" in low
     assert "reflections, portraits, photos, screens, or background people" in low
@@ -162,9 +166,9 @@ def test_faceless_scene_scaffold_scrubs_actual_failed_prompt_cues_but_keeps_dial
     assert "freestanding upright proxy props" in low
     assert "keep the scene sparse and natural" in low
     assert "warm practical bathroom lighting remains consistent" in low
-    assert "reserved product region" not in low
+    assert "reserved product interaction region is visually invisible" in low
     assert "reserved box" not in low
-    assert "point toward" not in low
+    assert "around and toward the invisible future product location" in low
     assert "product_present_to_camera" not in low
 
 
