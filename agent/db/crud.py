@@ -4503,6 +4503,10 @@ async def list_incomplete_final_video_deliveries(limit: int = 200) -> list[dict]
              AND v.final_concat_job_name!=''
              AND v.final_media_id IS NOT NULL AND v.final_media_id!=''
              AND v.final_local_path IS NOT NULL AND v.final_local_path!=''
+             AND NOT COALESCE(CASE WHEN json_valid(v.stage_state_json) THEN
+                 json_extract(v.stage_state_json, '$.artifact_retention_v1.media_id')=v.final_media_id
+                 AND json_extract(v.stage_state_json, '$.artifact_retention_v1.status')='EXPIRED'
+                 ELSE 0 END, 0)
              AND (ga.media_id IS NULL OR gr.media_id IS NULL)
            ORDER BY v.updated_at ASC LIMIT ?""",
         (max(1, min(1000, int(limit or 200))),),
@@ -5212,12 +5216,34 @@ async def purge_expired_artifacts(retention_hours: int = 48) -> dict:
                 pass  # already gone — row cleanup below still applies
     if rows:
         async with _db_lock:
-            await db.execute(
-                """DELETE FROM generated_artifact
-                   WHERE artifact_kind='video' AND created_at < ?""",
-                (cutoff,),
-            )
-            await db.commit()
+            # Keep policy expiry distinct from interrupted final delivery. The
+            # receipt and row removal commit together; generation/result history
+            # and the owning job's generation outcome remain unchanged.
+            try:
+                for media_id, _local_path in rows:
+                    receipt = json.dumps({
+                        "media_id": media_id,
+                        "status": "EXPIRED",
+                        "retention_hours": retention_hours,
+                        "purged_at": _now(),
+                    })
+                    await db.execute(
+                        """UPDATE video_production_job
+                           SET stage_state_json=json_set(
+                               CASE WHEN json_valid(stage_state_json)
+                               THEN stage_state_json ELSE '{}' END,
+                               '$.artifact_retention_v1', json(?))
+                           WHERE final_media_id=?""",
+                        (receipt, media_id),
+                    )
+                await db.executemany(
+                    "DELETE FROM generated_artifact WHERE media_id=?",
+                    [(media_id,) for media_id, _local_path in rows],
+                )
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
     return {"purged_rows": len(rows), "purged_files": removed_files,
             "retention_hours": retention_hours, "cutoff": cutoff}
 

@@ -5,9 +5,11 @@ DB record are auto-deleted (lazily, on every listing). Image artifacts remain
 until an explicit manual delete. Workspace pages stay workplaces.
 """
 import asyncio
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from agent.db import crud
 from agent.db.schema import init_db
@@ -120,3 +122,107 @@ def test_expired_image_survives_retention_sweep(tmp_path):
 
     _run(scenario())
     assert image_file.exists(), "the test image was not deleted by retention"
+
+
+async def test_purged_final_is_not_repaired_or_resubmitted_after_restart(tmp_path, monkeypatch):
+    from agent.services import video_production_orchestrator as orch
+
+    media_id = "final-retention-restart"
+    job_id = "vj_retention_restart"
+    path = tmp_path / "final.mp4"
+    path.write_bytes(b"delivered-video")
+    await crud.create_video_production_job_full(
+        job_id, logical_job_key=job_id, status=orch.S_COMPLETE,
+        stage_state_json=json.dumps({"existing_evidence": {"keep": True}}),
+    )
+    await crud.update_video_production_job_full(
+        job_id, final_media_id=media_id, final_local_path=str(path),
+        final_concat_job_name="projects/test/jobs/final",
+    )
+    await _insert(media_id, kind="video", created_at=_ts(49), local_path=str(path))
+    await crud.insert_generation_result(media_id, job_id=job_id, artifact_kind="video")
+
+    await crud.purge_expired_artifacts()
+    job = await crud.get_video_production_job(job_id)
+    state = json.loads(job["stage_state_json"])
+    assert state["existing_evidence"] == {"keep": True}
+    assert state["artifact_retention_v1"]["media_id"] == media_id
+    assert state["artifact_retention_v1"]["status"] == "EXPIRED"
+    assert not path.exists()
+    assert await crud.get_generation_result(media_id) is not None
+    assert await crud.list_incomplete_final_video_deliveries() == []
+
+    register = AsyncMock(side_effect=AssertionError("expired output must not be repaired"))
+    generate = AsyncMock(side_effect=AssertionError("retention must not submit"))
+    monkeypatch.setattr(orch, "_register_and_bind_final_delivery", register)
+    summary = await orch.reconcile_incomplete_final_deliveries()
+    assert summary["provider_submits"] == summary["failed"] == 0
+    result = await orch.advance_job(
+        None, job_id, authorization_token="", generate_initial=generate, resume_only=True,
+    )
+    assert result["status"] == orch.S_COMPLETE
+    assert result["artifact_availability"] == "EXPIRED"
+    register.assert_not_awaited()
+    generate.assert_not_awaited()
+    before = await crud.get_video_production_job(job_id)
+    await crud.purge_expired_artifacts()
+    assert await crud.get_video_production_job(job_id) == before
+
+
+async def test_missing_final_without_retention_evidence_is_not_called_expired(tmp_path, monkeypatch):
+    from agent.services import video_production_orchestrator as orch
+
+    job_id = "vj_missing_final"
+    await crud.create_video_production_job_full(job_id, logical_job_key=job_id)
+    await crud.update_video_production_job_full(
+        job_id, final_media_id="final-missing", final_local_path=str(tmp_path / "missing.mp4"),
+        final_concat_job_name="projects/test/jobs/missing",
+    )
+    real_register = orch._register_and_bind_final_delivery
+    register = AsyncMock(side_effect=AssertionError("no final bytes to register"))
+    monkeypatch.setattr(orch, "_register_and_bind_final_delivery", register)
+    summary = await orch.reconcile_incomplete_final_deliveries()
+    job = await crud.get_video_production_job(job_id)
+    assert summary["missing_files"] == 1
+    assert summary["provider_submits"] == 0
+    assert job["status"] == orch.F_FINAL_ARTIFACT
+    assert job["error_code"] == "FINAL_ARTIFACT_FILE_MISSING"
+    assert "artifact_retention_v1" not in json.loads(job["stage_state_json"] or "{}")
+    register.assert_not_awaited()
+    await orch.reconcile_incomplete_final_deliveries()
+    assert await crud.get_video_production_job(job_id) == job
+
+    # Restoring existing bytes re-enables local delivery; the diagnostic must
+    # not permanently exclude the job or require a new provider submission.
+    (tmp_path / "missing.mp4").write_bytes(b"recovered-existing-final")
+    monkeypatch.setattr(orch, "_register_and_bind_final_delivery", real_register)
+    summary = await orch.reconcile_incomplete_final_deliveries()
+    assert summary["repaired"] == 1
+    assert summary["provider_submits"] == 0
+    recovered = await crud.get_video_production_job(job_id)
+    assert recovered["status"] == orch.S_COMPLETE
+    assert recovered["error_code"] is None
+    assert (await crud.get_final_video_delivery("final-missing"))["complete"]
+
+
+async def test_expiry_receipt_for_another_media_does_not_hide_current_final(tmp_path):
+    from agent.services import video_production_orchestrator as orch
+
+    job_id = "vj_rebound_final"
+    await crud.create_video_production_job_full(
+        job_id, logical_job_key=job_id,
+        stage_state_json=json.dumps({
+            "artifact_retention_v1": {"media_id": "old-final", "status": "EXPIRED"},
+        }),
+    )
+    await crud.update_video_production_job_full(
+        job_id, final_media_id="current-final", final_local_path=str(tmp_path / "current.mp4"),
+        final_concat_job_name="projects/test/jobs/current",
+    )
+    candidates = await crud.list_incomplete_final_video_deliveries()
+    assert [j["job_id"] for j in candidates] == [job_id]
+    assert not orch._final_artifact_expired(candidates[0])
+    await crud.update_video_production_job_full(job_id, stage_state_json="invalid-legacy-json")
+    candidates = await crud.list_incomplete_final_video_deliveries()
+    assert [j["job_id"] for j in candidates] == [job_id]
+    assert not orch._final_artifact_expired(candidates[0])
