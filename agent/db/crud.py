@@ -5233,12 +5233,16 @@ async def purge_expired_artifacts(retention_hours: int = 48) -> dict:
                                CASE WHEN json_valid(stage_state_json)
                                THEN stage_state_json ELSE '{}' END,
                                '$.artifact_retention_v1', json(?))
-                           WHERE final_media_id=?""",
-                        (receipt, media_id),
+                           WHERE final_media_id=? AND EXISTS (
+                               SELECT 1 FROM generated_artifact
+                               WHERE media_id=? AND artifact_kind='video' AND created_at<?
+                           )""",
+                        (receipt, media_id, media_id, cutoff),
                     )
                 await db.executemany(
-                    "DELETE FROM generated_artifact WHERE media_id=?",
-                    [(media_id,) for media_id, _local_path in rows],
+                    """DELETE FROM generated_artifact
+                       WHERE media_id=? AND artifact_kind='video' AND created_at<?""",
+                    [(media_id, cutoff) for media_id, _local_path in rows],
                 )
                 await db.commit()
             except Exception:

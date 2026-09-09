@@ -6,6 +6,8 @@ until an explicit manual delete. Workspace pages stay workplaces.
 """
 import asyncio
 import json
+import os
+import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -226,3 +228,28 @@ async def test_expiry_receipt_for_another_media_does_not_hide_current_final(tmp_
     candidates = await crud.list_incomplete_final_video_deliveries()
     assert [j["job_id"] for j in candidates] == [job_id]
     assert not orch._final_artifact_expired(candidates[0])
+
+
+async def test_retention_does_not_expire_a_concurrently_renewed_record(tmp_path, monkeypatch):
+    from agent.db import schema
+
+    media_id = "final-renewed"
+    job_id = "vj_renewed"
+    path = tmp_path / "renewed.mp4"
+    path.write_bytes(b"old-video")
+    await crud.create_video_production_job_full(job_id, logical_job_key=job_id)
+    await crud.update_video_production_job_full(job_id, final_media_id=media_id)
+    await _insert(media_id, kind="video", created_at=_ts(49), local_path=str(path))
+    remove = os.remove
+
+    def renew_during_file_removal(local_path):
+        # Model another connection renewing metadata after candidate selection.
+        with sqlite3.connect(str(schema.DB_PATH)) as db:
+            db.execute("UPDATE generated_artifact SET created_at=? WHERE media_id=?", (_ts(0), media_id))
+        remove(local_path)
+
+    monkeypatch.setattr(os, "remove", renew_during_file_removal)
+    await crud.purge_expired_artifacts()
+    assert await crud.get_generated_artifact(media_id) is not None
+    job = await crud.get_video_production_job(job_id)
+    assert "artifact_retention_v1" not in json.loads(job["stage_state_json"] or "{}")
