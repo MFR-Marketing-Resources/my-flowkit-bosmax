@@ -1074,13 +1074,42 @@ async def _register_and_bind_final_delivery(job: dict, result: dict) -> dict:
     return {"media_id": media_id, "pair": pair, "lane_bound": True}
 
 
+def _final_artifact_expired(job: dict) -> bool:
+    try:
+        receipt = _decode_stage_state(job.get("stage_state_json")).get("artifact_retention_v1")
+    except OrchestratorError:
+        return False  # malformed legacy state is not evidence of policy expiry
+    return bool(
+        isinstance(receipt, dict)
+        and receipt.get("status") == "EXPIRED"
+        and receipt.get("media_id") == job.get("final_media_id")
+        and job.get("final_media_id")
+    )
+
+
 async def reconcile_incomplete_final_deliveries() -> dict:
     """Repair persisted final files locally; this branch has no submit callback."""
     rows = await _crud.list_incomplete_final_video_deliveries()
     repaired = 0
     failed = 0
+    missing_files = 0
     failures: list[dict[str, str]] = []
     for job in rows:
+        if _final_artifact_expired(job):
+            continue
+        if not Path(str(job.get("final_local_path") or "")).is_file():
+            # No purge receipt means missing bytes, not proven policy expiry.
+            # Preserve the identity for local recovery without retrying the
+            # compositor or rewriting the same failure timestamp every boot.
+            failed += 1
+            missing_files += 1
+            failures.append({"job_id": str(job.get("job_id")), "error": "FINAL_ARTIFACT_FILE_MISSING"})
+            if job.get("error_code") != "FINAL_ARTIFACT_FILE_MISSING":
+                await _crud.update_video_production_job_full(
+                    job["job_id"], status=F_FINAL_ARTIFACT,
+                    error_code="FINAL_ARTIFACT_FILE_MISSING",
+                )
+            continue
         try:
             await _register_and_bind_final_delivery(job, _final_result_from_job(job))
             repaired += 1
@@ -1094,6 +1123,7 @@ async def reconcile_incomplete_final_deliveries() -> dict:
         "selected": len(rows),
         "repaired": repaired,
         "failed": failed,
+        "missing_files": missing_files,
         "failures": failures,
         "provider_calls": 0,
         "provider_submits": 0,
@@ -1172,6 +1202,8 @@ async def advance_job(
     job = await _crud.get_video_production_job(job_id)
     if not job:
         raise OrchestratorError("VIDEO_JOB_NOT_FOUND", job_id)
+    if _final_artifact_expired(job):
+        return await get_job_status(job_id)
     # A final render can be durable while either half of local delivery was
     # interrupted. Repair only that local boundary; never re-enter a provider
     # submit. Exact-product jobs must also prove the durable final adapter receipt.
@@ -1596,6 +1628,7 @@ async def get_job_status(job_id: str) -> dict:
         "plan": plan,
         "final_media_id": job.get("final_media_id"),
         "final_duration_s": job.get("final_duration_s"),
+        "artifact_availability": "EXPIRED" if _final_artifact_expired(job) else None,
         "complete": job.get("status") == S_COMPLETE,
         "credit_summary": credit_summary,
         "no_credit_used": credit_summary == CR_NOT_SPENT,
