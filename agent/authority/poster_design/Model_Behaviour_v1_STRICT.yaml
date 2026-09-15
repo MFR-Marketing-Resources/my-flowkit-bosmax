@@ -1,0 +1,235 @@
+%YAML 1.2
+---
+id: KB-MODEL-BEHAVIOUR-SEA-002
+title: Image Model Behaviour Sovereign Core (Malaysia + SEA)
+version: "1.0.0"
+type: sovereign
+
+document_control:
+  enforcement_level: strict
+  region_scope: malaysia_sea
+  owner: BINA_POSTER_PROJECT
+  last_updated: "2026-03-02"
+
+description:
+  en: Master configuration governing AI image model behavior for commercial visual generation across Malaysia and Southeast Asia.
+
+governance:
+  realism_priority: high
+  mobile_first_rendering: true
+  typography_accuracy_required: true
+  hallucination_tolerance: zero
+
+core_behavior_rules:
+
+  photorealism:
+    face_distortion_threshold_percentage: 3
+    hand_distortion_threshold_percentage: 5
+    object_geometry_warping_allowed: false
+    lighting_consistency_required: true
+    shadow_direction_consistency_required: true
+
+  typography_control:
+    text_rendering_default: disabled
+    allow_text_when_explicitly_requested: true
+    max_typography_distortion_percentage: 1
+    prohibit_garbled_characters: true
+    enforce_sans_serif_for_ads: true
+
+  composition_integrity:
+    subject_centering_tolerance_percentage: 5
+    horizon_alignment_required: true
+    perspective_correction_enabled: true
+    background_noise_level: low
+
+  color_management:
+    enforce_srgb_space: true
+    oversaturation_limit_percentage: 10
+    skin_tone_natural_bias: true
+    white_balance_auto_correct: true
+
+  product_rendering:
+    logo_distortion_allowed: false
+    label_text_accuracy_required: true
+    reflective_surface_artifacts_allowed: false
+    packaging_edge_sharpness_required: true
+
+  ecommerce_thumbnail_behavior:
+    white_background_required: true
+    minimum_product_canvas_fill_percentage: 75
+    drop_shadow_intensity_max_percentage: 20
+    infographic_overlay_allowed_secondary_only: true
+
+  commercial_poster_behavior:
+    single_clear_hook_required: true
+    cluttered_badge_overload_prohibited: true
+    mobile_hierarchy_readability_required: true
+    product_truth_lock_required: true
+    cheap_discount_spam_aesthetic_prohibited: true
+
+model_class_profiles:
+
+  high_fidelity_image:
+    use_case: premium_product_and_luxury_assets
+    texture_detail_level: ultra_high
+    noise_grain_allowed: minimal
+    micro_contrast_required: true
+
+  cinematic_image:
+    use_case: lifestyle_ads_and_social_media
+    depth_of_field_bias: moderate
+    dynamic_range_bias: wide
+    color_grading_style: natural_warm
+
+  architectural_image:
+    use_case: real_estate_and_property
+    vertical_line_correction_required: true
+    hdr_balance_required: true
+    window_glare_reduction: enabled
+
+hallucination_prevention:
+  prevent_the_following:
+    - invented_brand_logo
+    - fake_text_snippets
+    - inconsistent_shadow_sources
+    - extra_limbs_or_fingers
+    - unreadable_product_label
+    - volumetric_scale_hallucination
+
+contract_enforcement:
+  description: "Image-generation prompts must be isolated from metadata, audit labels, and Layer B handoff terms before model inference."
+  image_prompt_metadata_isolation_required: true
+  enforcement_timing: before_model_inference
+  if_contamination_detected: reject_and_regenerate
+  metadata_must_not_be_rendered_as_visual_content: true
+  prohibited_tokens_in_image_prompt:
+    metadata_terms:
+      - metadata_json_handoff
+      - metadata_handoff_contract
+      - metadata_reference_targets
+      - validation_flags
+      - rule_id
+      - layer_b
+      - layer_b_enforcement_flags
+    platform_layout_terms:
+      - safe_zone
+      - side_margin_px
+      - bottom_exclusion_px
+      - top_px
+      - bottom_px
+      - left_px
+      - right_px
+      - top_10_percent
+      - side_10_percent
+      - bottom_exclusion
+      - side_margin
+    product_scale_terms_for_non_product_routes:
+      - product_scale_class
+      - anatomical_anchor_required
+      - camera_macro_enforced
+      - max_canvas_width_percent
+      - distal_phalanx_pinch
+      - pad_to_pad_precision_grip
+      - fingernail_scale_reference
+      - full_hand_grip
+      - palm_filling
+    validation_terms:
+      - file_size_check
+      - aspect_ratio_check
+      - color_profile_check
+      - safe_zone_text_check
+      - face_distortion_check
+      - typography_accuracy_check
+  allowed_technical_terms_in_image_prompt:
+    - "9:16"
+    - "1:1"
+    - "4:5"
+    - "16:9"
+    - "1080x1920px"
+    - "2000x2000px"
+    - "1920x1080px"
+    - "sRGB"
+    - "35mm"
+    - "50mm"
+    - "85mm"
+    - "100mm"
+    - "f/2.8"
+    - "shallow depth of field"
+    - "macro lens"
+  safe_zone_rendering_prevention:
+    prohibit_safe_zone_text_rendering: true
+    prohibit_visual_guide_labels: true
+    prohibit_platform_layout_labels: true
+    translate_layout_constraints_to_natural_composition_language: true
+    allowed_natural_language_replacements:
+      - "balanced lower negative space"
+      - "clean lower foreground"
+      - "subject positioned clear of interface area"
+      - "no visual guide labels"
+  non_product_human_scene_protection:
+    applies_to_routes:
+      - if_human_avatar_livestream_creator
+      - human_avatar_portrait
+      - livestream_creator
+      - studio_creator_scene
+      - non_product_lifestyle_scene
+    prohibit_product_scale_fields: true
+    prohibit_unrequested_object_holding: true
+    prohibit_product_handling_without_explicit_product_request: true
+    default_hand_behavior:
+      - natural_resting_on_desk
+      - relaxed_visible_hands
+      - light_gesture_only_if_contextual
+  product_route_exception:
+    class_a_micro_rules_remain_active_when_product_route_explicit: true
+    macro_lens_profile_allowed_when_product_route_explicit: true
+    anatomical_anchor_tokens_allowed_only_for_explicit_micro_product: true
+
+volumetric_scale_enforcement:
+
+  description: Prevent AI from inflating micro products to standard bottle sizes.
+
+  enforcement_rules:
+
+    class_a_micro_products:
+      prohibit:
+        - palm_filling_object
+        - full_hand_grip
+        - oversized_bottle_geometry
+        - container_over_30ml_when_5ml_specified
+
+      mandatory_signals:
+        - distal_phalanx_anchor
+        - fingernail_scale_reference
+        - macro_lens_profile
+
+  layer_b_rejection_triggers:
+    - product_height_exceeds_distal_phalanx_reference
+    - palm_contact_detected
+
+metadata_reference_targets:
+  - rule_id: face_distortion_check
+    action: enforce_in_metadata_handoff
+  - rule_id: typography_accuracy_check
+    action: enforce_in_metadata_handoff
+  - rule_id: logo_integrity_check
+    action: enforce_in_metadata_handoff
+  - rule_id: color_space_check
+    action: enforce_in_metadata_handoff
+  - rule_id: ecommerce_white_background_check
+    action: enforce_in_metadata_handoff
+
+canonical_prompts:
+  - "Generate high-fidelity product image, accurate packaging, no text distortion, photorealistic lighting."
+  - "Create cinematic lifestyle scene in Kuala Lumpur, natural skin tones, realistic shadows, no warped anatomy."
+  - "Produce architectural condo interior render, straight vertical lines, HDR balanced, realistic daylight."
+
+examples:
+  - prompt: "Luxury perfume bottle, macro shot, premium glass, neutral background."
+    expected_behavior: "No warped label text, no reflection artifacts, ultra sharp edges, sRGB compliant."
+  - prompt: "Shopee skincare listing image, white background, centered product."
+    expected_behavior: "White #FFFFFF background, 75% canvas fill, no logo distortion."
+  - prompt: "Modern condo interior in Mont Kiara, wide angle 24mm."
+    expected_behavior: "Correct vertical lines, balanced HDR, natural color temperature."
+
+...

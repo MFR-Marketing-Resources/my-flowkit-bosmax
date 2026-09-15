@@ -1,0 +1,135 @@
+%YAML 1.2
+---
+id: KB-TYPOGRAPHY-SEA-006
+title: Typography System (Malaysia + SEA)
+version: "1.0.0"
+type: satellite
+
+document_control:
+  enforcement_level: aligned_with_sovereign
+  region_scope: malaysia_sea
+  owner: BINA_POSTER_PROJECT
+  last_updated: "2026-03-02"
+
+description:
+  en: Typography configuration system defining font hierarchy, mobile readability standards, bilingual compatibility, and conversion-oriented text rendering for Malaysia and Southeast Asia markets.
+
+governance:
+  mobile_first_readability: true
+  bilingual_support_required: true
+  sans_serif_priority: true
+  commercial_license_compliance_required: true
+  sovereign_override_protocol: "must_yield_to_sovereign_conflict"
+
+font_hierarchy:
+
+  headline:
+    recommended_styles: [bold_sans_serif, geometric_sans, modern_display]
+    weight_range: [600, 800]
+    size_ratio_vs_body: 1.6
+    max_character_limit: 12
+
+  subheadline:
+    recommended_styles: [semi_bold_sans_serif]
+    weight_range: [500, 700]
+    size_ratio_vs_body: 1.3
+    max_character_limit: 20
+
+  body_text:
+    recommended_styles: [neutral_sans_serif]
+    weight_range: [400, 500]
+    size_px_mobile_range: [16, 18]
+    max_line_length_characters: 80
+
+  cta_text:
+    recommended_styles: [bold_sans_serif]
+    weight_range: [600, 700]
+    size_px_mobile_range: [18, 22]
+    character_limit: 5
+    high_contrast_required: true
+
+bilingual_compatibility:
+
+  language_support:
+    primary: english
+    secondary: malay
+  diacritic_support_required: true
+  prohibit_font_without_extended_latin_support: true
+
+mobile_readability_rules:
+
+  minimum_contrast_ratio: 4.5
+  prohibit_thin_weights_below: 400
+  minimum_letter_spacing_em: 0.02
+  line_height_ratio_range: [1.3, 1.6]
+  prohibit_text_touching_safe_zone_edges: true
+
+ecommerce_text_policy:
+
+  hero_image_text: prohibited_if_platform_restricts
+  infographic_overlay_allowed_secondary_only: true
+  prohibit_excessive_text_blocks: true
+  prioritize_clarity_over_stylization: true
+
+commercial_poster_overlay_policy:
+  max_headline_count: 1
+  max_support_line_count: 1
+  max_badge_count: 3
+  prohibit_paragraph_overlay: true
+  prioritize_mobile_scan_speed: true
+  headline_should_carry_primary_angle: true
+  support_line_should_add_clarity_not_poetry: true
+
+typography_render_integrity:
+
+  prohibit_warped_text: true
+  prohibit_perspective_distortion: true
+  prohibit_garbled_characters: true
+  require_sharp_edge_rendering: true
+
+conversion_guidelines:
+
+  cta_structure:
+    preferred_verbs: [Buy, Shop, Get, Discover, Claim]
+    max_words: 3
+    urgency_allowed: moderate
+    fake_urgency_prohibited: true
+
+  price_display:
+    currency_format_required: true
+    prohibit_misaligned_price_digits: true
+    decimal_alignment_required: true
+
+metadata_reference_targets:
+  - rule_id: contrast_check
+    action: enforce_in_metadata_handoff
+  - rule_id: weight_check
+    action: enforce_in_metadata_handoff
+  - rule_id: bilingual_support_check
+    action: enforce_in_metadata_handoff
+  - rule_id: cta_length_check
+    action: enforce_in_metadata_handoff
+
+canonical_typography_templates:
+
+  - template_id: ecommerce_standard
+    structure: "Bold headline (max 12 characters), neutral body 16-18px, bold CTA 18-22px, high contrast, clean sans-serif."
+
+  - template_id: social_media_ad
+    structure: "Large bold headline, minimal supporting text, CTA bottom aligned, safe zone respected."
+
+  - template_id: luxury_minimal
+    structure: "Elegant bold sans-serif headline, generous negative space, minimal copy, high contrast."
+
+examples:
+
+  - scenario: shopee_product_listing
+    expected_behavior: "No hero text overlay, infographic secondary only, high contrast CTA if used."
+
+  - scenario: tiktok_vertical_ad
+    expected_behavior: "Bold readable headline, no thin font weights, safe zone compliance."
+
+  - scenario: luxury_real_estate_banner
+    expected_behavior: "Minimal headline, strong contrast, clean alignment, no text distortion."
+
+...

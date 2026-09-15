@@ -1,0 +1,152 @@
+%YAML 1.2
+---
+id: KB-COMMERCIAL-DESIGN-SEA-010
+title: Commercial Design Intelligence Sovereign Core (Malaysia + SEA)
+version: "1.0.0"
+type: sovereign
+
+document_control:
+  enforcement_level: strict
+  region_scope: malaysia_sea
+  owner: BINA_POSTER_PROJECT
+  last_updated: "2026-06-01"
+
+description:
+  en: Master commercial design intelligence layer for elevating weak or messy poster and listing briefs into high-conversion, mobile-first visual prompts across Malaysia and SEA.
+
+governance:
+  brief_elevation_required: true
+  mobile_first_conversion_priority: true
+  commercial_clarity_over_decoration: true
+  weak_brief_recovery_mode: enabled
+  hallucination_tolerance: zero
+
+commercial_poster_activation:
+  trigger_keywords:
+    - poster
+    - hero shot
+    - listing image
+    - thumbnail
+    - banner
+    - product ad
+    - commercial visual
+    - tiktok shop
+    - shopee listing
+    - lazada listing
+  if_triggered:
+    resolve_selling_angle_before_prompt: true
+    resolve_visual_hierarchy_before_prompt: true
+    resolve_copy_density_before_prompt: true
+    resolve_hard_negatives_before_prompt: true
+
+weak_brief_recovery:
+  if_user_brief_is_short_or_lazy:
+    infer_platform_when_obvious: true
+    infer_asset_type_when_obvious: true
+    infer_primary_conversion_goal: true
+    infer_mobile_first_hierarchy: true
+    ask_questions_only_for_critical_blockers: true
+
+selling_angle_system:
+  one_primary_angle_only: true
+  allowed_primary_angles:
+    - pain_relief
+    - convenience
+    - trust_heritage
+    - premium_quality
+    - aspiration_status
+    - family_practicality
+    - value_stack
+  secondary_proof_limit: 3
+  prohibit_multi_angle_confusion: true
+
+overlay_density_rules:
+  headline_required_for_commercial_poster: conditional
+  max_headline_count: 1
+  max_support_line_count: 1
+  max_badge_count: 3
+  prohibit_paragraph_overlay: true
+  prioritize_scan_speed_on_mobile: true
+
+asset_text_inference_rules:
+  poster_banner_thumbnail_tiktok_visual:
+    rendered_text_can_be_inferred: true
+  shopee_lazada_hero_listing:
+    rendered_text_prohibited_by_default: true
+  secondary_infographic_or_benefit_image:
+    rendered_text_allowed: true
+
+commercial_hierarchy_rules:
+  product_first_by_default: true
+  avatar_led_only_when_explicit: true
+  single_dominant_focus_required: true
+  breathing_room_required: true
+  premium_means_hierarchy_not_empty_space: true
+  trust_before_flash_required: true
+
+marketplace_style_rejection:
+  prohibit_the_following:
+    - cluttered_badge_overload
+    - fake_discount_spam
+    - weak_hierarchy
+    - decorative_without_sales_logic
+    - cheap_gradient_noise
+    - unreadable_mobile_text
+    - competing_focal_points
+
+platform_conversion_bias:
+  tiktok_shop:
+    preferred_ratio: "9:16"
+    motion_intent_visual_language: preferred
+    hook_speed_priority: high
+    trust_plus_scroll_stop_balance: required
+  shopee:
+    preferred_ratio: "1:1"
+    hero_text_default: prohibited
+    clean_white_background_priority: high
+  lazada:
+    preferred_ratio: "1:1"
+    hero_text_default: prohibited
+    product_fill_priority: high
+  meta:
+    preferred_ratios: ["4:5", "9:16"]
+    headline_readability_priority: high
+
+copywriting_alignment:
+  claims_must_be_verifiable: true
+  cta_required_only_when_contextually_useful: true
+  prohibit_empty_luxury_slogans: true
+  prohibit_generic_marketing_fluff: true
+  prefer_scannable_utility_language: true
+
+output_modes:
+  prompt_only:
+    default: true
+  prompt_plus_design_diagnosis:
+    allowed_when_user_requests_explanation: true
+  multi_direction_variants:
+    allowed_when_user_requests_options: true
+
+metadata_reference_targets:
+  - rule_id: commercial_primary_angle_check
+    action: enforce_in_metadata_handoff
+  - rule_id: overlay_density_check
+    action: enforce_in_metadata_handoff
+  - rule_id: hierarchy_clarity_check
+    action: enforce_in_metadata_handoff
+  - rule_id: marketplace_spam_rejection_check
+    action: enforce_in_metadata_handoff
+
+canonical_commercial_templates:
+  - template_id: premium_tiktok_shop_poster
+    structure: "Single hero product, strong mobile-first hierarchy, one bold headline, one support line, up to three small badges, premium trustworthy lighting, clear conversion intent."
+  - template_id: clean_marketplace_listing_visual
+    structure: "Product-first composition, clean spacing, high scan clarity, no clutter, no fake urgency, platform-safe commercial polish."
+
+examples:
+  - scenario: weak_tiktok_shop_brief
+    expected_behavior: "Infer TikTok Shop vertical poster route, choose one selling angle, enforce mobile-first hierarchy, keep overlay density minimal."
+  - scenario: premium_product_hero
+    expected_behavior: "Resolve product as dominant focal point, maintain premium trust posture, reject cluttered discount styling."
+
+...

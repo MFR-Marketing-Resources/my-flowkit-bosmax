@@ -1,0 +1,132 @@
+%YAML 1.2
+---
+id: KB-REALESTATE-SEA-010
+title: Real Estate Visual Marketing System (Malaysia + SEA)
+version: "1.0.0"
+type: satellite
+
+document_control:
+  enforcement_level: aligned_with_sovereign
+  region_scope: malaysia_sea
+  owner: BINA_POSTER_PROJECT
+  last_updated: "2026-03-02"
+
+description:
+  en: Real estate visual marketing configuration system defining architectural rendering standards, luxury positioning logic, interior-exterior balance, and high-value asset presentation for Malaysia and Southeast Asia markets.
+
+governance:
+  luxury_bias_priority: high
+  legacy_positioning_allowed: true
+  vertical_line_integrity_required: true
+  hdr_balance_required: true
+  mobile_and_desktop_compatibility: true
+  sovereign_override_protocol: "must_yield_to_sovereign_conflict"
+
+property_visual_hierarchy:
+
+  primary_focus:
+    property_structure_must_be_dominant: true
+    minimum_property_canvas_fill_percentage: 65
+    sky_or_background_distraction_level: low
+
+  secondary_elements:
+    max_secondary_elements: 4
+    landscaping_allowed: true
+    human_presence_optional_but_non_dominant: true
+
+  luxury_signal_requirements:
+    clean_lines_required: true
+    material_texture_clarity_required: true
+    lighting_consistency_required: true
+
+interior_rendering_standards:
+
+  vertical_line_correction_required: true
+  wide_angle_limit_mm: 24
+  prohibit_extreme_distortion: true
+  window_exposure_balance_required: true
+  artificial_light_temperature_consistency_required: true
+
+exterior_rendering_standards:
+
+  golden_hour_or_blue_hour_preferred: true
+  overexposed_sky_prohibited: true
+  shadow_direction_consistency_required: true
+  building_edge_sharpness_required: true
+
+camera_technical_requirements:
+
+  allowed_focal_lengths_mm: [24, 28, 35]
+  tripod_stability_required: true
+  prohibit_handheld_blur: true
+  depth_of_field: deep
+  perspective_correction_enabled: true
+
+luxury_positioning_logic:
+
+  predator_expression_alignment:
+    neutral_or_stoic_expression_if_human_present: true
+    excessive_smiling_prohibited: true
+
+  empathy_expression_alignment:
+    warm_family_scene_allowed_in_residential_projects: true
+    dominance_posture_prohibited_in_family_context: true
+
+  cross_silo_contamination_prohibited: true
+
+color_and_material_control:
+
+  neutral_palette_preferred: true
+  gold_accent_allowed_for_premium_projects: true
+  oversaturation_prohibited: true
+  natural_material_tone_preservation_required: true
+
+brochure_and_listing_adaptation:
+
+  hero_image_required: true
+  headline_safe_zone_required: true
+  high_contrast_text_required: true
+  prohibit_text_covering_key_architecture: true
+
+render_integrity:
+
+  prohibit_fake_sky_replacement: false
+  prohibit_unrealistic_reflections: true
+  prohibit_missing_shadows: true
+  require_realistic_scale_representation: true
+
+metadata_reference_targets:
+  - rule_id: vertical_alignment_check
+    action: enforce_in_metadata_handoff
+  - rule_id: exposure_balance_check
+    action: enforce_in_metadata_handoff
+  - rule_id: distortion_check
+    action: enforce_in_metadata_handoff
+  - rule_id: luxury_signal_check
+    action: enforce_in_metadata_handoff
+  - rule_id: cross_silo_expression_check
+    action: enforce_in_metadata_handoff
+
+canonical_real_estate_templates:
+
+  - template_id: luxury_condo_exterior
+    structure: "Blue hour exterior, 24mm lens, deep depth of field, straight vertical lines, balanced sky exposure, neutral luxury palette."
+
+  - template_id: premium_interior_living_room
+    structure: "HDR balanced interior, 24mm wide angle, natural daylight through windows, warm interior lights, vertical line correction enabled."
+
+  - template_id: landed_property_family_scene
+    structure: "Golden hour exterior, clean landscaping, subtle human presence, warm natural tones, no dominance posture."
+
+examples:
+
+  - scenario: mont_kiara_luxury_condo
+    expected_behavior: "Straight vertical lines, balanced HDR, sharp building edges, no sky clipping."
+
+  - scenario: johor_bahru_landed_home
+    expected_behavior: "Golden hour lighting, natural color tones, deep depth of field, realistic scale."
+
+  - scenario: klcc_highrise_interior
+    expected_behavior: "Vertical correction applied, window exposure balanced, neutral palette maintained."
+
+...

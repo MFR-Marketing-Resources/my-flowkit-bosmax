@@ -1,0 +1,148 @@
+%YAML 1.2
+---
+id: KB-POSTPROCESSING-SEA-005
+title: PostProcessing & Export Pipeline Sovereign Core (Malaysia + SEA)
+version: "1.0.0"
+type: sovereign
+
+document_control:
+  enforcement_level: strict
+  region_scope: malaysia_sea
+  owner: BINA_POSTER_PROJECT
+  last_updated: "2026-03-02"
+
+description:
+  en: Master post-processing and export configuration enforcing final output optimization, compression, scaling, and delivery compliance for Malaysia and Southeast Asia platforms.
+
+governance:
+  mobile_first_output: true
+  compression_integrity_priority: high
+  platform_compliance_required: true
+  color_profile_enforcement: sRGB_only
+  watermark_policy: prohibited_unless_explicitly_requested
+
+pre_export_validation:
+
+  resolution_check:
+    require_exact_match_with_platform_specs: true
+    allow_upscale: false
+    allow_downscale: conditional_platform_safe_only
+
+  aspect_ratio_check:
+    tolerance_percentage: 0
+    layer_b_rejection_trigger: true
+
+  color_space_check:
+    required_profile: sRGB
+    layer_b_rejection_trigger: true
+
+  artifact_detection:
+    detect_jpeg_blocking: true
+    detect_bandings: true
+    detect_over_sharpening: true
+    layer_b_rejection_trigger: true
+
+compression_pipeline:
+
+  jpg:
+    quality_range_allowed: [80, 92]
+    chroma_subsampling: 4:4:4
+    progressive_encoding: enabled
+
+  png:
+    compression_level_range: [6, 9]
+    transparency_allowed: true
+
+  webp:
+    quality_range_allowed: [75, 90]
+    lossless_allowed: true
+
+  max_compression_threshold_percentage: 25
+  prohibit_visible_quality_loss: true
+
+scaling_engine:
+
+  interpolation_method: bicubic_sharper
+  prohibit_nearest_neighbor: true
+  prohibit_stretched_scaling: true
+  retina_support:
+    export_density_multiplier: 2
+    maintain_aspect_ratio: true
+
+thumbnail_generation:
+
+  default_crop_mode: center_weighted
+  ecommerce_square_priority: true
+  prevent_subject_cutoff: true
+  min_subject_visibility_percentage: 70
+
+platform_delivery_profiles:
+
+  meta:
+    max_file_size_mb: 30
+    preferred_format: jpg
+    auto_optimize_if_under_limit: true
+
+  tiktok:
+    max_file_size_mb: 100
+    preferred_format: jpg
+    motion_intent_required_for_static_visuals: true
+
+  shopee:
+    max_file_size_mb: 2
+    preferred_format: jpg
+    white_background_required: true
+    layer_b_reject_text_overlay: true
+
+  lazada:
+    max_file_size_mb: 2
+    preferred_format: jpg
+    min_product_fill_percentage: 80
+    layer_b_reject_text_overlay: true
+
+output_integrity_rules:
+
+  prohibit_color_shift_after_export: true
+  prohibit_gamma_shift: true
+  prohibit_metadata_corruption: true
+  strip_unnecessary_exif_data: true
+  preserve_orientation_metadata: true
+
+layer_b_pipeline_directives:
+  - rule_id: file_size_enforcement
+    action: execute_in_layer_b
+
+  - rule_id: compression_artifact_check
+    action: execute_in_layer_b
+
+  - rule_id: scaling_distortion_check
+    action: execute_in_layer_b
+
+  - rule_id: color_profile_enforcement
+    action: execute_in_layer_b
+
+  - rule_id: hero_text_overlay_check
+    action: execute_in_layer_b
+
+export_sequence:
+
+  step_1: validate_resolution_and_ratio
+  step_2: validate_color_profile
+  step_3: run_artifact_detection
+  step_4: apply_compression_profile
+  step_5: apply_scaling_if_required
+  step_6: strip_unnecessary_metadata
+  step_7: final_platform_size_check
+
+canonical_export_examples:
+
+  - scenario: shopee_product_listing
+    expected_output: "2000x2000px, JPG, <=2MB, sRGB, white background, no text overlay"
+
+  - scenario: tiktok_vertical_lifestyle
+    expected_output: "1080x1920px, JPG, <=100MB, sRGB, no compression artifacts"
+
+  - scenario: instagram_feed_4_5
+    expected_output: "1080x1350px, JPG, <=30MB, sRGB, aspect ratio exact match"
+
+...
