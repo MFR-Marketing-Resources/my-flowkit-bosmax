@@ -1,0 +1,898 @@
+{
+  "schema_version": "poster-builder-v3-e15-cohort-readiness-v1",
+  "mission": "BOSMAX POSTER BUILDER V3 - PHASE E1.5 BENCHMARK COHORT READINESS REMEDIATION",
+  "base_sha": "44fca6f43c0baa4f987cf82cb1aaba7fe9e75fc3",
+  "runtime_sha": "44fca6f43c0baa4f987cf82cb1aaba7fe9e75fc3",
+  "provider": "GOOGLE_FLOW",
+  "provider_operations": 0,
+  "retry_operations": 0,
+  "hidden_retries": false,
+  "db_mutation_count": 28,
+  "db_mutation_breakdown": {
+    "product_reference_pack_rows_inserted": 5,
+    "creative_asset_rows_inserted": 18,
+    "poster_copy_set_rows_inserted": 5,
+    "total_inserted_rows": 28,
+    "approvals_or_updates": 0
+  },
+  "runtime_and_policy": {
+    "canonical_runtime_sha": "44fca6f43c0baa4f987cf82cb1aaba7fe9e75fc3",
+    "frontend_bundle": "index-DjcZtXCt.js",
+    "feature_enabled": false,
+    "default_mode": "EXACT_COMMERCE",
+    "production_default": false,
+    "legacy_scene_asset_required": false,
+    "optional_scene_reference_supported": true,
+    "database_path": "C:/Users/USER/Desktop/_ref_flowkit/flow_agent.db",
+    "database_counts_after_remediation": {
+      "product": 901,
+      "manual_product": 603,
+      "queue": 663,
+      "product_reference_pack": 6,
+      "creative_asset": 123,
+      "poster_copy_set": 43
+    },
+    "database_integrity": "ok",
+    "database_quick_check": "ok",
+    "database_data_version": 2
+  },
+  "capability_status": {
+    "transport_payload": "SUPPORTED",
+    "provider_multi_reference_behavior": "UNPROVEN",
+    "provider_product_editing_behavior": "UNPROVEN",
+    "provider_nano_banana_behavior": "UNPROVEN",
+    "live_artifact_observation": "NOT_RUN",
+    "reason": "E1.5 is a no-spend readiness remediation. No Google Flow operation was submitted."
+  },
+  "filesystem_only_materialization": {
+    "remote_product_image_cache_files": 3,
+    "provider_operations": 0,
+    "credit_spend": 0,
+    "note": "The local resolver materialized deterministic image caches for remote product URLs. This is filesystem preparation, not a provider generation."
+  },
+  "experiments": [
+    {
+      "exp_id": "EXP-01",
+      "product_id": "ee961aba-5ad2-4d5e-8730-2f70bfeca017",
+      "display_name": "3 IN 1 SABUN DOBI+WANGI+PELEMBUT+ANTIBAKTIRIA 500ML LIQUID LAUNDRY DETERGENT",
+      "category": "Baby & Maternity",
+      "benchmark_reason": "LAUNDRY_LIQUID_REFILL; consumer convenience and multi-benefit product hero.",
+      "product_truth": {
+        "status": "APPROVED_SNAPSHOT",
+        "snapshot_id": "d35b2c02-cfb0-4459-9281-ce6270af9a4c",
+        "snapshot_version": 4,
+        "snapshot_status": "APPROVED",
+        "claim_gate": "CLAIM_SAFE",
+        "claim_risk_level": "LOW",
+        "completeness_score": 1.0,
+        "claim_provenance_status": "APPROVED_SNAPSHOT_BOUND",
+        "approved_claims": [
+          "3 dalam 1 (sabun, pewangi, pelembut), Anti-bakteria, Beli 5 beg penghantaran percuma",
+          "Formula 3-dalam-1 yang menggabungkan detergen, pelembut, dan pewangi dalam satu pek untuk cucian yang lebih pantas dan jimat."
+        ]
+      },
+      "product_intelligence": {
+        "status": "BLOCKED_MISSING_APPROVED_INTELLIGENCE",
+        "audience": "Suri rumah atau orang bujang yang nak jimat masa dan duit beli sabun, pelembut dan pewangi baju secara berasingan.",
+        "desire": "3 dalam 1 (sabun, pewangi, pelembut), Anti-bakteria, Beli 5 beg penghantaran percuma",
+        "selected_angle": "Leceh nak kena beli sabun, pelembut, dan pewangi baju asing-asing. Kos pun jadi mahal bila campur semua.",
+        "angle_source": "APPROVED_SNAPSHOT.pain_points_json -> copy_angle_derivation",
+        "objection": "",
+        "trigger": "",
+        "tone": "",
+        "missing_approved_fields": [
+          "buyer_persona.objections",
+          "buyer_persona.triggers",
+          "buyer_persona.tone"
+        ],
+        "approved_facts": [
+          "Formula 3-dalam-1 yang menggabungkan detergen, pelembut, dan pewangi dalam satu pek untuk cucian yang lebih pantas dan jimat.",
+          "3 dalam 1 (sabun, pewangi, pelembut), Anti-bakteria, Beli 5 beg penghantaran percuma"
+        ],
+        "provenance": "APPROVED_SNAPSHOT"
+      },
+      "copy": {
+        "draft_id": "99d0ebe8-d645-415d-973e-a74e5dabff90",
+        "status": "POSTER_COPY_DRAFT",
+        "approved": false,
+        "production_eligible": false,
+        "score": 74,
+        "rejected_reasons": [],
+        "draft_creation_warnings": [],
+        "primary_message": "3 Dalam 1, Sekali Tuang",
+        "support_message": "Detergen, pelembut dan pewangi dalam satu pek.",
+        "proof_points": [
+          "Formula 3-dalam-1"
+        ],
+        "cta": "Lihat produk",
+        "field_provenance": "APPROVED_SNAPSHOT.usp_json+allowed_claims_json; deterministic E1.5 owner-review draft",
+        "prompt_version": "poster-e1.5-deterministic-draft-v1"
+      },
+      "reference_pack": {
+        "pack_id": "prp_1d6d62c8234514ec6b3d28917479",
+        "status": "PENDING_REVIEW",
+        "machine_qa_status": "WARN",
+        "machine_findings": [
+          "LABEL_CROP_CANDIDATE_REQUIRES_HUMAN_REVIEW",
+          "LOGO_CROP_CANDIDATE_REQUIRES_HUMAN_REVIEW",
+          "CUTOUT_CANDIDATE_REQUIRES_HUMAN_REVIEW",
+          "PHYSICAL_SCALE_UNVERIFIED_NO_PIXEL_INFERENCE"
+        ],
+        "roles": [
+          {
+            "role": "PRODUCT_CANONICAL",
+            "asset_id": "ca_refpack_1bbbaa4d746827f8e805f581",
+            "media_id": null,
+            "sha256": "96465a6cae3ecbf54dfbd7eab4f5664d910898efdc8d28b65b35e0eecd6e8dc0",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_LABEL_CROP",
+            "asset_id": "ca_refpack_32a803596ba53a95d01235af",
+            "media_id": null,
+            "sha256": "bbd0886b6c8b263d276475baa043eb7fe02db8a3bac1265abedb7afc1b698b20",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_LOGO_CROP",
+            "asset_id": "ca_refpack_6bb6ee965698ec29a9342187",
+            "media_id": null,
+            "sha256": "bbd0886b6c8b263d276475baa043eb7fe02db8a3bac1265abedb7afc1b698b20",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_CUTOUT",
+            "asset_id": "ca_refpack_b64e395016792e4087bca070",
+            "media_id": null,
+            "sha256": "a91f5ee3b41f672697fb58c744b07a46ed71d7e4e0be59426ecc254065febc2f",
+            "source_type": "DETERMINISTIC_CUTOUT_CANDIDATE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          }
+        ],
+        "provenance": {
+          "builder": "product_reference_pack_service",
+          "canonical_source": "PRODUCT_DATABASE_RECORD",
+          "generated_by_provider": false,
+          "created_without_credit": true
+        }
+      },
+      "physical_scale": {
+        "physical_width_mm": null,
+        "physical_height_mm": null,
+        "physical_depth_mm": null,
+        "volume_ml": null,
+        "scale_evidence_source": "UNVERIFIED",
+        "scale_confidence": "UNVERIFIED",
+        "status": "UNVERIFIED",
+        "no_pixel_inference": true,
+        "reason": "Authored dimensions or an approved known-dimension reference are absent."
+      },
+      "campaign_design_brief": {
+        "status": "BLOCKED_MISSING_APPROVED_INTELLIGENCE",
+        "design_route": "BOLD_VALUE_COMMERCE",
+        "layout_variant": "VALUE_DIAGONAL",
+        "type_pairing_id": "commerce-arialblack-trebuchet-v1",
+        "blockers": [
+          "approved provenance:buyer_persona.objections",
+          "approved provenance:buyer_persona.tone",
+          "approved provenance:buyer_persona.triggers"
+        ],
+        "legacy_scene_asset_required": false,
+        "optional_scene_reference_supported": true
+      },
+      "deterministic_repairs_applied": [
+        "Materialized Product Reference Pack draft from canonical product image.",
+        "Created label/logo crop candidates and deterministic cutout candidate.",
+        "Bound all derived assets to product_id with SHA-256 provenance.",
+        "Derived angle only from approved pain-point evidence.",
+        "Created a bounded poster-native copy draft without approval."
+      ],
+      "owner_approvals_required": [
+        "APPROVE_EXP01_REFERENCE_PACK:prp_1d6d62c8234514ec6b3d28917479",
+        "APPROVE_EXP01_POSTER_COPY_SET:99d0ebe8-d645-415d-973e-a74e5dabff90",
+        "REVIEW_EXP01_CAMPAIGN_BRIEF_MISSING_APPROVED_OBJECTION_TRIGGER_TONE",
+        "BLOCK_EXP01_MISSING_SCALE_EVIDENCE"
+      ],
+      "remaining_blockers": [
+        "CAMPAIGN_INTELLIGENCE_INCOMPLETE",
+        "REFERENCE_PACK_APPROVAL_REQUIRED",
+        "POSTER_COPY_APPROVAL_REQUIRED",
+        "PHYSICAL_SCALE_EVIDENCE_UNVERIFIED",
+        "GENERATED_OUTPUT_MACHINE_CHECKED_REQUIRED",
+        "GENERATED_OUTPUT_HUMAN_APPROVED_REQUIRED"
+      ],
+      "status": "BLOCKED"
+    },
+    {
+      "exp_id": "EXP-02",
+      "product_id": "90349f8c-9e14-4efe-988e-76ec60ea31f4",
+      "display_name": "Bosmax Herbs 5 ML",
+      "category": "Health",
+      "benchmark_reason": "SUPPLEMENT_BOTTLE; sensitive claim boundary and label/identity fidelity.",
+      "product_truth": {
+        "status": "APPROVED_SNAPSHOT",
+        "snapshot_id": "a19862e9-25d3-4a90-b7fb-3240658cdf6b",
+        "snapshot_version": 4,
+        "snapshot_status": "APPROVED",
+        "claim_gate": "CLAIM_REVIEW_REQUIRED",
+        "claim_risk_level": "HIGH",
+        "completeness_score": 1.0,
+        "claim_provenance_status": "OWNER_REVIEW_REQUIRED",
+        "claim_safe_copy_status": "CLAIM_SAFE_COPY_APPROVED",
+        "approved_claims": [
+          "Minyak herba sapuan luaran untuk lelaki dewasa",
+          "Mengandungi Tongkat Ali Hitam, Gamat, Akar Angin dan Minyak Zaitun",
+          "Botol roll-on 5 ML yang kompak dan mudah dibawa",
+          "Pembungkusan diskret",
+          "Digunakan dengan urutan ringkas pada bahagian luaran"
+        ]
+      },
+      "product_intelligence": {
+        "status": "READY_FOR_COPY_REVIEW",
+        "audience": "Lelaki dewasa (25-55) yang sedar imej diri dan maruah; beli secara diskret.",
+        "desire": "rasa yakin dan ready semula",
+        "objection": "betul ke berkesan?",
+        "trigger": "ego",
+        "tone": "wrapped, ego-aware, dialogue-safe; jangan eksplisit/anatomikal",
+        "selected_angle": "keyakinan diri menurun",
+        "angle_source": "APPROVED_SNAPSHOT.copy_strategy_summary_json.angles",
+        "approved_facts": [
+          "Formulasi Tongkat Ali Hitam + Gamat + Akar Angin dalam asas Minyak Zaitun",
+          "Format roll-on 5 ML - kompak, mesra travel, elak pembaziran",
+          "Botol matte black diskret, sesuai untuk pembelian privasi"
+        ],
+        "provenance": "APPROVED_SNAPSHOT"
+      },
+      "copy": {
+        "draft_id": "a89aaa78-5ea7-4015-b588-c271f38fa015",
+        "status": "POSTER_COPY_DRAFT",
+        "approved": false,
+        "production_eligible": false,
+        "score": 72,
+        "rejected_reasons": [],
+        "draft_creation_warnings": [
+          "TOO_MANY_IDEAS"
+        ],
+        "primary_message": "Bosmax Herbs 5 ML",
+        "support_message": "Roll-on kompak untuk sapuan luaran.",
+        "proof_points": [
+          "Format roll-on 5 ML",
+          "Botol matte black diskret"
+        ],
+        "cta": "Lihat produk",
+        "field_provenance": "APPROVED_SNAPSHOT.usp_json+allowed_claims_json; deterministic E1.5 owner-review draft",
+        "prompt_version": "poster-e1.5-deterministic-draft-v1"
+      },
+      "reference_pack": {
+        "pack_id": "prp_b7514c86350c2651dfc0c9588cda",
+        "status": "PENDING_REVIEW",
+        "machine_qa_status": "WARN",
+        "machine_findings": [
+          "LABEL_CROP_CANDIDATE_REQUIRES_HUMAN_REVIEW",
+          "LOGO_CROP_CANDIDATE_REQUIRES_HUMAN_REVIEW",
+          "CUTOUT_NOT_BOUND"
+        ],
+        "roles": [
+          {
+            "role": "PRODUCT_CANONICAL",
+            "asset_id": "ca_refpack_528e49181f9e466401372b72",
+            "media_id": null,
+            "sha256": "31924843b59c598051de52e14f499a2d9be7c56599d68463525d9dd8891b76f2",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_LABEL_CROP",
+            "asset_id": "ca_refpack_3efc666bad5ac783087d5be2",
+            "media_id": null,
+            "sha256": "3c2e8bdc3b8ea79c69a06398d29206a1dc222ad7df09b1620419c9f358322d35",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_LOGO_CROP",
+            "asset_id": "ca_refpack_5897c485f92ed8c4b0c976ad",
+            "media_id": null,
+            "sha256": "3c2e8bdc3b8ea79c69a06398d29206a1dc222ad7df09b1620419c9f358322d35",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_CUTOUT",
+            "asset_id": null,
+            "media_id": null,
+            "sha256": null,
+            "source_type": "NOT_BOUND",
+            "approved": false,
+            "file_exists": false,
+            "product_id_bound": false
+          }
+        ],
+        "provenance": {
+          "builder": "product_reference_pack_service",
+          "canonical_source": "PRODUCT_DATABASE_RECORD",
+          "generated_by_provider": false,
+          "created_without_credit": true
+        }
+      },
+      "physical_scale": {
+        "physical_width_mm": null,
+        "physical_height_mm": null,
+        "physical_depth_mm": null,
+        "volume_ml": 5.0,
+        "scale_evidence_source": "PRODUCT_RECORD_OR_AUTHORITY_SCHEMA",
+        "scale_confidence": "MEDIUM",
+        "status": "UNVERIFIED",
+        "no_pixel_inference": true,
+        "reason": "Volume alone is not a world-scale bounding box; authored dimensions or an approved known-dimension reference are required."
+      },
+      "campaign_design_brief": {
+        "status": "READY_FOR_COPY_REVIEW",
+        "design_route": "PRODUCT_HERO_SCULPTURE",
+        "layout_variant": "SCULPTURE_LEFT_COPY",
+        "type_pairing_id": "hero-arialblack-trebuchet-v1",
+        "blockers": [],
+        "legacy_scene_asset_required": false,
+        "optional_scene_reference_supported": true
+      },
+      "deterministic_repairs_applied": [
+        "Materialized Product Reference Pack draft from canonical product image.",
+        "Created label/logo crop candidates; no cutout was falsely bound.",
+        "Bound derived assets to product_id with SHA-256 provenance.",
+        "Merged approved allowed claims into the grounded fact pool.",
+        "Derived the selected angle from the approved persona snapshot.",
+        "Created a bounded poster-native copy draft without approval."
+      ],
+      "owner_approvals_required": [
+        "REVIEW_EXP02_CLAIM_PROVENANCE:a19862e9-25d3-4a90-b7fb-3240658cdf6b",
+        "APPROVE_EXP02_REFERENCE_PACK:prp_b7514c86350c2651dfc0c9588cda",
+        "APPROVE_EXP02_POSTER_COPY_SET:a89aaa78-5ea7-4015-b588-c271f38fa015",
+        "REVIEW_EXP02_COPY_WARNING:TOO_MANY_IDEAS",
+        "BLOCK_EXP02_MISSING_SCALE_EVIDENCE"
+      ],
+      "remaining_blockers": [
+        "APPROVED_CLAIM_PROVENANCE_REQUIRED",
+        "REFERENCE_PACK_APPROVAL_REQUIRED",
+        "POSTER_COPY_APPROVAL_REQUIRED",
+        "PHYSICAL_SCALE_EVIDENCE_UNVERIFIED",
+        "GENERATED_OUTPUT_MACHINE_CHECKED_REQUIRED",
+        "GENERATED_OUTPUT_HUMAN_APPROVED_REQUIRED"
+      ],
+      "status": "BLOCKED"
+    },
+    {
+      "exp_id": "EXP-03",
+      "product_id": "d2f8fd58-437b-4447-8730-694b782eef17",
+      "display_name": "Sambal Nyet Berapi by Khairulaming",
+      "category": "Food & Beverage",
+      "benchmark_reason": "Food product; high-volume known product and existing poster-copy regression.",
+      "product_truth": {
+        "status": "APPROVED_SNAPSHOT",
+        "snapshot_id": "171b31d4-8c6b-474b-94ff-1f70563d2064",
+        "snapshot_version": 5,
+        "snapshot_status": "APPROVED",
+        "claim_gate": "CLAIM_SAFE",
+        "claim_risk_level": "MEDIUM",
+        "completeness_score": 1.0,
+        "claim_provenance_status": "APPROVED_SNAPSHOT_BOUND",
+        "approved_claims": [
+          "Sangat pedas dan memuaskan",
+          "Dibuat dengan cili pilihan",
+          "Rasa sambal buatan sendiri",
+          "Jenama dipercayai oleh Khairulaming",
+          "Sesuai untuk pelbagai hidangan"
+        ]
+      },
+      "product_intelligence": {
+        "status": "READY_FOR_COPY_REVIEW",
+        "audience": "Lelaki dan wanita Malaysia berumur 18-40, aktif di TikTok, suka mencuba makanan viral, dan sering mencari sensasi pedas.",
+        "desire": "Nak rasa sambal yang betul-betul pedas, bukan sekadar manis",
+        "objection": "Mahal?",
+        "trigger": "convenience",
+        "tone": "Berapi, bersemangat, santai, dan penuh keyakinan.",
+        "selected_angle": "Susah nak cari sambal kat pasaran yang betul-betul pedas kick. Kebanyakannya pedas manis je, tak puas makan bagi kaki pedas.",
+        "angle_source": "APPROVED_SNAPSHOT.buyer_persona_snapshot_json -> copy_angle_derivation",
+        "approved_facts": [
+          "Sambal viral nombor 1 di Malaysia. Tahap kepedasan yang sangat tinggi dan rasa yang seimbang, confirm puas hati bagi pencinta pedas.",
+          "Sangat pedas dan memuaskan",
+          "Dibuat dengan cili pilihan"
+        ],
+        "provenance": "APPROVED_SNAPSHOT"
+      },
+      "copy": {
+        "draft_id": "551d9b99-817a-469b-82fa-c0deb983df7e",
+        "status": "POSTER_COPY_DRAFT",
+        "approved": false,
+        "production_eligible": false,
+        "score": 76,
+        "rejected_reasons": [],
+        "draft_creation_warnings": [],
+        "legacy_approved_best_score": 70,
+        "legacy_approved_copy_provenance_complete": false,
+        "primary_message": "Pedas Berapi Untuk Kaki Pedas",
+        "support_message": "Rasa seimbang untuk nasi, mi dan hidangan harian.",
+        "proof_points": [
+          "Sangat pedas dan memuaskan",
+          "Dibuat dengan cili pilihan"
+        ],
+        "cta": "Jom cuba sekarang!",
+        "field_provenance": "APPROVED_SNAPSHOT.usp_json+allowed_claims_json; deterministic E1.5 owner-review draft",
+        "prompt_version": "poster-e1.5-deterministic-draft-v1"
+      },
+      "reference_pack": {
+        "pack_id": "prp_57a19175356ec88cbc0fc4ecc3b1",
+        "status": "PENDING_REVIEW",
+        "machine_qa_status": "WARN",
+        "machine_findings": [
+          "LABEL_CROP_CANDIDATE_REQUIRES_HUMAN_REVIEW",
+          "LOGO_CROP_CANDIDATE_REQUIRES_HUMAN_REVIEW",
+          "CUTOUT_CANDIDATE_REQUIRES_HUMAN_REVIEW",
+          "PHYSICAL_SCALE_UNVERIFIED_NO_PIXEL_INFERENCE"
+        ],
+        "roles": [
+          {
+            "role": "PRODUCT_CANONICAL",
+            "asset_id": "ca_refpack_d12b4f4dce8b1eceeb71f5be",
+            "media_id": null,
+            "sha256": "1d53b13d66de38d26c5db60ec5914a71aa2d6c987e31f0eb5bf18b2889d52924",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_LABEL_CROP",
+            "asset_id": "ca_refpack_272eeca5623d669d635f2555",
+            "media_id": null,
+            "sha256": "84f72f838eb6bf589db0bea3ddf926f3e9eedfddb4bd36f2d555ebd4017fcaee",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_LOGO_CROP",
+            "asset_id": "ca_refpack_d9001ff6fbfe0b0bbd953120",
+            "media_id": null,
+            "sha256": "84f72f838eb6bf589db0bea3ddf926f3e9eedfddb4bd36f2d555ebd4017fcaee",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_CUTOUT",
+            "asset_id": "ca_refpack_518e2caa8930215fcee73392",
+            "media_id": null,
+            "sha256": "efb5b1f9e2bca3f7e59aafe8779070ca47c8bbe57b947e652f7b758fc3da051f",
+            "source_type": "DETERMINISTIC_CUTOUT_CANDIDATE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          }
+        ],
+        "provenance": {
+          "builder": "product_reference_pack_service",
+          "canonical_source": "PRODUCT_DATABASE_RECORD",
+          "generated_by_provider": false,
+          "created_without_credit": true
+        }
+      },
+      "physical_scale": {
+        "physical_width_mm": null,
+        "physical_height_mm": null,
+        "physical_depth_mm": null,
+        "volume_ml": null,
+        "scale_evidence_source": "UNVERIFIED",
+        "scale_confidence": "UNVERIFIED",
+        "status": "UNVERIFIED",
+        "no_pixel_inference": true,
+        "reason": "Authored dimensions or an approved known-dimension reference are absent."
+      },
+      "campaign_design_brief": {
+        "status": "READY_FOR_COPY_REVIEW",
+        "design_route": "PRODUCT_HERO_SCULPTURE",
+        "layout_variant": "SCULPTURE_LEFT_COPY",
+        "type_pairing_id": "hero-arialblack-trebuchet-v1",
+        "blockers": [],
+        "legacy_scene_asset_required": false,
+        "optional_scene_reference_supported": true
+      },
+      "deterministic_repairs_applied": [
+        "Materialized Product Reference Pack draft from canonical product image.",
+        "Created label/logo crop candidates and deterministic cutout candidate.",
+        "Bound derived assets to product_id with SHA-256 provenance.",
+        "Kept existing approved copy immutable and measured it below the 72 threshold.",
+        "Derived the campaign angle from approved persona evidence.",
+        "Created a bounded poster-native copy draft without approval."
+      ],
+      "owner_approvals_required": [
+        "APPROVE_EXP03_REFERENCE_PACK:prp_57a19175356ec88cbc0fc4ecc3b1",
+        "APPROVE_EXP03_POSTER_COPY_SET:551d9b99-817a-469b-82fa-c0deb983df7e",
+        "BLOCK_EXP03_MISSING_SCALE_EVIDENCE"
+      ],
+      "remaining_blockers": [
+        "REFERENCE_PACK_APPROVAL_REQUIRED",
+        "POSTER_COPY_APPROVAL_REQUIRED",
+        "PHYSICAL_SCALE_EVIDENCE_UNVERIFIED",
+        "GENERATED_OUTPUT_MACHINE_CHECKED_REQUIRED",
+        "GENERATED_OUTPUT_HUMAN_APPROVED_REQUIRED"
+      ],
+      "status": "BLOCKED"
+    },
+    {
+      "exp_id": "EXP-04",
+      "product_id": "c41ccd1c-aa3d-48f8-a80c-f01414ea221e",
+      "display_name": "JBL PHANTOM P90 True Wireless Bluetooth In-Ear Earbuds",
+      "category": "Electronics & Gadgets",
+      "benchmark_reason": "ELECTRONICS_SMALL_DEVICE; non-bottle geometry and technical precision route.",
+      "product_truth": {
+        "status": "APPROVED_SNAPSHOT",
+        "snapshot_id": "9e43f306-062e-4899-a953-2e08537d7d71",
+        "snapshot_version": 5,
+        "snapshot_status": "APPROVED",
+        "claim_gate": "CLAIM_SAFE",
+        "claim_risk_level": "LOW",
+        "completeness_score": 1.0,
+        "claim_provenance_status": "APPROVED_SNAPSHOT_BOUND",
+        "claim_safe_copy_status": "MISSING_PRODUCT_RECORD_STATUS",
+        "approved_claims": [
+          "Kalis air dalam, bateri tahan lama, bass padu, 3D surround sound, noise reduction.",
+          "Earbud TWS dengan bunyi bass berkuasa, kalis air dalam dan teknologi noise reduction pintar untuk pengalaman audio premium."
+        ]
+      },
+      "product_intelligence": {
+        "status": "BLOCKED_MISSING_APPROVED_INTELLIGENCE",
+        "audience": "Peminat muzik, gamers dan orang aktif yang nak earbud berkualiti tinggi dengan bunyi mantap.",
+        "desire": "Kalis air dalam, bateri tahan lama, bass padu, 3D surround sound, noise reduction.",
+        "selected_angle": "Earbud biasa bunyi pecah, bateri tak tahan lama dan bising bunyi luar masuk masa tengah call.",
+        "angle_source": "APPROVED_SNAPSHOT.pain_points_json -> copy_angle_derivation",
+        "objection": "",
+        "trigger": "",
+        "tone": "",
+        "missing_approved_fields": [
+          "buyer_persona.objections",
+          "buyer_persona.triggers",
+          "buyer_persona.tone"
+        ],
+        "approved_facts": [
+          "Earbud TWS dengan bunyi bass berkuasa, kalis air dalam dan teknologi noise reduction pintar untuk pengalaman audio premium.",
+          "Kalis air dalam, bateri tahan lama, bass padu, 3D surround sound, noise reduction."
+        ],
+        "provenance": "APPROVED_SNAPSHOT"
+      },
+      "copy": {
+        "draft_id": "d794dd87-aaef-48f1-a22b-abeed0e7d841",
+        "status": "POSTER_COPY_DRAFT",
+        "approved": false,
+        "production_eligible": false,
+        "score": 76,
+        "rejected_reasons": [],
+        "draft_creation_warnings": [],
+        "primary_message": "Bass Padu Untuk Muzik Dan Gaming",
+        "support_message": "3D surround sound dengan noise reduction.",
+        "proof_points": [
+          "Bateri tahan lama",
+          "Kalis air dalam"
+        ],
+        "cta": "Lihat produk",
+        "field_provenance": "APPROVED_SNAPSHOT.usp_json+allowed_claims_json; deterministic E1.5 owner-review draft",
+        "prompt_version": "poster-e1.5-deterministic-draft-v1"
+      },
+      "reference_pack": {
+        "pack_id": "prp_e79f4a41098cbfc66d1f10e30683",
+        "status": "PENDING_REVIEW",
+        "machine_qa_status": "WARN",
+        "machine_findings": [
+          "LABEL_CROP_CANDIDATE_REQUIRES_HUMAN_REVIEW",
+          "LOGO_CROP_CANDIDATE_REQUIRES_HUMAN_REVIEW",
+          "CUTOUT_NOT_BOUND",
+          "PHYSICAL_SCALE_UNVERIFIED_NO_PIXEL_INFERENCE"
+        ],
+        "roles": [
+          {
+            "role": "PRODUCT_CANONICAL",
+            "asset_id": "ca_refpack_e67b2e487b08ca0b1dca43f1",
+            "media_id": null,
+            "sha256": "b660946a7714e6bc1b85534425fa4ed0fdfce57fbc3cc19b51fac4c0aabacfe5",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_LABEL_CROP",
+            "asset_id": "ca_refpack_7081068fb854be116a0339ed",
+            "media_id": null,
+            "sha256": "52f407bc03886d2a5fbecddaaa9d11fd55e526f750e545bd14f439462b4c15db",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_LOGO_CROP",
+            "asset_id": "ca_refpack_5ef77e3bf8adcce4a8d39a73",
+            "media_id": null,
+            "sha256": "52f407bc03886d2a5fbecddaaa9d11fd55e526f750e545bd14f439462b4c15db",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_CUTOUT",
+            "asset_id": null,
+            "media_id": null,
+            "sha256": null,
+            "source_type": "NOT_BOUND",
+            "approved": false,
+            "file_exists": false,
+            "product_id_bound": false
+          }
+        ],
+        "provenance": {
+          "builder": "product_reference_pack_service",
+          "canonical_source": "PRODUCT_DATABASE_RECORD",
+          "generated_by_provider": false,
+          "created_without_credit": true
+        }
+      },
+      "physical_scale": {
+        "physical_width_mm": null,
+        "physical_height_mm": null,
+        "physical_depth_mm": null,
+        "volume_ml": null,
+        "scale_evidence_source": "UNVERIFIED",
+        "scale_confidence": "UNVERIFIED",
+        "status": "UNVERIFIED",
+        "no_pixel_inference": true,
+        "reason": "Authored dimensions or an approved known-dimension reference are absent."
+      },
+      "campaign_design_brief": {
+        "status": "BLOCKED_MISSING_APPROVED_INTELLIGENCE",
+        "design_route": "TECHNICAL_PRECISION",
+        "layout_variant": "PRECISION_LEFT_RAIL",
+        "type_pairing_id": "technical-consolas-arial-v1",
+        "blockers": [
+          "approved provenance:buyer_persona.objections",
+          "approved provenance:buyer_persona.tone",
+          "approved provenance:buyer_persona.triggers"
+        ],
+        "legacy_scene_asset_required": false,
+        "optional_scene_reference_supported": true
+      },
+      "deterministic_repairs_applied": [
+        "Materialized Product Reference Pack draft from canonical product image.",
+        "Created label/logo crop candidates; no cutout was falsely bound.",
+        "Bound derived assets to product_id with SHA-256 provenance.",
+        "Derived angle only from approved pain-point evidence.",
+        "Created a bounded poster-native copy draft without approval."
+      ],
+      "owner_approvals_required": [
+        "REVIEW_EXP04_CLAIM_SAFE_COPY_STATUS",
+        "APPROVE_EXP04_REFERENCE_PACK:prp_e79f4a41098cbfc66d1f10e30683",
+        "REVIEW_EXP04_REFERENCE_PACK_CUTOUT_MISSING",
+        "APPROVE_EXP04_POSTER_COPY_SET:d794dd87-aaef-48f1-a22b-abeed0e7d841",
+        "REVIEW_EXP04_CAMPAIGN_BRIEF_MISSING_APPROVED_OBJECTION_TRIGGER_TONE",
+        "BLOCK_EXP04_MISSING_SCALE_EVIDENCE"
+      ],
+      "remaining_blockers": [
+        "CLAIM_SAFE_COPY_STATUS_MISSING",
+        "CAMPAIGN_INTELLIGENCE_INCOMPLETE",
+        "REFERENCE_PACK_APPROVAL_REQUIRED",
+        "REFERENCE_PACK_CUTOUT_NOT_BOUND",
+        "POSTER_COPY_APPROVAL_REQUIRED",
+        "PHYSICAL_SCALE_EVIDENCE_UNVERIFIED",
+        "GENERATED_OUTPUT_MACHINE_CHECKED_REQUIRED",
+        "GENERATED_OUTPUT_HUMAN_APPROVED_REQUIRED"
+      ],
+      "status": "BLOCKED"
+    },
+    {
+      "exp_id": "EXP-05",
+      "product_id": "bff6f9d6-8370-4bcb-a7ee-86d0f4dbf5f1",
+      "display_name": "CHEEZY GARLIC SPREAD BY AUMM | Halal Produk Bumiputra",
+      "category": "Food & Beverages",
+      "benchmark_reason": "Food product; human-product interaction target and distinct cohort replacement for the E1 duplicate.",
+      "product_truth": {
+        "status": "APPROVED_SNAPSHOT",
+        "snapshot_id": "a123d1f3-6685-43ab-978d-21dd7ab61e71",
+        "snapshot_version": 4,
+        "snapshot_status": "APPROVED",
+        "claim_gate": "CLAIM_SAFE",
+        "claim_risk_level": "MEDIUM",
+        "completeness_score": 1.0,
+        "claim_provenance_status": "APPROVED_SNAPSHOT_BOUND",
+        "claim_safe_copy_status": "CLAIM_SAFE_COPY_APPROVED",
+        "approved_claims": [
+          "Rasa cheezy garlic sedap, sapu terus pada roti atau pastri, Halal Bumiputra.",
+          "Sapuan sedia dimakan dengan gabungan rasa keju dan bawang putih sebenar. 100% Halal dan produk keluaran Bumiputra."
+        ]
+      },
+      "product_intelligence": {
+        "status": "BLOCKED_MISSING_APPROVED_INTELLIGENCE",
+        "audience": "Peminat roti dan snek berumur 18 hingga 40 tahun yang inginkan sapuan cheezy garlic yang lazat dan pantas disediakan.",
+        "desire": "Rasa cheezy garlic sedap, sapu terus pada roti atau pastri, Halal Bumiputra.",
+        "selected_angle": "Bosan dengan sarapan roti kosong yang tak ada rasa? Nak buat garlic bread sendiri tapi leceh nak cincang bawang putih dan parut cheese?",
+        "angle_source": "APPROVED_SNAPSHOT.pain_points_json -> copy_angle_derivation",
+        "objection": "",
+        "trigger": "",
+        "tone": "",
+        "missing_approved_fields": [
+          "buyer_persona.objections",
+          "buyer_persona.triggers",
+          "buyer_persona.tone"
+        ],
+        "approved_facts": [
+          "Rasa cheezy garlic sedap, sapu terus pada roti atau pastri, Halal Bumiputra."
+        ],
+        "provenance": "APPROVED_SNAPSHOT"
+      },
+      "copy": {
+        "draft_id": "c3835d37-d5cb-411d-9441-046334f2662c",
+        "status": "POSTER_COPY_DRAFT",
+        "approved": false,
+        "production_eligible": false,
+        "score": 68,
+        "rejected_reasons": [],
+        "draft_creation_warnings": [],
+        "primary_message": "Cheezy Garlic, Sapu Terus",
+        "support_message": "Sapu pada roti atau pastri, terus sedia dimakan.",
+        "proof_points": [
+          "Gabungan keju dan bawang putih",
+          "Halal Bumiputra"
+        ],
+        "cta": "Lihat produk",
+        "field_provenance": "APPROVED_SNAPSHOT.usp_json+allowed_claims_json; deterministic E1.5 owner-review draft",
+        "prompt_version": "poster-e1.5-deterministic-draft-v1"
+      },
+      "reference_pack": {
+        "pack_id": "prp_403f7d4d4c40ddadcfa0289e566a",
+        "status": "PENDING_REVIEW",
+        "machine_qa_status": "WARN",
+        "machine_findings": [
+          "LABEL_CROP_CANDIDATE_REQUIRES_HUMAN_REVIEW",
+          "LOGO_CROP_CANDIDATE_REQUIRES_HUMAN_REVIEW",
+          "CUTOUT_CANDIDATE_REQUIRES_HUMAN_REVIEW",
+          "PHYSICAL_SCALE_UNVERIFIED_NO_PIXEL_INFERENCE"
+        ],
+        "roles": [
+          {
+            "role": "PRODUCT_CANONICAL",
+            "asset_id": "ca_refpack_82e61503ff3d1a2c2fceffcc",
+            "media_id": null,
+            "sha256": "8c1691a95dd1caa3227922fbbf08d02f89aa941857087cd92bd8f396c2bd289e",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_LABEL_CROP",
+            "asset_id": "ca_refpack_b55d5360b6953337cb23632c",
+            "media_id": null,
+            "sha256": "6eee68e8220a2d9134b4f04fd8a7f20d654307eb72eb397b6f1e8f60b3159873",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_LOGO_CROP",
+            "asset_id": "ca_refpack_248cf2399fd91ce4bf9416e0",
+            "media_id": null,
+            "sha256": "6eee68e8220a2d9134b4f04fd8a7f20d654307eb72eb397b6f1e8f60b3159873",
+            "source_type": "PRODUCT_CACHE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          },
+          {
+            "role": "PRODUCT_CUTOUT",
+            "asset_id": "ca_refpack_7415ee1b364fe3064bfa241c",
+            "media_id": null,
+            "sha256": "f8b253d3ece07a33ed49811a9758f6512937828fff972c4e8fd87b35765126bc",
+            "source_type": "DETERMINISTIC_CUTOUT_CANDIDATE",
+            "approved": false,
+            "file_exists": true,
+            "product_id_bound": true
+          }
+        ],
+        "provenance": {
+          "builder": "product_reference_pack_service",
+          "canonical_source": "PRODUCT_DATABASE_RECORD",
+          "generated_by_provider": false,
+          "created_without_credit": true
+        }
+      },
+      "physical_scale": {
+        "physical_width_mm": null,
+        "physical_height_mm": null,
+        "physical_depth_mm": null,
+        "volume_ml": null,
+        "scale_evidence_source": "UNVERIFIED",
+        "scale_confidence": "UNVERIFIED",
+        "status": "UNVERIFIED",
+        "no_pixel_inference": true,
+        "reason": "Authored dimensions or an approved known-dimension reference are absent."
+      },
+      "campaign_design_brief": {
+        "status": "BLOCKED_MISSING_APPROVED_INTELLIGENCE",
+        "design_route": "PRODUCT_HERO_SCULPTURE",
+        "layout_variant": "SCULPTURE_LEFT_COPY",
+        "type_pairing_id": "hero-arialblack-trebuchet-v1",
+        "blockers": [
+          "approved provenance:buyer_persona.objections",
+          "approved provenance:buyer_persona.tone",
+          "approved provenance:buyer_persona.triggers"
+        ],
+        "legacy_scene_asset_required": false,
+        "optional_scene_reference_supported": true
+      },
+      "deterministic_repairs_applied": [
+        "Materialized Product Reference Pack draft from canonical product image.",
+        "Created label/logo crop candidates and deterministic cutout candidate.",
+        "Bound derived assets to product_id with SHA-256 provenance.",
+        "Merged approved allowed claims into the grounded fact pool.",
+        "Derived angle only from approved pain-point evidence.",
+        "Created a bounded poster-native copy draft without approval."
+      ],
+      "owner_approvals_required": [
+        "APPROVE_EXP05_REFERENCE_PACK:prp_403f7d4d4c40ddadcfa0289e566a",
+        "APPROVE_EXP05_POSTER_COPY_SET:c3835d37-d5cb-411d-9441-046334f2662c",
+        "REVIEW_EXP05_CAMPAIGN_BRIEF_MISSING_APPROVED_OBJECTION_TRIGGER_TONE",
+        "BLOCK_EXP05_MISSING_SCALE_EVIDENCE"
+      ],
+      "remaining_blockers": [
+        "CAMPAIGN_INTELLIGENCE_INCOMPLETE",
+        "REFERENCE_PACK_APPROVAL_REQUIRED",
+        "POSTER_COPY_APPROVAL_REQUIRED",
+        "PHYSICAL_SCALE_EVIDENCE_UNVERIFIED",
+        "GENERATED_OUTPUT_MACHINE_CHECKED_REQUIRED",
+        "GENERATED_OUTPUT_HUMAN_APPROVED_REQUIRED"
+      ],
+      "status": "BLOCKED"
+    }
+  ],
+  "owner_queue": [
+    "APPROVE_EXP01_REFERENCE_PACK:prp_1d6d62c8234514ec6b3d28917479",
+    "APPROVE_EXP01_POSTER_COPY_SET:99d0ebe8-d645-415d-973e-a74e5dabff90",
+    "APPROVE_EXP02_REFERENCE_PACK:prp_b7514c86350c2651dfc0c9588cda",
+    "APPROVE_EXP02_POSTER_COPY_SET:a89aaa78-5ea7-4015-b588-c271f38fa015",
+    "APPROVE_EXP03_REFERENCE_PACK:prp_57a19175356ec88cbc0fc4ecc3b1",
+    "APPROVE_EXP03_POSTER_COPY_SET:551d9b99-817a-469b-82fa-c0deb983df7e",
+    "APPROVE_EXP04_REFERENCE_PACK:prp_e79f4a41098cbfc66d1f10e30683",
+    "APPROVE_EXP04_POSTER_COPY_SET:d794dd87-aaef-48f1-a22b-abeed0e7d841",
+    "APPROVE_EXP05_REFERENCE_PACK:prp_403f7d4d4c40ddadcfa0289e566a",
+    "APPROVE_EXP05_POSTER_COPY_SET:c3835d37-d5cb-411d-9441-046334f2662c",
+    "REVIEW_EXP02_CLAIM_PROVENANCE:a19862e9-25d3-4a90-b7fb-3240658cdf6b",
+    "REVIEW_EXP04_CLAIM_SAFE_COPY_STATUS",
+    "REVIEW_EXP04_REFERENCE_PACK_CUTOUT_MISSING",
+    "BLOCK_EXP01_MISSING_SCALE_EVIDENCE",
+    "BLOCK_EXP02_MISSING_SCALE_EVIDENCE",
+    "BLOCK_EXP03_MISSING_SCALE_EVIDENCE",
+    "BLOCK_EXP04_MISSING_SCALE_EVIDENCE",
+    "BLOCK_EXP05_MISSING_SCALE_EVIDENCE"
+  ],
+  "final_verdict": "PHASE_E2_BLOCKED_COHORT_INCOMPLETE",
+  "feature_flag_decision": "KEEP_FEATURE_DISABLED",
+  "next_decision": "Do not run the five-operation live benchmark. Obtain owner decisions for the queued reference/copy/claim/brief items and authored physical dimensions or an approved known-dimension reference, then rerun the no-spend readiness gate."
+}

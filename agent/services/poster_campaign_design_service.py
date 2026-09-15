@@ -23,6 +23,7 @@ from agent.models.poster_campaign_design_brief import (
     PosterCampaignDesignBrief,
 )
 from agent.models.poster_copy_quality import PosterCopyQualityRequest
+from agent.models.poster_copy_set import validate_poster_native_lengths
 from agent.services import ai_copy_provider_adapter as ai_provider
 from agent.services.copy_grounding_service import (
     build_safe_campaign_context,
@@ -114,6 +115,11 @@ def _brief_from_context(
     copy_layout: dict[str, str] | None,
 ) -> PosterCampaignDesignBrief:
     product_id = _clean(product.get("id") or product.get("product_id"))
+    product_name = _clean(
+        product.get("product_display_name")
+        or product.get("raw_product_title")
+        or product_id
+    )
     art = context.get("art_direction") or {}
     design = resolve_design_route(
         product,
@@ -126,6 +132,7 @@ def _brief_from_context(
     provenance = dict(context.get("field_provenance") or {})
     provenance.update(
         {
+            "product_identity.name": "PRODUCT.product_display_name_or_raw_product_title",
             "approved_snapshot_id": "APPROVED_SNAPSHOT.snapshot_id" if snapshot else "MISSING_APPROVED_SNAPSHOT",
             "approved_snapshot_version": "APPROVED_SNAPSHOT.version" if snapshot else "MISSING_APPROVED_SNAPSHOT",
             "product_truth_status": "PRODUCT_TRUTH_SERVICE.computed_profile",
@@ -166,6 +173,7 @@ def _brief_from_context(
     brief_status = CAMPAIGN_BRIEF_REVIEW_READY if not blockers else CAMPAIGN_BRIEF_REVIEW_BLOCKED
     return PosterCampaignDesignBrief(
         product_id=product_id,
+        product_name=product_name,
         approved_snapshot_id=_clean((snapshot or {}).get("snapshot_id")),
         approved_snapshot_version=(snapshot or {}).get("version"),
         product_truth_status=_truth_status(product),
@@ -267,6 +275,15 @@ def score_campaign_copy_route(
     cta = _clean(candidate.get("cta"))
     blob = " ".join([headline, support, *proofs, cta])
     blockers: list[str] = []
+    length_errors = validate_poster_native_lengths(
+        {
+            "primary_message": headline,
+            "support_message": support,
+            "proof_points": proofs,
+            "cta": cta,
+        }
+    )
+    blockers.extend(f"COPY_LENGTH_INVALID:{error}" for error in length_errors)
     unsupported = [term for term in _UNSUPPORTED_MARKETING_TERMS if _contains_phrase(blob, term)]
     generic = [term for term in _GENERIC_TERMS if _contains_phrase(blob, term)]
     if unsupported:
@@ -285,7 +302,7 @@ def score_campaign_copy_route(
     )
     if any(f.severity == "BLOCK" for f in quality.findings):
         blockers.extend(sorted({f.code for f in quality.findings if f.severity == "BLOCK"}))
-    product_name_tokens = set(_words(brief.product_id))
+    product_name_tokens = set(_words(brief.product_name or brief.product_id))
     specificity = 8 if product_name_tokens and product_name_tokens & set(_words(blob)) else 4
     relevance_tokens = set(_words(" ".join([brief.audience, brief.desire, brief.buyer_moment])))
     relevance = min(10, 4 + len(relevance_tokens & set(_words(blob))))
@@ -343,7 +360,7 @@ def score_campaign_copy_route(
 
 
 def _fallback_candidates(brief: PosterCampaignDesignBrief) -> list[dict[str, Any]]:
-    name = _clean(brief.product_id) or "Produk berdaftar"
+    name = _clean(brief.product_name or brief.product_id) or "Produk berdaftar"
     moment = _clean(brief.buyer_moment) or "pilihan anda"
     fact = brief.approved_proof_points[:1]
     return [

@@ -534,9 +534,17 @@ def _resolve_snapshot_angles(snap: Any, persona: Any) -> list[str]:
     if stored and not _is_family_template(stored):
         return stored
 
-    derivation = copy_angle_derivation.derive_angles(
-        getattr(snap, "buyer_persona_snapshot_json", {}) or persona
+    # Derive from the normalized persona, not the raw snapshot blob.  The
+    # normalizer accepts the canonical ``pain_points`` spelling used by older
+    # approved snapshots and maps it to the derivation contract's ``pains``
+    # field.  Passing the raw blob silently discarded those approved pains and
+    # caused a false framework-angle blocker.
+    persona_payload = (
+        persona.model_dump(mode="json")
+        if hasattr(persona, "model_dump")
+        else persona
     )
+    derivation = copy_angle_derivation.derive_angles(persona_payload)
     if derivation.get("derived"):
         return [a["label"] for a in derivation["angles"]]
     return stored
@@ -584,10 +592,22 @@ def _grounding_from_snapshot(product: dict[str, Any], snap: Any) -> CopyGroundin
             "angle_strategies", "MISSING_APPROVED_ANGLE"
         )
 
+    snapshot_usps = _clean_list(getattr(snap, "usp_json", []))
+    approved_claims = _clean_list(getattr(snap, "allowed_claims_json", []))
+    # A snapshot USP can contain a claim-bound phrase that the downstream
+    # safety gate must remove (for example, an unqualified "100%" claim).  The
+    # same approved snapshot may carry a safer, explicitly allowed formulation.
+    # Keep both authorities in the grounded pool; build_safe_campaign_context
+    # performs the final banned-term filter without inventing a rewrite.
+    grounded_usps: list[str] = []
+    for fact in [*snapshot_usps, *approved_claims]:
+        if fact.casefold() not in {item.casefold() for item in grounded_usps}:
+            grounded_usps.append(fact)
+
     knowledge = ProductKnowledge(
         description=_clean(getattr(snap, "product_description", "")),
         benefits=_clean_list(getattr(snap, "benefits_json", [])),
-        usps=_clean_list(getattr(snap, "usp_json", [])),
+        usps=grounded_usps,
         ingredients=_clean(getattr(snap, "ingredients_text", "")),
         target_customer=_clean(getattr(snap, "target_customer_text", "")) or persona.audience,
     )
@@ -619,7 +639,11 @@ def _grounding_from_snapshot(product: dict[str, Any], snap: Any) -> CopyGroundin
         missing=missing,
         field_provenance={
             **field_provenance,
-            "product_knowledge.usps": "APPROVED_SNAPSHOT.usp_json",
+            "product_knowledge.usps": (
+                "APPROVED_SNAPSHOT.usp_json+allowed_claims_json"
+                if approved_claims
+                else "APPROVED_SNAPSHOT.usp_json"
+            ),
         },
     )
 

@@ -65,6 +65,22 @@ def test_framework_tier_direct_is_not_stealth():
     assert g.source in (GROUNDING_FRAMEWORK_FAMILY, GROUNDING_MINIMAL)
 
 
+def test_snapshot_angle_derivation_normalizes_pain_points_alias():
+    snap = SimpleNamespace(
+        buyer_persona_snapshot_json={
+            "audience": "Peminat roti",
+            "pain_points": ["Sarapan roti kosong terasa hambar"],
+        },
+        copy_strategy_summary_json={},
+    )
+    persona = cg._merge_persona(
+        snap.buyer_persona_snapshot_json,
+        cg.BuyerPersona(),
+    )
+    angles = cg._resolve_snapshot_angles(snap, persona)
+    assert angles == ["Sarapan roti kosong terasa hambar"]
+
+
 @pytest.mark.asyncio
 async def test_approved_snapshot_tier_uses_real_knowledge(monkeypatch):
     snap = SimpleNamespace(
@@ -101,6 +117,7 @@ async def test_approved_snapshot_tier_uses_real_knowledge(monkeypatch):
     # real product knowledge crosses (from the approved snapshot)
     assert g.product_knowledge.benefits == ["mudah dibawa", "diskret"]
     assert g.product_knowledge.usps
+    assert "mudah dibawa" in g.product_knowledge.usps
     # persona: snapshot keys win, framework fills the gaps (triggers)
     assert g.buyer_persona.audience == "Lelaki 30-50"
     assert "yakin semula" in g.buyer_persona.desires

@@ -39,6 +39,7 @@ PRODUCT = {
 def _brief(**overrides):
     data = dict(
         product_id=PRODUCT["id"],
+        product_name=PRODUCT["product_display_name"],
         approved_snapshot_id="snapshot-1",
         approved_snapshot_version=3,
         product_truth_status="RESTRICTED",
@@ -172,6 +173,12 @@ def test_five_fallback_routes_are_distinct_and_not_production_ready():
     assert len(response.top_three_route_ids) == 3
 
 
+def test_fallback_routes_use_canonical_product_name_not_internal_id():
+    response = generate_campaign_copy_routes(_brief())
+    assert PRODUCT["product_display_name"] in response.candidates[0].primary_message
+    assert PRODUCT["id"] not in response.candidates[0].primary_message
+
+
 def test_generic_fixture_is_below_production_threshold_and_reason_is_visible():
     score, reasons = score_campaign_copy_route(
         {
@@ -185,6 +192,20 @@ def test_generic_fixture_is_below_production_threshold_and_reason_is_visible():
     assert score.total < 72
     assert any(reason.startswith("UNSUPPORTED_SUPERLATIVE") for reason in reasons)
     assert any(reason.startswith("GENERIC_PHRASE") for reason in reasons)
+
+
+def test_copy_route_rejects_overlength_text_instead_of_clipping_it():
+    score, reasons = score_campaign_copy_route(
+        {
+            "primary_message": "JBL PHANTOM P90 True Wireless Bluetooth In-Ear Earbuds: Deep waterproofing, ultra-long battery life",
+            "support_message": "Ringkas.",
+            "proof_points": [],
+            "cta": "Lihat produk",
+        },
+        _brief(),
+    )
+    assert score.visual_fit_line_budget < 5
+    assert any(reason.startswith("COPY_LENGTH_INVALID:") for reason in reasons)
 
 
 def test_support_repetition_is_visible_as_a_copy_blocker():
